@@ -32,6 +32,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 is2D = true;
             else if (dimensionParam == "3d")
                 is2D = false;
+            else if (!string.IsNullOrEmpty(dimensionParam))
+                return new ErrorResponse($"Invalid dimension: '{dimensionParam}'. Use '3d' or '2d'.");
             else
                 is2D = has2DRb && !has3DRb;
 
@@ -68,14 +70,42 @@ namespace MCPForUnity.Editor.Tools.Physics
 
         private static object ApplyNormalForce(ToolParams p, GameObject go, bool is2D)
         {
-            var forceToken = p.GetRaw("force") as JArray;
+            var forceToken = p.GetRaw("force");
+            if (forceToken?.Type == JTokenType.Null) forceToken = null;
             var torqueToken = p.GetRaw("torque");
 
             if (forceToken == null && torqueToken == null)
                 return new ErrorResponse("Either 'force' or 'torque' (or both) must be provided.");
 
             string modeStr = p.Get("force_mode");
-            var positionToken = p.GetRaw("position") as JArray;
+            var positionToken = p.GetRaw("position");
+            if (positionToken?.Type == JTokenType.Null) positionToken = null;
+
+            // Parse the whole request before any AddForce/AddTorque call. A bad
+            // torque must not leave a force queued on a rejected request.
+            int dimensions = is2D ? 2 : 3;
+            float[] force = null;
+            float[] position = null;
+            float[] torque = null;
+            if (forceToken != null && !TryReadVector(forceToken, dimensions, out force))
+                return new ErrorResponse($"'force' array must contain at least {dimensions} finite floats for {(is2D ? "2D" : "3D")}.");
+            if (forceToken != null && positionToken != null && !TryReadVector(positionToken, dimensions, out position))
+                return new ErrorResponse($"'position' array must contain at least {dimensions} finite floats for {(is2D ? "2D" : "3D")}.");
+            if (torqueToken != null)
+            {
+                if (is2D)
+                {
+                    // MCP/CLI use [z]; retain the original raw scalar form too.
+                    var torqueArray = torqueToken as JArray;
+                    if (torqueArray != null && torqueArray.Count != 1)
+                        return new ErrorResponse("2D 'torque' requires [z] or a scalar finite float.");
+                    if (!TryReadFloat(torqueArray != null ? torqueArray[0] : torqueToken, out float value))
+                        return new ErrorResponse("2D 'torque' requires [z] or a scalar finite float.");
+                    torque = new[] { value };
+                }
+                else if (!TryReadVector(torqueToken, 3, out torque))
+                    return new ErrorResponse("'torque' array must contain at least 3 finite floats for 3D.");
+            }
 
             var applied = new List<string>();
             var responseData = new Dictionary<string, object>
@@ -100,19 +130,13 @@ namespace MCPForUnity.Editor.Tools.Physics
                 responseData["force_mode"] = mode2d.ToString();
                 var rb2d = go.GetComponent<Rigidbody2D>();
 
-                if (forceToken != null)
+                if (force != null)
                 {
-                    if (forceToken.Count < 2)
-                        return new ErrorResponse("'force' array must contain at least 2 floats for 2D.");
+                    var forceVec = new Vector2(force[0], force[1]);
 
-                    var forceVec = new Vector2(forceToken[0].Value<float>(), forceToken[1].Value<float>());
-
-                    if (positionToken != null)
+                    if (position != null)
                     {
-                        if (positionToken.Count < 2)
-                            return new ErrorResponse("'position' array must contain at least 2 floats for 2D.");
-
-                        var posVec = new Vector2(positionToken[0].Value<float>(), positionToken[1].Value<float>());
+                        var posVec = new Vector2(position[0], position[1]);
                         rb2d.AddForceAtPosition(forceVec, posVec, mode2d);
                     }
                     else
@@ -124,9 +148,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                     applied.Add("force");
                 }
 
-                if (torqueToken != null)
+                if (torque != null)
                 {
-                    float torqueFloat = torqueToken.Value<float>();
+                    float torqueFloat = torque[0];
                     rb2d.AddTorque(torqueFloat, mode2d);
                     responseData["torque"] = torqueFloat;
                     applied.Add("torque");
@@ -137,32 +161,22 @@ namespace MCPForUnity.Editor.Tools.Physics
                 ForceMode mode = ForceMode.Force;
                 if (!string.IsNullOrEmpty(modeStr))
                 {
-                    if (!Enum.TryParse<ForceMode>(modeStr, true, out mode))
+                    if (!Enum.TryParse<ForceMode>(modeStr, true, out mode) || !Enum.IsDefined(typeof(ForceMode), mode))
                         return new ErrorResponse($"Invalid ForceMode: '{modeStr}'. Valid values: Force, Impulse, Acceleration, VelocityChange.");
                 }
 
                 responseData["force_mode"] = mode.ToString();
                 var rb = go.GetComponent<Rigidbody>();
 
-                if (forceToken != null)
+                if (force != null)
                 {
-                    if (forceToken.Count < 3)
-                        return new ErrorResponse("'force' array must contain at least 3 floats for 3D.");
-
                     var forceVec = new Vector3(
-                        forceToken[0].Value<float>(),
-                        forceToken[1].Value<float>(),
-                        forceToken[2].Value<float>());
+                        force[0], force[1], force[2]);
 
-                    if (positionToken != null)
+                    if (position != null)
                     {
-                        if (positionToken.Count < 3)
-                            return new ErrorResponse("'position' array must contain at least 3 floats for 3D.");
-
                         var posVec = new Vector3(
-                            positionToken[0].Value<float>(),
-                            positionToken[1].Value<float>(),
-                            positionToken[2].Value<float>());
+                            position[0], position[1], position[2]);
                         rb.AddForceAtPosition(forceVec, posVec, mode);
                     }
                     else
@@ -174,16 +188,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                     applied.Add("force");
                 }
 
-                if (torqueToken != null)
+                if (torque != null)
                 {
-                    var torqueArr = torqueToken as JArray;
-                    if (torqueArr == null || torqueArr.Count < 3)
-                        return new ErrorResponse("'torque' array must contain at least 3 floats for 3D.");
-
                     var torqueVec = new Vector3(
-                        torqueArr[0].Value<float>(),
-                        torqueArr[1].Value<float>(),
-                        torqueArr[2].Value<float>());
+                        torque[0], torque[1], torque[2]);
                     rb.AddTorque(torqueVec, mode);
                     responseData["torque"] = new[] { torqueVec.x, torqueVec.y, torqueVec.z };
                     applied.Add("torque");
@@ -197,6 +205,35 @@ namespace MCPForUnity.Editor.Tools.Physics
                 message = $"Applied {appliedStr} to '{go.name}'.",
                 data = responseData
             };
+        }
+
+        private static bool TryReadVector(JToken token, int dimensions, out float[] values)
+        {
+            values = null;
+            if (!(token is JArray array) || array.Count < dimensions)
+                return false;
+            var parsed = new float[dimensions];
+            for (int i = 0; i < dimensions; i++)
+                if (!TryReadFloat(array[i], out parsed[i]))
+                    return false;
+            values = parsed;
+            return true;
+        }
+
+        private static bool TryReadFloat(JToken token, out float value)
+        {
+            value = 0f;
+            if (!(token is JValue) || token.Type == JTokenType.Null)
+                return false;
+            try
+            {
+                value = token.Value<float>();
+                return !float.IsNaN(value) && !float.IsInfinity(value);
+            }
+            catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is ArgumentException || ex is OverflowException)
+            {
+                return false;
+            }
         }
 
         private static object ApplyExplosionForce(ToolParams p, GameObject go, bool is2D)
@@ -256,6 +293,9 @@ namespace MCPForUnity.Editor.Tools.Physics
         {
             if (targetToken == null)
                 return null;
+
+            if (!string.IsNullOrEmpty(searchMethod))
+                return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
 
             if (targetToken.Type == JTokenType.Integer)
             {

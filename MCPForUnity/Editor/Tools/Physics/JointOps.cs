@@ -408,6 +408,9 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (targetToken == null)
                 return null;
 
+            if (!string.IsNullOrEmpty(searchMethod))
+                return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
+
             if (targetToken.Type == JTokenType.Integer)
             {
                 int instanceId = targetToken.Value<int>();
