@@ -51,6 +51,11 @@ namespace MCPForUnity.Editor.Tools
                     $"A maximum of {maxCommands} commands are allowed per batch (configurable in MCP Tools window, hard max {AbsoluteMaxCommandsPerBatch}).");
             }
 
+            // Preflight the entire batch before any command can have side effects.
+            foreach (var token in commandsToken)
+                if (token is JObject entry && string.Equals(entry["tool"]?.ToString(), "batch_execute", StringComparison.OrdinalIgnoreCase))
+                    return new ErrorResponse("Nested batch_execute commands are not allowed.");
+
             bool failFast = @params.Value<bool?>("failFast") ?? false;
             bool parallelRequested = @params.Value<bool?>("parallel") ?? false;
             int? maxParallel = @params.Value<int?>("maxParallelism");

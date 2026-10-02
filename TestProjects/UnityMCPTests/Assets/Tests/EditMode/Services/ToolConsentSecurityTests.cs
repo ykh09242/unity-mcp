@@ -43,7 +43,10 @@ namespace MCPForUnityTests.Editor.Services
             StringAssert.Contains("disabled", result.ToLowerInvariant());
         }
 
-        [TestCaseSource(nameof(Names))]
+        [TestCase("execute_code")]
+        [TestCase("manage_packages")]
+        [TestCase("execute_menu_item")]
+        [TestCase("manage_build")]
         public async Task BatchRejectsToolsWithoutConsent(string name)
         {
             var result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject
