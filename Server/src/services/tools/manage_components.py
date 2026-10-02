@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -18,6 +18,12 @@ from services.tools.preflight import preflight
 _VALUE_OMITTED = object()
 # Keep the public value optional/nullable while distinguishing a JSON null from omission.
 _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
+
+
+def _reject_boolean_component_index(value: Any) -> Any:
+    if isinstance(value, bool):
+        raise ValueError("component_index must be an integer, not a boolean.")
+    return value
 
 
 @mcp_for_unity_tool(
@@ -69,8 +75,13 @@ async def manage_components(
     # For targeting a specific component when multiple of the same type exist
     component_index: Annotated[
         Optional[int],
-        "Zero-based index to select which component when multiple of the same type exist. "
-        "Use the components resource to discover indices. If omitted, targets the first instance."
+        Field(
+            description=(
+                "Zero-based index to select which component when multiple of the same type exist. "
+                "Use the components resource to discover indices. If omitted, targets the first instance."
+            )
+        ),
+        BeforeValidator(_reject_boolean_component_index),
     ] = None,
 ) -> dict[str, Any]:
     """

@@ -130,7 +130,7 @@ def create(path: str, asset_type: str, properties: Optional[str]):
 
     result = run_command("manage_asset", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created {asset_type}: {path}")
 
 
@@ -157,7 +157,7 @@ def delete(path: str, force: bool):
     result = run_command(
         "manage_asset", {"action": "delete", "path": path}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Deleted: {path}")
 
 
@@ -182,7 +182,7 @@ def duplicate(source: str, destination: str):
 
     result = run_command("manage_asset", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Duplicated to: {destination}")
 
 
@@ -207,7 +207,7 @@ def move(source: str, destination: str):
 
     result = run_command("manage_asset", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Moved to: {destination}")
 
 
@@ -237,7 +237,7 @@ def rename(path: str, new_name: str):
 
     result = run_command("manage_asset", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Renamed to: {new_name}")
 
 
@@ -256,7 +256,7 @@ def import_asset(path: str):
     result = run_command(
         "manage_asset", {"action": "import", "path": path}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Imported: {path}")
 
 
@@ -276,5 +276,5 @@ def mkdir(path: str):
     result = run_command(
         "manage_asset", {"action": "create_folder", "path": path}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created folder: {path}")

@@ -58,7 +58,7 @@ def add(target: str, component_type: str, search_method: Optional[str], properti
 
     result = run_command("manage_components", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Added {component_type} to '{target}'")
 
 
@@ -109,7 +109,7 @@ def remove(target: str, component_type: str, search_method: Optional[str], force
 
     result = run_command("manage_components", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Removed {component_type} from '{target}'")
 
 
@@ -161,7 +161,7 @@ def set_property(target: str, component_type: str, property_name: str, value: st
 
     result = run_command("manage_components", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set {component_type}.{property_name} = {value}")
 
 
@@ -213,5 +213,5 @@ def modify(target: str, component_type: str, properties: str, search_method: Opt
 
     result = run_command("manage_components", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Modified {component_type} on '{target}'")
