@@ -1,4 +1,5 @@
 import importlib
+import json
 from unittest.mock import Mock
 
 from click.testing import CliRunner
@@ -131,5 +132,16 @@ def test_cli_async_tests_return_job_without_polling(editor_module, monkeypatch):
     monkeypatch.setattr(editor_module, "run_command", send)
     result = CliRunner().invoke(editor_module.editor, ["tests", "--async", "--wait", "3"])
     assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == send.return_value
+    send.assert_called_once()
+
+
+def test_cli_async_tests_keep_text_job_guidance(editor_module, monkeypatch):
+    monkeypatch.setattr(editor_module, "get_config", lambda: CLIConfig(format="text"))
+    send = Mock(return_value={"success": True, "data": {"job_id": "job-1", "status": "running"}})
+    monkeypatch.setattr(editor_module, "run_command", send)
+    result = CliRunner().invoke(editor_module.editor, ["tests", "--async", "--wait", "3"])
+    assert result.exit_code == 0, result.output
     assert "Test job started: job-1" in result.output
+    assert "poll-test job-1" in result.output
     send.assert_called_once()

@@ -25,19 +25,19 @@ def play():
     config = get_config()
     result = run_command("manage_editor", {"action": "play"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
-        print_success("Entered play mode")
+    if result.get("success") and config.format != "json":
+        print_success(result.get("message") or "Play mode requested")
 
 
 @editor.command("pause")
 @handle_unity_errors
 def pause():
-    """Pause play mode."""
+    """Toggle pause/resume in play mode."""
     config = get_config()
     result = run_command("manage_editor", {"action": "pause"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
-        print_success("Paused play mode")
+    if result.get("success") and config.format != "json":
+        print_success(result.get("message") or "Pause/resume toggled")
 
 
 @editor.command("stop")
@@ -47,8 +47,8 @@ def stop():
     config = get_config()
     result = run_command("manage_editor", {"action": "stop"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
-        print_success("Stopped play mode")
+    if result.get("success") and config.format != "json":
+        print_success(result.get("message") or "Stop requested")
 
 
 @editor.command("console")
@@ -98,7 +98,7 @@ def console(log_types: tuple, count: int, filter_text: Optional[str], stacktrace
     if clear:
         result = run_command("read_console", {"action": "clear"}, config)
         click.echo(format_output(result, config.format))
-        if result.get("success"):
+        if result.get("success") and config.format != "json":
             print_success("Console cleared")
         return
 
@@ -131,7 +131,7 @@ def add_tag(tag_name: str):
     result = run_command(
         "manage_editor", {"action": "add_tag", "tagName": tag_name}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Added tag: {tag_name}")
 
 
@@ -149,7 +149,7 @@ def remove_tag(tag_name: str):
     result = run_command(
         "manage_editor", {"action": "remove_tag", "tagName": tag_name}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Removed tag: {tag_name}")
 
 
@@ -167,7 +167,7 @@ def add_layer(layer_name: str):
     result = run_command(
         "manage_editor", {"action": "add_layer", "layerName": layer_name}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Added layer: {layer_name}")
 
 
@@ -185,7 +185,7 @@ def remove_layer(layer_name: str):
     result = run_command(
         "manage_editor", {"action": "remove_layer", "layerName": layer_name}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Removed layer: {layer_name}")
 
 
@@ -205,7 +205,7 @@ def set_tool(tool_name: str):
     result = run_command(
         "manage_editor", {"action": "set_active_tool", "toolName": tool_name}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set active tool: {tool_name}")
 
 
@@ -225,7 +225,7 @@ def deploy():
     config = get_config()
     result = run_command("manage_editor", {"action": "deploy_package"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Package deployed")
 
 
@@ -243,7 +243,7 @@ def restore():
     config = get_config()
     result = run_command("manage_editor", {"action": "restore_package"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Package restored from backup")
 
 
@@ -259,7 +259,7 @@ def undo():
     config = get_config()
     result = run_command("manage_editor", {"action": "undo"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Undo performed")
 
 
@@ -275,7 +275,7 @@ def redo():
     config = get_config()
     result = run_command("manage_editor", {"action": "redo"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Redo performed")
 
 
@@ -294,7 +294,7 @@ def execute_menu(menu_path: str):
     config = get_config()
     result = run_command("execute_menu_item", {"menu_path": menu_path}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Executed: {menu_path}")
 
 
@@ -362,8 +362,11 @@ def run_tests(mode: str, async_mode: bool, wait: Optional[int], details: bool, f
     if async_mode and result.get("success"):
         job_id = result.get("data", {}).get("job_id")
         if job_id:
-            click.echo(f"Test job started: {job_id}")
-            print_info("Poll with: unity-mcp editor poll-test " + job_id)
+            if config.format == "json":
+                click.echo(format_output(result, config.format))
+            else:
+                click.echo(f"Test job started: {job_id}")
+                print_info("Poll with: unity-mcp editor poll-test " + job_id)
             return
 
     if wait and result.get("success"):
@@ -440,7 +443,7 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
         result = response
     click.echo(format_output(result, config.format))
 
-    if isinstance(result, dict) and result.get("success"):
+    if isinstance(result, dict) and result.get("success") and config.format != "json":
         data = result.get("data", {})
         if not isinstance(data, dict):
             return
@@ -502,10 +505,11 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
     if compile:
         params["compile"] = "request"
 
-    click.echo("Refreshing Unity...")
+    if config.format != "json":
+        click.echo("Refreshing Unity...")
     result = run_command("refresh_unity", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Unity refreshed")
 
 
@@ -540,10 +544,11 @@ def custom_tool(tool_name: str, params: str):
         result = error.response
     click.echo(format_output(result, config.format))
     if result.get("success"):
-        print_success(f"Executed custom tool: {tool_name}")
+        if config.format != "json":
+            print_success(f"Executed custom tool: {tool_name}")
     else:
         message = (result.get("message") or result.get("error") or "").lower()
-        if "not found" in message and "tool" in message:
+        if config.format != "json" and "not found" in message and "tool" in message:
             try:
                 tools_result = run_list_custom_tools(config)
                 tools = tools_result.get("tools")
