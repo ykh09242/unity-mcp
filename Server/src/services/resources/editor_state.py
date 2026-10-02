@@ -235,8 +235,14 @@ async def get_editor_state(ctx: Context) -> MCPResponse:
     if isinstance(response, dict) and not response.get("success", True):
         return MCPResponse(**response)
 
-    state_v2 = response.get("data") if isinstance(
-        response, dict) and isinstance(response.get("data"), dict) else {}
+    if not isinstance(response, dict) or not isinstance(response.get("data"), dict):
+        return MCPResponse(
+            success=False,
+            error="invalid_editor_state",
+            message="Editor state response must contain a data object.",
+        )
+
+    state_v2 = response["data"]
     state_v2.setdefault("schema_version", "unity-mcp/editor_state@2")
     state_v2.setdefault("observed_at_unix_ms", _now_unix_ms())
     state_v2.setdefault("sequence", 0)
