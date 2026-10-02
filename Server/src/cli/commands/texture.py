@@ -363,8 +363,9 @@ def create(path: str, width: int, height: int, image_path: Optional[str], color:
         except ValueError as e:
             print_error(str(e))
             sys.exit(1)
-        for warning in warnings:
-            click.echo(f"⚠️ Warning: {warning}")
+        if config.format != "json":
+            for warning in warnings:
+                click.echo(f"⚠️ Warning: {warning}")
 
     params: dict[str, Any] = {
         "action": "create",
@@ -406,7 +407,7 @@ def create(path: str, width: int, height: int, image_path: Optional[str], color:
 
     result = run_command("manage_texture", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created texture: {path}")
 
 
@@ -442,8 +443,9 @@ def sprite(path: str, width: int, height: int, image_path: Optional[str], color:
         except ValueError as e:
             print_error(str(e))
             sys.exit(1)
-        for warning in warnings:
-            click.echo(f"⚠️ Warning: {warning}")
+        if config.format != "json":
+            for warning in warnings:
+                click.echo(f"⚠️ Warning: {warning}")
 
     sprite_settings: dict[str, Any] = {"pixelsPerUnit": ppu}
     if pivot:
@@ -477,7 +479,7 @@ def sprite(path: str, width: int, height: int, image_path: Optional[str], color:
 
     result = run_command("manage_texture", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created sprite: {path}")
 
 
@@ -592,7 +594,7 @@ def modify(path: str, set_pixels: Optional[str], texture_type: Optional[str], sp
 
     result = run_command("manage_texture", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Modified texture: {path}")
 
 
@@ -620,7 +622,7 @@ def delete(path: str, force: bool):
     result = run_command("manage_texture", {
                          "action": "delete", "path": path}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Deleted texture: {path}")
 
 
@@ -663,5 +665,5 @@ def set_import_settings(path: str, texture_type: Optional[str], sprite_mode: Opt
 
     result = run_command("manage_texture", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Import settings updated: {path}")

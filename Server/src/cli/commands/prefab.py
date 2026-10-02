@@ -35,7 +35,7 @@ def open_stage(path: str):
 
     result = run_command("manage_prefabs", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Opened prefab: {path}")
 
 
@@ -64,7 +64,7 @@ def close_stage(save: bool):
 
     result = run_command("manage_prefabs", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Closed prefab stage")
 
 
@@ -85,7 +85,7 @@ def save_stage():
 
     result = run_command("manage_prefabs", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Saved prefab stage")
 
 
@@ -115,7 +115,7 @@ def info(path: str, compact: bool):
     result = run_command("manage_prefabs", params, config)
     # Get the actual response data from the wrapped result structure
     response_data = result.get("result", result)
-    if compact and response_data.get("success") and response_data.get("data"):
+    if config.format != "json" and compact and response_data.get("success") and response_data.get("data"):
         data = response_data["data"]
         click.echo(f"Prefab: {data.get('assetPath', path)}")
         click.echo(f"  Type: {data.get('prefabType', 'Unknown')}")
@@ -162,7 +162,7 @@ def hierarchy(path: str, compact: bool, show_prefab_info: bool):
     result = run_command("manage_prefabs", params, config)
     # Get the actual response data from the wrapped result structure
     response_data = result.get("result", result)
-    if compact and response_data.get("success") and response_data.get("data"):
+    if config.format != "json" and compact and response_data.get("success") and response_data.get("data"):
         data = response_data["data"]
         items = data.get("items", [])
         for item in items:
@@ -172,7 +172,7 @@ def hierarchy(path: str, compact: bool, show_prefab_info: bool):
                 prefab_info = f" [nested: {item['prefab']['assetPath']}]"
             click.echo(f"{indent}{item.get('name')}{prefab_info}")
         click.echo(f"\nTotal: {data.get('total', 0)} objects")
-    elif show_prefab_info:
+    elif config.format != "json" and show_prefab_info:
         # Show prefab info in readable format
         if response_data.get("success") and response_data.get("data"):
             data = response_data["data"]
@@ -237,7 +237,7 @@ def create(target: str, path: str, overwrite: bool, include_inactive: bool, unli
 
     result = run_command("manage_prefabs", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created prefab: {path}")
 
 
@@ -366,5 +366,5 @@ def modify(path: str, target: Optional[str], position: Optional[str], rotation: 
 
     result = run_command("manage_prefabs", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Modified prefab: {path}")
