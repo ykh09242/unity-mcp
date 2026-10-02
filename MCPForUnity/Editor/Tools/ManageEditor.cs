@@ -186,7 +186,8 @@ namespace MCPForUnity.Editor.Tools
                 if (Enum.TryParse<Tool>(toolName, true, out targetTool)) // Case-insensitive parse
                 {
                     // Check if it's a valid built-in tool
-                    if (targetTool != Tool.None && targetTool <= Tool.Custom) // Tool.Custom is the last standard tool
+                    if (Enum.IsDefined(typeof(Tool), targetTool)
+                        && targetTool != Tool.None && targetTool <= Tool.Custom) // Tool.Custom is the last standard tool
                     {
                         UnityEditor.Tools.current = targetTool;
                         return new SuccessResponse($"Set active tool to '{targetTool}'.");
