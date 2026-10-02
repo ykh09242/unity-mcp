@@ -22,7 +22,7 @@ def asset_gen():
 def _emit(result, config, verb):
     """Echo the command result, then (on success with a job_id) print the status-poll hint."""
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if config.format != "json" and result.get("success"):
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
             print_info(f"{verb} started. Poll with: unity-mcp asset-gen status --job-id {job_id}")
