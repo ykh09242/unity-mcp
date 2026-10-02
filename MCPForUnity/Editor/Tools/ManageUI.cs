@@ -405,45 +405,43 @@ namespace MCPForUnity.Editor.Tools
                 path += ".asset";
             }
 
-            if (AssetDatabase.LoadAssetAtPath<PanelSettings>(path) != null)
+            if (File.Exists(AssetPathUtility.GetFullAssetPath(path))
+                || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
             {
-                return new ErrorResponse($"PanelSettings already exists at {path}");
+                return new ErrorResponse($"Asset already exists at {path}");
             }
 
-            var ps = CreateDefaultPanelSettings(path);
+            var changes = new List<string>();
+            var ps = CreateDefaultPanelSettings(path, panel =>
+            {
+                JToken settingsToken = p.GetRaw("settings");
+                if (settingsToken is JObject settingsObj)
+                {
+                    ApplyPanelSettingsProperties(panel, settingsObj, changes);
+                }
+                else
+                {
+                    // Legacy: support top-level scale_mode / reference_resolution
+                    string scaleMode = p.Get("scale_mode");
+                    if (!string.IsNullOrEmpty(scaleMode)
+                        && Enum.TryParse<PanelScaleMode>(scaleMode, true, out var mode))
+                    {
+                        panel.scaleMode = mode;
+                        changes.Add("scaleMode");
+                    }
+
+                    if (p.GetRaw("reference_resolution") is JObject refRes)
+                    {
+                        int w = refRes["width"]?.ToObject<int>() ?? 1920;
+                        int h = refRes["height"]?.ToObject<int>() ?? 1080;
+                        panel.referenceResolution = new Vector2Int(w, h);
+                        changes.Add("referenceResolution");
+                    }
+                }
+            });
             if (ps == null)
             {
                 return new ErrorResponse("Failed to create PanelSettings asset.");
-            }
-
-            // Apply any settings passed as a flat dict
-            JToken settingsToken = p.GetRaw("settings");
-            var changes = new List<string>();
-            if (settingsToken is JObject settingsObj)
-            {
-                ApplyPanelSettingsProperties(ps, settingsObj, changes);
-            }
-            else
-            {
-                // Legacy: support top-level scale_mode / reference_resolution
-                string scaleMode = p.Get("scale_mode");
-                if (!string.IsNullOrEmpty(scaleMode))
-                {
-                    if (Enum.TryParse<PanelScaleMode>(scaleMode, true, out var mode))
-                    {
-                        ps.scaleMode = mode;
-                        changes.Add("scaleMode");
-                    }
-                }
-
-                JToken refResToken = p.GetRaw("reference_resolution");
-                if (refResToken is JObject refRes)
-                {
-                    int w = refRes["width"]?.ToObject<int>() ?? 1920;
-                    int h = refRes["height"]?.ToObject<int>() ?? 1080;
-                    ps.referenceResolution = new Vector2Int(w, h);
-                    changes.Add("referenceResolution");
-                }
             }
 
             EditorUtility.SetDirty(ps);
@@ -489,18 +487,33 @@ namespace MCPForUnity.Editor.Tools
                 new { path, applied = changes });
         }
 
-        private static PanelSettings CreateDefaultPanelSettings(string path)
+        private static PanelSettings CreateDefaultPanelSettings(string path, Action<PanelSettings> configure = null)
         {
-            string dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir))
-            {
-                EnsureFolderExists(dir);
-            }
+            // This helper returns only a newly owned asset, never a borrowed one.
+            if (File.Exists(AssetPathUtility.GetFullAssetPath(path))
+                || AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
+                return null;
 
             var ps = ScriptableObject.CreateInstance<PanelSettings>();
-            AssetDatabase.CreateAsset(ps, path);
-            AssetDatabase.SaveAssets();
-            return ps;
+            try
+            {
+                configure?.Invoke(ps);
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) EnsureFolderExists(dir);
+
+                AssetDatabase.CreateAsset(ps, path);
+                if (!AssetDatabase.Contains(ps)
+                    || !string.Equals(AssetPathUtility.NormalizeSeparators(AssetDatabase.GetAssetPath(ps)),
+                        AssetPathUtility.NormalizeSeparators(path), StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                AssetDatabase.SaveAssets();
+                return ps;
+            }
+            finally
+            {
+                if (!AssetDatabase.Contains(ps)) UnityEngine.Object.DestroyImmediate(ps);
+            }
         }
 
         /// <summary>
@@ -514,6 +527,14 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static void ApplyPanelSettingsProperties(PanelSettings ps, JObject settings, List<string> changes)
         {
+            PreparePanelSettingsProperties(ps, settings, changes)();
+        }
+
+        private static Action PreparePanelSettingsProperties(PanelSettings ps, JObject settings, List<string> changes)
+        {
+            Action apply = null;
+            var pendingResolution = ps.referenceResolution;
+            var pendingAtlas = ps.dynamicAtlasSettings;
             foreach (var prop in settings)
             {
                 string key = NormalizeKey(prop.Key);
@@ -523,42 +544,44 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // ── Enum properties ─────────────────────────────────────
                     case "scalemode":
-                        if (TryParseEnum<PanelScaleMode>(val, out var sm)) { ps.scaleMode = sm; changes.Add("scaleMode"); }
+                        if (TryParseEnum<PanelScaleMode>(val, out var sm)) { apply += () => ps.scaleMode = sm; changes.Add("scaleMode"); }
                         break;
 
                     case "screenmatchmode":
-                        if (TryParseEnum<PanelScreenMatchMode>(val, out var smm)) { ps.screenMatchMode = smm; changes.Add("screenMatchMode"); }
+                        if (TryParseEnum<PanelScreenMatchMode>(val, out var smm)) { apply += () => ps.screenMatchMode = smm; changes.Add("screenMatchMode"); }
                         break;
 
                     // ── Numeric properties ──────────────────────────────────
                     case "match":
-                        if (TryFloat(val, out float matchVal)) { ps.match = Mathf.Clamp01(matchVal); changes.Add("match"); }
+                        if (TryFloat(val, out float matchVal)) { apply += () => ps.match = Mathf.Clamp01(matchVal); changes.Add("match"); }
                         break;
 
                     case "referencedpi":
-                        if (TryFloat(val, out float refDpi)) { ps.referenceDpi = refDpi; changes.Add("referenceDpi"); }
+                        if (TryFloat(val, out float refDpi)) { apply += () => ps.referenceDpi = refDpi; changes.Add("referenceDpi"); }
                         break;
 
                     case "fallbackdpi":
-                        if (TryFloat(val, out float fbDpi)) { ps.fallbackDpi = fbDpi; changes.Add("fallbackDpi"); }
+                        if (TryFloat(val, out float fbDpi)) { apply += () => ps.fallbackDpi = fbDpi; changes.Add("fallbackDpi"); }
                         break;
 
                     case "sortingorder":
-                        if (TryInt(val, out int so)) { ps.sortingOrder = so; changes.Add("sortingOrder"); }
+                        if (TryInt(val, out int so)) { apply += () => ps.sortingOrder = so; changes.Add("sortingOrder"); }
                         break;
 
                     case "targetdisplay":
-                        if (TryInt(val, out int td)) { ps.targetDisplay = td; changes.Add("targetDisplay"); }
+                        if (TryInt(val, out int td)) { apply += () => ps.targetDisplay = td; changes.Add("targetDisplay"); }
                         break;
 
                     // ── Bool properties ──────────────────────────────────────
                     case "clearcolor":
-                        ps.clearColor = ParamCoercion.CoerceBool(val, false);
+                        bool clearColor = ParamCoercion.CoerceBool(val, false);
+                        apply += () => ps.clearColor = clearColor;
                         changes.Add("clearColor");
                         break;
 
                     case "cleardepthstencil":
-                        ps.clearDepthStencil = ParamCoercion.CoerceBool(val, false);
+                        bool clearDepthStencil = ParamCoercion.CoerceBool(val, false);
+                        apply += () => ps.clearDepthStencil = clearDepthStencil;
                         changes.Add("clearDepthStencil");
                         break;
 
@@ -566,19 +589,34 @@ namespace MCPForUnity.Editor.Tools
                     case "referenceresolution":
                         if (val is JObject resObj)
                         {
-                            int w = resObj["width"]?.ToObject<int>() ?? ps.referenceResolution.x;
-                            int h = resObj["height"]?.ToObject<int>() ?? ps.referenceResolution.y;
-                            ps.referenceResolution = new Vector2Int(w, h);
+                            int w = resObj["width"]?.ToObject<int>() ?? pendingResolution.x;
+                            int h = resObj["height"]?.ToObject<int>() ?? pendingResolution.y;
+                            pendingResolution = new Vector2Int(w, h);
+                            var resolution = pendingResolution;
+                            apply += () => ps.referenceResolution = resolution;
                             changes.Add("referenceResolution");
                         }
                         break;
 
                     case "colorclearvalue":
-                        if (TryParseColor(val, out Color clr)) { ps.colorClearValue = clr; changes.Add("colorClearValue"); }
+                        if (TryParseColor(val, out Color clr)) { apply += () => ps.colorClearValue = clr; changes.Add("colorClearValue"); }
                         break;
 
                     case "dynamicatlassettings":
-                        if (val is JObject daObj) { ApplyDynamicAtlasSettings(ps, daObj, changes); }
+                        if (val is JObject daObj)
+                        {
+                            if (daObj["minAtlasSize"] != null && TryInt(daObj["minAtlasSize"], out int minSize))
+                                pendingAtlas.minAtlasSize = minSize;
+                            if (daObj["maxAtlasSize"] != null && TryInt(daObj["maxAtlasSize"], out int maxSize))
+                                pendingAtlas.maxAtlasSize = maxSize;
+                            if (daObj["maxSubTextureSize"] != null && TryInt(daObj["maxSubTextureSize"], out int maxSub))
+                                pendingAtlas.maxSubTextureSize = maxSub;
+                            if (daObj["activeFilters"] != null && TryParseEnum<DynamicAtlasFilters>(daObj["activeFilters"], out var af))
+                                pendingAtlas.activeFilters = af;
+                            var atlas = pendingAtlas;
+                            apply += () => ps.dynamicAtlasSettings = atlas;
+                            changes.Add("dynamicAtlasSettings");
+                        }
                         break;
 
                     // ── Asset reference properties ──────────────────────────
@@ -588,7 +626,7 @@ namespace MCPForUnity.Editor.Tools
                         if (!string.IsNullOrEmpty(tsPath))
                         {
                             var ts = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(AssetPathUtility.GetContainedAssetPath(tsPath));
-                            if (ts != null) { ps.themeStyleSheet = ts; changes.Add("themeStyleSheet"); }
+                            if (ts != null) { apply += () => ps.themeStyleSheet = ts; changes.Add("themeStyleSheet"); }
                         }
                         break;
                     }
@@ -596,23 +634,7 @@ namespace MCPForUnity.Editor.Tools
                     // unknown keys are silently ignored
                 }
             }
-        }
-
-        private static void ApplyDynamicAtlasSettings(PanelSettings ps, JObject da, List<string> changes)
-        {
-            var daCopy = ps.dynamicAtlasSettings;
-
-            if (da["minAtlasSize"] != null && TryInt(da["minAtlasSize"], out int minSize))
-                daCopy.minAtlasSize = minSize;
-            if (da["maxAtlasSize"] != null && TryInt(da["maxAtlasSize"], out int maxSize))
-                daCopy.maxAtlasSize = maxSize;
-            if (da["maxSubTextureSize"] != null && TryInt(da["maxSubTextureSize"], out int maxSub))
-                daCopy.maxSubTextureSize = maxSub;
-            if (da["activeFilters"] != null && TryParseEnum<DynamicAtlasFilters>(da["activeFilters"], out var af))
-                daCopy.activeFilters = af;
-
-            ps.dynamicAtlasSettings = daCopy;
-            changes.Add("dynamicAtlasSettings");
+            return apply ?? (() => { });
         }
 
         // ── Tiny helpers to keep the switch compact ─────────────────────────
