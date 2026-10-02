@@ -36,14 +36,12 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
             // Start recorders
             var recorders = new List<ProfilerRecorder>();
-            foreach (string name in counterNames)
-            {
-                recorders.Add(ProfilerRecorder.StartNew(category, name));
-            }
-
             var data = new Dictionary<string, object>();
             try
             {
+                foreach (string name in counterNames)
+                    recorders.Add(ProfilerRecorder.StartNew(category, name));
+
                 // Wait 1 frame for recorders to accumulate data
                 await WaitOneFrameAsync();
 
@@ -80,7 +78,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
         {
             var explicitCounters = p.GetStringArray("counters");
             if (explicitCounters != null && explicitCounters.Length > 0)
-                return explicitCounters.ToList();
+                return explicitCounters.Distinct(StringComparer.Ordinal).ToList();
 
             var allHandles = new List<ProfilerRecorderHandle>();
             ProfilerRecorderHandle.GetAvailable(allHandles);

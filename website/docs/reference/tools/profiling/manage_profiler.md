@@ -50,8 +50,8 @@ FRAME DEBUGGER:
 | `search_path` | `str \| None` | — | Search directory for memory_list_snapshots. |
 | `snapshot_a` | `str \| None` | — | First snapshot path for memory_compare_snapshots. |
 | `snapshot_b` | `str \| None` | — | Second snapshot path for memory_compare_snapshots. |
-| `page_size` | `int \| None` | — | Page size for frame_debugger_get_events (default 50). |
-| `cursor` | `int \| None` | — | Cursor offset for frame_debugger_get_events. |
+| `page_size` | `int \| None` | — | Page size for frame_debugger_get_events (default 50, clamped to 1..500). |
+| `cursor` | `int \| None` | — | Cursor offset for frame_debugger_get_events (default 0, negative values treated as 0). |
 
 ## Returns
 

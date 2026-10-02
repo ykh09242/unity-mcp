@@ -115,8 +115,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 return new ErrorResponse("FrameDebuggerUtility not found via reflection.");
 
             var p = new ToolParams(@params);
-            int pageSize = p.GetInt("page_size") ?? 50;
-            int cursor = p.GetInt("cursor") ?? 0;
+            int pageSize = Math.Max(1, Math.Min(p.GetInt("page_size") ?? 50, 500));
+            int cursor = Math.Max(0, p.GetInt("cursor") ?? 0);
 
             int totalEvents = GetEventCount();
             if (totalEvents == 0)
@@ -145,7 +145,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
 
             var events = new List<object>();
-            int end = Math.Min(cursor + pageSize, totalEvents);
+            int end = (int)Math.Min((long)cursor + pageSize, totalEvents);
 
             for (int i = cursor; i < end; i++)
             {

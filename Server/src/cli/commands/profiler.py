@@ -53,8 +53,12 @@ def set_areas(area):
     config = get_config()
     areas = {}
     for a in area:
-        name, _, val = a.partition("=")
-        areas[name.strip()] = val.strip().lower() in ("true", "1", "yes")
+        name, separator, val = a.partition("=")
+        name = name.strip()
+        val = val.strip().lower()
+        if not separator or not name or val not in ("true", "1", "yes", "false", "0", "no"):
+            raise click.BadParameter("Use Area=true or Area=false (also accepts 1/0 and yes/no).", param_hint="--area")
+        areas[name] = val in ("true", "1", "yes")
     result = run_command("manage_profiler", {"action": "profiler_set_areas", "areas": areas}, config)
     click.echo(format_output(result, config.format))
 
@@ -157,8 +161,8 @@ def frame_debugger_disable():
 
 
 @profiler.command("frame-debugger-events")
-@click.option("--page-size", default=50, help="Events per page (default 50).")
-@click.option("--cursor", default=None, type=int, help="Cursor offset.")
+@click.option("--page-size", default=50, help="Events per page (default 50, clamped to 1..500).")
+@click.option("--cursor", default=None, type=int, help="Cursor offset (negative values treated as 0).")
 @handle_unity_errors
 def frame_debugger_events(page_size, cursor):
     """Get Frame Debugger draw call events (paged)."""

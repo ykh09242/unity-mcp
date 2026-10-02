@@ -73,8 +73,8 @@ async def manage_profiler(
     search_path: Annotated[Optional[str], "Search directory for memory_list_snapshots."] = None,
     snapshot_a: Annotated[Optional[str], "First snapshot path for memory_compare_snapshots."] = None,
     snapshot_b: Annotated[Optional[str], "Second snapshot path for memory_compare_snapshots."] = None,
-    page_size: Annotated[Optional[int], "Page size for frame_debugger_get_events (default 50)."] = None,
-    cursor: Annotated[Optional[int], "Cursor offset for frame_debugger_get_events."] = None,
+    page_size: Annotated[Optional[int], "Page size for frame_debugger_get_events (default 50, clamped to 1..500)."] = None,
+    cursor: Annotated[Optional[int], "Cursor offset for frame_debugger_get_events (default 0, negative values treated as 0)."] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:

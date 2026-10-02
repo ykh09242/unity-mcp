@@ -19,14 +19,17 @@ namespace MCPForUnity.Editor.Tools.Profiler
             string logFile = p.Get("log_file");
             bool enableCallstacks = p.GetBool("enable_callstacks");
 
-            UProfiler.enabled = true;
-
             if (!string.IsNullOrEmpty(logFile))
             {
                 string dir = Path.GetDirectoryName(logFile);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     return new ErrorResponse($"Log file directory does not exist: {dir}");
+            }
 
+            UProfiler.enabled = true;
+
+            if (!string.IsNullOrEmpty(logFile))
+            {
                 UProfiler.logFile = logFile;
                 UProfiler.enableBinaryLog = true;
             }
@@ -84,17 +87,22 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 return new ErrorResponse($"'areas' parameter required. Valid areas: {string.Join(", ", AreaNames)}");
 
             var updated = new Dictionary<string, bool>();
+            var pending = new List<KeyValuePair<ProfilerArea, bool>>();
             foreach (var prop in areasToken.Properties())
             {
-                if (!Enum.TryParse<ProfilerArea>(prop.Name, true, out var area))
+                if (!Enum.TryParse<ProfilerArea>(prop.Name, true, out var area) || !Enum.IsDefined(typeof(ProfilerArea), area))
                     return new ErrorResponse($"Unknown area '{prop.Name}'. Valid: {string.Join(", ", AreaNames)}");
 
                 if (prop.Value.Type != JTokenType.Boolean)
                     return new ErrorResponse($"Area '{prop.Name}' value must be a boolean (true/false), got: {prop.Value}");
                 bool enabled = prop.Value.ToObject<bool>();
-                UProfiler.SetAreaEnabled(area, enabled);
+                pending.Add(new KeyValuePair<ProfilerArea, bool>(area, enabled));
                 updated[prop.Name] = enabled;
             }
+
+            // Reject malformed requests before changing any profiler area.
+            foreach (var setting in pending)
+                UProfiler.SetAreaEnabled(setting.Key, setting.Value);
 
             return new SuccessResponse($"Updated {updated.Count} profiler area(s).", new { areas = updated });
         }
