@@ -62,6 +62,61 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(response.Value<bool>("success"));
         }
 
+        [TestCase("missing-folder")]
+        [TestCase("item0.txt")]
+        public void InvalidScope_ReturnsErrorInsteadOfSearchingEntireProject(string child)
+        {
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "search",
+                ["path"] = _folder + "/" + child,
+                ["filterType"] = "TextAsset"
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("not a valid folder", response.Value<string>("error"));
+        }
+
+        [Test]
+        public void InvalidDate_ReturnsErrorInsteadOfDroppingFilter()
+        {
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "search",
+                ["path"] = _folder,
+                ["filterDateAfter"] = "not-a-date"
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("filterDateAfter", response.Value<string>("error"));
+        }
+
+        [Test]
+        public void DateFilter_AppliesBeforePagingAndTotalCount()
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-1);
+            File.SetLastWriteTimeUtc(_folder + "/item0.txt", cutoff.AddDays(-1));
+            for (int i = 1; i < 5; i++)
+                File.SetLastWriteTimeUtc(_folder + "/item" + i + ".txt", cutoff.AddHours(1));
+            var expectedPaths = AssetDatabase.FindAssets("t:TextAsset", new[] { _folder })
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .Where(path => File.GetLastWriteTimeUtc(path) > cutoff).Skip(2).Take(2).ToArray();
+
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "search",
+                ["path"] = _folder,
+                ["filterType"] = "TextAsset",
+                ["filterDateAfter"] = cutoff.ToString("o"),
+                ["pageSize"] = 2,
+                ["pageNumber"] = 2
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"));
+            Assert.AreEqual(4, response["data"]["totalAssets"].Value<int>());
+            CollectionAssert.AreEqual(expectedPaths, response["data"]["assets"].Select(a => a["path"].Value<string>()).ToArray());
+        }
+
         private JObject Search(int pageSize, int pageNumber)
             => JObject.FromObject(ManageAsset.HandleCommand(new JObject
             {

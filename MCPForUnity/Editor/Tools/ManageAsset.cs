@@ -282,7 +282,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for create_folder.");
             string fullPath = AssetPathUtility.SanitizeAssetPath(path);
-            string parentDir = Path.GetDirectoryName(fullPath);
+            string parentDir = AssetPathUtility.NormalizeSeparators(Path.GetDirectoryName(fullPath));
             string folderName = Path.GetFileName(fullPath);
 
             if (AssetExists(fullPath))
@@ -308,8 +308,9 @@ namespace MCPForUnity.Editor.Tools
                 // Ensure parent exists
                 if (!string.IsNullOrEmpty(parentDir) && !AssetDatabase.IsValidFolder(parentDir))
                 {
-                    // Recursively create parent folders if needed (AssetDatabase handles this internally)
-                    // Or we can do it manually: Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), parentDir)); AssetDatabase.Refresh();
+                    var parentResult = CreateFolder(parentDir);
+                    if (parentResult is ErrorResponse)
+                        return parentResult;
                 }
 
                 string guid = AssetDatabase.CreateFolder(parentDir, folderName);
@@ -651,12 +652,9 @@ namespace MCPForUnity.Editor.Tools
                 folderScope = new string[] { AssetPathUtility.SanitizeAssetPath(pathScope) };
                 if (!AssetDatabase.IsValidFolder(folderScope[0]))
                 {
-                    // Maybe the user provided a file path instead of a folder?
-                    // We could search in the containing folder, or return an error.
-                    McpLog.Warn(
-                        $"Search path '{folderScope[0]}' is not a valid folder. Searching entire project."
+                    return new ErrorResponse(
+                        $"Search path '{pathScope}' is not a valid folder."
                     );
-                    folderScope = null; // Search everywhere if path isn't a folder
                 }
             }
 
@@ -676,7 +674,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
-                    McpLog.Warn(
+                    return new ErrorResponse(
                         $"Could not parse filterDateAfter: '{filterDateAfterStr}'. Expected ISO 8601 format."
                     );
                 }
