@@ -20,7 +20,7 @@ Gets messages from or clears the Unity Editor console. Defaults to 10 most recen
 |------|------|----------|-------------|
 | `action` | `Literal['get', 'clear'] \| None` | — | Get or clear the Unity Editor console. Defaults to 'get' if omitted. |
 | `types` | `list[Literal['error', 'warning', 'log', 'all']] \| str \| None` | — | Message types to get (accepts list or JSON string) |
-| `count` | `int \| str \| None` | — | Max messages to return in non-paging mode (accepts int or string, e.g., 5 or '5'). Ignored when paging with page_size/cursor. |
+| `count` | `int \| str \| None` | — | Max messages to return in non-paging mode (default 10; accepts int or string, e.g., 5 or '5'). Pass 'all' or '*' to return all matches. Ignored when paging with page_size/cursor. |
 | `filter_text` | `str \| None` | — | Text filter for messages |
 | `page_size` | `int \| str \| None` | — | Page size for paginated console reads. Defaults to 50 when omitted. |
 | `cursor` | `int \| str \| None` | — | Opaque cursor for paging (0-based offset). Defaults to 0. |

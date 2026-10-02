@@ -359,7 +359,7 @@ namespace MCPForUnity.Editor.Tools
             // pageSize defaults to 50 when omitted; count is the overall non-paging limit only
             int resolvedPageSize = Mathf.Clamp(pageSize ?? 50, 1, 500);
             int resolvedCursor = Mathf.Max(0, cursor ?? 0);
-            int pageEndExclusive = resolvedCursor + resolvedPageSize;
+            long pageEndExclusive = (long)resolvedCursor + resolvedPageSize;
 
             // LogEntries filtering state is global and shared with the Console window, so a
             // severity toggle switched off or a leftover search query in the toolbar silently

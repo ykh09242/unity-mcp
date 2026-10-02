@@ -40,7 +40,7 @@ async def read_console(
                                   'log', 'all']] | str,
                      "Message types to get (accepts list or JSON string)"] | None = None,
     count: Annotated[int | str,
-                     "Max messages to return in non-paging mode (accepts int or string, e.g., 5 or '5'). Ignored when paging with page_size/cursor."] | None = None,
+                     "Max messages to return in non-paging mode (default 10; accepts int or string, e.g., 5 or '5'). Pass 'all' or '*' to return all matches. Ignored when paging with page_size/cursor."] | None = None,
     filter_text: Annotated[str, "Text filter for messages"] | None = None,
     page_size: Annotated[int | str,
                          "Page size for paginated console reads. Defaults to 50 when omitted."] | None = None,
@@ -108,12 +108,13 @@ async def read_console(
     # (and can exceed the plugin command timeout when Unity has a large console).
     # To keep the tool responsive by default, we cap the default to a reasonable number of most-recent entries.
     # If a client truly wants everything, it can pass count="all" (or count="*") explicitly.
-    if isinstance(count, str) and count.strip().lower() in ("all", "*"):
+    read_all = isinstance(count, str) and count.strip().lower() in ("all", "*")
+    if read_all:
         count = None
     else:
         count = coerce_int(count)
 
-    if action == "get" and count is None:
+    if action == "get" and count is None and not read_all:
         count = 10
 
     # Prepare parameters for the C# handler
