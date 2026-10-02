@@ -132,4 +132,5 @@ def create(name: str, light_type: str, position: Tuple[float, float, float], col
 
     # Output the result
     click.echo(format_output(create_result, config.format))
-    print_success(f"Created {light_type} light: {name}")
+    if config.format != "json":
+        print_success(f"Created {light_type} light: {name}")
