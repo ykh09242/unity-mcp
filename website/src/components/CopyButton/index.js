@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useTransition } from 'react';
 import styles from './styles.module.css';
 
 /**
@@ -9,44 +9,58 @@ import styles from './styles.module.css';
  */
 export default function CopyButton({ text, label = 'Copy', className }) {
   const [copied, setCopied] = useState(false);
+  const [isPending, startTransition] = useTransition();
   // Timer ref so rapid repeated clicks don't stack pending resets and
   // an unmount mid-cooldown doesn't fire setCopied on a dead component.
   const timerRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, []);
 
-  const onClick = async () => {
+  const onClick = () => startTransition(async () => {
     try {
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
         // Legacy fallback
         const ta = document.createElement('textarea');
+        const activeElement = document.activeElement;
         ta.value = text;
         ta.setAttribute('readonly', '');
         ta.style.position = 'absolute';
         ta.style.left = '-9999px';
         document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+        try {
+          ta.select();
+          if (!document.execCommand('copy')) return;
+        } finally {
+          ta.remove();
+          activeElement?.focus();
+        }
       }
-      setCopied(true);
+      if (!mountedRef.current) return;
+      startTransition(() => setCopied(true));
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // swallow — the user can still select-and-copy the rendered text
     }
-  };
+  });
 
   return (
     <button
       type="button"
       className={`${styles.copy} ${copied ? styles.copied : ''} ${className ?? ''}`.trim()}
       onClick={onClick}
-      aria-label={copied ? 'Copied to clipboard' : `Copy ${label} to clipboard`}
+      disabled={isPending}
+      aria-busy={isPending}
+      aria-label={isPending ? `Copying ${label}` : copied ? 'Copied to clipboard' : `Copy ${label} to clipboard`}
     >
       <span className={styles.icon} aria-hidden="true">
         {copied ? (
@@ -66,7 +80,7 @@ export default function CopyButton({ text, label = 'Copy', className }) {
           </svg>
         )}
       </span>
-      <span className={styles.label}>{copied ? 'Copied' : 'Copy'}</span>
+      <span className={styles.label} aria-live="polite">{isPending ? 'Copying' : copied ? 'Copied' : 'Copy'}</span>
     </button>
   );
 }
