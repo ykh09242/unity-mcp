@@ -137,28 +137,19 @@ async def manage_tools(
 async def _list_groups(ctx: Context) -> dict[str, Any]:
     """Build the list_groups response with group metadata and tool names."""
     group_tools = get_group_tool_names()
+    # Server/session transforms and authenticated Unity catalogs both affect visibility.
+    # Reuse this request's resolved routing instead of reinjecting it via tools/list.
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
 
-    # Determine current session-enabled state for each group.
-    # Session rules accumulate; the last rule whose tags include "group:<name>" wins.
-    session_enabled: dict[str, bool] = {}
-    try:
-        rules = await ctx._get_visibility_rules()
-        for rule in rules:
-            tags = rule.get("tags") or []
-            enabled = rule.get("enabled", True)
-            for tag in tags:
-                if isinstance(tag, str) and tag.startswith("group:"):
-                    group_name = tag[len("group:"):]
-                    session_enabled[group_name] = enabled
-    except Exception:
-        pass  # No active session or unsupported – fall back to defaults
+    visible_tools = await ctx.fastmcp.list_tools(run_middleware=False)
+    for middleware in ctx.fastmcp.middleware:
+        if isinstance(middleware, UnityInstanceMiddleware):
+            visible_tools = await middleware.filter_tools_for_context(ctx, visible_tools)
+    visible_names = {tool.name for tool in visible_tools}
 
     groups = []
     for name in sorted(TOOL_GROUPS.keys()):
-        if name in session_enabled:
-            currently_enabled = session_enabled[name]
-        else:
-            currently_enabled = name in DEFAULT_ENABLED_GROUPS
+        currently_enabled = bool(visible_names.intersection(group_tools.get(name, [])))
         groups.append({
             "name": name,
             "description": TOOL_GROUPS[name],
@@ -170,6 +161,7 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
     return {
         "groups": groups,
         "note": (
+            "A group is enabled when at least one of its registered tools is currently visible. "
             "Use activate/deactivate with a stateful MCP handshake to toggle groups for this session. "
             "Tools with group=None (server meta-tools) are always visible."
         ),

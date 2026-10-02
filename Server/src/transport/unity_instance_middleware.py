@@ -5,6 +5,7 @@ This middleware intercepts all tool calls and injects the active Unity instance
 into the request-scoped state, allowing tools to access it via ctx.get_state("unity_instance").
 """
 from threading import RLock
+from types import SimpleNamespace
 import logging
 import time
 
@@ -446,7 +447,10 @@ class UnityInstanceMiddleware(Middleware):
             )
 
         tools = await call_next(context)
+        return await self.filter_tools_for_context(context.fastmcp_context, tools)
 
+    async def filter_tools_for_context(self, ctx, tools):
+        """Filter an inventory using this request's already-resolved routing state."""
         if config.http_remote_hosted:
             builtin_names = {tool["name"] for tool in get_registered_tools()}
             tools = [tool for tool in tools if getattr(tool, "name", None) in builtin_names]
@@ -462,7 +466,8 @@ class UnityInstanceMiddleware(Middleware):
             return tools
 
         self._refresh_tool_visibility_metadata_from_registry()
-        enabled_tool_names = await self._resolve_enabled_tool_names_for_context(context)
+        enabled_tool_names = await self._resolve_enabled_tool_names_for_context(
+            SimpleNamespace(fastmcp_context=ctx))
         if enabled_tool_names is None:
             if not config.http_remote_hosted:
                 _diag.debug("on_list_tools: no Unity session data, returning %d tools from FastMCP as-is", len(tools))
