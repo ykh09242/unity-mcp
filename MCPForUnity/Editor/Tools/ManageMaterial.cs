@@ -260,6 +260,8 @@ namespace MCPForUnity.Editor.Tools
 
             int slot = p.GetInt("slot") ?? 0;
             string mode = p.Get("mode", "property_block");
+            if (mode != "property_block" && mode != "shared" && mode != "instance" && mode != "create_unique")
+                return new ErrorResponse($"Unknown mode: {mode}");
 
             Color color;
             try
@@ -286,21 +288,26 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"GameObject {go.name} has no Renderer component");
             }
 
+            var sharedMaterials = renderer.sharedMaterials;
+            if (slot < 0 || slot >= Math.Max(1, sharedMaterials.Length))
+                return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMaterials.Length})");
+
             RendererHelpers.EnsureMaterial(renderer);
+            sharedMaterials = renderer.sharedMaterials;
 
             if (mode == "property_block")
             {
-                if (slot < 0 || slot >= renderer.sharedMaterials.Length)
+                if (slot >= sharedMaterials.Length)
                 {
-                    return new ErrorResponse($"Slot {slot} out of bounds (count: {renderer.sharedMaterials.Length})");
+                    return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMaterials.Length})");
                 }
 
                 MaterialPropertyBlock block = new MaterialPropertyBlock();
                 renderer.GetPropertyBlock(block, slot);
 
-                if (renderer.sharedMaterials[slot] != null)
+                if (sharedMaterials[slot] != null)
                 {
-                    Material mat = renderer.sharedMaterials[slot];
+                    Material mat = sharedMaterials[slot];
                     bool wroteAnyProperty = false;
                     if (mat.HasProperty("_BaseColor"))
                     {
@@ -330,9 +337,9 @@ namespace MCPForUnity.Editor.Tools
             }
             else if (mode == "shared")
             {
-                if (slot >= 0 && slot < renderer.sharedMaterials.Length)
+                if (slot < sharedMaterials.Length)
                 {
-                    Material mat = renderer.sharedMaterials[slot];
+                    Material mat = sharedMaterials[slot];
                     if (mat == null)
                     {
                         return new ErrorResponse($"No material in slot {slot}");
@@ -346,7 +353,7 @@ namespace MCPForUnity.Editor.Tools
             }
             else if (mode == "instance")
             {
-                if (slot >= 0 && slot < renderer.materials.Length)
+                if (slot < sharedMaterials.Length)
                 {
                     Material mat = renderer.materials[slot];
                     if (mat == null)
@@ -406,6 +413,10 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CreateUniqueAndAssign(Renderer renderer, GameObject go, Color color, int slot)
         {
+            Material[] sharedMats = renderer.sharedMaterials;
+            if (slot < 0 || slot >= sharedMats.Length)
+                return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMats.Length})");
+
             string safeName = go.name.Replace(" ", "_");
 
             // Derive material folder from the scene context so generated materials
@@ -453,11 +464,6 @@ namespace MCPForUnity.Editor.Tools
 
             // Assign to renderer
             Undo.RecordObject(renderer, "Assign unique material");
-            Material[] sharedMats = renderer.sharedMaterials;
-            if (slot < 0 || slot >= sharedMats.Length)
-            {
-                return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMats.Length})");
-            }
             sharedMats[slot] = existing;
             renderer.sharedMaterials = sharedMats;
             EditorUtility.SetDirty(renderer);

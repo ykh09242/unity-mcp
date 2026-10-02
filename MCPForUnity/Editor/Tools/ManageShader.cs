@@ -103,8 +103,8 @@ namespace MCPForUnity.Editor.Tools
                 Path.Combine("Assets", relativeDir, shaderFileName)
             ); // Ensure "Assets/" prefix and forward slashes
 
-            // Ensure the target directory exists for create/update
-            if (action == "create" || action == "update")
+            // Only creation needs a new directory; updates require an existing shader.
+            if (action == "create")
             {
                 try
                 {

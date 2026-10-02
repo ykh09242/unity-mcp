@@ -120,6 +120,8 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         var sanitizedPath = AssetPathUtility.SanitizeAssetPath(texPath);
                         var newTex = AssetDatabase.LoadAssetAtPath<Texture>(sanitizedPath);
+                        if (newTex == null)
+                            throw new ArgumentException($"Texture not found at path: {sanitizedPath}");
                         // Use ResolvePropertyName to handle aliases even for structured texture names
                         string candidateName = string.IsNullOrEmpty(rawName) ? "_BaseMap" : rawName;
                         string targetProp = ResolvePropertyName(mat, candidateName);

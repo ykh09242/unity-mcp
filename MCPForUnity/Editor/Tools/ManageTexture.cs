@@ -118,6 +118,7 @@ namespace MCPForUnity.Editor.Tools
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             EnsureDirectoryExists(fullPath);
 
+            Texture2D texture = null;
             try
             {
                 var fillColorToken = @params["fillColor"];
@@ -137,7 +138,6 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse("patternSize must be greater than 0.");
                 }
 
-                Texture2D texture;
                 if (hasImage)
                 {
                     string resolvedImagePath = ResolveImagePath(imagePath);
@@ -148,7 +148,6 @@ namespace MCPForUnity.Editor.Tools
                     texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                     if (!texture.LoadImage(imageBytes))
                     {
-                        UnityEngine.Object.DestroyImmediate(texture);
                         return new ErrorResponse($"Failed to load image from '{imagePath}'.");
                     }
 
@@ -157,7 +156,6 @@ namespace MCPForUnity.Editor.Tools
                     var imageDimensionError = ValidateDimensions(width, height, warnings);
                     if (imageDimensionError != null)
                     {
-                        UnityEngine.Object.DestroyImmediate(texture);
                         return imageDimensionError;
                     }
                 }
@@ -199,7 +197,6 @@ namespace MCPForUnity.Editor.Tools
                 byte[] imageData = TextureOps.EncodeTexture(texture, fullPath);
                 if (imageData == null || imageData.Length == 0)
                 {
-                    UnityEngine.Object.DestroyImmediate(texture);
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
@@ -220,8 +217,6 @@ namespace MCPForUnity.Editor.Tools
                     ConfigureAsSprite(fullPath, spriteSettingsToken);
                 }
 
-                // Clean up memory
-                UnityEngine.Object.DestroyImmediate(texture);
                 foreach (var warning in warnings)
                 {
                     McpLog.Warn($"[ManageTexture] {warning}");
@@ -243,6 +238,11 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Failed to create texture: {e.Message}");
             }
+            finally
+            {
+                if (texture != null)
+                    UnityEngine.Object.DestroyImmediate(texture);
+            }
         }
 
         private static object ModifyTexture(JObject @params)
@@ -255,6 +255,7 @@ namespace MCPForUnity.Editor.Tools
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Texture not found at path: {fullPath}");
 
+            Texture2D editableTexture = null;
             try
             {
                 var setPixelsToken = @params["setPixels"] as JObject;
@@ -284,7 +285,7 @@ namespace MCPForUnity.Editor.Tools
 
                     string absolutePath = GetAbsolutePath(fullPath);
                     byte[] fileData = File.ReadAllBytes(absolutePath);
-                    Texture2D editableTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
+                    editableTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
                     editableTexture.LoadImage(fileData);
 
                     int x = setPixelsToken["x"]?.ToObject<int>() ?? 0;
@@ -294,7 +295,6 @@ namespace MCPForUnity.Editor.Tools
 
                     if (w <= 0 || h <= 0)
                     {
-                        UnityEngine.Object.DestroyImmediate(editableTexture);
                         return new ErrorResponse("setPixels width and height must be positive.");
                     }
 
@@ -323,7 +323,6 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else
                     {
-                        UnityEngine.Object.DestroyImmediate(editableTexture);
                         return new ErrorResponse("setPixels requires 'color' or 'pixels'.");
                     }
 
@@ -332,12 +331,10 @@ namespace MCPForUnity.Editor.Tools
                     byte[] imageData = TextureOps.EncodeTexture(editableTexture, fullPath);
                     if (imageData == null || imageData.Length == 0)
                     {
-                        UnityEngine.Object.DestroyImmediate(editableTexture);
                         return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                     }
                     File.WriteAllBytes(absolutePath, imageData);
                     AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-                    UnityEngine.Object.DestroyImmediate(editableTexture);
                 }
 
                 if (hasImportSettings)
@@ -351,6 +348,11 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception e)
             {
                 return new ErrorResponse($"Failed to modify texture: {e.Message}");
+            }
+            finally
+            {
+                if (editableTexture != null)
+                    UnityEngine.Object.DestroyImmediate(editableTexture);
             }
         }
 
@@ -809,8 +811,7 @@ namespace MCPForUnity.Editor.Tools
             TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
             {
-                McpLog.Warn($"[ManageTexture] Could not get TextureImporter for {path}");
-                return;
+                throw new InvalidOperationException($"Could not get TextureImporter for {path}");
             }
 
             importer.textureType = TextureImporterType.Sprite;
@@ -846,8 +847,7 @@ namespace MCPForUnity.Editor.Tools
             TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
             {
-                McpLog.Warn($"[ManageTexture] Could not get TextureImporter for {path}");
-                return;
+                throw new InvalidOperationException($"Could not get TextureImporter for {path}");
             }
 
             if (importSettings == null || importSettings.Type != JTokenType.Object)
