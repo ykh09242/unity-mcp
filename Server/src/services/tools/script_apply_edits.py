@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
+from services.tools.manage_script import _lsp_position_to_line_col, _split_uri
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import parse_json_payload
 from transport.unity_transport import send_with_unity_instance
@@ -599,48 +600,23 @@ def _normalize_script_locator(name: str, path: str) -> tuple[str, str]:
 
     Returns (name_without_extension, directory_path_under_Assets).
     """
-    n = (name or "").strip()
-    p = (path or "").strip()
+    n = (name or "").strip().replace("\\", "/")
+    p = (path or "").strip().replace("\\", "/")
+    if "/" in n:
+        candidate = n
+    elif p.lower().endswith(".cs"):
+        candidate = p
+    else:
+        candidate = f"{p.rstrip('/') or 'Assets'}/{n}"
 
-    def strip_prefix(s: str) -> str:
-        if s.startswith("mcpforunity://path/"):
-            return s[len("mcpforunity://path/"):]
-        if s.startswith("file://"):
-            return s[len("file://"):]
-        return s
-
-    def collapse_duplicate_tail(s: str) -> str:
-        # Collapse trailing "/X.cs/X.cs" to "/X.cs"
-        parts = s.split("/")
-        if len(parts) >= 2 and parts[-1] == parts[-2]:
-            parts = parts[:-1]
-        return "/".join(parts)
-
-    # Prefer a full path if provided in either field
-    candidate = ""
-    for v in (n, p):
-        v2 = strip_prefix(v)
-        if v2.endswith(".cs") or v2.startswith("Assets/"):
-            candidate = v2
-            break
-
-    if candidate:
-        candidate = collapse_duplicate_tail(candidate)
-        # If a directory was passed in path and file in name, join them
-        if not candidate.endswith(".cs") and n.endswith(".cs"):
-            v2 = strip_prefix(n)
-            candidate = (candidate.rstrip("/") + "/" + v2.split("/")[-1])
-        if candidate.endswith(".cs"):
-            parts = candidate.split("/")
-            file_name = parts[-1]
-            dir_path = "/".join(parts[:-1]) if len(parts) > 1 else "Assets"
-            base = file_name[:-
-                             3] if file_name.lower().endswith(".cs") else file_name
-            return base, dir_path
-
-    # Fall back: remove extension from name if present and return given path
-    base_name = n[:-3] if n.lower().endswith(".cs") else n
-    return base_name, (p or "Assets")
+    # Retain tolerance for an accidentally repeated file name, then use the
+    # same URI decoding and Assets-relative locator as the other script tools.
+    parts = candidate.split("/")
+    if len(parts) >= 2 and parts[-1] == parts[-2]:
+        candidate = "/".join(parts[:-1])
+    if not candidate.lower().endswith(".cs"):
+        candidate += ".cs"
+    return _split_uri(candidate)
 
 
 def _with_norm(resp: dict[str, Any] | Any, edits: list[dict[str, Any]], routing: str | None = None) -> dict[str, Any] | Any:
@@ -832,15 +808,8 @@ async def script_apply_edits(
 
         # LSP-like range edit -> replace_range
         if "range" in e and isinstance(e["range"], dict):
-            rng = e.pop("range")
-            start = rng.get("start", {})
-            end = rng.get("end", {})
-            # Convert 0-based to 1-based line/col
+            # Keep UTF-16 positions until file contents are available to convert.
             e["op"] = "replace_range"
-            e["startLine"] = int(start.get("line", 0)) + 1
-            e["startCol"] = int(start.get("character", 0)) + 1
-            e["endLine"] = int(end.get("line", 0)) + 1
-            e["endCol"] = int(end.get("character", 0)) + 1
             if "newText" in edit and "text" not in e:
                 e["text"] = edit.get("newText", "")
         return e
@@ -1010,6 +979,17 @@ async def script_apply_edits(
             data["encodedContents"]).decode("utf-8")
     if contents is None:
         return {"success": False, "message": "No contents returned from Unity read."}
+
+    lsp_edits = [e for e in edits if isinstance(e.get("range"), dict)]
+    if lsp_edits:
+        source_lines = contents.split("\n")
+        try:
+            for edit in lsp_edits:
+                rng = edit.pop("range")
+                edit["startLine"], edit["startCol"] = _lsp_position_to_line_col(source_lines, rng.get("start", {}))
+                edit["endLine"], edit["endCol"] = _lsp_position_to_line_col(source_lines, rng.get("end", {}))
+        except (ValueError, TypeError, OverflowError) as exc:
+            return _err("invalid_range", str(exc))
 
     # Optional preview/dry-run: apply locally and return diff without writing
     if preview:
@@ -1192,7 +1172,7 @@ async def script_apply_edits(
                     "type") or e.get("mode") or "").strip().lower()
                 # aliasing for text field
                 text_field = e.get("text") or e.get(
-                    "insert") or e.get("content") or ""
+                    "insert") or e.get("content") or e.get("replacement") or ""
                 if op == "anchor_insert":
                     anchor = e.get("anchor") or ""
                     position = (e.get("position") or "after").lower()
@@ -1245,7 +1225,7 @@ async def script_apply_edits(
                     except Exception as ex:
                         return _with_norm(_err("bad_regex", f"Invalid regex pattern: {ex}", normalized=normalized_for_echo, routing="text", extra={"hint": "Escape special chars or prefer structured delete for methods."}), normalized_for_echo, routing="text")
                     # Use smart anchor matching for consistent behavior with anchor_insert
-                    m = _find_best_anchor_match(
+                    m = await asyncio.to_thread(_find_best_anchor_match,
                         pattern, base_text, flags, prefer_last=True)
                     if not m:
                         continue

@@ -23,6 +23,26 @@ def _is_missing_script_read(response: dict[str, Any]) -> bool:
             and error.startswith("Script not found at '") and error.endswith("'."))
 
 
+def _lsp_position_to_line_col(lines: list[str], position: dict[str, int]) -> tuple[int, int]:
+    """Convert default LSP UTF-16 offsets to Unity's 1-based codepoint columns."""
+    if not isinstance(position, dict):
+        raise ValueError("LSP position must contain line and character offsets")
+    line = int(position.get("line", 0))
+    character = int(position.get("character", 0))
+    if line < 0 or line >= len(lines) or character < 0:
+        raise ValueError("LSP position is outside the document")
+    text = lines[line].removesuffix("\r")
+    units = 0
+    for column, char in enumerate(text):
+        if units == character:
+            return line + 1, column + 1
+        units += 2 if ord(char) > 0xFFFF else 1
+        if units > character:
+            raise ValueError("LSP position splits a UTF-16 surrogate pair")
+    # LSP offsets beyond the line end are clamped to that end.
+    return line + 1, len(text) + 1
+
+
 def _split_uri(uri: str) -> tuple[str, str]:
     """Split an incoming URI or path into (name, directory) suitable for Unity.
 
@@ -146,6 +166,7 @@ async def apply_text_edits(
                     "utf-8")).decode("utf-8", "replace")
             except Exception:
                 contents = contents or ""
+        source_lines = contents.split("\n") if isinstance(contents, str) else []
 
         # Helper to map 0-based character index to 1-based line/col
         def line_col_from_index(idx: int) -> tuple[int, int]:
@@ -190,13 +211,14 @@ async def apply_text_edits(
 
             rng = e2.get("range")
             if isinstance(rng, dict):
-                # LSP style: 0-based
+                # LSP defaults to UTF-16 offsets; explicit coordinates use codepoints.
                 s = rng.get("start", {})
                 t = rng.get("end", {})
-                e2["startLine"] = int(s.get("line", 0)) + 1
-                e2["startCol"] = int(s.get("character", 0)) + 1
-                e2["endLine"] = int(t.get("line", 0)) + 1
-                e2["endCol"] = int(t.get("character", 0)) + 1
+                try:
+                    e2["startLine"], e2["startCol"] = _lsp_position_to_line_col(source_lines, s)
+                    e2["endLine"], e2["endCol"] = _lsp_position_to_line_col(source_lines, t)
+                except (ValueError, TypeError, OverflowError) as exc:
+                    return {"success": False, "code": "invalid_range", "message": str(exc)}
                 e2.pop("range", None)
                 normalized_edits.append(e2)
                 continue
@@ -650,8 +672,8 @@ async def manage_script_capabilities(ctx: Context) -> dict[str, Any]:
             "insert_method", "anchor_insert", "anchor_delete", "anchor_replace"
         ]
         text_ops = ["replace_range", "regex_replace", "prepend", "append"]
-        # Match ManageScript.MaxEditPayloadBytes if exposed; hardcode a sensible default fallback
-        max_edit_payload_bytes = 256 * 1024
+        # Match the Editor's ManageScript.MaxEditPayloadBytes text-edit budget.
+        max_edit_payload_bytes = 64 * 1024
         guards = {"using_guard": True}
         extras = {"get_sha": True}
         return {"success": True, "data": {

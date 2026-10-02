@@ -551,71 +551,6 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            // Attempt auto-upgrade: if a single edit targets a method header/body, re-route as structured replace_method
-            if (spans.Count == 1)
-            {
-                var sp = spans[0];
-                // Heuristic: around the start of the edit, try to match a method header in original
-                int searchStart = Math.Max(0, sp.start - 200);
-                int searchEnd = Math.Min(original.Length, sp.start + 200);
-                string slice = original.Substring(searchStart, searchEnd - searchStart);
-                var rx = new System.Text.RegularExpressions.Regex(@"(?m)^[\t ]*(?:\[[^\]]+\][\t ]*)*[\t ]*(?:public|private|protected|internal|static|virtual|override|sealed|async|extern|unsafe|new|partial)[\s\S]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(");
-                var mh = rx.Match(slice);
-                if (mh.Success)
-                {
-                    string methodName = mh.Groups[1].Value;
-                    // Find class span containing the edit
-                    if (TryComputeClassSpan(original, name, null, out var clsStart, out var clsLen, out _))
-                    {
-                        if (TryComputeMethodSpan(original, clsStart, clsLen, methodName, null, null, null, out var mStart, out var mLen, out _))
-                        {
-                            // If the edit overlaps the method span significantly, treat as replace_method
-                            if (sp.start <= mStart + 2 && sp.end >= mStart + 1)
-                            {
-                                var structEdits = new JArray();
-
-                                // Apply the edit to get a candidate string, then recompute method span on the edited text
-                                string candidate = original.Remove(sp.start, sp.end - sp.start).Insert(sp.start, sp.text ?? string.Empty);
-                                string replacementText;
-                                if (TryComputeClassSpan(candidate, name, null, out var cls2Start, out var cls2Len, out _)
-                                    && TryComputeMethodSpan(candidate, cls2Start, cls2Len, methodName, null, null, null, out var m2Start, out var m2Len, out _))
-                                {
-                                    replacementText = candidate.Substring(m2Start, m2Len);
-                                }
-                                else
-                                {
-                                    // Fallback: adjust method start by the net delta if the edit was before the method
-                                    int delta = (sp.text?.Length ?? 0) - (sp.end - sp.start);
-                                    int adjustedStart = mStart + (sp.start <= mStart ? delta : 0);
-                                    adjustedStart = Math.Max(0, Math.Min(adjustedStart, candidate.Length));
-
-                                    // If the edit was within the original method span, adjust the length by the delta within-method
-                                    int withinMethodDelta = 0;
-                                    if (sp.start >= mStart && sp.start <= mStart + mLen)
-                                    {
-                                        withinMethodDelta = delta;
-                                    }
-                                    int adjustedLen = mLen + withinMethodDelta;
-                                    adjustedLen = Math.Max(0, Math.Min(candidate.Length - adjustedStart, adjustedLen));
-                                    replacementText = candidate.Substring(adjustedStart, adjustedLen);
-                                }
-
-                                var op = new JObject
-                                {
-                                    ["mode"] = "replace_method",
-                                    ["className"] = name,
-                                    ["methodName"] = methodName,
-                                    ["replacement"] = replacementText
-                                };
-                                structEdits.Add(op);
-                                // Reuse structured path
-                                return EditScript(fullPath, relativePath, name, structEdits, new JObject { ["refresh"] = "immediate", ["validate"] = "standard" });
-                            }
-                        }
-                    }
-                }
-            }
-
             if (totalBytes > MaxEditPayloadBytes)
             {
                 return new ErrorResponse("too_large", new { status = "too_large", limitBytes = MaxEditPayloadBytes, hint = "split into smaller edits" });
@@ -780,6 +715,8 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
+                    if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                        i++;
                     col++;
                 }
             }

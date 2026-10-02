@@ -4,12 +4,15 @@ from .test_helpers import DummyContext, DummyMCP, setup_script_tools
 
 
 @pytest.mark.asyncio
-async def test_normalizes_lsp_and_index_ranges(monkeypatch):
+@pytest.mark.parametrize("source_line, expected_column", [("abc", 3), ("😀x", 2)])
+async def test_normalizes_lsp_and_index_ranges(monkeypatch, source_line, expected_column):
     tools = setup_script_tools()
     apply = tools["apply_text_edits"]
     calls = []
 
     async def fake_send(cmd, params, **kwargs):
+        if params.get("action") == "read":
+            return {"success": True, "data": {"contents": "\n" * 10 + source_line + "\n"}}
         calls.append(params)
         return {"success": True}
 
@@ -27,15 +30,20 @@ async def test_normalizes_lsp_and_index_ranges(monkeypatch):
         "range": {"start": {"line": 10, "character": 2}, "end": {"line": 10, "character": 2}},
         "newText": "// lsp\n"
     }]
-    await apply(
+    response = await apply(
         DummyContext(),
         uri="mcpforunity://path/Assets/Scripts/F.cs",
         edits=edits,
         precondition_sha256="x",
     )
+    assert response["success"] is True
     p = calls[-1]
     e = p["edits"][0]
-    assert e["startLine"] == 11 and e["startCol"] == 3
+    assert p["action"] == "apply_text_edits"
+    assert e == {
+        "startLine": 11, "startCol": expected_column,
+        "endLine": 11, "endCol": expected_column, "newText": "// lsp\n",
+    }
 
     # Index pair
     calls.clear()
@@ -54,13 +62,17 @@ async def test_normalizes_lsp_and_index_ranges(monkeypatch):
         "async_send_command_with_retry",
         fake_read,
     )
-    await apply(
+    response = await apply(
         DummyContext(),
         uri="mcpforunity://path/Assets/Scripts/F.cs",
         edits=edits,
         precondition_sha256="x",
     )
-    # last call is apply_text_edits
+    assert response["success"] is True
+    assert calls[-1]["action"] == "apply_text_edits"
+    assert calls[-1]["edits"] == [{
+        "startLine": 1, "startCol": 1, "endLine": 1, "endCol": 1, "newText": "// idx\n",
+    }]
 
 
 @pytest.mark.asyncio
