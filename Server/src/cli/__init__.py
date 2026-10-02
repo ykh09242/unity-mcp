@@ -1,3 +1,5 @@
 """Unity MCP Command Line Interface."""
 
-__version__ = "1.0.0"
+from core.telemetry import get_package_version
+
+__version__ = get_package_version()
