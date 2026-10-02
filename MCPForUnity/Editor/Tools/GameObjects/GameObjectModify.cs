@@ -28,6 +28,31 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
             }
 
+            // Resolve deterministic inputs before any rename, asset rename, or Undo recording.
+            JToken parentToken = @params["parent"];
+            GameObject newParentGo = null;
+            if (parentToken != null)
+            {
+                newParentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
+                if (newParentGo == null
+                    && !(parentToken.Type == JTokenType.Null
+                         || (parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString()))))
+                {
+                    return new ErrorResponse($"New parent ('{parentToken}') not found.");
+                }
+                if (newParentGo != null && newParentGo.transform.IsChildOf(targetGo.transform))
+                {
+                    return new ErrorResponse($"Cannot parent '{targetGo.name}' to '{newParentGo.name}', as it would create a hierarchy loop.");
+                }
+            }
+
+            string layerName = @params["layer"]?.ToString();
+            int layerId = string.IsNullOrEmpty(layerName) ? -1 : LayerMask.NameToLayer(layerName);
+            if (!string.IsNullOrEmpty(layerName) && layerId == -1)
+            {
+                return new ErrorResponse($"Invalid layer specified: '{layerName}'. Use a valid layer name.");
+            }
+
             Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
             Undo.RecordObject(targetGo, "Modify GameObject Properties");
 
@@ -76,22 +101,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 modified = true;
             }
 
-            JToken parentToken = @params["parent"];
             if (parentToken != null)
             {
-                GameObject newParentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
-                if (
-                    newParentGo == null
-                    && !(parentToken.Type == JTokenType.Null
-                         || (parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString())))
-                )
-                {
-                    return new ErrorResponse($"New parent ('{parentToken}') not found.");
-                }
-                if (newParentGo != null && newParentGo.transform.IsChildOf(targetGo.transform))
-                {
-                    return new ErrorResponse($"Cannot parent '{targetGo.name}' to '{newParentGo.name}', as it would create a hierarchy loop.");
-                }
                 if (targetGo.transform.parent != (newParentGo?.transform))
                 {
                     targetGo.transform.SetParent(newParentGo?.transform, true);
@@ -135,14 +146,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
             }
 
-            string layerName = @params["layer"]?.ToString();
             if (!string.IsNullOrEmpty(layerName))
             {
-                int layerId = LayerMask.NameToLayer(layerName);
-                if (layerId == -1)
-                {
-                    return new ErrorResponse($"Invalid layer specified: '{layerName}'. Use a valid layer name.");
-                }
                 if (layerId != -1 && targetGo.layer != layerId)
                 {
                     targetGo.layer = layerId;

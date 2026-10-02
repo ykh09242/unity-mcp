@@ -95,19 +95,6 @@ async def manage_prefabs(
                 "message": f"Action '{action}' requires parameter '{param_name}'."
             }
 
-    unity_instance = await get_unity_instance_from_context(ctx)
-
-    # Preflight check for operations to ensure Unity is ready
-    try:
-        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-        if gate is not None:
-            return gate.model_dump()
-    except Exception as exc:
-        return {
-            "success": False,
-            "message": f"Unity preflight check failed: {exc}"
-        }
-
     try:
         # Build parameters dictionary
         params: dict[str, Any] = {"action": action}
@@ -199,6 +186,13 @@ async def manage_prefabs(
             params["deleteChild"] = delete_child
 
         # Send command to Unity
+        unity_instance = await get_unity_instance_from_context(ctx)
+        try:
+            gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+            if gate is not None:
+                return gate.model_dump()
+        except Exception as exc:
+            return {"success": False, "message": f"Unity preflight check failed: {exc}"}
         response = await send_with_unity_instance(
             async_send_command_with_retry, unity_instance, "manage_prefabs", params
         )

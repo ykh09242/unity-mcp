@@ -1181,9 +1181,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 childrenToDelete = new JArray { deleteChildToken };
             }
 
+            // Resolve all paths against the original hierarchy, before deleting an ancestor
+            // can make a later descendant (or duplicate) path disappear.
+            var resolvedChildren = new List<Transform>();
             foreach (var childToken in childrenToDelete)
             {
-                string childPath = childToken.Type == JTokenType.String ? childToken.ToString() : childToken["name"]?.ToString();
+                string childPath = childToken.Type == JTokenType.String ? childToken.ToString() : (childToken as JObject)?["name"]?.ToString();
                 if (string.IsNullOrEmpty(childPath))
                 {
                     return (removedCount, new ErrorResponse("'deleteChild'/'delete_child' entries must be a string or object with 'name' field."));
@@ -1196,9 +1199,19 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     return (removedCount, new ErrorResponse($"Child '{childPath}' not found under '{targetGo.name}'."));
                 }
 
+                if (!resolvedChildren.Contains(childToRemove))
+                    resolvedChildren.Add(childToRemove);
+            }
+
+            // Only destroy topmost requested objects; descendants are removed with them.
+            var removalRoots = resolvedChildren.Where(child =>
+                !resolvedChildren.Any(other => other != child && child.IsChildOf(other))).ToList();
+            foreach (var childToRemove in removalRoots)
+            {
+                string childName = childToRemove.name;
                 UnityEngine.Object.DestroyImmediate(childToRemove.gameObject);
                 removedCount++;
-                McpLog.Info($"[ManagePrefabs] Removed child '{childPath}' under '{targetGo.name}' in prefab.");
+                McpLog.Info($"[ManagePrefabs] Removed child '{childName}' under '{targetGo.name}' in prefab.");
             }
 
             return (removedCount, null);

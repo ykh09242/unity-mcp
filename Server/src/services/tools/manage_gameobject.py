@@ -205,14 +205,6 @@ async def manage_gameobject(
     look_at_up: Annotated[list[float] | str,
                           "Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]."] | None = None,
 ) -> dict[str, Any]:
-    # Get active instance from session state
-    # Removed session_state import
-    unity_instance = await get_unity_instance_from_context(ctx)
-
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
-
     if action is None:
         return {
             "success": False,
@@ -308,6 +300,10 @@ async def manage_gameobject(
         # --------------------------------
 
         # Use centralized retry helper with instance routing
+        unity_instance = await get_unity_instance_from_context(ctx)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+        if gate is not None:
+            return gate.model_dump()
         response = await send_with_unity_instance(
             async_send_command_with_retry,
             unity_instance,

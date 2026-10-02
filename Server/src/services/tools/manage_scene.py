@@ -81,12 +81,16 @@ async def manage_scene(
     auto_repair: Annotated[bool | str,
                            "For validate: true to auto-fix missing scripts (undoable)."] | None = None,
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
     try:
         coerced_build_index = coerce_int(build_index, default=None)
+        if build_index is not None and coerced_build_index is None:
+            return {"success": False, "message": "build_index must be an integer."}
+        for field, raw_value in (
+            ("additive", additive), ("remove_scene", remove_scene),
+            ("auto_repair", auto_repair), ("include_transform", include_transform),
+        ):
+            if raw_value is not None and coerce_bool(raw_value, default=None) is None:
+                return {"success": False, "message": f"{field} must be a boolean or a recognized boolean string."}
         coerced_page_size = coerce_int(page_size, default=None)
         coerced_cursor = coerce_int(cursor, default=None)
         coerced_max_nodes = coerce_int(max_nodes, default=None)
@@ -147,6 +151,10 @@ async def manage_scene(
             params["autoRepair"] = coerced_auto_repair
 
         # Use centralized retry helper with instance routing
+        unity_instance = await get_unity_instance_from_context(ctx)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+        if gate is not None:
+            return gate.model_dump()
         response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_scene", params)
 
         # Preserve structured failure data; unwrap success into a friendlier shape
