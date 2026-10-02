@@ -118,6 +118,13 @@ class PluginRegistry:
             self._sessions[session_id] = session
             return session, evicted_session_id
 
+    async def clear(self) -> None:
+        """Release all session state when the owning server shuts down."""
+        async with self._lock:
+            self._sessions.clear()
+            self._hash_to_session.clear()
+            self._user_hash_to_session.clear()
+
     async def touch(self, session_id: str) -> None:
         """Update the ``connected_at`` timestamp when a heartbeat is received."""
 

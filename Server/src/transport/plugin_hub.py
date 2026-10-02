@@ -133,6 +133,7 @@ class PluginHub(WebSocketEndpoint):
     _last_pong: ClassVar[dict[str, float]] = {}
     # session_id -> ping task
     _ping_tasks: ClassVar[dict[str, asyncio.Task]] = {}
+    CLOSE_TIMEOUT = 5.0
 
     @classmethod
     def configure(
@@ -153,6 +154,45 @@ class PluginHub(WebSocketEndpoint):
     @classmethod
     def is_configured(cls) -> bool:
         return cls._registry is not None and cls._lock is not None
+
+    @classmethod
+    async def _close_websocket(cls, websocket: WebSocket) -> None:
+        try:
+            await asyncio.wait_for(websocket.close(code=1001), timeout=cls.CLOSE_TIMEOUT)
+        except Exception:
+            logger.debug("Failed to close plugin WebSocket", exc_info=True)
+
+    @classmethod
+    async def shutdown(cls) -> None:
+        """Release the plugin resources owned by the current server lifespan."""
+        lock = cls._lock
+        if lock is None:
+            return
+        async with lock:
+            registry = cls._registry
+            connections = list(cls._connections.values())
+            ping_tasks = list(cls._ping_tasks.values())
+            pending = list(cls._pending.values())
+            cls._connections.clear()
+            cls._ping_tasks.clear()
+            cls._last_pong.clear()
+            cls._pending.clear()
+            cls._registry = None
+            cls._mcp = None
+            cls._loop = None
+            cls._lock = None
+            cls._unity_transform_start = None
+
+        for entry in pending:
+            future = entry.get("future")
+            if future is not None and not future.done():
+                future.set_exception(PluginDisconnectedError("Unity plugin server shut down"))
+        for task in ping_tasks:
+            task.cancel()
+        await asyncio.gather(*ping_tasks, return_exceptions=True)
+        if registry is not None:
+            await registry.clear()
+        await asyncio.gather(*(cls._close_websocket(ws) for ws in connections))
 
     async def on_connect(self, websocket: WebSocket) -> None:
         # Validate API key in remote-hosted mode (fail closed)
@@ -508,19 +548,13 @@ class PluginHub(WebSocketEndpoint):
             ping_task = asyncio.create_task(cls._ping_loop(session_id, websocket))
             cls._ping_tasks[session_id] = ping_task
 
-        response = RegisteredMessage(session_id=session_id)
-        await websocket.send_json(response.model_dump())
-
-        # Close evicted WebSocket outside the lock to avoid blocking
-        if evicted_ws is not None:
-            try:
-                await evicted_ws.close(code=1001)
-            except Exception:
-                logger.debug(
-                    "Failed to close evicted WebSocket for session %s",
-                    evicted_session_id,
-                    exc_info=True,
-                )
+        try:
+            response = RegisteredMessage(session_id=session_id)
+            await websocket.send_json(response.model_dump())
+        finally:
+            # Eviction owns closure even if the replacement's ACK fails or is cancelled.
+            if evicted_ws is not None:
+                await cls._close_websocket(evicted_ws)
 
         if user_id:
             logger.info(f"Plugin registered: {project_name} ({project_hash}) for user {user_id}")

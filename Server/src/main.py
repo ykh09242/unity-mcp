@@ -181,117 +181,133 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         loop = asyncio.get_running_loop()
         PluginHub.configure(_plugin_registry, loop, mcp=server)
 
-    # Record server startup telemetry
-    start_time = time.time()
-    start_clk = time.perf_counter()
-    # Defer initial telemetry by 1s to avoid stdio handshake interference
+    telemetry_timers: list[threading.Timer] = []
 
-    def _emit_startup():
+    def defer_telemetry(callback):
+        timer = threading.Timer(1.0, callback)
+        telemetry_timers.append(timer)
+        timer.start()
+
+    try:
+        # Record server startup telemetry
+        start_time = time.time()
+        start_clk = time.perf_counter()
+        # Defer initial telemetry by 1s to avoid stdio handshake interference
+
+        def _emit_startup():
+            try:
+                record_telemetry(RecordType.STARTUP, {
+                    "server_version": _server_version,
+                    "startup_time": start_time,
+                })
+                record_milestone(MilestoneType.FIRST_STARTUP)
+            except Exception:
+                logger.debug("Deferred startup telemetry failed", exc_info=True)
+        defer_telemetry(_emit_startup)
+
         try:
-            record_telemetry(RecordType.STARTUP, {
-                "server_version": _server_version,
-                "startup_time": start_time,
-            })
-            record_milestone(MilestoneType.FIRST_STARTUP)
-        except Exception:
-            logger.debug("Deferred startup telemetry failed", exc_info=True)
-    threading.Timer(1.0, _emit_startup).start()
-
-    try:
-        skip_connect = os.environ.get(
-            "UNITY_MCP_SKIP_STARTUP_CONNECT", "").lower() in ("1", "true", "yes", "on")
-        if skip_connect:
-            logger.info(
-                "Skipping Unity connection on startup (UNITY_MCP_SKIP_STARTUP_CONNECT=1)")
-        else:
-            # Initialize connection pool and discover instances
-            _unity_connection_pool = get_unity_connection_pool()
-            instances = _unity_connection_pool.discover_all_instances()
-
-            if instances:
+            skip_connect = os.environ.get(
+                "UNITY_MCP_SKIP_STARTUP_CONNECT", "").lower() in ("1", "true", "yes", "on")
+            if skip_connect:
                 logger.info(
-                    f"Discovered {len(instances)} Unity instance(s): {[i.id for i in instances]}")
-
-                # Try to connect to default instance
-                try:
-                    _unity_connection_pool.get_connection()
-                    logger.info(
-                        "Connected to default Unity instance on startup")
-
-                    # In stdio mode, query Unity for tool enabled states and sync
-                    # server-level visibility. In HTTP mode this is handled by
-                    # register_tools via WebSocket in PluginHub.
-                    if (config.transport_mode or "stdio").lower() != "http":
-                        try:
-                            from services.tools import sync_tool_visibility_from_unity
-                            sync_result = await sync_tool_visibility_from_unity(notify=False)
-                            if sync_result.get("synced"):
-                                logger.info(
-                                    "Stdio startup: synced tool visibility from Unity — "
-                                    "enabled=[%s], disabled=[%s]",
-                                    ", ".join(sync_result.get("enabled_groups", [])),
-                                    ", ".join(sync_result.get("disabled_groups", [])),
-                                )
-                            else:
-                                # Unsupported command = old Unity package; just debug-log
-                                log_fn = logger.debug if sync_result.get("unsupported") else logger.warning
-                                log_fn(
-                                    "Stdio startup: could not sync tool visibility: %s",
-                                    sync_result.get("error", "unknown"),
-                                )
-                        except Exception as sync_exc:
-                            logger.debug(
-                                "Stdio startup: tool visibility sync failed: %s", sync_exc)
-
-                    # Record successful Unity connection (deferred)
-                    threading.Timer(1.0, lambda: record_telemetry(
-                        RecordType.UNITY_CONNECTION,
-                        {
-                            "status": "connected",
-                            "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
-                            "instance_count": len(instances)
-                        }
-                    )).start()
-                except Exception as e:
-                    logger.warning(
-                        f"Could not connect to default Unity instance: {e}")
+                    "Skipping Unity connection on startup (UNITY_MCP_SKIP_STARTUP_CONNECT=1)")
             else:
-                logger.warning("No Unity instances found on startup")
+                # Initialize connection pool and discover instances
+                _unity_connection_pool = get_unity_connection_pool()
+                instances = _unity_connection_pool.discover_all_instances()
 
-    except ConnectionError as e:
-        logger.warning(f"Could not connect to Unity on startup: {e}")
+                if instances:
+                    logger.info(
+                        f"Discovered {len(instances)} Unity instance(s): {[i.id for i in instances]}")
 
-        # Record connection failure (deferred)
-        _err_msg = str(e)[:200]
-        threading.Timer(1.0, lambda: record_telemetry(
-            RecordType.UNITY_CONNECTION,
-            {
-                "status": "failed",
-                "error": _err_msg,
-                "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
-            }
-        )).start()
-    except Exception as e:
-        logger.warning(f"Unexpected error connecting to Unity on startup: {e}")
-        _err_msg = str(e)[:200]
-        threading.Timer(1.0, lambda: record_telemetry(
-            RecordType.UNITY_CONNECTION,
-            {
-                "status": "failed",
-                "error": _err_msg,
-                "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
-            }
-        )).start()
+                    # Try to connect to default instance
+                    try:
+                        _unity_connection_pool.get_connection()
+                        logger.info(
+                            "Connected to default Unity instance on startup")
 
-    try:
+                        # In stdio mode, query Unity for tool enabled states and sync
+                        # server-level visibility. In HTTP mode this is handled by
+                        # register_tools via WebSocket in PluginHub.
+                        if (config.transport_mode or "stdio").lower() != "http":
+                            try:
+                                from services.tools import sync_tool_visibility_from_unity
+                                sync_result = await sync_tool_visibility_from_unity(notify=False)
+                                if sync_result.get("synced"):
+                                    logger.info(
+                                        "Stdio startup: synced tool visibility from Unity — "
+                                        "enabled=[%s], disabled=[%s]",
+                                        ", ".join(sync_result.get("enabled_groups", [])),
+                                        ", ".join(sync_result.get("disabled_groups", [])),
+                                    )
+                                else:
+                                    # Unsupported command = old Unity package; just debug-log
+                                    log_fn = logger.debug if sync_result.get("unsupported") else logger.warning
+                                    log_fn(
+                                        "Stdio startup: could not sync tool visibility: %s",
+                                        sync_result.get("error", "unknown"),
+                                    )
+                            except Exception as sync_exc:
+                                logger.debug(
+                                    "Stdio startup: tool visibility sync failed: %s", sync_exc)
+
+                        # Record successful Unity connection (deferred)
+                        defer_telemetry(lambda: record_telemetry(
+                            RecordType.UNITY_CONNECTION,
+                            {
+                                "status": "connected",
+                                "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
+                                "instance_count": len(instances)
+                            }
+                        ))
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not connect to default Unity instance: {e}")
+                else:
+                    logger.warning("No Unity instances found on startup")
+
+        except ConnectionError as e:
+            logger.warning(f"Could not connect to Unity on startup: {e}")
+
+            # Record connection failure (deferred)
+            _err_msg = str(e)[:200]
+            defer_telemetry(lambda: record_telemetry(
+                RecordType.UNITY_CONNECTION,
+                {
+                    "status": "failed",
+                    "error": _err_msg,
+                    "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
+                }
+            ))
+        except Exception as e:
+            logger.warning(f"Unexpected error connecting to Unity on startup: {e}")
+            _err_msg = str(e)[:200]
+            defer_telemetry(lambda: record_telemetry(
+                RecordType.UNITY_CONNECTION,
+                {
+                    "status": "failed",
+                    "error": _err_msg,
+                    "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
+                }
+            ))
+
         # Yield shared state for lifespan consumers (e.g., middleware)
         yield {
             "pool": _unity_connection_pool,
             "plugin_registry": _plugin_registry,
         }
     finally:
-        if _unity_connection_pool:
-            _unity_connection_pool.disconnect_all()
+        for timer in telemetry_timers:
+            timer.cancel()
+        try:
+            await PluginHub.shutdown()
+        finally:
+            try:
+                if _unity_connection_pool:
+                    _unity_connection_pool.disconnect_all()
+            finally:
+                _plugin_registry = None
+                _unity_connection_pool = None
         logger.info("MCP for Unity Server shut down")
 
 
