@@ -7,7 +7,9 @@ import click
 from typing import Optional
 
 from cli import __version__
-from cli.utils.config import CLIConfig, set_config, get_config
+from cli.utils.config import (
+    CLIConfig, set_config, get_config, HTTP_PORT_TYPE, TIMEOUT_TYPE, OUTPUT_FORMAT_TYPE,
+)
 from cli.utils.suggestions import suggest_matches, format_suggestions
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import (
@@ -70,20 +72,20 @@ click.Group.resolve_command = _resolve_command_with_suggestions  # type: ignore[
 @click.option(
     "--port", "-p",
     default=8080,
-    type=int,
+    type=HTTP_PORT_TYPE,
     envvar="UNITY_MCP_HTTP_PORT",
     help="MCP server port."
 )
 @click.option(
     "--timeout", "-t",
     default=30,
-    type=int,
+    type=TIMEOUT_TYPE,
     envvar="UNITY_MCP_TIMEOUT",
     help="Command timeout in seconds."
 )
 @click.option(
     "--format", "-f",
-    type=click.Choice(["text", "json", "table"]),
+    type=OUTPUT_FORMAT_TYPE,
     default="text",
     envvar="UNITY_MCP_FORMAT",
     help="Output format."
