@@ -3,6 +3,12 @@ import importlib
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolate_windows_telemetry_storage(tmp_path, monkeypatch):
+    # Windows uses APPDATA instead of XDG_DATA_HOME. Never write real user state.
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+
+
 def test_endpoint_rejects_non_http(tmp_path, monkeypatch):
     # Point data dir to temp to avoid touching real files
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))

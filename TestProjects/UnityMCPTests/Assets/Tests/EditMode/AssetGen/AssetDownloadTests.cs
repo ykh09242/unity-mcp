@@ -277,7 +277,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var downloader = new AssetDownloadTransport(_ => pending.Task);
             Task<HttpResult> download = downloader.DownloadAsync("meshy", MeshyUrl, cts.Token);
             cts.Cancel();
-            Assert.ThrowsAsync(Is.InstanceOf<OperationCanceledException>(), async () => await download);
+            Assert.ThrowsAsync(Is.InstanceOf<OperationCanceledException>(), async () => await download.ConfigureAwait(false));
         }
 
         [Test]

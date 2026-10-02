@@ -32,6 +32,16 @@ MCP for Unity is intentionally fail-closed:
 
 If you find a way to bypass any of these guards, that qualifies as a security vulnerability and warrants a private report.
 
+## Resource and Data Safeguards
+
+- Hosted plugin catalogs are scoped to the authenticated user. A WebSocket registers once; reconnecting uses a new socket. Limits are 32 sessions per user, 256 overall, and 256 tools / 512 KiB of tool metadata per plugin.
+- API-key validation endpoints require HTTPS and do not follow redirects. Client configuration generation applies the same remote TLS policy as the Unity connection.
+- Shader operations stay inside `Assets/`. Screenshot filenames cannot contain directories; their output folders must stay inside the project. These paths reject symbolic links and junctions.
+- Caller-supplied Python regexes have a 0.1-second matching budget, 2,048-character patterns, 2,000,000-character input, and 10,000 matches. Script edit requests allow at most 32 edits. Search responses include at most 1,000 results, with 2,000-character match/excerpt fields.
+- Provider API responses are limited to 32 MiB and artifact downloads to 512 MiB, including responses with missing or misleading size headers. Archives allow at most 4,096 entries, 256 MiB per entry, 1 GiB total uncompressed data, and a 200:1 compression ratio. Extraction checks actual streamed bytes and removes newly written files on failure.
+- Optional command recording writes only execution metadata to `Library/MCPForUnity/Logs/`. Parameters, action values, and error text are excluded. Older logs under `Assets/UnityMCP/Log/` are not modified automatically.
+- Batch commands enforce the same enabled-resource and enabled-tool settings as individual calls.
+
 ## What Counts as a Security Issue
 
 - Remote code execution via crafted MCP messages
