@@ -52,7 +52,8 @@ namespace MCPForUnity.Editor.Tools.Build
 
             if (CompletedAt.HasValue)
             {
-                data["duration_seconds"] = (CompletedAt.Value - StartedAt).TotalSeconds;
+                if (StartedAt != default)
+                    data["duration_seconds"] = (CompletedAt.Value - StartedAt).TotalSeconds;
                 data["completed_at"] = CompletedAt.Value.ToString("O");
             }
 
@@ -177,9 +178,9 @@ namespace MCPForUnity.Editor.Tools.Build
                 var batch = kvp.Value;
                 if (batch.State == BuildJobState.Building || batch.State == BuildJobState.Pending)
                     continue;
-                // Remove child references that were already pruned from _buildJobs
-                batch.Children.RemoveAll(c => !_buildJobs.ContainsKey(c.JobId));
-                if (batch.Children.Count == 0)
+                // Keep the original summary while any child is still retained.
+                // Pruning individual child references would change historical totals.
+                if (!batch.Children.Exists(c => _buildJobs.ContainsKey(c.JobId)))
                     batchesToRemove.Add(kvp.Key);
             }
             foreach (var key in batchesToRemove)

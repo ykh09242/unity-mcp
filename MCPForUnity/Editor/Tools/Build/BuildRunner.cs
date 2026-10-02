@@ -107,6 +107,9 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void RunBuildCore(BuildJob job, Func<BuildReport> buildFunc)
         {
+            if (job.State != BuildJobState.Pending)
+                return;
+
             job.State = BuildJobState.Building;
             job.StartedAt = DateTime.UtcNow;
 
@@ -178,7 +181,20 @@ namespace MCPForUnity.Editor.Tools.Build
             }
 
             var child = batch.Children[batch.CurrentIndex];
-            createChildBuild(batch.CurrentIndex);
+            try
+            {
+                createChildBuild(batch.CurrentIndex);
+            }
+            catch (Exception ex)
+            {
+                child.State = BuildJobState.Failed;
+                child.CompletedAt = DateTime.UtcNow;
+                child.ErrorMessage = ex.Message;
+                BuildJobStore.AddBuildJob(child);
+                BuildJobStore.SetLastCompleted(child);
+                ScheduleOnNextUpdate(() => ScheduleNextBatchBuild(batch, createChildBuild));
+                return;
+            }
 
             // Safety timeout: if child never transitions out of Building/Pending after 2 hours,
             // unregister the delegate to prevent an orphaned update loop
