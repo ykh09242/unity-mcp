@@ -119,10 +119,11 @@ async def sync_tool_visibility_from_unity(
 
     from transport.legacy.unity_connection import async_send_command_with_retry
     from transport.plugin_hub import PluginHub
+    from transport.unity_transport import send_with_unity_instance
 
     try:
-        response = await async_send_command_with_retry(
-            "get_tool_states", {}, instance_id=instance_id,
+        response = await send_with_unity_instance(
+            async_send_command_with_retry, instance_id, "get_tool_states", {},
         )
 
         # Detect unsupported command (Unity package too old)
