@@ -44,9 +44,6 @@ namespace MCPForUnity.Editor.Helpers
                 return null;
             }
 
-            // Use a flexible default search method if none provided
-            string searchMethodToUse = string.IsNullOrEmpty(method) ? "by_id_or_name_or_path" : method;
-
             // --- Asset Search ---
             // Normalize path separators before checking asset paths
             string normalizedPath = AssetPathUtility.NormalizeSeparators(findTerm);
@@ -55,14 +52,11 @@ namespace MCPForUnity.Editor.Helpers
             if (IsAssetType(targetType) || 
                 (typeof(GameObject).IsAssignableFrom(targetType) && normalizedPath.StartsWith("Assets/")))
             {
-                UnityEngine.Object asset = TryLoadAsset(normalizedPath, targetType);
-                if (asset != null)
-                    return asset;
-                // If still not found, fall through to scene search
+                return TryLoadAsset(normalizedPath, targetType);
             }
 
             // --- Scene Object Search ---
-            GameObject foundGo = GameObjectLookup.FindByTarget(new JValue(findTerm), searchMethodToUse, includeInactive: false);
+            GameObject foundGo = ResolveGameObject(new JValue(findTerm), method);
 
             if (foundGo == null)
             {
@@ -115,7 +109,14 @@ namespace MCPForUnity.Editor.Helpers
             // If target is a simple value, use GameObjectLookup directly
             if (target.Type != JTokenType.Object)
             {
-                return GameObjectLookup.FindByTarget(target, searchMethod ?? "by_id_or_name_or_path");
+                if (string.IsNullOrEmpty(searchMethod) ||
+                    string.Equals(searchMethod, "by_id_or_name_or_path", StringComparison.OrdinalIgnoreCase))
+                {
+                    string findTerm = target.ToString();
+                    searchMethod = int.TryParse(findTerm, out _) ? "by_id" :
+                        findTerm.Contains("/") ? "by_path" : "by_name";
+                }
+                return GameObjectLookup.FindByTarget(target, searchMethod);
             }
 
             // If target is an instruction object
@@ -178,6 +179,10 @@ namespace MCPForUnity.Editor.Helpers
             asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(findTerm);
             if (asset != null && targetType.IsAssignableFrom(asset.GetType())) 
                 return asset;
+
+            // An explicit path must not resolve a same-name asset elsewhere.
+            if (findTerm.Contains("/"))
+                return null;
 
             // Try finding by name/type using FindAssets
             string searchFilter = $"t:{targetType.Name} {System.IO.Path.GetFileNameWithoutExtension(findTerm)}";
