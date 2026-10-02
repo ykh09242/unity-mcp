@@ -160,6 +160,8 @@ namespace MCPForUnity.Editor.Resources.Scene
                 var allComponents = go.GetComponents<Component>().Where(c => c != null).ToList();
                 int total = allComponents.Count;
 
+                cursor = Mathf.Clamp(cursor, 0, total);
+
                 var pagedComponents = allComponents.Skip(cursor).Take(pageSize).ToList();
                 
                 var componentData = new List<object>();

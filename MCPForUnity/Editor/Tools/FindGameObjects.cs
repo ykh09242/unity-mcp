@@ -46,8 +46,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Pagination parameters using standard PaginationRequest
-            var pagination = PaginationRequest.FromParams(@params, defaultPageSize: 50);
-            pagination.PageSize = Mathf.Clamp(pagination.PageSize, 1, 500);
+            int requestedPageSize = ParamCoercion.CoerceInt(@params["page_size"] ?? @params["pageSize"], 50);
+            int clampedPageSize = requestedPageSize <= 0 ? 50 : Mathf.Clamp(requestedPageSize, 1, 500);
+            var paginationParams = new JObject(@params);
+            paginationParams["page_size"] = clampedPageSize;
+            var pagination = PaginationRequest.FromParams(paginationParams, defaultPageSize: 50);
 
             // Search options (supports multiple parameter name variants)
             bool includeInactive = p.GetBool("includeInactive", false) ||

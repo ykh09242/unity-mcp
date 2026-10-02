@@ -35,6 +35,7 @@ namespace MCPForUnity.Editor.Helpers
                 @params["page_size"] ?? @params["pageSize"], 
                 defaultPageSize
             );
+            if (pageSize <= 0) pageSize = defaultPageSize;
 
             // Accept both cursor (0-based) and page_number (convert 1-based to 0-based)
             var cursorToken = @params["cursor"];
@@ -49,8 +50,8 @@ namespace MCPForUnity.Editor.Helpers
             {
                 // Convert 1-based page_number to 0-based cursor
                 int pageNumber = ParamCoercion.CoerceInt(pageNumberToken, 1);
-                cursor = (pageNumber - 1) * pageSize;
-                if (cursor < 0) cursor = 0;
+                long offset = ((long)pageNumber - 1) * pageSize;
+                cursor = (int)System.Math.Min(System.Math.Max(offset, 0), int.MaxValue);
             }
             else
             {
@@ -126,7 +127,7 @@ namespace MCPForUnity.Editor.Helpers
 
             // Get the page of items
             var items = new List<T>();
-            int endIndex = System.Math.Min(cursor + pageSize, totalCount);
+            int endIndex = (int)System.Math.Min((long)cursor + pageSize, totalCount);
             for (int i = cursor; i < endIndex; i++)
             {
                 items.Add(allItems[i]);

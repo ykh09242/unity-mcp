@@ -80,7 +80,7 @@ namespace MCPForUnity.Editor.Resources.Tests
             if (clampedPageSize <= 0) clampedPageSize = DEFAULT_PAGE_SIZE;
 
             // Create modified params with clamped page_size for cursor calculation
-            var paginationParams = new JObject(@params);
+            var paginationParams = @params != null ? new JObject(@params) : new JObject();
             paginationParams["page_size"] = clampedPageSize;
 
             // Parse pagination with clamped page size

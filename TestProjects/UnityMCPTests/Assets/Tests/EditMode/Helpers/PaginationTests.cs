@@ -93,6 +93,49 @@ namespace MCPForUnityTests.Editor.Helpers
         #region PaginationResponse Tests
 
         [Test]
+        public void HugePageNumber_ReturnsEmptyFinalPage()
+        {
+            var request = PaginationRequest.FromParams(new JObject
+            {
+                ["page_number"] = int.MaxValue,
+                ["page_size"] = 50
+            });
+
+            var response = PaginationResponse<int>.Create(new List<int> { 1, 2, 3 }, request);
+
+            Assert.IsEmpty(response.Items);
+            Assert.IsFalse(response.HasMore);
+            Assert.AreEqual(3, response.Cursor);
+        }
+
+        [Test]
+        public void HugePageSize_ReturnsRemainingItemsWithoutOverflow()
+        {
+            var request = new PaginationRequest { Cursor = 1, PageSize = int.MaxValue };
+
+            var response = PaginationResponse<int>.Create(new List<int> { 1, 2, 3 }, request);
+
+            CollectionAssert.AreEqual(new[] { 2, 3 }, response.Items);
+            Assert.IsNull(response.NextCursor);
+        }
+
+        [TestCase(0)]
+        [TestCase(-1)]
+        public void InvalidPageSize_UsesDefaultWhenComputingPageOffset(int pageSize)
+        {
+            var request = PaginationRequest.FromParams(new JObject
+            {
+                ["page_size"] = pageSize,
+                ["page_number"] = 2
+            }, defaultPageSize: 2);
+
+            var response = PaginationResponse<int>.Create(new List<int> { 1, 2, 3, 4 }, request);
+
+            CollectionAssert.AreEqual(new[] { 3, 4 }, response.Items);
+            Assert.AreEqual(2, response.Cursor);
+        }
+
+        [Test]
         public void PaginationResponse_Create_ReturnsCorrectPageOfItems()
         {
             var allItems = new List<int> { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
