@@ -68,9 +68,9 @@ async def get_gameobject_api_docs(_ctx: Context) -> MCPResponse:
                 "example": "mcpforunity://scene/gameobject/-81840",
                 "returns": ["instanceID", "name", "tag", "layer", "transform", "componentTypes", "path", "parent", "children"]
             },
-            "mcpforunity://scene/gameobject/{instance_id}/components": {
+            "mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}": {
                 "description": "Get all components with full property serialization (paginated)",
-                "example": "mcpforunity://scene/gameobject/-81840/components",
+                "example": "mcpforunity://scene/gameobject/-81840/components?page_size=10&cursor=0&include_properties=false",
                 "parameters": {
                     "page_size": "Number of components per page (default: 25)",
                     "cursor": "Pagination offset (default: 0)",
@@ -168,9 +168,9 @@ class ComponentsResponse(MCPResponse):
 
 
 @mcp_for_unity_resource(
-    uri="mcpforunity://scene/gameobject/{instance_id}/components",
+    uri="mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}",
     name="gameobject_components",
-    description="Get all components on a GameObject with full property serialization. Supports pagination with pageSize and cursor parameters.\n\nURI: mcpforunity://scene/gameobject/{instance_id}/components"
+    description="Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), and include_properties (default true).\n\nURI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}"
 )
 async def get_gameobject_components(
     ctx: Context,

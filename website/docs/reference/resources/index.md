@@ -113,11 +113,11 @@ URI: mcpforunity://scene/gameobject/{instance_id}/component/{component_name}
 
 ## `gameobject_components`
 
-**URI:** `mcpforunity://scene/gameobject/{instance_id}/components`
+**URI:** `mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}`
 
-Get all components on a GameObject with full property serialization. Supports pagination with pageSize and cursor parameters.
+Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), and include_properties (default true).
 
-URI: mcpforunity://scene/gameobject/{instance_id}/components
+URI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}
 
 **Parameters:**
 
