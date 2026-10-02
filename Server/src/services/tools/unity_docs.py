@@ -1,5 +1,11 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
+import functools
+import inspect
 import re
+import threading
+import time
 from html.parser import HTMLParser
 from typing import Annotated, Any, Optional
 from urllib.error import HTTPError, URLError
@@ -11,6 +17,42 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 
 ALL_ACTIONS = ["get_doc", "get_manual", "get_package_doc", "lookup"]
+MAX_QUERIES = 8
+MAX_QUERY_LENGTH = 256
+MAX_INPUT_LENGTH = 2048
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+REQUEST_TIMEOUT_SECONDS = 30
+MAX_CONCURRENT_REQUESTS = 4
+MAX_CONCURRENT_FETCHES = 8
+_request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+_fetch_slots = threading.BoundedSemaphore(MAX_CONCURRENT_FETCHES)
+_fetch_executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_FETCHES, thread_name_prefix="unity-docs")
+_request_budget: ContextVar[tuple[asyncio.Semaphore, float] | None] = ContextVar("docs_budget", default=None)
+
+
+def _bounded_request(func):
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    async def bounded(*args, **kwargs):
+        values = signature.bind(*args, **kwargs).arguments
+        strings = [v for key, v in values.items() if key != "ctx" and isinstance(v, str)]
+        if sum(map(len, strings)) > MAX_INPUT_LENGTH or any(
+                len(v) > MAX_QUERY_LENGTH for key, v in values.items()
+                if key not in ("ctx", "queries") and isinstance(v, str)):
+            return {"success": False, "message": "Documentation input exceeds the request limit."}
+        if not _request_slots.acquire(blocking=False):
+            return {"success": False, "message": "Documentation service is busy; retry later."}
+        token = _request_budget.set((asyncio.Semaphore(2), time.monotonic() + REQUEST_TIMEOUT_SECONDS))
+        try:
+            return await asyncio.wait_for(func(*args, **kwargs), REQUEST_TIMEOUT_SECONDS)
+        except (TimeoutError, ConnectionError) as exc:
+            return {"success": False, "message": "Documentation request exceeded its time or resource budget.",
+                    "error_type": type(exc).__name__}
+        finally:
+            _request_budget.reset(token)
+            _request_slots.release()
+    return bounded
 
 
 # ---------------------------------------------------------------------------
@@ -86,20 +128,48 @@ async def _fetch_url_full(url: str) -> tuple[int, str, str]:
 
     Like _fetch_url but also returns the final URL after any redirects.
     """
-    loop = asyncio.get_running_loop()
+    budget = _request_budget.get()
+    semaphore, deadline = budget or (asyncio.Semaphore(2), time.monotonic() + REQUEST_TIMEOUT_SECONDS)
 
     def _do_fetch() -> tuple[int, str, str]:
-        req = Request(url, headers={"User-Agent": "MCPForUnity/1.0"})
+        req = Request(url, headers={"User-Agent": "MCPForUnity/1.0", "Accept-Encoding": "identity"})
         try:
-            with urlopen(req, timeout=10) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Documentation deadline exceeded")
+            with urlopen(req, timeout=min(10, remaining)) as resp:
+                declared = resp.headers.get("Content-Length")
+                if declared and int(declared) > MAX_RESPONSE_BYTES:
+                    raise ConnectionError("Documentation response exceeds size limit")
+                body_bytes = bytearray()
+                read = getattr(resp, "read1", resp.read)
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Documentation deadline exceeded")
+                    chunk = read(min(65536, MAX_RESPONSE_BYTES + 1 - len(body_bytes)))
+                    if not chunk:
+                        break
+                    body_bytes.extend(chunk)
+                    if len(body_bytes) > MAX_RESPONSE_BYTES:
+                        raise ConnectionError("Documentation response exceeds size limit")
+                body = body_bytes.decode("utf-8", errors="replace")
                 return (resp.status, body, resp.url)
         except HTTPError as e:
             return (e.code, "", url)
         except URLError as e:
             raise ConnectionError(f"Cannot reach {url}: {e}") from e
 
-    return await loop.run_in_executor(None, _do_fetch)
+    async with semaphore:
+        if not _fetch_slots.acquire(blocking=False):
+            raise ConnectionError("Documentation fetch capacity exhausted")
+        try:
+            future = _fetch_executor.submit(_do_fetch)
+        except BaseException:
+            _fetch_slots.release()
+            raise
+        # Keep the slot until the real worker finishes, even if the caller cancels.
+        future.add_done_callback(lambda _: _fetch_slots.release())
+        return await asyncio.wrap_future(future)
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +558,7 @@ _KEYWORD_TO_FILTER_TYPE = {
 def _build_asset_search_terms(query: str) -> list[dict[str, str]]:
     """Extract meaningful search terms and infer asset filter types from query."""
     words = query.lower().replace("-", " ").replace("_", " ").split()
-    terms = [w for w in words if w not in _ASSET_STOPWORDS and len(w) > 1]
+    terms = list(dict.fromkeys(w for w in words if w not in _ASSET_STOPWORDS and len(w) > 1))[:MAX_QUERIES]
 
     # Infer filter_type from keywords
     filter_type = None
@@ -541,7 +611,9 @@ async def _search_assets(ctx: Any, query: str) -> dict[str, Any] | None:
                 return result.get("data", {}).get("assets", [])
             return []
 
-        results = await asyncio.gather(*[_do_search(p) for p in search_terms], return_exceptions=True)
+        results = []
+        for params in search_terms:
+            results.append(await _do_search(params))
 
         for result in results:
             if isinstance(result, list):
@@ -655,7 +727,10 @@ async def _lookup(
     Supports multiple queries — all run concurrently via asyncio.gather.
     For asset-related queries (shader, material, etc.), also searches project assets.
     """
-    # Run all queries in parallel
+    if len(queries) > MAX_QUERIES or any(len(q) > MAX_QUERY_LENGTH for q in queries):
+        return {"success": False, "message": "Documentation query count or length exceeds the limit."}
+    queries = list(dict.fromkeys(queries))
+    # Run the bounded query set; HTTP work shares the request and service limits.
     tasks = [_lookup_single(q, version, package, pkg_version, ctx) for q in queries]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -719,6 +794,7 @@ async def _lookup(
         destructiveHint=False,
     ),
 )
+@_bounded_request
 async def unity_docs(
     ctx: Context,
     action: Annotated[str, "The documentation action to perform."],
