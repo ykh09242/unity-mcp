@@ -112,29 +112,40 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static void ApplyCommonRendererProperties(Renderer renderer, JObject @params, List<string> changes)
         {
+            PrepareCommonRendererProperties(renderer, @params, changes)();
+        }
+
+        /// <summary>
+        /// Parses common renderer properties without changing the renderer.
+        /// The returned action applies the values in their original order.
+        /// </summary>
+        public static Action PrepareCommonRendererProperties(Renderer renderer, JObject @params, List<string> changes)
+        {
+            Action apply = () => { };
             // Shadows
             if (@params["shadowCastingMode"] != null && Enum.TryParse<UnityEngine.Rendering.ShadowCastingMode>(@params["shadowCastingMode"].ToString(), true, out var shadowMode)) 
-            { renderer.shadowCastingMode = shadowMode; changes.Add("shadowCastingMode"); }
-            if (@params["receiveShadows"] != null) { renderer.receiveShadows = @params["receiveShadows"].ToObject<bool>(); changes.Add("receiveShadows"); }
+            { apply += () => renderer.shadowCastingMode = shadowMode; changes.Add("shadowCastingMode"); }
+            if (@params["receiveShadows"] != null) { bool value = @params["receiveShadows"].ToObject<bool>(); apply += () => renderer.receiveShadows = value; changes.Add("receiveShadows"); }
             // Note: shadowBias is only available on specific renderer types (e.g., ParticleSystemRenderer), not base Renderer
             
             // Lighting and probes
             if (@params["lightProbeUsage"] != null && Enum.TryParse<UnityEngine.Rendering.LightProbeUsage>(@params["lightProbeUsage"].ToString(), true, out var probeUsage)) 
-            { renderer.lightProbeUsage = probeUsage; changes.Add("lightProbeUsage"); }
+            { apply += () => renderer.lightProbeUsage = probeUsage; changes.Add("lightProbeUsage"); }
             if (@params["reflectionProbeUsage"] != null && Enum.TryParse<UnityEngine.Rendering.ReflectionProbeUsage>(@params["reflectionProbeUsage"].ToString(), true, out var reflectionUsage)) 
-            { renderer.reflectionProbeUsage = reflectionUsage; changes.Add("reflectionProbeUsage"); }
+            { apply += () => renderer.reflectionProbeUsage = reflectionUsage; changes.Add("reflectionProbeUsage"); }
             
             // Motion vectors
             if (@params["motionVectorGenerationMode"] != null && Enum.TryParse<MotionVectorGenerationMode>(@params["motionVectorGenerationMode"].ToString(), true, out var motionMode)) 
-            { renderer.motionVectorGenerationMode = motionMode; changes.Add("motionVectorGenerationMode"); }
+            { apply += () => renderer.motionVectorGenerationMode = motionMode; changes.Add("motionVectorGenerationMode"); }
             
             // Sorting
-            if (@params["sortingOrder"] != null) { renderer.sortingOrder = @params["sortingOrder"].ToObject<int>(); changes.Add("sortingOrder"); }
-            if (@params["sortingLayerName"] != null) { renderer.sortingLayerName = @params["sortingLayerName"].ToString(); changes.Add("sortingLayerName"); }
-            if (@params["sortingLayerID"] != null) { renderer.sortingLayerID = @params["sortingLayerID"].ToObject<int>(); changes.Add("sortingLayerID"); }
+            if (@params["sortingOrder"] != null) { int value = @params["sortingOrder"].ToObject<int>(); apply += () => renderer.sortingOrder = value; changes.Add("sortingOrder"); }
+            if (@params["sortingLayerName"] != null) { string value = @params["sortingLayerName"].ToString(); apply += () => renderer.sortingLayerName = value; changes.Add("sortingLayerName"); }
+            if (@params["sortingLayerID"] != null) { int value = @params["sortingLayerID"].ToObject<int>(); apply += () => renderer.sortingLayerID = value; changes.Add("sortingLayerID"); }
             
             // Rendering layer mask (for SRP)
-            if (@params["renderingLayerMask"] != null) { renderer.renderingLayerMask = @params["renderingLayerMask"].ToObject<uint>(); changes.Add("renderingLayerMask"); }
+            if (@params["renderingLayerMask"] != null) { uint value = @params["renderingLayerMask"].ToObject<uint>(); apply += () => renderer.renderingLayerMask = value; changes.Add("renderingLayerMask"); }
+            return apply;
         }
 
         /// <summary>
