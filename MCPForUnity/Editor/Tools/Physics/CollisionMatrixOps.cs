@@ -79,7 +79,16 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (layerB < 0 || layerB >= 32)
                 return new ErrorResponse($"Invalid layer_b: '{layerBToken}'. Layer not found or out of range.");
 
-            bool collide = p.GetBool("collide", true);
+            var collideToken = p.GetRaw("collide");
+            bool collide = true;
+            if (collideToken != null && collideToken.Type != JTokenType.Null
+                && !string.IsNullOrWhiteSpace(collideToken.ToString()))
+            {
+                bool? parsedCollide = ParamCoercion.CoerceBoolNullable(collideToken);
+                if (!parsedCollide.HasValue)
+                    return new ErrorResponse("Invalid 'collide' parameter. Use a boolean value.");
+                collide = parsedCollide.Value;
+            }
 
             if (dimension == "2d")
             {

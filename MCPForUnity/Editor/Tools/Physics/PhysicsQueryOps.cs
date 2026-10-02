@@ -98,9 +98,12 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
+            var triggerFilter = ResolveTriggerFilter2D(p, layerMask);
             Physics2D.SyncTransforms();
 
-            var hit = Physics2D.Raycast(origin, direction, maxDistance, layerMask);
+            var hit = triggerFilter.HasValue
+                ? Physics2D.defaultPhysicsScene.Raycast(origin, direction, maxDistance, triggerFilter.Value)
+                : Physics2D.Raycast(origin, direction, maxDistance, layerMask);
 
             if (hit.collider == null)
             {
@@ -164,8 +167,6 @@ namespace MCPForUnity.Editor.Tools.Physics
             var position = new Vector3(
                 posArr[0].Value<float>(), posArr[1].Value<float>(), posArr[2].Value<float>());
 
-            UnityEngine.Physics.SyncTransforms();
-
             Collider[] results;
 
             switch (shape.ToLowerInvariant())
@@ -173,6 +174,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 case "sphere":
                 {
                     float radius = sizeToken.Value<float>();
+                    UnityEngine.Physics.SyncTransforms();
                     results = UnityEngine.Physics.OverlapSphere(position, radius, layerMask);
                     break;
                 }
@@ -184,6 +186,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                             sizeArr[0].Value<float>(), sizeArr[1].Value<float>(), sizeArr[2].Value<float>());
                     else
                         return new ErrorResponse("3D box overlap 'size' requires [halfX, halfY, halfZ].");
+                    UnityEngine.Physics.SyncTransforms();
                     results = UnityEngine.Physics.OverlapBox(position, halfExtents, Quaternion.identity, layerMask);
                     break;
                 }
@@ -213,6 +216,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                                 break;
                         }
 
+                        UnityEngine.Physics.SyncTransforms();
                         results = UnityEngine.Physics.OverlapCapsule(point0, point1, radius, layerMask);
                     }
                     else
@@ -235,8 +239,6 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             var position = new Vector2(posArr[0].Value<float>(), posArr[1].Value<float>());
 
-            Physics2D.SyncTransforms();
-
             Collider2D[] results;
 
             switch (shape.ToLowerInvariant())
@@ -244,6 +246,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 case "circle":
                 {
                     float radius = sizeToken.Value<float>();
+                    Physics2D.SyncTransforms();
                     results = Physics2D.OverlapCircleAll(position, radius, layerMask);
                     break;
                 }
@@ -254,6 +257,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         size = new Vector2(sizeArr[0].Value<float>(), sizeArr[1].Value<float>());
                     else
                         return new ErrorResponse("2D box overlap 'size' requires [width, height].");
+                    Physics2D.SyncTransforms();
                     results = Physics2D.OverlapBoxAll(position, size, 0f, layerMask);
                     break;
                 }
@@ -267,6 +271,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         string dirStr = capsuleObj["direction"]?.ToString();
                         if (dirStr != null && dirStr.ToLowerInvariant() == "horizontal")
                             dir = CapsuleDirection2D.Horizontal;
+                        Physics2D.SyncTransforms();
                         results = Physics2D.OverlapCapsuleAll(position, new Vector2(sizeX, sizeY), dir, 0f, layerMask);
                     }
                     else
@@ -377,8 +382,6 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (sizeToken == null)
                 return new ErrorResponse("'size' parameter is required.");
 
-            UnityEngine.Physics.SyncTransforms();
-
             bool hit;
             RaycastHit hitInfo;
 
@@ -387,6 +390,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 case "sphere":
                 {
                     float radius = sizeToken.Value<float>();
+                    UnityEngine.Physics.SyncTransforms();
                     hit = UnityEngine.Physics.SphereCast(origin, radius, direction, out hitInfo, maxDistance, layerMask, triggerInteraction);
                     break;
                 }
@@ -398,6 +402,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                             sizeArr[0].Value<float>(), sizeArr[1].Value<float>(), sizeArr[2].Value<float>());
                     else
                         return new ErrorResponse("3D box shapecast 'size' requires [halfX, halfY, halfZ].");
+                    UnityEngine.Physics.SyncTransforms();
                     hit = UnityEngine.Physics.BoxCast(origin, halfExtents, direction, out hitInfo, Quaternion.identity, maxDistance, layerMask, triggerInteraction);
                     break;
                 }
@@ -437,6 +442,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         }
                     }
 
+                    UnityEngine.Physics.SyncTransforms();
                     hit = UnityEngine.Physics.CapsuleCast(pt1, pt2, radius, direction, out hitInfo, maxDistance, layerMask, triggerInteraction);
                     break;
                 }
@@ -488,8 +494,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (sizeToken == null)
                 return new ErrorResponse("'size' parameter is required.");
 
-            Physics2D.SyncTransforms();
-
+            var triggerFilter = ResolveTriggerFilter2D(p, layerMask);
             RaycastHit2D hit;
 
             switch (shape.ToLowerInvariant())
@@ -497,7 +502,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                 case "circle":
                 {
                     float radius = sizeToken.Value<float>();
-                    hit = Physics2D.CircleCast(origin, radius, direction, maxDistance, layerMask);
+                    Physics2D.SyncTransforms();
+                    hit = triggerFilter.HasValue
+                        ? Physics2D.defaultPhysicsScene.CircleCast(origin, radius, direction, maxDistance, triggerFilter.Value)
+                        : Physics2D.CircleCast(origin, radius, direction, maxDistance, layerMask);
                     break;
                 }
                 case "box":
@@ -507,7 +515,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                         size = new Vector2(sizeArr[0].Value<float>(), sizeArr[1].Value<float>());
                     else
                         return new ErrorResponse("2D box shapecast 'size' requires [width, height].");
-                    hit = Physics2D.BoxCast(origin, size, angle, direction, maxDistance, layerMask);
+                    Physics2D.SyncTransforms();
+                    hit = triggerFilter.HasValue
+                        ? Physics2D.defaultPhysicsScene.BoxCast(origin, size, angle, direction, maxDistance, triggerFilter.Value)
+                        : Physics2D.BoxCast(origin, size, angle, direction, maxDistance, layerMask);
                     break;
                 }
                 case "capsule":
@@ -521,7 +532,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                         string dirStr = sizeObj["direction"]?.ToString();
                         if (dirStr != null && dirStr.ToLowerInvariant() == "horizontal")
                             capsuleDir = CapsuleDirection2D.Horizontal;
-                        hit = Physics2D.CapsuleCast(origin, capsuleSize, capsuleDir, angle, direction, maxDistance, layerMask);
+                        Physics2D.SyncTransforms();
+                        hit = triggerFilter.HasValue
+                            ? Physics2D.defaultPhysicsScene.CapsuleCast(origin, capsuleSize, capsuleDir, angle, direction, maxDistance, triggerFilter.Value)
+                            : Physics2D.CapsuleCast(origin, capsuleSize, capsuleDir, angle, direction, maxDistance, layerMask);
                     }
                     else
                     {
@@ -645,9 +659,21 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
+            var triggerFilter = ResolveTriggerFilter2D(p, layerMask);
             Physics2D.SyncTransforms();
 
-            RaycastHit2D[] hits = Physics2D.RaycastAll(origin, direction, maxDistance, layerMask);
+            IReadOnlyList<RaycastHit2D> hits;
+            if (triggerFilter.HasValue)
+            {
+                var filteredHits = new List<RaycastHit2D>();
+                Physics2D.Raycast(origin, direction, triggerFilter.Value, filteredHits, maxDistance);
+                filteredHits.Sort((a, b) => a.distance.CompareTo(b.distance));
+                hits = filteredHits;
+            }
+            else
+            {
+                hits = Physics2D.RaycastAll(origin, direction, maxDistance, layerMask);
+            }
 
             var hitsArray = new List<object>();
             foreach (var h in hits)
@@ -666,8 +692,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             return new
             {
                 success = true,
-                message = $"RaycastAll found {hits.Length} hit(s).",
-                data = new { hit_count = hits.Length, hits = hitsArray }
+                message = $"RaycastAll found {hits.Count} hit(s).",
+                data = new { hit_count = hits.Count, hits = hitsArray }
             };
         }
 
@@ -758,9 +784,12 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
+            var triggerFilter = ResolveTriggerFilter2D(p, layerMask);
             Physics2D.SyncTransforms();
 
-            var hit = Physics2D.Linecast(start, end, layerMask);
+            var hit = triggerFilter.HasValue
+                ? Physics2D.defaultPhysicsScene.Linecast(start, end, triggerFilter.Value)
+                : Physics2D.Linecast(start, end, layerMask);
 
             if (hit.collider == null)
             {
@@ -787,6 +816,17 @@ namespace MCPForUnity.Editor.Tools.Physics
                     collider_type = hit.collider.GetType().Name
                 }
             };
+        }
+
+        private static ContactFilter2D? ResolveTriggerFilter2D(ToolParams p, int layerMask)
+        {
+            if (!Enum.TryParse(p.Get("query_trigger_interaction"), true, out QueryTriggerInteraction interaction)
+                || (interaction != QueryTriggerInteraction.Ignore && interaction != QueryTriggerInteraction.Collide))
+                return null;
+
+            var filter = new ContactFilter2D { useTriggers = interaction == QueryTriggerInteraction.Collide };
+            filter.SetLayerMask(layerMask);
+            return filter;
         }
 
         private static int ResolveLayerMask(string layerMaskStr)
