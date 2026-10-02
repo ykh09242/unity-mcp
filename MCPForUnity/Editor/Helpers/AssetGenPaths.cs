@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Helpers
             if (string.IsNullOrWhiteSpace(projectRelative)) return projectRelative;
             string p = projectRelative.Replace('\\', '/');
             string abs = Path.IsPathRooted(p) ? p : Path.Combine(ProjectRoot(), p);
-            return Path.GetFullPath(abs).Replace('\\', '/');
+            return MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(Application.dataPath, abs).Replace('\\', '/');
         }
 
         /// <summary>Convert an absolute (or already-relative) path to a project-relative ("Assets/...") path.</summary>
@@ -53,7 +53,7 @@ namespace MCPForUnity.Editor.Helpers
                     return false;
                 }
 
-                string full = Path.GetFullPath(abs).Replace('\\', '/');
+                string full = MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(Application.dataPath, abs).Replace('\\', '/');
                 string dataPath = Path.GetFullPath(Application.dataPath).Replace('\\', '/').TrimEnd('/');
                 if (string.Equals(full, dataPath, StringComparison.Ordinal))
                 {

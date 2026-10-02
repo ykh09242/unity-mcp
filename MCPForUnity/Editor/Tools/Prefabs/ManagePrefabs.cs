@@ -198,7 +198,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return (false, "'prefabPath' parameter is required for create_from_gameobject.", targetName, null, false, false, false);
             }
 
-            string sanitizedPath = AssetPathUtility.SanitizeAssetPath(requestedPath);
+            string sanitizedPath = AssetPathUtility.GetContainedAssetPath(requestedPath);
             if (sanitizedPath == null)
             {
                 return (false, $"Invalid prefab path (path traversal detected): '{requestedPath}'", targetName, null, false, false, false);
@@ -266,6 +266,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// </summary>
         private static GameObject CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting)
         {
+            path = AssetPathUtility.GetContainedAssetPath(path);
             GameObject result = PrefabUtility.SaveAsPrefabAssetAndConnect(
                 sourceObject,
                 path,
@@ -319,7 +320,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     string goName = renderer.gameObject.name.Replace(" ", "_");
                     string suffix = slot > 0 ? $"_slot{slot}" : "";
                     string matPath = $"{materialsFolder}/{goName}{suffix}_mat.mat";
-                    matPath = AssetPathUtility.SanitizeAssetPath(matPath);
+                    matPath = AssetPathUtility.GetContainedAssetPath(matPath);
                     if (matPath == null)
                     {
                         McpLog.Warn($"[ManagePrefabs] Could not build safe material path for '{renderer.gameObject.name}', skipping.");
@@ -441,9 +442,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             // Use Application.dataPath for more reliable path resolution
             // Application.dataPath points to the Assets folder (e.g., ".../ProjectName/Assets")
-            string assetsPath = Application.dataPath;
-            string projectRoot = Path.GetDirectoryName(assetsPath);
-            string fullDirectory = Path.Combine(projectRoot, directory);
+            string fullDirectory = AssetPathUtility.GetFullAssetPath(directory);
 
             if (!Directory.Exists(fullDirectory))
             {
@@ -507,7 +506,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse("'prefabPath' parameter is required for get_info.");
             }
 
-            string sanitizedPath = AssetPathUtility.SanitizeAssetPath(prefabPath);
+            string sanitizedPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
             if (string.IsNullOrEmpty(sanitizedPath))
             {
                 return new ErrorResponse($"Invalid prefab path: '{prefabPath}'.");
@@ -553,7 +552,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse("'prefabPath' parameter is required for get_hierarchy.");
             }
 
-            string sanitizedPath = AssetPathUtility.SanitizeAssetPath(prefabPath);
+            string sanitizedPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
             if (string.IsNullOrEmpty(sanitizedPath))
             {
                 return new ErrorResponse($"Invalid prefab path '{prefabPath}'. Path traversal sequences are not allowed.");
@@ -604,7 +603,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse("'prefabPath' parameter is required for modify_contents.");
             }
 
-            string sanitizedPath = AssetPathUtility.SanitizeAssetPath(prefabPath);
+            string sanitizedPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
             if (string.IsNullOrEmpty(sanitizedPath))
             {
                 return new ErrorResponse($"Invalid prefab path '{prefabPath}'. Path traversal sequences are not allowed.");
@@ -652,6 +651,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                 // Save the prefab
                 bool success;
+                sanitizedPath = AssetPathUtility.GetContainedAssetPath(sanitizedPath);
                 PrefabUtility.SaveAsPrefabAsset(prefabContents, sanitizedPath, out success);
 
                 if (!success)
@@ -1032,7 +1032,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             if (!string.IsNullOrEmpty(sourcePrefabPath))
             {
-                string sanitizedSourcePath = AssetPathUtility.SanitizeAssetPath(sourcePrefabPath);
+                string sanitizedSourcePath = AssetPathUtility.GetContainedAssetPath(sourcePrefabPath);
                 if (string.IsNullOrEmpty(sanitizedSourcePath))
                 {
                     return (false, new ErrorResponse($"Invalid source_prefab_path '{sourcePrefabPath}'. Path traversal sequences are not allowed."));
@@ -1287,7 +1287,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse("Either 'prefabPath' or 'path' parameter is required for open_prefab_stage.");
             }
 
-            string sanitizedPath = AssetPathUtility.SanitizeAssetPath(requestedPath);
+            string sanitizedPath = AssetPathUtility.GetContainedAssetPath(requestedPath);
             if (sanitizedPath == null)
             {
                 return new ErrorResponse($"Invalid prefab path (path traversal detected): '{requestedPath}'.");
@@ -1401,6 +1401,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             bool saved;
+            prefabPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
             PrefabUtility.SaveAsPrefabAsset(prefabStage.prefabContentsRoot, prefabPath, out saved);
             if (!saved)
             {

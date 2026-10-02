@@ -25,12 +25,23 @@ namespace MCPForUnity.Runtime.Helpers
                     if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                         throw new InvalidOperationException("Paths through symbolic links or junctions are not permitted.");
                 }
-                catch (FileNotFoundException) { }
-                catch (DirectoryNotFoundException) { }
+                catch (FileNotFoundException) { RejectUnresolvedEntry(current, comparison); }
+                catch (DirectoryNotFoundException) { RejectUnresolvedEntry(current, comparison); }
                 if (current.Equals(fullRoot, comparison)) break;
                 current = Path.GetDirectoryName(current);
             }
             return fullPath;
+        }
+
+        private static void RejectUnresolvedEntry(string path, StringComparison comparison)
+        {
+            // Some Unity/Mono versions report dangling links as missing targets.
+            // Only a genuinely absent directory entry may be created later.
+            string parent = Path.GetDirectoryName(path);
+            if (parent == null || !Directory.Exists(parent)) return;
+            foreach (string entry in Directory.EnumerateFileSystemEntries(parent, Path.GetFileName(path)))
+                if (string.Equals(Path.GetFileName(entry), Path.GetFileName(path), comparison))
+                    throw new InvalidOperationException("An existing path could not be safely inspected.");
         }
     }
 }

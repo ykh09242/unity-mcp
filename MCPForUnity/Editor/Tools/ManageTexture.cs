@@ -115,7 +115,7 @@ namespace MCPForUnity.Editor.Tools
                     return dimensionError;
             }
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             EnsureDirectoryExists(fullPath);
 
             try
@@ -251,7 +251,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for modify.");
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Texture not found at path: {fullPath}");
 
@@ -359,7 +359,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for delete.");
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Texture not found at path: {fullPath}");
 
@@ -405,7 +405,7 @@ namespace MCPForUnity.Editor.Tools
                 palette = new List<Color32> { new Color32(0, 0, 0, 255), new Color32(255, 255, 255, 255) };
             }
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             EnsureDirectoryExists(fullPath);
 
             Texture2D texture = null;
@@ -494,7 +494,7 @@ namespace MCPForUnity.Editor.Tools
                 palette = new List<Color32> { new Color32(0, 0, 0, 255), new Color32(255, 255, 255, 255) };
             }
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             EnsureDirectoryExists(fullPath);
 
             Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
@@ -782,7 +782,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(pathResult.ErrorMessage);
             string path = pathResult.Value;
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Texture not found at path: {fullPath}");
 
@@ -1112,15 +1112,14 @@ namespace MCPForUnity.Editor.Tools
 
         private static string GetAbsolutePath(string assetPath)
         {
-            return Path.Combine(Directory.GetCurrentDirectory(), assetPath);
+            return AssetPathUtility.GetFullAssetPath(assetPath);
         }
 
         private static string ResolveImagePath(string imagePath)
         {
-            if (Path.IsPathRooted(imagePath))
-                return imagePath;
-
-            return Path.Combine(Directory.GetCurrentDirectory(), imagePath);
+            if (!AssetGenPaths.TryGetAssetsRelativePath(imagePath, out string relative))
+                throw new ArgumentException("Image paths must resolve safely inside Assets.");
+            return AssetPathUtility.GetFullAssetPath(relative);
         }
     }
 }

@@ -59,63 +59,19 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static bool TryResolveUnderAssets(string relDir, out string fullPathDir, out string relPathSafe)
         {
-            string assets = AssetPathUtility.NormalizeSeparators(Application.dataPath);
-
-            // Normalize caller path: allow both "Scripts/..." and "Assets/Scripts/..."
-            string rel = AssetPathUtility.NormalizeSeparators(relDir ?? "Scripts").Trim();
-            if (string.IsNullOrEmpty(rel)) rel = "Scripts";
-
-            // Handle both "Assets" and "Assets/" prefixes
-            if (rel.Equals("Assets", StringComparison.OrdinalIgnoreCase))
-            {
-                rel = string.Empty;
-            }
-            else if (rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
-            {
-                rel = rel.Substring(7);
-            }
-
-            rel = rel.TrimStart('/');
-
-            string targetDir = AssetPathUtility.NormalizeSeparators(Path.Combine(assets, rel));
-            string full = AssetPathUtility.NormalizeSeparators(Path.GetFullPath(targetDir));
-
-            bool underAssets = full.StartsWith(assets + "/", StringComparison.OrdinalIgnoreCase)
-                               || string.Equals(full, assets, StringComparison.OrdinalIgnoreCase);
-            if (!underAssets)
-            {
-                fullPathDir = null;
-                relPathSafe = null;
-                return false;
-            }
-
-            // Best-effort symlink guard: if the directory OR ANY ANCESTOR (up to Assets/) is a reparse point/symlink, reject
+            fullPathDir = null;
+            relPathSafe = null;
             try
             {
-                var di = new DirectoryInfo(full);
-                while (di != null)
-                {
-                    if (di.Exists && (di.Attributes & FileAttributes.ReparsePoint) != 0)
-                    {
-                        fullPathDir = null;
-                        relPathSafe = null;
-                        return false;
-                    }
-                    var atAssets = string.Equals(
-                        di.FullName.Replace('\\', '/'),
-                        assets,
-                        StringComparison.OrdinalIgnoreCase
-                    );
-                    if (atAssets) break;
-                    di = di.Parent;
-                }
+                string rel = string.IsNullOrWhiteSpace(relDir) ? "Scripts" : relDir.Trim().TrimEnd('/', '\\');
+                relPathSafe = AssetPathUtility.GetContainedAssetPath(rel);
+                fullPathDir = AssetPathUtility.GetFullAssetPath(relPathSafe);
+                return true;
             }
-            catch { /* best effort; proceed */ }
-
-            fullPathDir = full;
-            string tail = full.Length > assets.Length ? full.Substring(assets.Length).TrimStart('/') : string.Empty;
-            relPathSafe = ("Assets/" + tail).TrimEnd('/');
-            return true;
+            catch (Exception)
+            {
+                return false;
+            }
         }
         /// <summary>
         /// Main handler for script management actions.
@@ -191,8 +147,10 @@ namespace MCPForUnity.Editor.Tools
 
             // Construct file paths
             string scriptFileName = $"{name}.cs";
-            string fullPath = Path.Combine(fullPathDir, scriptFileName);
             string relativePath = AssetPathUtility.NormalizeSeparators(Path.Combine(relPathSafeDir, scriptFileName));
+            string fullPath;
+            try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
+            catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
 
             // Ensure the target directory exists for create/update
             if (action == "create" || action == "update")
@@ -525,21 +483,8 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
-            // Refuse edits if the target or any ancestor is a symlink
-            try
-            {
-                var di = new DirectoryInfo(Path.GetDirectoryName(fullPath) ?? "");
-                while (di != null && !string.Equals(di.FullName.Replace('\\', '/'), Application.dataPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase))
-                {
-                    if (di.Exists && (di.Attributes & FileAttributes.ReparsePoint) != 0)
-                        return new ErrorResponse("Refusing to edit a symlinked script path.");
-                    di = di.Parent;
-                }
-            }
-            catch
-            {
-                // If checking attributes fails, proceed without the symlink guard
-            }
+            try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
+            catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
             if (edits == null || edits.Count == 0)
                 return new ErrorResponse("No edits provided.");
 
@@ -1245,17 +1190,8 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
-            // Refuse edits if the target is a symlink
-            try
-            {
-                var attrs = File.GetAttributes(fullPath);
-                if ((attrs & FileAttributes.ReparsePoint) != 0)
-                    return new ErrorResponse("Refusing to edit a symlinked script path.");
-            }
-            catch
-            {
-                // ignore failures checking attributes and proceed
-            }
+            try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
+            catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
             if (edits == null || edits.Count == 0)
                 return new ErrorResponse("No edits provided.");
 
