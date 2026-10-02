@@ -19,6 +19,7 @@ Essential scene, script, asset & editor tools (always on by default)
 - **[`find_in_file`](./find_in_file.md)** — Searches a file with a regex pattern and returns line numbers and excerpts.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
+- **[`manage_audio`](./manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_camera`](./manage_camera.md)** — Manage cameras (Unity Camera + Cinemachine).
 - **[`manage_components`](./manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.

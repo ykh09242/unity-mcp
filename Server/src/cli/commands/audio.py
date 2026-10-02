@@ -1,18 +1,18 @@
-"""Audio CLI commands - placeholder for future implementation."""
+"""AudioSource playback controls and volume configuration."""
 
-import sys
+import math
 import click
 from typing import Optional, Any
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_error, print_info
+from cli.utils.output import format_output
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.constants import SEARCH_METHOD_CHOICE_BASIC
 
 
 @click.group()
 def audio():
-    """Audio operations - AudioSource control, audio settings."""
+    """AudioSource playback in Play mode and volume settings."""
     pass
 
 
@@ -31,7 +31,7 @@ def audio():
 )
 @handle_unity_errors
 def play(target: str, clip: Optional[str], search_method: Optional[str]):
-    """Play audio on a target's AudioSource.
+    """Request playback on an existing AudioSource in Play mode.
 
     \b
     Examples:
@@ -41,20 +41,17 @@ def play(target: str, clip: Optional[str], search_method: Optional[str]):
     config = get_config()
 
     params: dict[str, Any] = {
-        "action": "set_property",
+        "action": "play",
         "target": target,
-        "componentType": "AudioSource",
-        "property": "Play",
-        "value": True,
     }
 
-    if clip:
+    if clip is not None:
         params["clip"] = clip
 
     if search_method:
         params["searchMethod"] = search_method
 
-    result = run_command("manage_components", params, config)
+    result = run_command("manage_audio", params, config)
     click.echo(format_output(result, config.format))
 
 
@@ -68,7 +65,7 @@ def play(target: str, clip: Optional[str], search_method: Optional[str]):
 )
 @handle_unity_errors
 def stop(target: str, search_method: Optional[str]):
-    """Stop audio on a target's AudioSource.
+    """Request stopping an existing AudioSource in Play mode.
 
     \b
     Examples:
@@ -77,17 +74,14 @@ def stop(target: str, search_method: Optional[str]):
     config = get_config()
 
     params: dict[str, Any] = {
-        "action": "set_property",
+        "action": "stop",
         "target": target,
-        "componentType": "AudioSource",
-        "property": "Stop",
-        "value": True,
     }
 
     if search_method:
         params["searchMethod"] = search_method
 
-    result = run_command("manage_components", params, config)
+    result = run_command("manage_audio", params, config)
     click.echo(format_output(result, config.format))
 
 
@@ -108,6 +102,9 @@ def volume(target: str, level: float, search_method: Optional[str]):
     Examples:
         unity-mcp audio volume "MusicPlayer" 0.5
     """
+    if not math.isfinite(level) or not 0 <= level <= 1:
+        raise click.BadParameter("must be a finite number between 0 and 1", param_hint="level")
+
     config = get_config()
 
     params: dict[str, Any] = {

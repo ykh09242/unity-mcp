@@ -24,7 +24,7 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists on disk (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (30 tools)
+## `core` &nbsp; (31 tools)
 Essential scene, script, asset & editor tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -37,6 +37,7 @@ Essential scene, script, asset & editor tools (always on by default)
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a file with a regex pattern and returns line numbers and excerpts.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./core/manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
+- **[`manage_audio`](./core/manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_camera`](./core/manage_camera.md)** — Manage cameras (Unity Camera + Cinemachine).
 - **[`manage_components`](./core/manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
