@@ -42,6 +42,7 @@ Environment variables take effect when the corresponding CLI argument is not pro
 The server validates its configuration at startup:
 
 - If `--http-remote-hosted` is set but `--api-key-validation-url` is not provided (and the env var is also unset), the server logs an error and exits with code 1.
+- The validation endpoint must use absolute HTTPS, with no embedded credentials or URL fragment. Plaintext endpoints (including loopback) are rejected at initialization, and redirects are not followed. HTTPX honors the host's proxy and certificate environment settings; configure only trusted proxies and certificate authorities.
 
 ### Example
 

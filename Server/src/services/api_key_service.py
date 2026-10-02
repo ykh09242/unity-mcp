@@ -8,6 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -56,6 +57,20 @@ class ApiKeyService:
             service_token_header: Optional header name for service authentication (e.g. "X-Service-Token")
             service_token: Optional token value for service authentication
         """
+        error = "API key validation URL must be absolute HTTPS without userinfo or fragments"
+        try:
+            endpoint = urlsplit(validation_url)
+            allowed = (
+                endpoint.scheme == "https" and bool(endpoint.hostname)
+                and endpoint.username is None and endpoint.password is None
+                and not endpoint.fragment and endpoint.port != 0
+                and not any(char.isspace() or ord(char) < 32 for char in validation_url)
+                and "\\" not in validation_url
+            )
+        except ValueError:
+            raise ValueError(error) from None
+        if not allowed:
+            raise ValueError(error)
         self._validation_url = validation_url
         self._cache_ttl = cache_ttl
         self._service_token_header = service_token_header
@@ -152,7 +167,9 @@ class ApiKeyService:
 
         for attempt in range(self.MAX_RETRIES + 1):
             try:
-                async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
+                async with httpx.AsyncClient(
+                    timeout=self.REQUEST_TIMEOUT, follow_redirects=False
+                ) as client:
                     # Build request headers
                     headers = {"Content-Type": "application/json"}
                     if self._service_token_header and self._service_token:

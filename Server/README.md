@@ -243,6 +243,7 @@ When deploying the server as a shared remote service (e.g. for a team or Asset S
 
 - An external HTTP endpoint that validates API keys. The server POSTs `{"api_key": "..."}` and expects `{"valid": true, "user_id": "..."}` or `{"valid": false}` in response.
 - `--api-key-validation-url` must be provided (or `UNITY_MCP_API_KEY_VALIDATION_URL`). The server exits with code 1 if this is missing.
+- The validation URL must be absolute HTTPS without embedded credentials or a fragment. Plaintext URLs, including loopback, are rejected before authentication starts. Validation redirects are not followed. HTTPX honors proxy and certificate environment settings, so only use trusted proxies and CA configuration on the server host.
 
 **What changes in remote-hosted mode:**
 
