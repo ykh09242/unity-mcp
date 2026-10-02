@@ -5,7 +5,7 @@
 
 import { themes as prismThemes } from 'prism-react-renderer';
 import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +31,7 @@ function listMarkdownFiles(dir) {
 
 function countReferenceTools() {
   const dir = resolve(__dirname, 'docs', 'reference', 'tools');
-  return listMarkdownFiles(dir).filter((path) => !path.endsWith('/index.md')).length;
+  return listMarkdownFiles(dir).filter((path) => basename(path) !== 'index.md').length;
 }
 
 function countToolGroups() {
