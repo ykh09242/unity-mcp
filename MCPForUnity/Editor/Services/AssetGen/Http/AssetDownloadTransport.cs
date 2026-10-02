@@ -129,19 +129,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         };
                         // Redirect/error bodies are unnecessary and must not be staged as assets.
                         if (!result.IsSuccess) return result;
-                        if (response.ContentLength > MaxDownloadBytes)
-                            throw new IOException("Provider download exceeds the 512 MiB limit.");
                         using Stream body = response.GetResponseStream();
-                        using var output = new MemoryStream();
-                        var buffer = new byte[81920];
-                        int read;
-                        while ((read = await body.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
-                        {
-                            if (output.Length + read > MaxDownloadBytes)
-                                throw new IOException("Provider download exceeds the 512 MiB limit.");
-                            output.Write(buffer, 0, read);
-                        }
-                        result.Body = output.ToArray();
+                        result.Body = await ReadLimitedAsync(body, response.ContentLength, MaxDownloadBytes, ct).ConfigureAwait(false);
                         return result;
                     }
                 }
@@ -154,6 +143,22 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                     request.ServicePoint.CloseConnectionGroup(request.ConnectionGroupName);
                 }
             }
+        }
+
+        internal static async Task<byte[]> ReadLimitedAsync(Stream body, long contentLength, int maxBytes, CancellationToken ct)
+        {
+            if (contentLength > maxBytes)
+                throw new IOException("Provider download exceeds the byte limit.");
+            using var output = new MemoryStream();
+            var buffer = new byte[81920];
+            int read;
+            while ((read = await body.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
+            {
+                if (read > maxBytes - output.Length)
+                    throw new IOException("Provider download exceeds the byte limit.");
+                output.Write(buffer, 0, read);
+            }
+            return output.ToArray();
         }
     }
 }

@@ -471,6 +471,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static string WriteFile(Runner r, byte[] bytes)
         {
+            if (bytes == null || bytes.Length > AssetDownloadTransport.MaxDownloadBytes)
+                throw new IOException("Provider artifact exceeds the 512 MiB limit.");
             string chosen = !string.IsNullOrEmpty(r.OverrideExt) ? r.OverrideExt : r.Ext;
             string ext = string.IsNullOrEmpty(chosen) ? "bin" : chosen.TrimStart('.').ToLowerInvariant();
             if (!IsAllowedResultExtension(r.Job.Kind, ext))
