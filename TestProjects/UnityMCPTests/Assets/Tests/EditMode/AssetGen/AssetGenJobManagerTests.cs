@@ -96,7 +96,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 if (spec.Method == "POST" && spec.Url.EndsWith("/openapi/task"))
                     return Json("{\"code\":0,\"data\":{\"task_id\":\"task_abc\"}}");
                 if (spec.Url.Contains("/openapi/task/"))
-                    return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"https://cdn.example.com/model.glb\"}}}");
+                    return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}");
                 return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } }; // download
             };
 
@@ -107,6 +107,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNotNull(job.AssetPath);
             StringAssert.EndsWith("jobtest.glb", job.AssetPath);
             Assert.AreEqual(1f, job.Progress);
+            HttpRequestSpec download = _fake.RecordedRequests.Find(spec => spec.DownloadProvider != null);
+            Assert.IsNotNull(download, "Artifacts must select the restricted download transport.");
+            Assert.AreEqual("tripo", download.DownloadProvider);
+            Assert.IsEmpty(download.Headers, "Provider API credentials must not be sent to the artifact host.");
         }
 
         [Test]
@@ -116,9 +120,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 if (spec.Method == "POST") return Json("{\"response_url\":\"" + AudioResp + "\"}");
                 if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
-                if (spec.Url.Contains("cdn.example.com"))
+                if (spec.Url.Contains("fal.media"))
                     return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } };
-                return Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/a.wav\"}}"); // result payload
+                return Json("{\"audio_file\":{\"url\":\"https://fal.media/a.wav\"}}"); // result payload
             };
 
             AssetGenJob job = AssetGenJobManager.StartAudioGeneration(AudioReq());
@@ -140,9 +144,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 if (spec.Method == "POST") return Json("{\"response_url\":\"" + AudioResp + "\"}");
                 if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
-                if (spec.Url.Contains("cdn.example.com"))
+                if (spec.Url.Contains("fal.media"))
                     return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } };
-                return Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/track.mp3\"}}");
+                return Json("{\"audio_file\":{\"url\":\"https://fal.media/track.mp3\"}}");
             };
 
             AssetGenJob job = AssetGenJobManager.StartAudioGeneration(AudioReq());
@@ -227,10 +231,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 if (spec.Method == "POST") return Json("{\"response_url\":\"" + AudioResp + "\"}");
                 if (spec.Url.EndsWith("/status")) return Json("{\"status\":\"COMPLETED\"}");
-                if (spec.Url.Contains("cdn.example.com"))
+                if (spec.Url.Contains("fal.media"))
                     return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3, 4 } };
                 // Provider hands back a payload whose URL implies a .cs extension.
-                return Json("{\"audio_file\":{\"url\":\"https://cdn.example.com/payload.cs\"}}");
+                return Json("{\"audio_file\":{\"url\":\"https://fal.media/payload.cs\"}}");
             };
 
             AssetGenJob job = AssetGenJobManager.StartAudioGeneration(AudioReq());
@@ -247,15 +251,20 @@ namespace MCPForUnityTests.Editor.AssetGen
                     StringAssert.DoesNotEndWith(".cs", f);
         }
 
-        [Test]
-        public void FileSchemeDownloadUrl_Rejected_FailsJob()
+        [TestCase("file:///etc/passwd")]
+        [TestCase("http://127.0.0.1/private")]
+        [TestCase("https://169.254.169.254/metadata")]
+        [TestCase("https://[::1]/private")]
+        [TestCase("https://attacker.example/model.glb")]
+        [TestCase("https://tripo-data.rg1.data.tripo3d.com:8443/model.glb")]
+        public void UnsafeDownloadUrl_FailsJobWithoutRequestOrAsset(string url)
         {
             _fake.Handler = spec =>
             {
                 if (spec.Method == "POST" && spec.Url.EndsWith("/openapi/task"))
                     return Json("{\"code\":0,\"data\":{\"task_id\":\"task_abc\"}}");
-                // Poll succeeds but hands back a malicious local-file URL as the model.
-                return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"file:///etc/passwd\"}}}");
+                // Poll succeeds but hands back an unsafe URL as the model.
+                return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"" + url + "\"}}}");
             };
 
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
@@ -263,6 +272,8 @@ namespace MCPForUnityTests.Editor.AssetGen
 
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
             StringAssert.Contains("http", job.Error.ToLowerInvariant());
+            Assert.AreEqual(2, _fake.RecordedRequests.Count, "Only submit and poll may reach the transport.");
+            Assert.IsNull(job.AssetPath);
         }
 
         [Test]

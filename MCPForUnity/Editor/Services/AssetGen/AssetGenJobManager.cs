@@ -386,16 +386,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         break;
 
                     case RunnerPhase.Download:
-                        // The download URL comes from an untrusted provider response. Only fetch
-                        // http(s) — refuse file://, ftp://, etc. so a malicious response can't read
-                        // a local file into the project or hit an internal host.
-                        if (!IsAllowedDownloadUrl(r.DownloadUrl))
-                        {
-                            Fail(r, "Refusing to fetch a non-http(s) download URL returned by the provider.");
-                            break;
-                        }
+                        AssetDownloadPolicy.RequireAllowedUrl(r.Job.Provider, r.DownloadUrl);
                         r.DownloadTask = r.Transport.SendAsync(
-                            new HttpRequestSpec { Method = "GET", Url = r.DownloadUrl }, r.Cts.Token);
+                            new HttpRequestSpec { Method = "GET", Url = r.DownloadUrl, DownloadProvider = r.Job.Provider }, r.Cts.Token);
                         r.Phase = RunnerPhase.AwaitDownload;
                         break;
 
@@ -573,11 +566,6 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static bool IsTerminal(AssetGenJobState s)
             => s == AssetGenJobState.Done || s == AssetGenJobState.Failed || s == AssetGenJobState.Canceled;
-
-        /// <summary>Only http(s) download URLs are allowed; provider responses are untrusted.</summary>
-        private static bool IsAllowedDownloadUrl(string url)
-            => Uri.TryCreate(url, UriKind.Absolute, out Uri u)
-               && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp);
 
         private static double Now() => EditorApplication.timeSinceStartup;
 

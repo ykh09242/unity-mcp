@@ -14,5 +14,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         public Dictionary<string, string> Headers = new Dictionary<string, string>();
         public byte[] Body;
         public string ContentType;
+        /// <summary>Non-null for untrusted artifact downloads; selects the provider's outbound policy.</summary>
+        public string DownloadProvider;
     }
 }
