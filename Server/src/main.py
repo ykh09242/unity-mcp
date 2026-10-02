@@ -126,7 +126,7 @@ except Exception as exc:
     # Never let logging setup break startup
     logger.debug("Failed to configure main logger file handler", exc_info=exc)
 # Quieten noisy third-party loggers to avoid clutter during stdio handshake
-for noisy in ("httpx", "urllib3", "mcp.server.lowlevel.server"):
+for noisy in ("httpx", "httpx2", "httpcore2", "urllib3", "mcp.server.lowlevel.server"):
     try:
         logging.getLogger(noisy).setLevel(
             max(logging.WARNING, getattr(logging, config.log_level)))
@@ -314,8 +314,9 @@ This server provides tools to interact with the Unity Game Engine Editor.
 
 Targeting Unity instances:
 - Use the resource mcpforunity://instances to list active Unity sessions (Name@hash).
-- When multiple instances are connected, call set_active_instance with the exact Name@hash before using tools/resources to pin routing for the whole session. The server will error if multiple are connected and no active instance is set.
-- Alternatively, pass unity_instance as a parameter on any individual tool call to route just that call (e.g. unity_instance="MyGame@abc123", unity_instance="abc" for a hash prefix, or unity_instance="6401" for a port number in stdio mode). This does not change the session default.
+- When multiple instances are connected, specify the target for each request. Pass unity_instance as a tool argument (e.g. unity_instance="MyGame@abc123", unity_instance="abc" for a hash prefix, or unity_instance="6401" for a port number in stdio mode).
+- For resource reads, set request metadata _meta.unity_instance to the same identifier (FastMCP Python client: read_resource(uri, meta={{"unity_instance": "MyGame@abc123"}})). Per-request targeting does not change the session default.
+- Clients using a stateful legacy MCP protocol can call set_active_instance with an exact Name@hash to pin a session default. Modern sessionless clients must use per-request targeting; set_active_instance and persistent tool-group changes are unavailable.
 
 Important Workflows:
 

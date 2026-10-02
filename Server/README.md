@@ -11,11 +11,37 @@ Model Context Protocol server for Unity Editor integration. Control Unity throug
 
 The server uses FastMCP 4 and MCP SDK 2, supporting Python 3.10 and newer.
 Stateful MCP clients can use `set_active_instance` to select a Unity Editor for their session.
-Clients using the modern sessionless protocol must pass `unity_instance` on each tool call;
+Clients using the modern sessionless protocol must pass `unity_instance` on each tool call
+and `_meta.unity_instance` on each resource read for remote hosting or when local
+auto-selection is ambiguous;
 `set_active_instance` returns an explanatory error instead of reporting a selection that cannot persist.
 When using FastMCP's Python client and session selection is needed, connect with `Client(..., mode="legacy")`.
 The `activate`, `deactivate`, and `reset` actions of `manage_tools` also require a stateful handshake.
-Sessionless clients can list groups and use `sync` to refresh server defaults from Unity's tool toggles.
+Sessionless clients can list groups and, on local servers, use `sync` to refresh server defaults
+from Unity's tool toggles.
+Remote-hosted clients of either protocol see and can call the built-in tools enabled in their
+authenticated Unity plugin's catalog, including optional groups. Without a catalog, only
+server-side helper tools are available. Remote `sync` is unavailable because Unity pushes its catalog.
+
+For example, with FastMCP's Python client:
+
+```python
+await client.read_resource(
+    "mcpforunity://project/info", meta={"unity_instance": "MyGame@abc123"}
+)
+```
+
+The equivalent MCP `resources/read` request parameters are:
+
+```json
+{
+  "uri": "mcpforunity://project/info",
+  "_meta": { "unity_instance": "MyGame@abc123" }
+}
+```
+
+These selectors apply only to the current request. Clients that cannot attach resource
+metadata can use a stateful protocol and `set_active_instance` for a persistent default.
 
 **Maintained by [Coplay](https://www.coplay.dev/?ref=unity-mcp)** - This project is not affiliated with Unity Technologies.
 

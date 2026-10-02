@@ -28,9 +28,12 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
     Any .py file in this directory or subdirectories with @mcp_for_unity_tool decorated
     functions will be automatically registered.
 
-    After registration, non-default tool groups are disabled at the server level
+    On local HTTP servers, non-default tool groups are disabled at the server level
     so that new sessions only see the *core* tools (plus always-visible meta-tools).
-    Clients can activate additional groups at any time via ``manage_tools``.
+    Stateful clients can adjust their session's groups via ``manage_tools``.
+    Hosted remote servers use each authenticated user's Unity catalog instead;
+    request middleware filters discovery and rejects disabled tool calls.
+    A session override cannot grant access to a tool absent from that catalog.
     """
     logger.info("Auto-discovering MCP for Unity Server tools...")
     # Dynamic import of all modules in this directory
@@ -76,7 +79,10 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
     # Tools with group=None (no tag) are unaffected and always visible.
     from core.config import config as server_config
 
-    if (server_config.transport_mode or "stdio").lower() == "http":
+    transport_mode = (server_config.transport_mode or "stdio").lower()
+    if transport_mode == "http" and server_config.http_remote_hosted:
+        logger.info("Remote HTTP transport: tool availability follows each user's Unity catalog.")
+    elif transport_mode == "http":
         groups_to_disable = set(TOOL_GROUPS.keys()) - DEFAULT_ENABLED_GROUPS
         for group_name in sorted(groups_to_disable):
             tag = f"group:{group_name}"

@@ -338,12 +338,11 @@ class UnityInstanceMiddleware(Middleware):
         if user_id:
             await ctx.set_state("user_id", user_id, serializable=False)
 
-        # Per-call routing: check if this tool call explicitly specifies unity_instance.
-        # context.message.arguments is a mutable dict on CallToolRequestParams; resource
-        # reads use ReadResourceRequestParams which has no .arguments, so this is a no-op for them.
-        # We pop the key here so Pydantic's type_adapter.validate_python() never sees it.
+        # Tools supply the selector in arguments; resource requests use _meta.
+        # Remove the tool argument before FastMCP validates the tool signature.
         active_instance: str | None = None
-        msg_args = getattr(getattr(context, "message", None), "arguments", None)
+        message = getattr(context, "message", None)
+        msg_args = getattr(message, "arguments", None)
         if isinstance(msg_args, dict) and "unity_instance" in msg_args:
             raw = msg_args.pop("unity_instance")
             if raw is not None:
@@ -352,6 +351,14 @@ class UnityInstanceMiddleware(Middleware):
                     # Raises ValueError with a user-friendly message on invalid input.
                     active_instance = await self._resolve_instance_value(raw_str, ctx)
                     logger.debug("Per-call unity_instance resolved to: %s", active_instance)
+
+        if msg_args is None:
+            metadata = getattr(getattr(ctx, "request_context", None), "meta", None)
+            if isinstance(metadata, dict) and "unity_instance" in metadata:
+                raw = metadata["unity_instance"]
+                if not isinstance(raw, str) or not raw.strip():
+                    raise ValueError("Request metadata unity_instance must be a nonempty string")
+                active_instance = await self._resolve_instance_value(raw.strip(), ctx)
 
         if not active_instance:
             active_instance = await self.get_active_instance(ctx)
@@ -404,6 +411,12 @@ class UnityInstanceMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into tool context if available."""
         await self._inject_unity_instance(context)
+        if config.http_remote_hosted:
+            self._refresh_tool_visibility_metadata_from_registry()
+            tool_name = getattr(context.message, "name", None)
+            enabled_names = await self._resolve_enabled_tool_names_for_context(context)
+            if not self._is_tool_visible(tool_name, enabled_names or set()):
+                raise ValueError(f"Tool '{tool_name}' is disabled or unavailable for this Unity instance")
         return await call_next(context)
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
@@ -444,15 +457,17 @@ class UnityInstanceMiddleware(Middleware):
             len(tools), tool_names_from_fastmcp,
         )
 
-        if not self._should_filter_tool_listing():
+        if not self._should_filter_tool_listing() and not config.http_remote_hosted:
             _diag.debug("on_list_tools: skipping middleware filter (not HTTP or PluginHub not configured)")
             return tools
 
         self._refresh_tool_visibility_metadata_from_registry()
         enabled_tool_names = await self._resolve_enabled_tool_names_for_context(context)
         if enabled_tool_names is None:
-            _diag.debug("on_list_tools: no Unity session data, returning %d tools from FastMCP as-is", len(tools))
-            return tools
+            if not config.http_remote_hosted:
+                _diag.debug("on_list_tools: no Unity session data, returning %d tools from FastMCP as-is", len(tools))
+                return tools
+            enabled_tool_names = set()
 
         filtered = []
         for tool in tools:
