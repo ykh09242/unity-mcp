@@ -17,6 +17,7 @@ def remote_app(monkeypatch):
     from main import create_mcp_server
 
     monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setattr(config, "http_behind_tls_proxy", True)
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "api_key_validation_url", None)
     monkeypatch.setattr(config, "api_key_login_url", "https://auth.example/keys")
@@ -101,6 +102,15 @@ def test_uninitialized_validator_is_closed(remote_app, monkeypatch):
     app, _ = remote_app
     monkeypatch.setattr(ApiKeyService, "_instance", None)
     assert TestClient(app).post("/mcp", headers={"X-API-Key": "alice-key"}).status_code == 401
+
+
+def test_embedded_remote_app_requires_explicit_tls_proxy(monkeypatch):
+    from main import UnityMCP
+
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setattr(config, "http_behind_tls_proxy", False)
+    with pytest.raises(ValueError, match="HTTPS/WSS proxy"):
+        UnityMCP("unconfigured-remote").http_app()
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "invalid-key"}])

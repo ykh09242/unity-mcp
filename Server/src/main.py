@@ -394,6 +394,11 @@ class UnityMCP(FastMCP):
         event_store: "EventStore | None" = None,
         retry_interval: int | None = None,
     ) -> "StarletteWithLifespan":
+        if config.http_remote_hosted and not config.http_behind_tls_proxy:
+            raise ValueError(
+                "Remote HTTP requires a private backend behind an HTTPS/WSS proxy; "
+                "configure http_behind_tls_proxy only after securing that boundary"
+            )
         app = super().http_app(
             path=path,
             middleware=middleware,
@@ -705,6 +710,7 @@ Environment Variables:
   UNITY_MCP_HTTP_URL   HTTP server URL (default: http://127.0.0.1:8080)
   UNITY_MCP_HTTP_HOST   HTTP server host (overrides URL host)
   UNITY_MCP_HTTP_PORT   HTTP server port (overrides URL port)
+  UNITY_MCP_HTTP_BEHIND_TLS_PROXY   Confirm the remote HTTP backend is private behind HTTPS/WSS
 
 Examples:
   # Use specific Unity project as default
@@ -764,6 +770,13 @@ Examples:
         action="store_true",
         help="Treat HTTP transport as remotely hosted (forces explicit Unity instance selection). "
              "Can also set via UNITY_MCP_HTTP_REMOTE_HOSTED=true."
+    )
+    parser.add_argument(
+        "--http-behind-tls-proxy",
+        action="store_true",
+        help="Confirm this HTTP backend is private behind an HTTPS/WSS reverse proxy. "
+             "Required for remote-hosted mode; does not enable TLS on the backend. "
+             "Can also set via UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true."
     )
     parser.add_argument(
         "--api-key-validation-url",
@@ -847,6 +860,10 @@ Examples:
         bool(args.http_remote_hosted)
         or os.environ.get("UNITY_MCP_HTTP_REMOTE_HOSTED", "").lower() in ("true", "1", "yes", "on")
     )
+    config.http_behind_tls_proxy = (
+        bool(args.http_behind_tls_proxy)
+        or os.environ.get("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", "").lower() in ("true", "1", "yes", "on")
+    )
 
     # API key authentication configuration
     config.api_key_validation_url = (
@@ -883,6 +900,15 @@ Examples:
         logger.error(
             "--http-remote-hosted requires --api-key-validation-url or "
             "UNITY_MCP_API_KEY_VALIDATION_URL environment variable"
+        )
+        raise SystemExit(1)
+
+    if config.http_remote_hosted and config.transport_mode == "http" and not config.http_behind_tls_proxy:
+        logger.error(
+            "Remote HTTP requires an HTTPS/WSS reverse proxy and a private backend. "
+            "Bind the backend to loopback or an unpublished container network, then "
+            "set --http-behind-tls-proxy or UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true. "
+            "This assertion does not enable TLS; do not publish the HTTP backend."
         )
         raise SystemExit(1)
 

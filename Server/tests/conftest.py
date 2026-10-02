@@ -74,6 +74,7 @@ def restore_global_config():
     prior = {
         "transport_mode": global_config.transport_mode,
         "http_remote_hosted": global_config.http_remote_hosted,
+        "http_behind_tls_proxy": global_config.http_behind_tls_proxy,
         "local_auth_token": global_config.local_auth_token,
         "api_key_validation_url": global_config.api_key_validation_url,
         "api_key_login_url": global_config.api_key_login_url,

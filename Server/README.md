@@ -164,6 +164,7 @@ These options apply to the `mcp-for-unity` command (whether run via `uvx`, Docke
   - Disables local/CLI-only HTTP routes (`/api/command`, `/api/instances`, `/api/custom-tools`)
   - Forces explicit Unity instance selection for MCP tool/resource calls
   - Isolates Unity sessions per user
+- `--http-behind-tls-proxy` - Required for remote HTTP; confirms the backend is private behind an HTTPS/WSS proxy. This flag does not enable TLS itself.
 - `--api-key-validation-url URL` - External endpoint to validate API keys (required when `--http-remote-hosted` is set)
 - `--api-key-login-url URL` - URL where users can obtain/manage API keys (served by `/api/auth/login-url`)
 - `--api-key-cache-ttl SECONDS` - Cache duration for validated keys (default: `300`)
@@ -181,6 +182,7 @@ These options apply to the `mcp-for-unity` command (whether run via `uvx`, Docke
 - `UNITY_MCP_HTTP_HOST` - HTTP bind host (overrides URL host)
 - `UNITY_MCP_HTTP_PORT` - HTTP bind port (overrides URL port)
 - `UNITY_MCP_HTTP_REMOTE_HOSTED` - Enable remote-hosted mode (`true`, `1`, or `yes`)
+- `UNITY_MCP_HTTP_BEHIND_TLS_PROXY` - Confirm the remote HTTP backend is private behind an HTTPS/WSS proxy
 - `UNITY_MCP_DEFAULT_INSTANCE` - Default Unity instance to target (project name, hash, or `Name@hash`)
 - `UNITY_MCP_SKIP_STARTUP_CONNECT=1` - Skip initial Unity connection attempt on startup
 - `UNITY_MCP_LOG_DIR` - Override the rotating server log directory. Default: `%LOCALAPPDATA%\UnityMCP\Logs` (Windows), `~/Library/Application Support/UnityMCP/Logs` (macOS), `$XDG_STATE_HOME/UnityMCP/Logs` (Linux/BSD, defaults to `~/.local/state/UnityMCP/Logs`).
@@ -215,14 +217,17 @@ uvx --from mcpforunityserver mcp-for-unity --transport stdio
 uvx --from mcpforunityserver mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
-**HTTP (remote-hosted with API key auth):**
+**Remote HTTPS (private backend behind a TLS proxy, with API key auth):**
+
+Configure the proxy first using the [HTTPS deployment guide](../website/docs/guides/remote-server-auth.md#https-deployment). Bind the Python backend to loopback when the proxy is on the same host:
 
 ```bash
 uvx --from mcpforunityserver mcp-for-unity \
   --transport http \
-  --http-host 0.0.0.0 \
+  --http-host 127.0.0.1 \
   --http-port 8080 \
   --http-remote-hosted \
+  --http-behind-tls-proxy \
   --api-key-validation-url https://auth.example.com/api/validate-key \
   --api-key-login-url https://app.example.com/api-keys
 ```
@@ -241,13 +246,14 @@ When deploying the server as a shared remote service (e.g. for a team or Asset S
 
 **Requirements:**
 
-- An external HTTP endpoint that validates API keys. The server POSTs `{"api_key": "..."}` and expects `{"valid": true, "user_id": "..."}` or `{"valid": false}` in response.
+- A trusted HTTPS reverse proxy for MCP requests and WSS plugin connections. Keep the HTTP backend on loopback or an unpublished container network; never expose it directly. `--http-behind-tls-proxy` (or `UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true`) explicitly confirms this boundary and is required at startup. `--http-url https://...` alone does not configure TLS.
+- An external HTTPS endpoint that validates API keys. The server POSTs `{"api_key": "..."}` and expects `{"valid": true, "user_id": "..."}` or `{"valid": false}` in response.
 - `--api-key-validation-url` must be provided (or `UNITY_MCP_API_KEY_VALIDATION_URL`). The server exits with code 1 if this is missing.
 - The validation URL must be absolute HTTPS without embedded credentials or a fragment. Plaintext URLs, including loopback, are rejected before authentication starts. Validation redirects are not followed. HTTPX honors proxy and certificate environment settings, so only use trusted proxies and CA configuration on the server host.
 
 **What changes in remote-hosted mode:**
 
-- All MCP tool/resource calls and Unity plugin WebSocket connections require a valid `X-API-Key` header.
+- Every MCP HTTP request (including initialization and catalogs) and Unity plugin WebSocket upgrade requires exactly one valid `X-API-Key` header. Authentication failures are rejected before dispatch.
 - Each user only sees Unity instances that connected with their API key (session isolation).
 - Auto-selection of a sole Unity instance is disabled; users must explicitly call `set_active_instance`.
 - CLI REST routes (`/api/command`, `/api/instances`, `/api/custom-tools`) are disabled.
@@ -259,7 +265,7 @@ When deploying the server as a shared remote service (e.g. for a team or Asset S
 {
   "mcpServers": {
     "UnityMCP": {
-      "url": "http://remote-server:8080/mcp",
+      "url": "https://mcp.example.com/mcp",
       "headers": {
         "X-API-Key": "<your-api-key>"
       }
@@ -268,7 +274,7 @@ When deploying the server as a shared remote service (e.g. for a team or Asset S
 }
 ```
 
-For full details, see [Remote Server Auth Guide](../docs/guides/REMOTE_SERVER_AUTH.md) and [Architecture Reference](../docs/reference/REMOTE_SERVER_AUTH_ARCHITECTURE.md).
+For full details, see [Remote Server Auth Guide](../website/docs/guides/remote-server-auth.md) and [Architecture Reference](../website/docs/architecture/remote-auth.md). The repository's `docker-compose.remote.yml` provides a Caddy HTTPS proxy with an unpublished backend.
 
 ---
 

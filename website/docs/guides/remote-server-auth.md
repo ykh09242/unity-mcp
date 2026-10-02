@@ -8,7 +8,7 @@ This guide covers how to configure, deploy, and use the feature.
 
 ### External Auth Service
 
-You need an external HTTP endpoint that validates API keys. The server delegates all key validation to this endpoint rather than managing keys itself.
+You need an external HTTPS endpoint that validates API keys. The server delegates all key validation to this endpoint rather than managing keys itself.
 
 The endpoint must:
 
@@ -29,6 +29,7 @@ API key authentication is only available when running with HTTP transport (`--tr
 | Argument | Environment Variable | Default | Description |
 | -------- | -------------------- | ------- | ----------- |
 | `--http-remote-hosted` | `UNITY_MCP_HTTP_REMOTE_HOSTED` | `false` | Enable remote-hosted mode. Requires API key auth. |
+| `--http-behind-tls-proxy` | `UNITY_MCP_HTTP_BEHIND_TLS_PROXY` | `false` | Confirm a private HTTP backend behind an HTTPS/WSS proxy (required for remote hosting). Does not enable TLS itself. |
 | `--api-key-validation-url URL` | `UNITY_MCP_API_KEY_VALIDATION_URL` | None | External endpoint to validate API keys (required). |
 | `--api-key-login-url URL` | `UNITY_MCP_API_KEY_LOGIN_URL` | None | URL where users can obtain or manage API keys. |
 | `--api-key-cache-ttl SECONDS` | `UNITY_MCP_API_KEY_CACHE_TTL` | `300` | How long validated keys are cached (seconds). |
@@ -42,16 +43,22 @@ Environment variables take effect when the corresponding CLI argument is not pro
 The server validates its configuration at startup:
 
 - If `--http-remote-hosted` is set but `--api-key-validation-url` is not provided (and the env var is also unset), the server logs an error and exits with code 1.
+- Remote HTTP startup also requires `--http-behind-tls-proxy` (or its environment variable). Configure HTTPS first and keep the backend reachable only by the proxy on loopback or an unpublished container network. Setting an `https://` value for `--http-url` alone does not enable TLS on this listener.
 - The validation endpoint must use absolute HTTPS, with no embedded credentials or URL fragment. Plaintext endpoints (including loopback) are rejected at initialization, and redirects are not followed. HTTPX honors the host's proxy and certificate environment settings; configure only trusted proxies and certificate authorities.
 
-### Example
+### HTTPS deployment
+
+Clients must connect over **HTTPS**, and Unity's plugin connection must use **WSS**. The Python listener is a private HTTP backend. Terminate TLS at a reverse proxy with a trusted certificate; never publish the backend port directly to clients.
+
+For a proxy on the same machine, bind the backend to loopback:
 
 ```bash
-python -m src.main \
+uv run --directory Server mcp-for-unity \
   --transport http \
-  --http-host 0.0.0.0 \
+  --http-host 127.0.0.1 \
   --http-port 8080 \
   --http-remote-hosted \
+  --http-behind-tls-proxy \
   --api-key-validation-url https://auth.example.com/api/validate-key \
   --api-key-login-url https://app.example.com/api-keys \
   --api-key-cache-ttl 120
@@ -61,14 +68,38 @@ Or using environment variables:
 
 ```bash
 export UNITY_MCP_TRANSPORT=http
-export UNITY_MCP_HTTP_HOST=0.0.0.0
+export UNITY_MCP_HTTP_HOST=127.0.0.1
 export UNITY_MCP_HTTP_PORT=8080
 export UNITY_MCP_HTTP_REMOTE_HOSTED=true
+export UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true
 export UNITY_MCP_API_KEY_VALIDATION_URL=https://auth.example.com/api/validate-key
 export UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys
 
-python -m src.main
+uv run --directory Server mcp-for-unity --transport http
 ```
+
+For example, run Caddy on the same host with this configuration, substituting a public DNS hostname that resolves to that host:
+
+```caddyfile
+https://mcp.example.com {
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}
+```
+
+Caddy obtains and renews certificates automatically and forwards WebSocket upgrades and streaming MCP responses. Permit inbound ports 80 and 443 for the proxy and certificate challenges; keep port 8080 private. See the [Caddy HTTPS documentation](https://caddyserver.com/docs/automatic-https) and [reverse proxy reference](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+
+The repository also includes `docker-compose.remote.yml` and `Server/deploy/Caddyfile.remote`. From the repository root:
+
+```bash
+export MCP_DOMAIN=mcp.example.com
+export UNITY_MCP_API_KEY_VALIDATION_URL=https://auth.example.com/api/validate-key
+export UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys
+docker compose -f docker-compose.remote.yml up -d --build
+```
+
+Run this Compose file on its own; combining it with the local `docker-compose.yml` would publish the backend port. Only Caddy publishes ports in the remote example. The backend uses the Compose network for proxy requests and outbound HTTPS for key validation. Do not put the proxy-to-backend hop across an untrusted network; use TLS for that hop if the services are on separate hosts. For ASGI embedding, configure the same private boundary and set `config.http_behind_tls_proxy = True` before calling `http_app()`.
 
 ### Service Token (Optional)
 
@@ -89,7 +120,7 @@ When connecting to a remote-hosted server, Unity users need to provide their API
 
 1. Open the MCP for Unity window in the Unity Editor.
 2. Select HTTP Remote as the connection mode.
-3. Enter the API key in the API Key field. The key is stored in `EditorPrefs` (per-machine, not source-controlled).
+3. Set the server URL to `https://mcp.example.com` and enter the API key in the API Key field. The key is stored in `EditorPrefs` (per-machine, not source-controlled). Keep **Allow Insecure Remote HTTP** disabled. The plugin derives its `wss://` connection from this HTTPS URL.
 4. Click **Get API Key** to open the login URL in a browser if you need a new key. This fetches the URL from the server's `/api/auth/login-url` endpoint.
 
 The API key is a one-time entry per machine. It persists across Unity sessions until explicitly cleared.
@@ -104,7 +135,7 @@ Example generated config for **Cursor** (`~/.cursor/mcp.json`):
 {
   "mcpServers": {
     "mcp-for-unity": {
-      "url": "http://remote-server:8080/mcp",
+      "url": "https://mcp.example.com/mcp",
       "headers": {
         "X-API-Key": "<your-api-key>"
       }
@@ -116,7 +147,7 @@ Example generated config for **Cursor** (`~/.cursor/mcp.json`):
 Example for **Claude Code** (CLI):
 
 ```bash
-claude mcp add --transport http mcp-for-unity http://remote-server:8080/mcp \
+claude mcp add --transport http mcp-for-unity https://mcp.example.com/mcp \
   --header "X-API-Key: <your-api-key>"
 ```
 
@@ -232,6 +263,7 @@ Transient failures (5xx, timeouts, network errors) are **not cached**, so subseq
 | WebSocket connect | Missing, duplicate, invalid, or unverifiable API key | Upgrade rejected (ASGI close `1008`) |
 | `/api/auth/login-url` | Login URL not configured | HTTP `404` with admin guidance message |
 | Server startup | Remote-hosted without validation URL | `SystemExit(1)` |
+| Server startup | Remote-hosted without explicit TLS proxy configuration | `SystemExit(1)` |
 
 ## Troubleshooting
 
@@ -247,7 +279,7 @@ The server is in remote-hosted mode but no API key is being sent. Ensure the MCP
 
 ### Server exits immediately with code 1
 
-The `--http-remote-hosted` flag requires `--api-key-validation-url`. Provide the URL via CLI argument or `UNITY_MCP_API_KEY_VALIDATION_URL` environment variable.
+Remote hosting requires both `--api-key-validation-url` and `--http-behind-tls-proxy` (or their environment variables). Set the proxy assertion only after configuring HTTPS/WSS and restricting access to the backend. See [HTTPS deployment](#https-deployment).
 
 ### WebSocket upgrade is rejected
 

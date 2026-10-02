@@ -65,19 +65,20 @@ docker run -p 8080:8080 -e LOG_LEVEL=DEBUG msanatan/mcp-for-unity-server:latest
 
 ## Remote-Hosted Mode
 
-To deploy as a shared remote service with API key authentication and per-user session isolation, pass `--http-remote-hosted` along with an API key validation URL:
+Remote clients must use HTTPS and Unity plugins must use WSS. The Python server is a private HTTP backend behind a TLS proxy. Use the repository's `docker-compose.remote.yml`, which builds the current source and publishes only the Caddy proxy's ports. From the repository root:
 
 ```bash
-docker run -p 8080:8080 \
-  -e UNITY_MCP_HTTP_REMOTE_HOSTED=true \
-  -e UNITY_MCP_API_KEY_VALIDATION_URL=https://auth.example.com/api/validate-key \
-  -e UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys \
-  msanatan/mcp-for-unity-server:latest
+export MCP_DOMAIN=mcp.example.com
+export UNITY_MCP_API_KEY_VALIDATION_URL=https://auth.example.com/api/validate-key
+export UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys
+docker compose -f docker-compose.remote.yml up -d --build
 ```
+
+Point the domain at the Docker host and allow inbound ports 80 and 443 for Caddy's certificate issuance and HTTPS service. Do not combine this Compose file with the local one, add a backend `ports` mapping, or send API keys to an HTTP URL. Keep the proxy-to-backend hop on the private host network. When configuring another proxy, explicitly set `UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true` only after securing that boundary; the server refuses remote startup without it, and the setting itself does not enable TLS.
 
 In this mode:
 
-- All MCP tool/resource calls and Unity plugin WebSocket connections require a valid `X-API-Key` header.
+- All MCP HTTP requests, including initialization and catalogs, and Unity plugin WebSocket upgrades require a valid `X-API-Key` header.
 - Each user only sees Unity instances that connected with their API key.
 - Users must explicitly call `set_active_instance` to select a Unity instance.
 
@@ -86,6 +87,7 @@ In this mode:
 | Variable | Description |
 |----------|-------------|
 | `UNITY_MCP_HTTP_REMOTE_HOSTED` | Enable remote-hosted mode (`true`, `1`, or `yes`) |
+| `UNITY_MCP_HTTP_BEHIND_TLS_PROXY` | Required: confirm a private backend behind an HTTPS/WSS proxy |
 | `UNITY_MCP_API_KEY_VALIDATION_URL` | External endpoint to validate API keys (required) |
 | `UNITY_MCP_API_KEY_LOGIN_URL` | URL where users can obtain/manage API keys |
 | `UNITY_MCP_API_KEY_CACHE_TTL` | Cache TTL for validated keys in seconds (default: `300`) |
@@ -98,7 +100,7 @@ In this mode:
 {
   "mcpServers": {
     "UnityMCP": {
-      "url": "http://your-server:8080/mcp",
+      "url": "https://mcp.example.com/mcp",
       "headers": {
         "X-API-Key": "<your-api-key>"
       }
@@ -107,7 +109,7 @@ In this mode:
 }
 ```
 
-For full details, see the [Remote Server Auth Guide](https://github.com/CoplayDev/unity-mcp/blob/main/docs/guides/REMOTE_SERVER_AUTH.md).
+For full details, see the [Remote Server Auth Guide](../website/docs/guides/remote-server-auth.md).
 
 ---
 

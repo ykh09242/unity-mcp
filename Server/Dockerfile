@@ -30,7 +30,7 @@ ENV PYTHONPATH=/app/Server/src
 
 # ENTRYPOINT allows override via docker run arguments
 # Default: stdio transport (Docker MCP Gateway compatible)
-# For HTTP: docker run -p 8080:8080 <image> --transport http --http-host 0.0.0.0 --http-port 8080
-# If hosting remotely, you should add the --project-scoped-tools flag
+# For local HTTP, publish only to 127.0.0.1 and supply the per-launch token.
+# For remote hosting, use docker-compose.remote.yml with HTTPS and no backend port publication.
 ENTRYPOINT ["uv", "run", "mcp-for-unity"]
 CMD []

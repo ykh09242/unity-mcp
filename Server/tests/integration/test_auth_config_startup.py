@@ -23,6 +23,50 @@ def _restore_config(monkeypatch):
 
 
 class TestStartupConfigValidation:
+    @pytest.mark.parametrize("proxy_env", [None, "false", "0", "invalid"])
+    def test_remote_http_requires_explicit_tls_proxy(self, monkeypatch, proxy_env):
+        import main as entry
+
+        monkeypatch.setattr(sys, "argv", [
+            "main", "--transport", "http", "--http-remote-hosted",
+            "--api-key-validation-url", "https://auth.example/validate",
+        ])
+        monkeypatch.delenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", raising=False)
+        if proxy_env is not None:
+            monkeypatch.setenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", proxy_env)
+        create = MagicMock()
+        monkeypatch.setattr(entry, "create_mcp_server", create)
+
+        with pytest.raises(SystemExit) as denied:
+            entry.main()
+        assert denied.value.code == 1
+        create.assert_not_called()
+
+    @pytest.mark.parametrize("use_env", [False, True])
+    def test_private_remote_backend_starts_with_explicit_tls_proxy(self, monkeypatch, use_env):
+        import main as entry
+
+        arguments = [
+            "main", "--transport", "http", "--http-remote-hosted",
+            "--api-key-validation-url", "https://auth.example/validate",
+            "--http-host", "127.0.0.1", "--http-port", "8099",
+        ]
+        monkeypatch.delenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", raising=False)
+        if use_env:
+            monkeypatch.setenv("UNITY_MCP_HTTP_BEHIND_TLS_PROXY", "true")
+        else:
+            arguments.append("--http-behind-tls-proxy")
+        monkeypatch.setattr(sys, "argv", arguments)
+        monkeypatch.setenv("UNITY_MCP_HTTP_HOST", "127.0.0.1")
+        monkeypatch.setenv("UNITY_MCP_HTTP_PORT", "8099")
+        server = MagicMock()
+        monkeypatch.setattr(entry, "create_mcp_server", MagicMock(return_value=server))
+
+        entry.main()
+
+        assert config.http_remote_hosted and config.http_behind_tls_proxy
+        server.run.assert_called_once_with(transport="http", host="127.0.0.1", port=8099)
+
     def test_remote_hosted_flag_without_validation_url_exits(self, monkeypatch):
         """--http-remote-hosted without --api-key-validation-url should SystemExit(1)."""
         monkeypatch.setattr(

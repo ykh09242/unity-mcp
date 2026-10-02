@@ -40,6 +40,8 @@ class ServerConfig:
 
     # HTTP transport behaviour
     http_remote_hosted: bool = False
+    # Explicit deployment assertion: the HTTP backend is private behind HTTPS/WSS.
+    http_behind_tls_proxy: bool = False
     # Set only for this process launch; never include the secret in config reprs.
     local_auth_token: str | None = field(default=None, repr=False)
 

@@ -1,0 +1,7 @@
+# A public DNS hostname enables automatic certificate management.
+https://{$MCP_DOMAIN} {
+    reverse_proxy unity-mcp-server:8080 {
+        # Deliver MCP streaming responses immediately; WebSockets also work.
+        flush_interval -1
+    }
+}

@@ -1,0 +1,39 @@
+# Run this file by itself; do not merge it with the local compose file.
+services:
+  unity-mcp-server:
+    build:
+      context: .
+      dockerfile: Server/Dockerfile
+    restart: unless-stopped
+    # Deliberately no published ports: only the proxy can reach this backend
+    # from outside the host. The auth service still needs outbound HTTPS.
+    expose:
+      - "8080"
+    environment:
+      UNITY_MCP_HTTP_REMOTE_HOSTED: "true"
+      UNITY_MCP_HTTP_BEHIND_TLS_PROXY: "true"
+      UNITY_MCP_API_KEY_VALIDATION_URL: "${UNITY_MCP_API_KEY_VALIDATION_URL:?Set an HTTPS API key validation URL}"
+      UNITY_MCP_API_KEY_LOGIN_URL: "${UNITY_MCP_API_KEY_LOGIN_URL:-}"
+      UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER: "${UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER:-}"
+      UNITY_MCP_API_KEY_SERVICE_TOKEN: "${UNITY_MCP_API_KEY_SERVICE_TOKEN:-}"
+      UNITY_MCP_SKIP_STARTUP_CONNECT: "1"
+    command: ["--transport", "http", "--http-host", "0.0.0.0", "--http-port", "8080", "--project-scoped-tools"]
+
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - unity-mcp-server
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      MCP_DOMAIN: "${MCP_DOMAIN:?Set the public DNS hostname without a scheme or path}"
+    volumes:
+      - ./Server/deploy/Caddyfile.remote:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
