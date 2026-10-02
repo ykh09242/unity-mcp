@@ -14,6 +14,17 @@ def _coerce_cli_value(value: str):
         return value
 
 
+def _parse_properties(properties):
+    """Parse every key=value argument before sending a configuration request."""
+    parsed = {}
+    for item in properties:
+        key, separator, value = item.partition("=")
+        if not separator or not key:
+            raise click.BadParameter(f"Expected key=value, got {item!r}.", param_hint="properties")
+        parsed[key] = _coerce_cli_value(value)
+    return parsed
+
+
 @click.group("physics")
 def physics():
     """Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries, validation."""
@@ -184,7 +195,7 @@ def simulate(steps, step_size, dimension):
 def configure_material(path, dimension, properties):
     """Configure a physics material asset (key=value ...)."""
     config = get_config()
-    props = {k: _coerce_cli_value(v) for kv in properties if "=" in kv for k, v in [kv.split("=", 1)]}
+    props = _parse_properties(properties)
     result = run_command(
         "manage_physics",
         {"action": "configure_physics_material", "path": path, "dimension": dimension, "properties": props},
@@ -252,7 +263,7 @@ def add_joint(target, joint_type, connected_body, dimension):
 def configure_joint(target, joint_type, component_index, properties):
     """Configure a joint on a GameObject (key=value ...)."""
     config = get_config()
-    props = {k: _coerce_cli_value(v) for kv in properties if "=" in kv for k, v in [kv.split("=", 1)]}
+    props = _parse_properties(properties)
     params = {"action": "configure_joint", "target": target, "properties": props}
     if joint_type:
         params["joint_type"] = joint_type
@@ -433,7 +444,7 @@ def get_rigidbody(target, dimension, search_method):
 def configure_rigidbody(target, dimension, properties):
     """Configure Rigidbody properties (key=value ...)."""
     config = get_config()
-    props = {k: _coerce_cli_value(v) for kv in properties if "=" in kv for k, v in [kv.split("=", 1)]}
+    props = _parse_properties(properties)
     params = {"action": "configure_rigidbody", "target": target, "properties": props}
     if dimension:
         params["dimension"] = dimension
