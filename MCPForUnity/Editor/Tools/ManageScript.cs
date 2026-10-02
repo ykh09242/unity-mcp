@@ -744,17 +744,19 @@ namespace MCPForUnity.Editor.Tools
             private readonly string _text;
             private int _pos;
             private readonly int _end;
+            private readonly int _literalDepth;
             private int _line;
 
             // String/comment state
             private bool _inSingleComment;
             private bool _inMultiComment;
 
-            public CSharpLexer(string text, int start = 0, int end = -1)
+            public CSharpLexer(string text, int start = 0, int end = -1, int literalDepth = 0)
             {
                 _text = text;
                 _pos = start;
                 _end = end < 0 ? text.Length : end;
+                _literalDepth = literalDepth;
                 _line = 1;
                 // count newlines before start
                 for (int i = 0; i < start && i < text.Length; i++)
@@ -910,19 +912,7 @@ namespace MCPForUnity.Editor.Tools
                         // Inside interpolation hole — this is code, scan for nested strings/braces
                         if (ch == '{') { interpDepth++; _pos++; continue; }
                         if (ch == '}') { interpDepth--; _pos++; continue; }
-                        if (ch == '"')
-                        {
-                            // Nested string inside interpolation hole
-                            _pos++;
-                            while (_pos < _end)
-                            {
-                                if (_text[_pos] == '\\') { _pos += 2; continue; }
-                                if (_text[_pos] == '"') { _pos++; break; }
-                                if (_text[_pos] == '\n') _line++;
-                                _pos++;
-                            }
-                            continue;
-                        }
+                        if (SkipNestedInterpolationLiteral()) continue;
                         if (ch == '/' && _pos + 1 < _end)
                         {
                             if (_text[_pos + 1] == '/') { _pos += 2; while (_pos < _end && _text[_pos] != '\n') _pos++; continue; }
@@ -974,24 +964,12 @@ namespace MCPForUnity.Editor.Tools
                         // Inside interpolation hole — code context
                         if (ch == '{') { interpDepth++; _pos++; continue; }
                         if (ch == '}') { interpDepth--; _pos++; continue; }
-                        if (ch == '"')
-                        {
-                            _pos++;
-                            while (_pos < _end)
-                            {
-                                if (_text[_pos] == '\\') { _pos += 2; continue; }
-                                if (_text[_pos] == '"') { _pos++; break; }
-                                if (_text[_pos] == '\n') _line++;
-                                _pos++;
-                            }
-                            continue;
-                        }
+                        if (SkipNestedInterpolationLiteral()) continue;
                         if (ch == '/' && _pos + 1 < _end)
                         {
                             if (_text[_pos + 1] == '/') { _pos += 2; while (_pos < _end && _text[_pos] != '\n') _pos++; continue; }
                             if (_text[_pos + 1] == '*') { _pos += 2; while (_pos + 1 < _end && !(_text[_pos] == '*' && _text[_pos + 1] == '/')) { if (_text[_pos] == '\n') _line++; _pos++; } if (_pos + 1 < _end) _pos += 2; continue; }
                         }
-                        if (ch == '\'') { _pos++; while (_pos < _end) { if (_text[_pos] == '\\') { _pos += 2; continue; } if (_text[_pos] == '\'') { _pos++; break; } _pos++; } continue; }
                         _pos++;
                         continue;
                     }
@@ -1038,6 +1016,19 @@ namespace MCPForUnity.Editor.Tools
 
                     _pos++;
                 }
+            }
+            private bool SkipNestedInterpolationLiteral()
+            {
+                char c = _text[_pos];
+                if (c != '"' && c != '\'' && c != '@' && c != '$') return false;
+                // Unusually deep nested literals are left opaque and rejected by the
+                // existing delimiter guard, rather than risking unbounded recursion.
+                if (_literalDepth >= 64) { _pos = _end; return true; }
+                var nested = new CSharpLexer(_text, _pos, _end, _literalDepth + 1);
+                if (!nested.Advance(out _) || !nested.InNonCode || nested.Position <= _pos + 1) return false;
+                int end = Math.Min(_end, nested.Position);
+                while (_pos < end) { if (_text[_pos] == '\n') _line++; _pos++; }
+                return true;
             }
         }
 
@@ -1141,6 +1132,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 var replacements = new List<(int start, int length, string text)>();
+                var structuralInsertions = new HashSet<int>();
                 int appliedCount = 0;
 
                 // Apply mode: atomic (default) computes all spans against original and applies together.
@@ -1172,14 +1164,16 @@ namespace MCPForUnity.Editor.Tools
                                 if (!ValidateClassSnippet(replacement, className, out var vErr))
                                     return new ErrorResponse($"Replacement snippet invalid: {vErr}");
 
+                                replacement = FormatStructuralReplacement(working, spanStart, spanLength, replacement);
+
                                 if (applySequentially)
                                 {
-                                    working = working.Remove(spanStart, spanLength).Insert(spanStart, NormalizeNewlines(replacement));
+                                    working = working.Remove(spanStart, spanLength).Insert(spanStart, replacement);
                                     appliedCount++;
                                 }
                                 else
                                 {
-                                    replacements.Add((spanStart, spanLength, NormalizeNewlines(replacement)));
+                                    replacements.Add((spanStart, spanLength, replacement));
                                 }
                                 break;
                             }
@@ -1233,14 +1227,15 @@ namespace MCPForUnity.Editor.Tools
                                     return new ErrorResponse($"replace_method failed: {whyMethod}.{hint}");
                                 }
 
+                                replacement = FormatStructuralReplacement(working, mStart, mLen, replacement, clsStart, clsLen);
                                 if (applySequentially)
                                 {
-                                    working = working.Remove(mStart, mLen).Insert(mStart, NormalizeNewlines(replacement));
+                                    working = working.Remove(mStart, mLen).Insert(mStart, replacement);
                                     appliedCount++;
                                 }
                                 else
                                 {
-                                    replacements.Add((mStart, mLen, NormalizeNewlines(replacement)));
+                                    replacements.Add((mStart, mLen, replacement));
                                 }
                                 break;
                             }
@@ -1302,13 +1297,19 @@ namespace MCPForUnity.Editor.Tools
                                 if (!TryComputeClassSpan(working, className, ns, out var clsStart, out var clsLen, out var whyClass))
                                     return new ErrorResponse($"insert_method failed to locate class: {whyClass}");
 
-                                if (position == "after")
+                                if (position == "after" || position == "before")
                                 {
-                                    if (string.IsNullOrEmpty(afterMethodName)) return new ErrorResponse("insert_method with position='after' requires 'afterMethodName'.");
+                                    if (position == "before")
+                                    {
+                                        afterMethodName = op.Value<string>("beforeMethodName");
+                                        afterReturnType = afterParameters = afterAttributesContains = null;
+                                    }
+                                    if (string.IsNullOrEmpty(afterMethodName)) return new ErrorResponse($"insert_method with position='{position}' requires '{position}MethodName'.");
                                     if (!TryComputeMethodSpan(working, clsStart, clsLen, afterMethodName, afterReturnType, afterParameters, afterAttributesContains, out var aStart, out var aLen, out var whyAfter))
                                         return new ErrorResponse($"insert_method(after) failed to locate anchor method: {whyAfter}");
-                                    int insAt = aStart + aLen;
-                                    string text = NormalizeNewlines("\n\n" + snippet.TrimEnd() + "\n");
+                                    int insAt = position == "after" ? aStart + aLen : aStart;
+                                    if (position == "before") insAt = BeforeMethodTrivia(working, clsStart, insAt);
+                                    string text = FormatMethodInsertion(working, clsStart, clsLen, ref insAt, snippet);
                                     if (applySequentially)
                                     {
                                         working = working.Insert(insAt, text);
@@ -1316,14 +1317,14 @@ namespace MCPForUnity.Editor.Tools
                                     }
                                     else
                                     {
-                                        replacements.Add((insAt, 0, text));
+                                        QueueStructuralInsertion(replacements, structuralInsertions, insAt, text);
                                     }
                                 }
                                 else if (!TryFindClassInsertionPoint(working, clsStart, clsLen, position, out var insAt, out var whyIns))
                                     return new ErrorResponse($"insert_method failed: {whyIns}");
                                 else
                                 {
-                                    string text = NormalizeNewlines("\n\n" + snippet.TrimEnd() + "\n");
+                                    string text = FormatMethodInsertion(working, clsStart, clsLen, ref insAt, snippet);
                                     if (applySequentially)
                                     {
                                         working = working.Insert(insAt, text);
@@ -1331,7 +1332,7 @@ namespace MCPForUnity.Editor.Tools
                                     }
                                     else
                                     {
-                                        replacements.Add((insAt, 0, text));
+                                        QueueStructuralInsertion(replacements, structuralInsertions, insAt, text);
                                     }
                                 }
                                 break;
@@ -1353,11 +1354,7 @@ namespace MCPForUnity.Editor.Tools
                                     var m = FindBestAnchorMatch(allMatches, working, anchor);
                                     if (m == null) return new ErrorResponse($"anchor_insert: anchor not found (filtered): {anchor}");
                                     int insAt = position == "after" ? m.Index + m.Length : m.Index;
-                                    string norm = NormalizeNewlines(text);
-                                    if (!norm.EndsWith("\n"))
-                                    {
-                                        norm += "\n";
-                                    }
+                                    string norm = text;
 
                                     // Duplicate guard: if identical snippet already exists within this class, skip insert
                                     if (TryComputeClassSpan(working, name, null, out var clsStartDG, out var clsLenDG, out _))
@@ -1430,7 +1427,7 @@ namespace MCPForUnity.Editor.Tools
                                     if (m == null) return new ErrorResponse($"anchor_replace: anchor not found (filtered): {anchor}");
                                     int at = m.Index;
                                     int len = m.Length;
-                                    string norm = NormalizeNewlines(replacement);
+                                    string norm = replacement;
                                     if (applySequentially)
                                     {
                                         working = working.Remove(at, len).Insert(at, norm);
@@ -1602,10 +1599,235 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static string NormalizeNewlines(string t)
+        // Formatting is limited to structural snippets. Literal operations never use these helpers.
+        private static bool[] ProtectedLiteralBytes(string text, bool literalsOnly = true)
         {
-            if (string.IsNullOrEmpty(t)) return t;
-            return t.Replace("\r\n", "\n").Replace("\r", "\n");
+            var protectedBytes = new bool[text.Length];
+            var lexer = new CSharpLexer(text);
+            while (lexer.Position < text.Length)
+            {
+                int start = lexer.Position;
+                if (!lexer.Advance(out _)) break;
+                char c = text[start];
+                if (lexer.InNonCode && (!literalsOnly || (lexer.Position > start + 1 && (c == '"' || c == '\'' || c == '@' || c == '$'))))
+                    for (int i = start; i < Math.Min(text.Length, lexer.Position); i++) protectedBytes[i] = true;
+            }
+            return protectedBytes;
+        }
+
+        private static IEnumerable<(int start, int end, int next)> FormattingLines(string text)
+        {
+            for (int start = 0; start < text.Length;)
+            {
+                int end = start;
+                while (end < text.Length && text[end] != '\r' && text[end] != '\n') end++;
+                int next = end;
+                if (next < text.Length && text[next++] == '\r' && next < text.Length && text[next] == '\n') next++;
+                yield return (start, end, next);
+                start = next;
+            }
+        }
+
+        private static string LineIndent(string text, int start)
+        {
+            int end = start;
+            while (end < text.Length && (text[end] == ' ' || text[end] == '\t')) end++;
+            return text.Substring(start, end - start);
+        }
+
+        private static string FormattingBaseIndent(string text, bool[] protectedBytes)
+        {
+            foreach (var line in FormattingLines(text))
+            {
+                string indent = LineIndent(text, line.start);
+                int token = line.start + indent.Length;
+                if (token < line.end && !protectedBytes[line.start] && text[token] != '#') return indent;
+            }
+            return string.Empty;
+        }
+
+        private static string FormattingIndentUnit(string text, bool[] protectedBytes, bool includeZero = true)
+        {
+            var nonCode = ProtectedLiteralBytes(text, literalsOnly: false);
+            var indents = new HashSet<string>();
+            if (includeZero) indents.Add(string.Empty);
+            foreach (var line in FormattingLines(text))
+            {
+                string indent = LineIndent(text, line.start);
+                int token = line.start + indent.Length;
+                if (token < line.end && !protectedBytes[line.start] && !nonCode[token] && text[token] != '#') indents.Add(indent);
+            }
+            string unit = null;
+            string outer = includeZero ? string.Empty : FormattingBaseIndent(text, protectedBytes);
+            foreach (string inner in indents)
+                if (inner.Length > outer.Length && inner.StartsWith(outer, StringComparison.Ordinal))
+                {
+                    // Compare to the declaration base, not differences between deeper
+                    // aligned expressions (e.g. a six-space initializer under a four-space body).
+                    string delta = inner.Substring(outer.Length);
+                    if (unit == null || delta.Length < unit.Length) unit = delta;
+                }
+            return unit;
+        }
+
+        private static string LocalFormattingNewline(string source, int position)
+        {
+            // The closest source boundary wins, including mixed-EOL files.
+            var protectedBytes = ProtectedLiteralBytes(source);
+            string newline = "\n";
+            int closest = int.MaxValue;
+            foreach (var line in FormattingLines(source))
+            {
+                int distance = Math.Abs(line.end - position);
+                if (line.end < source.Length && !protectedBytes[line.end] && distance < closest)
+                { closest = distance; newline = source.Substring(line.end, line.next - line.end); }
+            }
+            return newline;
+        }
+
+        private static string FormatStructuralSnippet(string snippet, string indent, string unit, string newline)
+        {
+            var protectedBytes = ProtectedLiteralBytes(snippet);
+            string baseIndent = FormattingBaseIndent(snippet, protectedBytes);
+            string snippetUnit = FormattingIndentUnit(snippet, protectedBytes, includeZero: false);
+            // Only completely flat snippets need brace-based indentation. Existing relative
+            // alignment is otherwise retained, rather than reformatted.
+            var nonCode = snippetUnit == null ? ProtectedLiteralBytes(snippet, literalsOnly: false) : null;
+            int braceDepth = 0;
+            var result = new System.Text.StringBuilder(snippet.Length);
+            var lines = FormattingLines(snippet).ToList();
+            int first = 0;
+            while (first < lines.Count && string.IsNullOrWhiteSpace(snippet.Substring(lines[first].start, lines[first].end - lines[first].start)) && !protectedBytes[lines[first].start]) first++;
+            int last = snippet.Length;
+            while (last > 0 && char.IsWhiteSpace(snippet[last - 1]) && !protectedBytes[last - 1]) last--;
+            foreach (var line in lines.Skip(first))
+            {
+                if (line.start >= last) break;
+                int end = Math.Min(line.end, last);
+                if (protectedBytes[line.start]) result.Append(snippet, line.start, end - line.start);
+                else
+                {
+                    string leading = LineIndent(snippet, line.start);
+                    int token = line.start + leading.Length;
+                    if (token < end && snippet[token] != '#' && leading.StartsWith(baseIndent, StringComparison.Ordinal))
+                    {
+                        string relative = leading.Substring(baseIndent.Length);
+                        result.Append(indent);
+                        if (snippetUnit == null)
+                        {
+                            int closing = 0;
+                            while (token + closing < end && snippet[token + closing] == '}' && !nonCode[token + closing]) closing++;
+                            for (int depth = 0; depth < Math.Max(0, braceDepth - closing); depth++) result.Append(unit);
+                        }
+                        else
+                            while (relative.StartsWith(snippetUnit, StringComparison.Ordinal)) { result.Append(unit); relative = relative.Substring(snippetUnit.Length); }
+                        result.Append(relative).Append(snippet, token, end - token);
+                    }
+                    else result.Append(snippet, line.start, end - line.start);
+                }
+                if (nonCode != null)
+                {
+                    int token = line.start + LineIndent(snippet, line.start).Length;
+                    if (token < end && snippet[token] != '#')
+                        for (int i = line.start; i < end; i++)
+                            if (!nonCode[i])
+                            {
+                                if (snippet[i] == '{') braceDepth++;
+                                else if (snippet[i] == '}') braceDepth = Math.Max(0, braceDepth - 1);
+                            }
+                }
+                if (line.end < last)
+                {
+                    if (protectedBytes[line.end]) result.Append(snippet, line.end, line.next - line.end);
+                    else result.Append(newline);
+                }
+            }
+            return result.ToString();
+        }
+
+        private static string FormatStructuralReplacement(string source, int start, int length, string snippet, int contextStart = -1, int contextLength = 0)
+        {
+            string old = source.Substring(start, length);
+            var protectedBytes = ProtectedLiteralBytes(old);
+            string indent = FormattingBaseIndent(old, protectedBytes);
+            string context = contextStart >= 0 ? source.Substring(contextStart, contextLength) : old;
+            string unit = FormattingIndentUnit(context, ProtectedLiteralBytes(context), includeZero: false) ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source)) ?? "    ";
+            int first = 0;
+            foreach (var line in FormattingLines(old))
+            {
+                if (!string.IsNullOrWhiteSpace(old.Substring(line.start, line.end - line.start))) break;
+                first = line.next;
+            }
+            int last = old.Length;
+            while (last > first && char.IsWhiteSpace(old[last - 1]) && !protectedBytes[last - 1]) last--;
+            return old.Substring(0, first) + FormatStructuralSnippet(snippet, indent, unit, LocalFormattingNewline(source, start)) + old.Substring(last);
+        }
+
+        private static int BeforeMethodTrivia(string source, int classStart, int position)
+        {
+            int originalPosition = position;
+            bool block = false;
+            while (position > classStart)
+            {
+                int end = position;
+                if (end > 0 && source[end - 1] == '\n') end--;
+                if (end > 0 && source[end - 1] == '\r') end--;
+                int start = end;
+                while (start > classStart && source[start - 1] != '\r' && source[start - 1] != '\n') start--;
+                string line = source.Substring(start, end - start).Trim();
+                if (line.EndsWith("*/", StringComparison.Ordinal)) block = true;
+                if (!block && !line.StartsWith("//", StringComparison.Ordinal)) break;
+                int opening = line.IndexOf("/*", StringComparison.Ordinal);
+                if (block && opening >= 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(line.Substring(0, opening))) return originalPosition;
+                    block = false;
+                }
+                position = start;
+            }
+            return block ? originalPosition : position;
+        }
+
+        private static void QueueStructuralInsertion(List<(int start, int length, string text)> replacements, HashSet<int> structuralInsertions, int position, string text)
+        {
+            // Equal-position inserts keep the existing stable order (last edit appears first).
+            // A line break needed against the original prefix belongs only to that first final snippet.
+            for (int i = 0; i < replacements.Count; i++)
+                if (structuralInsertions.Contains(i) && replacements[i].start == position)
+                {
+                    var previous = replacements[i];
+                    int prefix = previous.text.StartsWith("\r\n", StringComparison.Ordinal) ? 2 : previous.text.StartsWith("\r", StringComparison.Ordinal) || previous.text.StartsWith("\n", StringComparison.Ordinal) ? 1 : 0;
+                    if (prefix > 0) replacements[i] = (previous.start, previous.length, previous.text.Substring(prefix));
+                }
+            structuralInsertions.Add(replacements.Count);
+            replacements.Add((position, 0, text));
+        }
+
+        private static string FormatMethodInsertion(string source, int classStart, int classLength, ref int insertAt, string snippet)
+        {
+            string classText = source.Substring(classStart, classLength);
+            var protectedBytes = ProtectedLiteralBytes(classText);
+            string classIndent = FormattingBaseIndent(classText, protectedBytes);
+            string unit = FormattingIndentUnit(classText, protectedBytes, includeZero: false) ?? FormattingIndentUnit(source, ProtectedLiteralBytes(source)) ?? "    ";
+            int lineStart = insertAt;
+            while (lineStart > 0 && source[lineStart - 1] != '\r' && source[lineStart - 1] != '\n') lineStart--;
+            if (source.Substring(lineStart, insertAt - lineStart).All(c => c == ' ' || c == '\t')) insertAt = lineStart;
+            else
+            {
+                int end = insertAt;
+                while (end < source.Length && (source[end] == ' ' || source[end] == '\t')) end++;
+                if (end + 1 < source.Length && source[end] == '/' && source[end + 1] == '/')
+                    while (end < source.Length && source[end] != '\r' && source[end] != '\n') end++;
+                if (end < source.Length && (source[end] == '\r' || source[end] == '\n'))
+                {
+                    insertAt = end + 1;
+                    if (source[end] == '\r' && insertAt < source.Length && source[insertAt] == '\n') insertAt++;
+                }
+            }
+            string newline = LocalFormattingNewline(source, insertAt);
+            string text = FormatStructuralSnippet(snippet, classIndent + unit, unit, newline);
+            string before = insertAt > 0 && source[insertAt - 1] != '\n' && source[insertAt - 1] != '\r' ? newline : string.Empty;
+            return before + text + newline;
         }
 
         private static bool ValidateClassSnippet(string snippet, string expectedName, out string err)
