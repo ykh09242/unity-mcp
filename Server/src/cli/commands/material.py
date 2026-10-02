@@ -72,7 +72,7 @@ def create(path: str, shader: str, properties: Optional[str]):
 
     result = run_command("manage_material", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created material: {path}")
 
 
@@ -108,7 +108,7 @@ def set_color(path: str, r: float, g: float, b: float, a: float, property: str):
 
     result = run_command("manage_material", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set color on: {path}")
 
 
@@ -140,7 +140,7 @@ def set_property(path: str, property_name: str, value: str):
 
     result = run_command("manage_material", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set {property_name} on: {path}")
 
 
@@ -190,7 +190,7 @@ def assign(material_path: str, target: str, search_method: Optional[str], slot: 
 
     result = run_command("manage_material", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Assigned material to: {target}")
 
 
@@ -235,5 +235,5 @@ def set_renderer_color(target: str, r: float, g: float, b: float, a: float, sear
 
     result = run_command("manage_material", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set renderer color on: {target}")

@@ -6,12 +6,19 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import BeforeValidator
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import parse_json_payload, coerce_int, normalize_properties, normalize_color
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+
+def _reject_boolean_slot(value: Any) -> Any:
+    if isinstance(value, bool):
+        raise ValueError("slot must be an integer, not a boolean.")
+    return value
 
 
 @mcp_for_unity_tool(
@@ -57,7 +64,7 @@ async def manage_material(
                       "Target GameObject (name, path, or find instruction)"] | None = None,
     search_method: Annotated[Literal["by_id", "by_name", "by_path", "by_tag",
                                      "by_layer", "by_component"], "Search method for target"] | None = None,
-    slot: Annotated[int, "Material slot index (0-based)"] | None = None,
+    slot: Annotated[int, "Material slot index (0-based)", BeforeValidator(_reject_boolean_slot)] | None = None,
     mode: Annotated[Literal["shared", "instance", "property_block", "create_unique"],
                     "Assignment/modification mode; behavior when omitted is action-specific on the Unity side."] | None = None,
 
