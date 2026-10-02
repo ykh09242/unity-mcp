@@ -187,28 +187,30 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var p = new ToolParams(@params);
 
             string modeStr = p.Get("ambient_mode") ?? p.Get("mode");
+            var mode = RenderSettings.ambientMode;
             if (!string.IsNullOrEmpty(modeStr))
             {
-                if (Enum.TryParse<AmbientMode>(modeStr, true, out var mode))
-                    RenderSettings.ambientMode = mode;
-                else
+                if (!Enum.TryParse(modeStr, true, out mode) || !Enum.IsDefined(typeof(AmbientMode), mode))
                     return new ErrorResponse(
                         $"Invalid ambient mode '{modeStr}'. Valid: Skybox, Trilight, Flat, Custom.");
             }
 
             var skyColor = ParseColorToken(p.GetRaw("color") ?? p.GetRaw("sky_color"));
+            var equatorColor = ParseColorToken(p.GetRaw("equator_color"));
+            var groundColor = ParseColorToken(p.GetRaw("ground_color"));
+            var intensity = p.GetFloat("intensity");
+
+            if (!string.IsNullOrEmpty(modeStr))
+                RenderSettings.ambientMode = mode;
             if (skyColor.HasValue)
                 RenderSettings.ambientSkyColor = skyColor.Value;
 
-            var equatorColor = ParseColorToken(p.GetRaw("equator_color"));
             if (equatorColor.HasValue)
                 RenderSettings.ambientEquatorColor = equatorColor.Value;
 
-            var groundColor = ParseColorToken(p.GetRaw("ground_color"));
             if (groundColor.HasValue)
                 RenderSettings.ambientGroundColor = groundColor.Value;
 
-            var intensity = p.GetFloat("intensity");
             if (intensity.HasValue)
                 RenderSettings.ambientIntensity = intensity.Value;
 
@@ -246,24 +248,26 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             var enabledToken = p.GetRaw("fog_enabled") ?? p.GetRaw("enabled");
+            bool enabled = ParamCoercion.CoerceBool(enabledToken, RenderSettings.fog);
+            var fogColor = ParseColorToken(p.GetRaw("fog_color") ?? p.GetRaw("color"));
+            var density = p.GetFloat("fog_density") ?? p.GetFloat("density");
+            var start = p.GetFloat("fog_start") ?? p.GetFloat("start");
+            var end = p.GetFloat("fog_end") ?? p.GetFloat("end");
+
             if (enabledToken != null && enabledToken.Type != JTokenType.Null)
-                RenderSettings.fog = ParamCoercion.CoerceBool(enabledToken, RenderSettings.fog);
+                RenderSettings.fog = enabled;
             if (!string.IsNullOrEmpty(modeStr))
                 RenderSettings.fogMode = fogMode;
 
-            var fogColor = ParseColorToken(p.GetRaw("fog_color") ?? p.GetRaw("color"));
             if (fogColor.HasValue)
                 RenderSettings.fogColor = fogColor.Value;
 
-            var density = p.GetFloat("fog_density") ?? p.GetFloat("density");
             if (density.HasValue)
                 RenderSettings.fogDensity = density.Value;
 
-            var start = p.GetFloat("fog_start") ?? p.GetFloat("start");
             if (start.HasValue)
                 RenderSettings.fogStartDistance = start.Value;
 
-            var end = p.GetFloat("fog_end") ?? p.GetFloat("end");
             if (end.HasValue)
                 RenderSettings.fogEndDistance = end.Value;
 
@@ -300,10 +304,22 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     $"Invalid reflection mode '{modeStr}'. Valid: Skybox, Custom.");
 
             var intensity = p.GetFloat("intensity");
+            var bounces = p.GetInt("bounces");
+            var resolution = p.GetInt("resolution");
+            string cubemapPath = p.Get("path") ?? p.Get("cubemap_path");
+            Texture cubemap = null;
+            if (!string.IsNullOrEmpty(cubemapPath))
+            {
+                cubemap = AssetDatabase.LoadAssetAtPath<Texture>(cubemapPath);
+                if (cubemap == null)
+                    return new ErrorResponse($"Cubemap not found at '{cubemapPath}'.");
+                if (cubemap.dimension != TextureDimension.Cube)
+                    return new ErrorResponse($"Reflection texture at '{cubemapPath}' must have Cube dimension.");
+            }
+
             if (intensity.HasValue)
                 RenderSettings.reflectionIntensity = intensity.Value;
 
-            var bounces = p.GetInt("bounces");
             if (bounces.HasValue)
                 RenderSettings.reflectionBounces = bounces.Value;
 
@@ -312,19 +328,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 RenderSettings.defaultReflectionMode = mode;
             }
 
-            var resolution = p.GetInt("resolution");
             if (resolution.HasValue)
                 RenderSettings.defaultReflectionResolution = resolution.Value;
 
-            string cubemapPath = p.Get("path") ?? p.Get("cubemap_path");
             if (!string.IsNullOrEmpty(cubemapPath))
-            {
-                var cubemap = AssetDatabase.LoadAssetAtPath<Texture>(cubemapPath);
-                if (cubemap != null)
-                    CustomReflectionTexture = cubemap;
-                else
-                    return new ErrorResponse($"Cubemap not found at '{cubemapPath}'.");
-            }
+                CustomReflectionTexture = cubemap;
 
             MarkSceneDirty();
 
@@ -421,7 +429,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 case ShaderPropertyType.Range:
                     return mat.GetFloat(propName);
                 case ShaderPropertyType.Int:
-                    return mat.GetInt(propName);
+                    return mat.GetInteger(propName);
                 case ShaderPropertyType.Vector:
                     var v = mat.GetVector(propName);
                     return new[] { v.x, v.y, v.z, v.w };
@@ -457,7 +465,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         mat.SetFloat(propName, (float)value);
                         return true;
                     case ShaderPropertyType.Int:
-                        mat.SetInt(propName, (int)value);
+                        mat.SetInteger(propName, (int)value);
                         return true;
                     case ShaderPropertyType.Vector:
                         if (value is JArray vecArr && vecArr.Count >= 2)
