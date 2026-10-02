@@ -215,9 +215,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
         }
 
         private static int _overrideId = -1;
+        private static Component _overrideBrain;
 
         internal static object ForceCamera(JObject @params)
         {
+            ClearDestroyedOverride();
             var brain = CameraHelpers.FindBrain();
             if (brain == null)
                 return new ErrorResponse("No CinemachineBrain found. Use 'ensure_brain' first.");
@@ -225,6 +227,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var cmCamera = CameraHelpers.FindCinemachineCamera(@params);
             if (cmCamera == null)
                 return new ErrorResponse("Target CinemachineCamera not found.");
+
+            if (_overrideId >= 0 && _overrideBrain != brain)
+                return new ErrorResponse("Release the active override before forcing a different CinemachineBrain.");
 
             // Use SetCameraOverride via reflection
             var brainType = brain.GetType();
@@ -234,7 +239,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (method == null)
             {
                 // Fallback: just set high priority
-                CameraHelpers.SetReflectionProperty(cmCamera, "Priority", 999);
+                var error = CameraConfigure.SetPriority(cmCamera, 999);
+                if (error != null) return error;
+                CameraHelpers.MarkDirty(cmCamera.gameObject);
                 return new
                 {
                     success = true,
@@ -257,11 +264,14 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     1f,       // weightB = fully on camB
                     -1f       // deltaTime = use default
                 });
+                _overrideBrain = brain;
             }
             catch (Exception ex)
             {
                 // Fallback
-                CameraHelpers.SetReflectionProperty(cmCamera, "Priority", 999);
+                var error = CameraConfigure.SetPriority(cmCamera, 999);
+                if (error != null) return error;
+                CameraHelpers.MarkDirty(cmCamera.gameObject);
                 return new
                 {
                     success = true,
@@ -285,12 +295,18 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static object ReleaseOverride(JObject @params)
         {
-            var brain = CameraHelpers.FindBrain();
-            if (brain == null)
-                return new ErrorResponse("No CinemachineBrain found.");
-
+            if (ClearDestroyedOverride())
+                return new { success = true, message = "The override owner was destroyed; override state cleared." };
             if (_overrideId < 0)
+            {
+                if (CameraHelpers.FindBrain() == null)
+                    return new ErrorResponse("No CinemachineBrain found.");
                 return new { success = true, message = "No active camera override to release." };
+            }
+
+            var brain = _overrideBrain;
+            if (brain == null)
+                return new ErrorResponse("The CinemachineBrain owning the active override is unavailable.");
 
             var method = brain.GetType().GetMethod("ReleaseCameraOverride",
                 BindingFlags.Public | BindingFlags.Instance);
@@ -300,6 +316,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 method.Invoke(brain, new object[] { _overrideId });
                 int releasedId = _overrideId;
                 _overrideId = -1;
+                _overrideBrain = null;
                 return new
                 {
                     success = true,
@@ -308,8 +325,16 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 };
             }
 
+            return new ErrorResponse("Could not release the active override: ReleaseCameraOverride is unavailable.");
+        }
+
+        private static bool ClearDestroyedOverride()
+        {
+            if (_overrideId < 0 || ReferenceEquals(_overrideBrain, null) || _overrideBrain != null)
+                return false;
             _overrideId = -1;
-            return new { success = true, message = "Override state cleared." };
+            _overrideBrain = null;
+            return true;
         }
     }
 }

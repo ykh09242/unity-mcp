@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -104,12 +105,32 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
 
-            Undo.RecordObject(cmCamera, "Set Cinemachine Target");
-
+            var targets = new List<KeyValuePair<string, JToken>>();
             if (props.ContainsKey("follow"))
-                CameraHelpers.SetTransformTarget(cmCamera, "Follow", props["follow"]);
+                targets.Add(new KeyValuePair<string, JToken>("Follow", props["follow"]));
             if (props.ContainsKey("lookAt") || props.ContainsKey("look_at"))
-                CameraHelpers.SetTransformTarget(cmCamera, "LookAt", props["lookAt"] ?? props["look_at"]);
+                targets.Add(new KeyValuePair<string, JToken>("LookAt", props["lookAt"] ?? props["look_at"]));
+
+            var setters = new List<Action>();
+            foreach (var target in targets)
+            {
+                var property = cmCamera.GetType().GetProperty(target.Key, BindingFlags.Public | BindingFlags.Instance);
+                if (property == null || !property.CanWrite || property.PropertyType != typeof(Transform))
+                    return new ErrorResponse($"Could not set {target.Key} on CinemachineCamera.");
+
+                Transform transform = null;
+                if (target.Value != null && target.Value.Type != JTokenType.Null)
+                {
+                    var resolved = CameraHelpers.ResolveGameObjectRef(target.Value);
+                    if (resolved == null)
+                        return new ErrorResponse($"Target '{target.Value}' not found for {target.Key}.");
+                    transform = resolved.transform;
+                }
+                setters.Add(() => property.SetValue(cmCamera, transform));
+            }
+
+            Undo.RecordObject(cmCamera, "Set Cinemachine Target");
+            foreach (var set in setters) set();
 
             CameraHelpers.MarkDirty(cmCamera.gameObject);
 
@@ -160,22 +181,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
             int priority = ParamCoercion.CoerceInt(props["priority"], 10);
 
-            // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty
-            using var so = new SerializedObject(cmCamera);
-            var priorityProp = so.FindProperty("Priority");
-            if (priorityProp != null)
-            {
-                var enabledProp = priorityProp.FindPropertyRelative("Enabled");
-                var valueProp = priorityProp.FindPropertyRelative("m_Value");
-                if (enabledProp != null) enabledProp.boolValue = true;
-                if (valueProp != null) valueProp.intValue = priority;
-                so.ApplyModifiedProperties();
-            }
-            else
-            {
-                Undo.RecordObject(cmCamera, "Set Cinemachine Priority");
-                CameraHelpers.SetReflectionProperty(cmCamera, "Priority", priority);
-            }
+            var error = SetPriority(cmCamera, priority);
+            if (error != null) return error;
             CameraHelpers.MarkDirty(cmCamera.gameObject);
 
             return new
@@ -184,6 +191,33 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 message = $"Priority set to {priority} on CinemachineCamera '{cmCamera.gameObject.name}'.",
                 data = new { instanceID = cmCamera.gameObject.GetInstanceIDCompat(), priority }
             };
+        }
+
+        internal static ErrorResponse SetPriority(Component cmCamera, int priority)
+        {
+            // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty.
+            using var so = new SerializedObject(cmCamera);
+            var priorityProp = so.FindProperty("Priority");
+            if (priorityProp != null)
+            {
+                var enabledProp = priorityProp.FindPropertyRelative("Enabled");
+                var valueProp = priorityProp.FindPropertyRelative("m_Value");
+                if (enabledProp == null || enabledProp.propertyType != SerializedPropertyType.Boolean
+                    || valueProp == null || valueProp.propertyType != SerializedPropertyType.Integer)
+                    return new ErrorResponse("Could not find writable Priority fields on CinemachineCamera.");
+                enabledProp.boolValue = true;
+                valueProp.intValue = priority;
+                so.ApplyModifiedProperties();
+            }
+            else
+            {
+                var property = cmCamera.GetType().GetProperty("Priority", BindingFlags.Public | BindingFlags.Instance);
+                if (property == null || !property.CanWrite || property.PropertyType != typeof(int))
+                    return new ErrorResponse("Could not find writable Priority on CinemachineCamera.");
+                Undo.RecordObject(cmCamera, "Set Cinemachine Priority");
+                property.SetValue(cmCamera, priority);
+            }
+            return null;
         }
 
         internal static object SetBody(JObject @params)
