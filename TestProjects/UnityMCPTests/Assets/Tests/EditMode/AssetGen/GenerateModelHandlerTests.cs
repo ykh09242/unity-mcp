@@ -161,5 +161,43 @@ namespace MCPForUnityTests.Editor.AssetGen
             JObject resp = Call(new JObject { ["action"] = "frobnicate" });
             Assert.AreEqual(false, (bool)resp["success"]);
         }
+
+        [TestCase("tripo", "garbage")]
+        [TestCase("meshy", "text_typo")]
+        public void Generate_UnknownMode_DoesNotCreateJobOrSubmit(string provider, string mode)
+        {
+            _store.Set(provider, "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            JObject response = Call(new JObject
+            {
+                ["action"] = "generate", ["provider"] = provider,
+                ["mode"] = mode, ["prompt"] = "a tree"
+            });
+            Assert.AreEqual(false, (bool)response["success"]);
+            StringAssert.Contains("mode", (string)response["error"]);
+            Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+            Assert.AreEqual(0, transport.RecordedRequests.Count);
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("TeXt")]
+        [TestCase("ImAgE")]
+        public void Generate_DefaultAndMixedCaseModes_StillSubmit(string mode)
+        {
+            _store.Set("tripo", "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            JObject response = Call(new JObject
+            {
+                ["action"] = "generate", ["mode"] = mode, ["prompt"] = "a tree",
+                ["imageUrl"] = "https://fixture.invalid/source.png", ["texture"] = false
+            });
+            Assert.AreEqual(true, (bool)response["success"]);
+            Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
+            AssetGenJobManager.TryAdvanceForTests((string)response["data"]["job_id"]);
+            Assert.AreEqual(1, transport.RecordedRequests.Count);
+        }
     }
 }

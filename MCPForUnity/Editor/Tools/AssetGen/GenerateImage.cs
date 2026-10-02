@@ -73,6 +73,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 Name = p.Get("name"),
                 OutputFolder = p.Get("outputFolder"),
             };
+            if (string.IsNullOrWhiteSpace(req.Mode)) req.Mode = "text";
+            if (req.Mode != "text" && req.Mode != "image")
+                return new ErrorResponse("'mode' must be 'text' or 'image'.");
             if (!AssetGenPaths.NormalizeOutputFolder(req.OutputFolder, out req.OutputFolder, out string outputErr))
                 return new ErrorResponse(outputErr);
 

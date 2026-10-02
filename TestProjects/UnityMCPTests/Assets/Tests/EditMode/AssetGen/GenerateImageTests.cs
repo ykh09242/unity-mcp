@@ -50,6 +50,45 @@ namespace MCPForUnityTests.Editor.AssetGen
         private static JObject Call(JObject p)
             => JObject.Parse(JsonConvert.SerializeObject(GenerateImage.HandleCommand(p)));
 
+        [TestCase("fal", "garbage")]
+        [TestCase("openrouter", "text_typo")]
+        public void Generate_UnknownMode_DoesNotCreateJobOrSubmit(string provider, string mode)
+        {
+            _store.Set(provider, "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            JObject response = Call(new JObject
+            {
+                ["action"] = "generate", ["provider"] = provider,
+                ["mode"] = mode, ["prompt"] = "a cat"
+            });
+            Assert.AreEqual(false, (bool)response["success"]);
+            StringAssert.Contains("mode", (string)response["error"]);
+            Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+            Assert.AreEqual(0, transport.RecordedRequests.Count);
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("TeXt")]
+        [TestCase("ImAgE")]
+        public void Generate_DefaultAndMixedCaseModes_StillSubmit(string mode)
+        {
+            _store.Set("fal", "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            JObject response = Call(new JObject
+            {
+                ["action"] = "generate", ["mode"] = mode, ["prompt"] = "a cat",
+                ["imageUrl"] = "https://fixture.invalid/source.png",
+                ["transparent"] = false, ["width"] = 0, ["height"] = 0
+            });
+            Assert.AreEqual(true, (bool)response["success"]);
+            Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
+            AssetGenJobManager.TryAdvanceForTests((string)response["data"]["job_id"]);
+            Assert.AreEqual(1, transport.RecordedRequests.Count);
+        }
+
         private static string ProjectRoot()
         {
             string dp = Application.dataPath.Replace('\\', '/');

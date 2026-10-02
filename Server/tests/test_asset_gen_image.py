@@ -134,6 +134,16 @@ class TestGenerateImageRouting:
 
 
 class TestGenerateImageCLI:
+    def test_invalid_mode_preserves_unity_failure(self, runner, mock_config):
+        failure = {"success": False, "error": "'mode' must be 'text' or 'image'."}
+        with patch("cli.commands.asset_gen.get_config", return_value=mock_config), \
+             patch("cli.commands.asset_gen.run_command", return_value=failure) as send:
+            result = runner.invoke(asset_gen, ["generate-image", "--mode", "garbage", "--prompt", "fixture"])
+        assert result.exit_code == 0
+        assert send.call_args.args[1]["mode"] == "garbage"
+        assert "mode" in result.output and "text" in result.output
+        assert "started" not in result.output and "Poll with" not in result.output
+
     def test_generate_image_cli(self, cli_runner):
         result, mock_run = cli_runner([
             "generate-image", "--provider", "fal", "--prompt", "a stone texture",
