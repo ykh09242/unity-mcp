@@ -77,32 +77,16 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 if (takeMethod == null)
                     return new ErrorResponse("Could not find TakeSnapshot method on MemoryProfiler. API may have changed.");
 
-                Action<string, bool> callback = (path, result) =>
-                {
-                    if (result)
-                    {
-                        var fi = new FileInfo(path);
-                        tcs.TrySetResult(new SuccessResponse("Memory snapshot captured.", new
-                        {
-                            path,
-                            size_bytes = fi.Exists ? fi.Length : 0,
-                            size_mb = fi.Exists ? Math.Round(fi.Length / (1024.0 * 1024.0), 2) : 0,
-                        }));
-                    }
-                    else
-                    {
-                        tcs.TrySetResult(new ErrorResponse($"Snapshot capture failed for path: {path}"));
-                    }
-                };
+                Action<string, bool> callback = (path, result) => CompleteSnapshot(tcs, path, result);
 
                 var takeMethodParams = takeMethod.GetParameters();
                 int paramCount = takeMethodParams.Length;
                 if (paramCount == 4 && takeMethodParams[3].ParameterType == captureFlagsType)
-                    takeMethod.Invoke(null, new object[] { snapshotPath, callback, null, Enum.ToObject(captureFlagsType, 0) });
+                    takeMethod.Invoke(null, new object[] { snapshotPath, callback, null, GetCaptureFlagsDefault(takeMethodParams[3]) });
                 else if (paramCount == 3 && takeMethodParams[2].ParameterType == captureFlagsType)
-                    takeMethod.Invoke(null, new object[] { snapshotPath, callback, Enum.ToObject(captureFlagsType, 0) });
+                    takeMethod.Invoke(null, new object[] { snapshotPath, callback, GetCaptureFlagsDefault(takeMethodParams[2]) });
                 else if (paramCount == 4 && takeMethodParams[3].ParameterType == typeof(uint))
-                    takeMethod.Invoke(null, new object[] { snapshotPath, callback, null, 0u });
+                    takeMethod.Invoke(null, new object[] { snapshotPath, callback, null, GetCaptureFlagsDefault(takeMethodParams[3]) });
                 else if (paramCount == 2)
                     takeMethod.Invoke(null, new object[] { snapshotPath, callback });
                 else
@@ -119,6 +103,43 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 return new ErrorResponse("Snapshot timed out after 30 seconds.");
 
             return await tcs.Task;
+        }
+
+        private static object GetCaptureFlagsDefault(System.Reflection.ParameterInfo parameter)
+        {
+            if (parameter.HasDefaultValue)
+                return parameter.DefaultValue;
+
+            // Preserve the existing fallback for signatures without an optional default.
+            return parameter.ParameterType == typeof(uint)
+                ? (object)0u
+                : Enum.ToObject(parameter.ParameterType, 0);
+        }
+
+        private static void CompleteSnapshot(TaskCompletionSource<object> completion, string path, bool result)
+        {
+            try
+            {
+                if (result)
+                {
+                    var fi = new FileInfo(path);
+                    long size = fi.Exists ? fi.Length : 0;
+                    completion.TrySetResult(new SuccessResponse("Memory snapshot captured.", new
+                    {
+                        path,
+                        size_bytes = size,
+                        size_mb = Math.Round(size / (1024.0 * 1024.0), 2),
+                    }));
+                }
+                else
+                {
+                    completion.TrySetResult(new ErrorResponse($"Snapshot capture failed for path: {path}"));
+                }
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetResult(new ErrorResponse($"Failed to read snapshot metadata: {ex.Message}"));
+            }
         }
 
         internal static object ListSnapshots(JObject @params)

@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
         {
             var p = new ToolParams(@params);
             string logFile = p.Get("log_file");
-            bool enableCallstacks = p.GetBool("enable_callstacks");
+            bool? enableCallstacks = ParamCoercion.CoerceBoolNullable(p.GetRaw("enable_callstacks"));
 
             if (!string.IsNullOrEmpty(logFile))
             {
@@ -34,8 +34,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 UProfiler.enableBinaryLog = true;
             }
 
-            if (enableCallstacks)
-                UProfiler.enableAllocationCallstacks = true;
+            if (enableCallstacks.HasValue)
+                UProfiler.enableAllocationCallstacks = enableCallstacks.Value;
 
             return new SuccessResponse("Profiler started.", new
             {
