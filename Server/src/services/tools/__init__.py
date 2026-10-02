@@ -112,6 +112,11 @@ async def sync_tool_visibility_from_unity(
     Returns:
         dict with sync results (enabled/disabled groups, tool count).
     """
+    from core.config import config
+    if config.http_remote_hosted:
+        return {"error": "Tool sync is unavailable in remote-hosted mode; Unity pushes its catalog through the authenticated plugin session.",
+                "remote_sync_disabled": True}
+
     from transport.legacy.unity_connection import async_send_command_with_retry
     from transport.plugin_hub import PluginHub
 

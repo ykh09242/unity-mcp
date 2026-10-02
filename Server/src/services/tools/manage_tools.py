@@ -89,6 +89,8 @@ async def manage_tools(
         result = await sync_tool_visibility_from_unity(notify=True)
         if result.get("error"):
             msg = result["error"]
+            if result.get("remote_sync_disabled"):
+                return {"error": msg}
             if result.get("unsupported"):
                 msg = (
                     "The connected Unity Editor does not support tool state syncing yet. "
