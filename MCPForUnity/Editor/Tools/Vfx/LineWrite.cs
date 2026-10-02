@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -13,16 +14,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             LineRenderer lr = LineRead.FindLineRenderer(@params);
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
+            if (!TryParsePositions(@params["positions"], out var positions, out var error))
+                return new { success = false, message = error };
+
             RendererHelpers.EnsureMaterial(lr);
-
-            JArray posArr = @params["positions"] as JArray;
-            if (posArr == null) return new { success = false, message = "Positions array required" };
-
-            var positions = new Vector3[posArr.Count];
-            for (int i = 0; i < posArr.Count; i++)
-            {
-                positions[i] = ManageVfxCommon.ParseVector3(posArr[i]);
-            }
 
             Undo.RecordObject(lr, "Set Line Positions");
             lr.positionCount = positions.Length;
@@ -37,9 +32,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             LineRenderer lr = LineRead.FindLineRenderer(@params);
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(lr);
+            if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
+                return new { success = false, message = "Invalid position: expected [x, y, z] or {x, y, z}" };
 
-            Vector3 pos = ManageVfxCommon.ParseVector3(@params["position"]);
+            RendererHelpers.EnsureMaterial(lr);
 
             Undo.RecordObject(lr, "Add Line Position");
             int idx = lr.positionCount;
@@ -55,12 +51,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
             LineRenderer lr = LineRead.FindLineRenderer(@params);
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(lr);
-
             int index = @params["index"]?.ToObject<int>() ?? -1;
             if (index < 0 || index >= lr.positionCount) return new { success = false, message = $"Invalid index {index}" };
 
-            Vector3 pos = ManageVfxCommon.ParseVector3(@params["position"]);
+            if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
+                return new { success = false, message = "Invalid position: expected [x, y, z] or {x, y, z}" };
+
+            RendererHelpers.EnsureMaterial(lr);
 
             Undo.RecordObject(lr, "Set Line Position");
             lr.SetPosition(index, pos);
@@ -69,21 +66,30 @@ namespace MCPForUnity.Editor.Tools.Vfx
             return new { success = true, message = $"Set position at index {index}" };
         }
 
+        private static void RequireFinite(float value, string name)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                throw new ArgumentException($"'{name}' must be finite.");
+        }
+
         public static object SetWidth(JObject @params)
         {
             LineRenderer lr = LineRead.FindLineRenderer(@params);
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(lr);
-
-            Undo.RecordObject(lr, "Set Line Width");
             var changes = new List<string>();
+            var updates = new List<Action>();
 
             RendererHelpers.ApplyWidthProperties(@params, changes,
-                v => lr.startWidth = v, v => lr.endWidth = v,
-                v => lr.widthCurve = v, v => lr.widthMultiplier = v,
+                v => { RequireFinite(v, "startWidth"); updates.Add(() => lr.startWidth = v); },
+                v => { RequireFinite(v, "endWidth"); updates.Add(() => lr.endWidth = v); },
+                v => updates.Add(() => lr.widthCurve = v),
+                v => { RequireFinite(v, "widthMultiplier"); updates.Add(() => lr.widthMultiplier = v); },
                 ManageVfxCommon.ParseAnimationCurve);
 
+            RendererHelpers.EnsureMaterial(lr);
+            Undo.RecordObject(lr, "Set Line Width");
+            foreach (var update in updates) update();
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -118,59 +124,97 @@ namespace MCPForUnity.Editor.Tools.Vfx
             LineRenderer lr = LineRead.FindLineRenderer(@params);
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
-            RendererHelpers.EnsureMaterial(lr);
+            Vector3[] positions = null;
+            int? positionCount = null;
+            if (@params["positions"] != null)
+            {
+                // Explicit null retains the existing positions and suppresses positionCount.
+                if (@params["positions"].Type != JTokenType.Null &&
+                    !TryParsePositions(@params["positions"], out positions, out var error))
+                    return new { success = false, message = error };
+            }
+            else if (@params["positionCount"] != null)
+            {
+                positionCount = @params["positionCount"].ToObject<int>();
+                if (positionCount < 0)
+                    return new { success = false, message = "positionCount must be non-negative" };
+            }
+
+            var rendererChanges = new List<string>();
+            var updates = new List<Action>();
+            RendererHelpers.ApplyLineTrailProperties(@params, rendererChanges,
+                v => updates.Add(() => lr.loop = v), v => updates.Add(() => lr.useWorldSpace = v),
+                v => updates.Add(() => lr.numCornerVertices = v), v => updates.Add(() => lr.numCapVertices = v),
+                v => updates.Add(() => lr.alignment = v), v => updates.Add(() => lr.textureMode = v),
+                v => updates.Add(() => lr.generateLightingData = v));
+            var applyCommon = RendererHelpers.PrepareCommonRendererProperties(lr, @params, rendererChanges);
+
+            Material material = null;
+            if (@params["materialPath"] != null)
+            {
+                material = ManageVfxCommon.FindMaterialByPath(@params["materialPath"].ToString());
+                if (material == null) McpLog.Warn($"Material not found: {@params["materialPath"]}");
+            }
+            if (material == null) RendererHelpers.EnsureMaterial(lr);
 
             Undo.RecordObject(lr, "Set Line Properties");
             var changes = new List<string>();
 
             // Handle material if provided
-            if (@params["materialPath"] != null)
+            if (material != null)
             {
-                Material mat = ManageVfxCommon.FindMaterialByPath(@params["materialPath"].ToString());
-                if (mat != null)
-                {
-                    lr.sharedMaterial = mat;
-                    changes.Add($"material={mat.name}");
-                }
-                else
-                {
-                    McpLog.Warn($"Material not found: {@params["materialPath"]}");
-                }
+                lr.sharedMaterial = material;
+                changes.Add($"material={material.name}");
             }
 
             // Handle positions if provided
-            if (@params["positions"] != null)
+            if (positions != null)
             {
-                JArray posArr = @params["positions"] as JArray;
-                if (posArr != null && posArr.Count > 0)
-                {
-                    var positions = new Vector3[posArr.Count];
-                    for (int i = 0; i < posArr.Count; i++)
-                    {
-                        positions[i] = ManageVfxCommon.ParseVector3(posArr[i]);
-                    }
-                    lr.positionCount = positions.Length;
-                    lr.SetPositions(positions);
-                    changes.Add($"positions({positions.Length})");
-                }
+                lr.positionCount = positions.Length;
+                lr.SetPositions(positions);
+                changes.Add($"positions({positions.Length})");
             }
-            else if (@params["positionCount"] != null)
+            else if (positionCount.HasValue)
             {
-                int count = @params["positionCount"].ToObject<int>();
-                lr.positionCount = count;
+                lr.positionCount = positionCount.Value;
                 changes.Add("positionCount");
             }
 
-            RendererHelpers.ApplyLineTrailProperties(@params, changes,
-                v => lr.loop = v, v => lr.useWorldSpace = v,
-                v => lr.numCornerVertices = v, v => lr.numCapVertices = v,
-                v => lr.alignment = v, v => lr.textureMode = v,
-                v => lr.generateLightingData = v);
-
-            RendererHelpers.ApplyCommonRendererProperties(lr, @params, changes);
+            foreach (var update in updates) update();
+            applyCommon();
+            changes.AddRange(rendererChanges);
 
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
+        }
+
+        private static bool TryParsePositions(JToken token, out Vector3[] positions, out string error)
+        {
+            positions = null;
+            error = "Positions array required";
+            if (!(token is JArray array)) return false;
+
+            positions = new Vector3[array.Count];
+            for (int i = 0; i < array.Count; i++)
+            {
+                if (!TryParsePosition(array[i], allowDefault: false, out positions[i]))
+                {
+                    error = $"Invalid positions[{i}]: expected [x, y, z] or {{x, y, z}}";
+                    return false;
+                }
+            }
+            error = null;
+            return true;
+        }
+
+        private static bool TryParsePosition(JToken token, bool allowDefault, out Vector3 position)
+        {
+            position = Vector3.zero;
+            if (token == null || token.Type == JTokenType.Null) return allowDefault;
+            var parsed = VectorParsing.ParseVector3(token);
+            if (!parsed.HasValue) return false;
+            position = parsed.Value;
+            return true;
         }
 
         public static object Clear(JObject @params)
