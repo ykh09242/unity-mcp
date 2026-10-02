@@ -91,8 +91,7 @@ def particle_play(target: str, with_children: bool, search_method: Optional[str]
     """
     config = get_config()
     params: dict[str, Any] = {"action": "particle_play", "target": target}
-    if with_children:
-        params["withChildren"] = True
+    params["withChildren"] = with_children
     if search_method:
         params["searchMethod"] = search_method
     if component_index is not None:
@@ -115,8 +114,7 @@ def particle_stop(target: str, with_children: bool, search_method: Optional[str]
     """Stop a particle system."""
     config = get_config()
     params: dict[str, Any] = {"action": "particle_stop", "target": target}
-    if with_children:
-        params["withChildren"] = True
+    params["withChildren"] = with_children
     if search_method:
         params["searchMethod"] = search_method
     if component_index is not None:
@@ -158,8 +156,7 @@ def particle_restart(target: str, with_children: bool, search_method: Optional[s
     """Restart a particle system."""
     config = get_config()
     params: dict[str, Any] = {"action": "particle_restart", "target": target}
-    if with_children:
-        params["withChildren"] = True
+    params["withChildren"] = with_children
     if search_method:
         params["searchMethod"] = search_method
     if component_index is not None:
@@ -180,8 +177,7 @@ def particle_clear(target: str, with_children: bool, search_method: Optional[str
     """Clear all particles from a particle system."""
     config = get_config()
     params: dict[str, Any] = {"action": "particle_clear", "target": target}
-    if with_children:
-        params["withChildren"] = True
+    params["withChildren"] = with_children
     if search_method:
         params["searchMethod"] = search_method
     if component_index is not None:

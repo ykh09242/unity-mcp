@@ -94,17 +94,17 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 try
                 {
-                    return JToken.Parse(token.ToString()) as JObject;
+                    return JObject.Parse(token.ToString());
                 }
                 catch (JsonException ex)
                 {
                     throw new JsonException(
-                        $"Failed to parse 'properties' JSON string. Raw value: {token}",
+                        "'properties' must be a JSON object or a JSON string containing an object.",
                         ex);
                 }
             }
 
-            return null;
+            throw new JsonException("'properties' must be a JSON object or a JSON string containing an object.");
         }
 
         private static string NormalizeKey(string key, bool allowAliases)
@@ -160,15 +160,13 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         public static object HandleCommand(JObject @params)
         {
-            JObject normalizedParams = NormalizeParams(@params);
-            string action = normalizedParams["action"]?.ToString();
-            if (string.IsNullOrEmpty(action))
-            {
-                return new { success = false, message = "Action is required" };
-            }
-
+            string action = null;
             try
             {
+                JObject normalizedParams = NormalizeParams(@params);
+                action = normalizedParams["action"]?.ToString();
+                if (string.IsNullOrEmpty(action))
+                    return new { success = false, message = "Action is required" };
                 string actionLower = action.ToLowerInvariant();
 
                 if (actionLower.StartsWith("animator_"))
@@ -187,6 +185,10 @@ namespace MCPForUnity.Editor.Tools.Animation
                 }
 
                 return new { success = false, message = $"Unknown action: {action}. Actions must be prefixed with: animator_, controller_, or clip_" };
+            }
+            catch (JsonException e)
+            {
+                return new ErrorResponse(e.Message);
             }
             catch (Exception e)
             {

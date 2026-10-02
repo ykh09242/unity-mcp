@@ -23,7 +23,7 @@ Manage Unity animation: Animator control and AnimationClip creation. Action pref
 | `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer'] \| None` | — | How to find the target GameObject. |
 | `clip_path` | `str \| None` | — | Asset path for AnimationClip (e.g. 'Assets/Animations/Walk.anim'). |
 | `controller_path` | `str \| None` | — | Asset path for AnimatorController (e.g. 'Assets/Animators/Player.controller'). |
-| `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON string). |
+| `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON object string). |
 
 ## Returns
 

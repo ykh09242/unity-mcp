@@ -5,6 +5,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.utils import normalize_properties
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -57,7 +58,7 @@ async def manage_animation(
     controller_path: Annotated[str | None, "Asset path for AnimatorController (e.g. 'Assets/Animators/Player.controller')."] = None,
     properties: Annotated[
         dict[str, Any] | str | None,
-        "Action-specific parameters (dict or JSON string).",
+        "Action-specific parameters (dict or JSON object string).",
     ] = None,
 ) -> dict[str, Any]:
     """Unified animation management tool."""
@@ -86,6 +87,10 @@ async def manage_animation(
                     "clip_* (AnimationClip operations)."
                 ),
             }
+
+    properties, properties_error = normalize_properties(properties)
+    if properties_error:
+        return {"success": False, "message": properties_error}
 
     unity_instance = await get_unity_instance_from_context(ctx)
 

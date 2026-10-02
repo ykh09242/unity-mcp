@@ -21,7 +21,7 @@ Manage Unity VFX components (ParticleSystem, VisualEffect, LineRenderer, TrailRe
 | `action` | `str` | yes | Action to perform (prefix: particle_, vfx_, line_, trail_). |
 | `target` | `str \| None` | — | Target GameObject (name/path/id). |
 | `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer'] \| None` | — | How to find the target GameObject. |
-| `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON string). |
+| `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON object string). |
 | `component_index` | `int \| None` | — | Zero-based index to select which component when multiple of the same type exist (e.g., multiple ParticleSystems). If omitted, targets the first instance. |
 
 ## Returns
