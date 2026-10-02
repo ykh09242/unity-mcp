@@ -16,11 +16,15 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_shader", AutoRegister = false, Group = "vfx")]
     public static class ManageShader
     {
+        private static readonly System.Text.UTF8Encoding StrictUtf8 = new System.Text.UTF8Encoding(false, true);
+
         /// <summary>
         /// Main handler for shader management actions.
         /// </summary>
         public static object HandleCommand(JObject @params)
         {
+            if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+
             // Extract parameters
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
             string name = @params["name"]?.ToString();
@@ -28,7 +32,15 @@ namespace MCPForUnity.Editor.Tools
             string contents = null;
 
             // Check if we have base64 encoded contents
-            bool contentsEncoded = @params["contentsEncoded"]?.ToObject<bool>() ?? false;
+            bool contentsEncoded;
+            try
+            {
+                contentsEncoded = @params["contentsEncoded"]?.ToObject<bool>() ?? false;
+            }
+            catch (Exception e) when (e is ArgumentException || e is FormatException || e is InvalidCastException || e is Newtonsoft.Json.JsonException)
+            {
+                return new ErrorResponse($"Invalid contentsEncoded value: {e.Message}");
+            }
             if (contentsEncoded && @params["encodedContents"] != null)
             {
                 try
@@ -98,30 +110,9 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Invalid shader path: {ex.Message}");
             }
-            string fullPathDir = Path.GetDirectoryName(fullPath);
             string relativePath = AssetPathUtility.NormalizeSeparators(
                 Path.Combine("Assets", relativeDir, shaderFileName)
             ); // Ensure "Assets/" prefix and forward slashes
-
-            // Only creation needs a new directory; updates require an existing shader.
-            if (action == "create")
-            {
-                try
-                {
-                    if (!Directory.Exists(fullPathDir))
-                    {
-                        Directory.CreateDirectory(fullPathDir);
-                        // Refresh AssetDatabase to recognize new folders
-                        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                    }
-                }
-                catch (Exception e)
-                {
-                    return new ErrorResponse(
-                        $"Could not create directory '{fullPathDir}': {e.Message}"
-                    );
-                }
-            }
 
             // Route to specific action handlers
             switch (action)
@@ -147,7 +138,7 @@ namespace MCPForUnity.Editor.Tools
         private static string DecodeBase64(string encoded)
         {
             byte[] data = Convert.FromBase64String(encoded);
-            return System.Text.Encoding.UTF8.GetString(data);
+            return StrictUtf8.GetString(data);
         }
 
         /// <summary>
@@ -190,7 +181,15 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                File.WriteAllText(fullPath, contents, new System.Text.UTF8Encoding(false));
+                // Validate before preparing directories or opening a file, which could truncate existing content.
+                StrictUtf8.GetByteCount(contents);
+                string fullPathDir = Path.GetDirectoryName(fullPath);
+                if (!Directory.Exists(fullPathDir))
+                {
+                    Directory.CreateDirectory(fullPathDir);
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                }
+                File.WriteAllText(fullPath, contents, StrictUtf8);
                 AssetDatabase.ImportAsset(relativePath);
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport); // Ensure Unity recognizes the new shader
                 return new SuccessResponse(
@@ -258,7 +257,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                File.WriteAllText(fullPath, contents, new System.Text.UTF8Encoding(false));
+                StrictUtf8.GetByteCount(contents);
+                File.WriteAllText(fullPath, contents, StrictUtf8);
                 AssetDatabase.ImportAsset(relativePath);
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 return new SuccessResponse(
