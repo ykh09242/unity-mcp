@@ -31,43 +31,54 @@ namespace MCPForUnity.Editor.Tools.Cameras
             float far = ParamCoercion.CoerceFloat(props["farClipPlane"], 1000f);
 
             var go = new GameObject(name);
-            Undo.RegisterCreatedObjectUndo(go, $"Create Camera '{name}'");
-            var cam = go.AddComponent<UnityEngine.Camera>();
-            cam.fieldOfView = fov;
-            cam.nearClipPlane = near;
-            cam.farClipPlane = far;
-
-            // Position near follow target if provided
-            string follow = ParamCoercion.CoerceString(props["follow"], null);
-            if (follow != null)
+            bool completed = false;
+            try
             {
-                var target = CameraHelpers.ResolveGameObjectRef(follow);
-                if (target != null)
-                    go.transform.position = target.transform.position + new Vector3(0, 5, -10);
-            }
+                Undo.RegisterCreatedObjectUndo(go, $"Create Camera '{name}'");
+                var cam = go.AddComponent<UnityEngine.Camera>();
+                if (cam == null)
+                    return new ErrorResponse("Could not add Camera component.");
+                cam.fieldOfView = fov;
+                cam.nearClipPlane = near;
+                cam.farClipPlane = far;
 
-            // Look at target if provided
-            string lookAt = ParamCoercion.CoerceString(props["lookAt"] ?? props["look_at"], null);
-            if (lookAt != null)
-            {
-                var target = CameraHelpers.ResolveGameObjectRef(lookAt);
-                if (target != null)
-                    go.transform.LookAt(target.transform);
-            }
-
-            CameraHelpers.MarkDirty(go);
-
-            return new
-            {
-                success = true,
-                message = $"Created basic Camera '{name}' (Cinemachine not installed — using Unity Camera).",
-                data = new
+                // Position near follow target if provided
+                string follow = ParamCoercion.CoerceString(props["follow"], null);
+                if (follow != null)
                 {
-                    instanceID = go.GetInstanceIDCompat(),
-                    cinemachine = false,
-                    hint = "Install com.unity.cinemachine for presets, blending, and virtual camera features."
+                    var target = CameraHelpers.ResolveGameObjectRef(follow);
+                    if (target != null)
+                        go.transform.position = target.transform.position + new Vector3(0, 5, -10);
                 }
-            };
+
+                // Look at target if provided
+                string lookAt = ParamCoercion.CoerceString(props["lookAt"] ?? props["look_at"], null);
+                if (lookAt != null)
+                {
+                    var target = CameraHelpers.ResolveGameObjectRef(lookAt);
+                    if (target != null)
+                        go.transform.LookAt(target.transform);
+                }
+
+                CameraHelpers.MarkDirty(go);
+                completed = true;
+                return new
+                {
+                    success = true,
+                    message = $"Created basic Camera '{name}' (Cinemachine not installed — using Unity Camera).",
+                    data = new
+                    {
+                        instanceID = go.GetInstanceIDCompat(),
+                        cinemachine = false,
+                        hint = "Install com.unity.cinemachine for presets, blending, and virtual camera features."
+                    }
+                };
+            }
+            finally
+            {
+                if (!completed && go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
+            }
         }
 
         internal static object CreateCinemachineCamera(JObject @params)
@@ -83,89 +94,119 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     $"Unknown preset '{preset}'. Valid presets: {string.Join(", ", Presets.Keys)}.");
             }
 
-            var go = new GameObject(name);
-            Undo.RegisterCreatedObjectUndo(go, $"Create CinemachineCamera '{name}'");
-
-            // Add CinemachineCamera component
             var cmType = CameraHelpers.CinemachineCameraType;
-            var cmCamera = go.AddComponent(cmType);
+            var bodyType = presetDef.body == null ? null : CameraHelpers.ResolveComponentType(presetDef.body);
+            var aimType = presetDef.aim == null ? null : CameraHelpers.ResolveComponentType(presetDef.aim);
+            if (cmType == null || (presetDef.body != null && bodyType == null)
+                || (presetDef.aim != null && aimType == null))
+                return new ErrorResponse($"Required Cinemachine components for preset '{preset}' are unavailable.");
 
-            // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty
-            using (var so = new SerializedObject(cmCamera))
+            var go = new GameObject(name);
+            bool completed = false;
+            try
             {
-                var priorityProp = so.FindProperty("Priority");
-                if (priorityProp != null)
+                Undo.RegisterCreatedObjectUndo(go, $"Create CinemachineCamera '{name}'");
+                var cmCamera = go.AddComponent(cmType);
+                if (cmCamera == null)
+                    return new ErrorResponse("Could not add CinemachineCamera component.");
+
+                // PrioritySettings is a struct with Enabled + m_Value — use SerializedProperty
+                using (var so = new SerializedObject(cmCamera))
                 {
-                    var enabledProp = priorityProp.FindPropertyRelative("Enabled");
-                    var valueProp = priorityProp.FindPropertyRelative("m_Value");
-                    if (enabledProp != null) enabledProp.boolValue = true;
-                    if (valueProp != null) valueProp.intValue = priority;
-                    so.ApplyModifiedProperties();
+                    var priorityProp = so.FindProperty("Priority");
+                    if (priorityProp != null)
+                    {
+                        var enabledProp = priorityProp.FindPropertyRelative("Enabled");
+                        var valueProp = priorityProp.FindPropertyRelative("m_Value");
+                        if (enabledProp == null || valueProp == null)
+                            return new ErrorResponse("Could not find supported Priority fields on CinemachineCamera.");
+                        enabledProp.boolValue = true;
+                        valueProp.intValue = priority;
+                        so.ApplyModifiedProperties();
+                    }
+                    else
+                    {
+                        if (!CameraHelpers.SetReflectionProperty(cmCamera, "Priority", priority))
+                            return new ErrorResponse("Could not set Priority on CinemachineCamera.");
+                    }
+
+                    if (props["fieldOfView"] != null || props["nearClipPlane"] != null || props["farClipPlane"] != null)
+                    {
+                        var lensProp = so.FindProperty("Lens") ?? so.FindProperty("m_Lens");
+                        if (lensProp == null)
+                            return new ErrorResponse("Could not find Lens property on CinemachineCamera.");
+                        foreach (var (input, field) in new[]
+                        {
+                            ("fieldOfView", "FieldOfView"),
+                            ("nearClipPlane", "NearClipPlane"),
+                            ("farClipPlane", "FarClipPlane")
+                        })
+                        {
+                            if (props[input] == null) continue;
+                            var lensField = lensProp.FindPropertyRelative(field);
+                            if (lensField == null)
+                                return new ErrorResponse($"Could not find Lens.{field} property on CinemachineCamera.");
+                            lensField.floatValue = ParamCoercion.CoerceFloat(props[input], lensField.floatValue);
+                        }
+                        so.ApplyModifiedProperties();
+                    }
                 }
-                else
+
+                if (bodyType != null && go.AddComponent(bodyType) == null)
+                    return new ErrorResponse($"Could not add {presetDef.body} component.");
+                if (aimType != null && go.AddComponent(aimType) == null)
+                    return new ErrorResponse($"Could not add {presetDef.aim} component.");
+
+                var followToken = props["follow"];
+                if (followToken != null && followToken.Type != JTokenType.Null)
+                    CameraHelpers.SetTransformTarget(cmCamera, "Follow", followToken);
+                var lookAtToken = props["lookAt"] ?? props["look_at"];
+                if (lookAtToken != null && lookAtToken.Type != JTokenType.Null)
+                    CameraHelpers.SetTransformTarget(cmCamera, "LookAt", lookAtToken);
+
+                CameraHelpers.MarkDirty(go);
+                completed = true;
+                return new
                 {
-                    CameraHelpers.SetReflectionProperty(cmCamera, "Priority", priority);
-                }
+                    success = true,
+                    message = $"Created CinemachineCamera '{name}' with preset '{preset}'.",
+                    data = new
+                    {
+                        instanceID = go.GetInstanceIDCompat(),
+                        cinemachine = true,
+                        preset,
+                        priority,
+                        body = bodyType == null ? null : presetDef.body,
+                        aim = aimType == null ? null : presetDef.aim
+                    }
+                };
             }
-
-            // Add Body component
-            string bodyName = null;
-            if (presetDef.body != null)
+            finally
             {
-                var bodyType = CameraHelpers.ResolveComponentType(presetDef.body);
-                if (bodyType != null)
-                {
-                    go.AddComponent(bodyType);
-                    bodyName = presetDef.body;
-                }
+                if (!completed && go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
             }
-
-            // Add Aim component
-            string aimName = null;
-            if (presetDef.aim != null)
-            {
-                var aimType = CameraHelpers.ResolveComponentType(presetDef.aim);
-                if (aimType != null)
-                {
-                    go.AddComponent(aimType);
-                    aimName = presetDef.aim;
-                }
-            }
-
-            // Set Follow target
-            var followToken = props["follow"];
-            if (followToken != null && followToken.Type != JTokenType.Null)
-                CameraHelpers.SetTransformTarget(cmCamera, "Follow", followToken);
-
-            // Set LookAt target
-            var lookAtToken = props["lookAt"] ?? props["look_at"];
-            if (lookAtToken != null && lookAtToken.Type != JTokenType.Null)
-                CameraHelpers.SetTransformTarget(cmCamera, "LookAt", lookAtToken);
-
-            CameraHelpers.MarkDirty(go);
-
-            return new
-            {
-                success = true,
-                message = $"Created CinemachineCamera '{name}' with preset '{preset}'.",
-                data = new
-                {
-                    instanceID = go.GetInstanceIDCompat(),
-                    cinemachine = true,
-                    preset,
-                    priority,
-                    body = bodyName,
-                    aim = aimName
-                }
-            };
         }
 
         internal static object EnsureBrain(JObject @params)
         {
             var props = CameraHelpers.ExtractProperties(@params) ?? new JObject();
 
-            // Check if Brain already exists
-            var existingBrain = CameraHelpers.FindBrain();
+            string cameraRef = ParamCoercion.CoerceString(props["camera"], null);
+            UnityEngine.Camera cam = null;
+            Component existingBrain;
+            if (cameraRef != null)
+            {
+                var camGo = CameraHelpers.ResolveGameObjectRef(cameraRef);
+                cam = camGo != null ? camGo.GetComponent<UnityEngine.Camera>() : null;
+                if (cam == null)
+                    return new ErrorResponse("No Camera found to add CinemachineBrain to.");
+                existingBrain = cam.gameObject.GetComponent(CameraHelpers.CinemachineBrainType);
+            }
+            else
+            {
+                existingBrain = CameraHelpers.FindBrain();
+            }
             if (existingBrain != null)
             {
                 return new
@@ -181,71 +222,73 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             // Find target camera
-            string cameraRef = ParamCoercion.CoerceString(props["camera"], null);
-            UnityEngine.Camera cam;
-            if (cameraRef != null)
-            {
-                var camGo = CameraHelpers.ResolveGameObjectRef(cameraRef);
-                cam = camGo != null ? camGo.GetComponent<UnityEngine.Camera>() : null;
-            }
-            else
-            {
+            if (cam == null)
                 cam = CameraHelpers.FindMainCamera();
-            }
 
             if (cam == null)
                 return new ErrorResponse("No Camera found to add CinemachineBrain to.");
 
             var brainType = CameraHelpers.CinemachineBrainType;
             Undo.RecordObject(cam.gameObject, "Add CinemachineBrain");
-            var brain = cam.gameObject.AddComponent(brainType);
-
-            // Configure default blend if provided
-            string blendStyle = ParamCoercion.CoerceString(props["defaultBlendStyle"] ?? props["default_blend_style"], null);
-            float blendDuration = ParamCoercion.CoerceFloat(props["defaultBlendDuration"] ?? props["default_blend_duration"], -1f);
-
-            if (blendStyle != null || blendDuration >= 0)
+            Component brain = null;
+            bool completed = false;
+            try
             {
-                // Set via SerializedProperty for the DefaultBlend struct
-                using var so = new SerializedObject(brain);
-                var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
-                if (defaultBlendProp != null)
+                brain = cam.gameObject.AddComponent(brainType);
+                if (brain == null)
+                    return new ErrorResponse("Could not add CinemachineBrain component.");
+
+                // Configure default blend if provided
+                string blendStyle = ParamCoercion.CoerceString(props["defaultBlendStyle"] ?? props["default_blend_style"], null);
+                float blendDuration = ParamCoercion.CoerceFloat(props["defaultBlendDuration"] ?? props["default_blend_duration"], -1f);
+
+                if (blendStyle != null || blendDuration >= 0)
                 {
-                    if (blendStyle != null)
+                    using var so = new SerializedObject(brain);
+                    var defaultBlendProp = so.FindProperty("DefaultBlend") ?? so.FindProperty("m_DefaultBlend");
+                    if (defaultBlendProp != null)
                     {
-                        var styleProp = defaultBlendProp.FindPropertyRelative("Style")
-                                     ?? defaultBlendProp.FindPropertyRelative("m_Style");
-                        if (styleProp != null)
+                        if (blendStyle != null)
                         {
-                            int idx = Array.FindIndex(styleProp.enumNames,
-                                n => n.Equals(blendStyle, StringComparison.OrdinalIgnoreCase));
-                            if (idx >= 0)
-                                styleProp.enumValueIndex = idx;
+                            var styleProp = defaultBlendProp.FindPropertyRelative("Style")
+                                         ?? defaultBlendProp.FindPropertyRelative("m_Style");
+                            if (styleProp != null)
+                            {
+                                int idx = Array.FindIndex(styleProp.enumNames,
+                                    n => n.Equals(blendStyle, StringComparison.OrdinalIgnoreCase));
+                                if (idx >= 0)
+                                    styleProp.enumValueIndex = idx;
+                            }
                         }
+                        if (blendDuration >= 0)
+                        {
+                            var timeProp = defaultBlendProp.FindPropertyRelative("Time")
+                                        ?? defaultBlendProp.FindPropertyRelative("m_Time");
+                            if (timeProp != null)
+                                timeProp.floatValue = blendDuration;
+                        }
+                        so.ApplyModifiedProperties();
                     }
-                    if (blendDuration >= 0)
-                    {
-                        var timeProp = defaultBlendProp.FindPropertyRelative("Time")
-                                    ?? defaultBlendProp.FindPropertyRelative("m_Time");
-                        if (timeProp != null)
-                            timeProp.floatValue = blendDuration;
-                    }
-                    so.ApplyModifiedProperties();
                 }
-            }
 
-            CameraHelpers.MarkDirty(cam.gameObject);
-
-            return new
-            {
-                success = true,
-                message = $"CinemachineBrain added to '{cam.gameObject.name}'.",
-                data = new
+                CameraHelpers.MarkDirty(cam.gameObject);
+                completed = true;
+                return new
                 {
-                    instanceID = cam.gameObject.GetInstanceIDCompat(),
-                    alreadyExisted = false
-                }
-            };
+                    success = true,
+                    message = $"CinemachineBrain added to '{cam.gameObject.name}'.",
+                    data = new
+                    {
+                        instanceID = cam.gameObject.GetInstanceIDCompat(),
+                        alreadyExisted = false
+                    }
+                };
+            }
+            finally
+            {
+                if (!completed && brain != null)
+                    UnityEngine.Object.DestroyImmediate(brain);
+            }
         }
     }
 }
