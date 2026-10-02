@@ -601,33 +601,44 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse($"Failed to create ProBuilder shape '{shapeTypeStr}'.");
 
             var go = pbMesh.gameObject;
-            Undo.RegisterCreatedObjectUndo(go, $"Create ProBuilder {shapeTypeStr}");
-
-            // Apply name
-            string name = props["name"]?.ToString();
-            if (!string.IsNullOrEmpty(name))
-                go.name = name;
-
-            // Apply position
-            var posToken = props["position"];
-            if (posToken != null)
-                go.transform.position = ParseVector3(posToken);
-
-            // Apply rotation
-            var rotToken = props["rotation"];
-            if (rotToken != null)
-                go.transform.eulerAngles = ParseVector3(rotToken);
-
-            RefreshMesh(pbMesh);
-
-            return new SuccessResponse($"Created ProBuilder {shapeTypeStr}: {go.name}", new
+            bool completed = false;
+            try
             {
-                gameObjectName = go.name,
-                instanceId = go.GetInstanceIDCompat(),
-                shapeType = shapeTypeStr,
-                faceCount = GetFaceCount(pbMesh),
-                vertexCount = GetVertexCount(pbMesh),
-            });
+                Undo.RegisterCreatedObjectUndo(go, $"Create ProBuilder {shapeTypeStr}");
+
+                // Apply name
+                string name = props["name"]?.ToString();
+                if (!string.IsNullOrEmpty(name))
+                    go.name = name;
+
+                // Apply position
+                var posToken = props["position"];
+                if (posToken != null)
+                    go.transform.position = ParseVector3(posToken);
+
+                // Apply rotation
+                var rotToken = props["rotation"];
+                if (rotToken != null)
+                    go.transform.eulerAngles = ParseVector3(rotToken);
+
+                RefreshMesh(pbMesh);
+
+                var response = new SuccessResponse($"Created ProBuilder {shapeTypeStr}: {go.name}", new
+                {
+                    gameObjectName = go.name,
+                    instanceId = go.GetInstanceIDCompat(),
+                    shapeType = shapeTypeStr,
+                    faceCount = GetFaceCount(pbMesh),
+                    vertexCount = GetVertexCount(pbMesh),
+                });
+                completed = true;
+                return response;
+            }
+            finally
+            {
+                if (!completed && go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
+            }
         }
 
         private static Component CreateShapeViaGenerator(string shapeType, JObject props, object pivot)
@@ -893,14 +904,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             float extrudeHeight = props["extrudeHeight"]?.Value<float>() ?? props["extrude_height"]?.Value<float>() ?? 1f;
             bool flipNormals = props["flipNormals"]?.Value<bool>() ?? props["flip_normals"]?.Value<bool>() ?? false;
 
-            // Create a new GameObject with ProBuilderMesh
-            var go = new GameObject("PolyShape");
-            Undo.RegisterCreatedObjectUndo(go, "Create ProBuilder PolyShape");
-            var pbMesh = go.AddComponent(_proBuilderMeshType);
-
             if (_appendElementsType == null)
             {
-                UnityEngine.Object.DestroyImmediate(go);
                 return new ErrorResponse("AppendElements type not found in ProBuilder assembly.");
             }
 
@@ -912,27 +917,51 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             if (createFromPolygonMethod == null)
             {
-                UnityEngine.Object.DestroyImmediate(go);
                 return new ErrorResponse("CreateShapeFromPolygon method not found.");
             }
 
-            createFromPolygonMethod.Invoke(null, new object[] { pbMesh, points, extrudeHeight, flipNormals });
-
-            string name = props["name"]?.ToString();
-            if (!string.IsNullOrEmpty(name))
-                go.name = name;
-
-            RefreshMesh(pbMesh);
-
-            return new SuccessResponse($"Created poly shape: {go.name}", new
+            var go = new GameObject("PolyShape");
+            bool completed = false;
+            try
             {
-                gameObjectName = go.name,
-                instanceId = go.GetInstanceIDCompat(),
-                pointCount = points.Count,
-                extrudeHeight,
-                faceCount = GetFaceCount(pbMesh),
-                vertexCount = GetVertexCount(pbMesh),
-            });
+                Undo.RegisterCreatedObjectUndo(go, "Create ProBuilder PolyShape");
+                var pbMesh = go.AddComponent(_proBuilderMeshType);
+                var result = createFromPolygonMethod.Invoke(null, new object[] { pbMesh, points, extrudeHeight, flipNormals });
+                // ProBuilder ActionResult only considers Success a successful operation.
+                // Retain compatibility with older APIs returning void.
+                if (result != null)
+                {
+                    var status = result.GetType().GetProperty("status")?.GetValue(result);
+                    if (status != null && status.ToString() != "Success")
+                    {
+                        var notification = result.GetType().GetProperty("notification")?.GetValue(result);
+                        return new ErrorResponse($"Failed to create poly shape: {notification ?? status}");
+                    }
+                }
+
+                string name = props["name"]?.ToString();
+                if (!string.IsNullOrEmpty(name))
+                    go.name = name;
+
+                RefreshMesh(pbMesh);
+
+                var response = new SuccessResponse($"Created poly shape: {go.name}", new
+                {
+                    gameObjectName = go.name,
+                    instanceId = go.GetInstanceIDCompat(),
+                    pointCount = points.Count,
+                    extrudeHeight,
+                    faceCount = GetFaceCount(pbMesh),
+                    vertexCount = GetVertexCount(pbMesh),
+                });
+                completed = true;
+                return response;
+            }
+            finally
+            {
+                if (!completed && go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
+            }
         }
 
         // =====================================================================
@@ -1464,28 +1493,73 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_meshImporterType == null)
                 return null;
 
-            var pbMesh = go.AddComponent(_proBuilderMeshType);
+            return ImportProBuilderMesh(go, meshFilter, false);
+        }
 
-            var importerCtor = _meshImporterType.GetConstructor(new[] { _proBuilderMeshType });
+        private static Component ImportProBuilderMesh(GameObject go, MeshFilter meshFilter, bool recordUndo)
+        {
+            var importerCtor = _meshImporterType.GetConstructor(
+                new[] { typeof(Mesh), typeof(Material[]), _proBuilderMeshType })
+                ?? _meshImporterType.GetConstructor(new[] { _proBuilderMeshType });
             if (importerCtor == null)
-                return null;
+                throw new InvalidOperationException("MeshImporter constructor not found.");
 
-            var importer = importerCtor.Invoke(new object[] { pbMesh });
-            var importM = _meshImporterType.GetMethod("Import",
-                BindingFlags.Instance | BindingFlags.Public,
-                null,
-                new[] { typeof(Mesh) },
-                null);
+            var importMethod = _meshImporterType.GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                .Where(m => m.Name == "Import")
+                .OrderBy(m => m.GetParameters().Length)
+                .FirstOrDefault();
+            if (importMethod == null || importMethod.GetParameters().Length > 1)
+                throw new InvalidOperationException("Supported MeshImporter.Import method not found.");
 
-            if (importM == null)
-                importM = _meshImporterType.GetMethod("Import",
-                    BindingFlags.Instance | BindingFlags.Public);
+            var renderer = go.GetComponent<MeshRenderer>();
+            var materials = renderer != null ? renderer.sharedMaterials : new Material[0];
+            // Adding ProBuilderMesh can clear the MeshFilter binding from Awake.
+            var sourceMesh = meshFilter.sharedMesh;
+            if (recordUndo)
+                Undo.RegisterCompleteObjectUndo(go, "Convert to ProBuilder");
 
-            if (importM != null)
-                importM.Invoke(importer, new object[] { meshFilter.sharedMesh });
-
-            RefreshMesh(pbMesh);
-            return pbMesh;
+            Component pbMesh = null;
+            bool completed = false;
+            try
+            {
+                pbMesh = go.AddComponent(_proBuilderMeshType);
+                var importer = importerCtor.GetParameters().Length == 3
+                    ? importerCtor.Invoke(new object[] { sourceMesh, materials, pbMesh })
+                    : importerCtor.Invoke(new object[] { pbMesh });
+                var parameters = importMethod.GetParameters();
+                object[] arguments = null;
+                if (parameters.Length == 1)
+                {
+                    var parameter = parameters[0];
+                    arguments = new[] { parameter.ParameterType == typeof(Mesh)
+                        ? (object)sourceMesh
+                        : parameter.HasDefaultValue ? parameter.DefaultValue : null };
+                }
+                importMethod.Invoke(importer, arguments);
+                RefreshMesh(pbMesh);
+                completed = true;
+                return pbMesh;
+            }
+            finally
+            {
+                if (!completed)
+                {
+                    try
+                    {
+                        // ProBuilder's OnDestroy deletes the bound mesh. Detach borrowed
+                        // input/assets while allowing it to clean up its generated output.
+                        var boundMesh = meshFilter.sharedMesh;
+                        if (boundMesh == sourceMesh || (boundMesh != null && AssetDatabase.Contains(boundMesh)))
+                            meshFilter.sharedMesh = null;
+                        if (pbMesh != null)
+                            UnityEngine.Object.DestroyImmediate(pbMesh);
+                    }
+                    finally
+                    {
+                        meshFilter.sharedMesh = sourceMesh;
+                    }
+                }
+            }
         }
 
         private static object MergeObjects(JObject @params)
@@ -2500,46 +2574,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_meshImporterType == null)
                 return new ErrorResponse("MeshImporter type not found.");
 
-            Undo.RegisterCompleteObjectUndo(go, "Convert to ProBuilder");
-
-            var pbMesh = go.AddComponent(_proBuilderMeshType);
-
-            // Use MeshImporter(Mesh, Material[], ProBuilderMesh) constructor
-            var renderer = go.GetComponent<MeshRenderer>();
-            var materials = renderer != null ? renderer.sharedMaterials : new Material[0];
-            var importerCtor = _meshImporterType.GetConstructor(
-                new[] { typeof(Mesh), typeof(Material[]), _proBuilderMeshType });
-
-            if (importerCtor == null)
-            {
-                // Fall back to MeshImporter(ProBuilderMesh)
-                importerCtor = _meshImporterType.GetConstructor(new[] { _proBuilderMeshType });
-                if (importerCtor == null)
-                    return new ErrorResponse("MeshImporter constructor not found.");
-            }
-
-            object importer;
-            if (importerCtor.GetParameters().Length == 3)
-                importer = importerCtor.Invoke(new object[] { meshFilter.sharedMesh, materials, pbMesh });
-            else
-                importer = importerCtor.Invoke(new object[] { pbMesh });
-
-            // Find Import() overload with fewest parameters (takes optional MeshImportSettings)
-            var importM = _meshImporterType.GetMethods(BindingFlags.Instance | BindingFlags.Public)
-                .Where(m => m.Name == "Import")
-                .OrderBy(m => m.GetParameters().Length)
-                .FirstOrDefault();
-
-            if (importM != null)
-            {
-                var importParams = importM.GetParameters();
-                if (importParams.Length == 0)
-                    importM.Invoke(importer, null);
-                else
-                    importM.Invoke(importer, new object[] { null });
-            }
-
-            RefreshMesh(pbMesh);
+            var pbMesh = ImportProBuilderMesh(go, meshFilter, true);
 
             return new SuccessResponse($"Converted '{go.name}' to ProBuilder", new
             {
