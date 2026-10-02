@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Threading;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Services.AssetGen.Import
 {
@@ -18,12 +20,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     /// </summary>
     public static class SafeZipExtractor
     {
-        public static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions = null)
+        public static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions = null,
+            CancellationToken cancellationToken = default)
+            => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096,
+                256L * 1024 * 1024, 1024L * 1024 * 1024, 200);
+
+        internal static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions,
+            CancellationToken cancellationToken, int maxEntries, long maxEntryBytes, long maxTotalBytes, int maxRatio)
         {
             if (string.IsNullOrEmpty(zipPath)) throw new ArgumentException("zipPath required", nameof(zipPath));
             if (string.IsNullOrEmpty(destDir)) throw new ArgumentException("destDir required", nameof(destDir));
 
-            Directory.CreateDirectory(destDir);
+            cancellationToken.ThrowIfCancellationRequested();
             string destFull = Path.GetFullPath(destDir);
             string prefix = destFull.EndsWith(Path.DirectorySeparatorChar.ToString())
                 ? destFull
@@ -32,41 +40,82 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             using (FileStream fs = File.OpenRead(zipPath))
             using (var archive = new ZipArchive(fs, ZipArchiveMode.Read))
             {
+                if (archive.Entries.Count > maxEntries)
+                    throw new IOException("Archive exceeds the entry count limit.");
+                long declaredTotal = 0;
+                // Validate all advertised sizes before creating any output files.
                 foreach (ZipArchiveEntry entry in archive.Entries)
                 {
-                    string name = entry.FullName;
-                    if (string.IsNullOrEmpty(name)) continue;
-
-                    // Reject traversal / absolute paths up front.
-                    if (name.Contains("..") || Path.IsPathRooted(name))
-                        throw new IOException($"Unsafe zip entry rejected: {name}");
-
-                    string target = Path.GetFullPath(Path.Combine(destDir, name));
-                    if (!target.StartsWith(prefix, StringComparison.Ordinal))
-                        throw new IOException($"Unsafe zip entry escapes destination: {name}");
-
-                    // A directory entry has an empty Name (FullName ends with a separator).
-                    if (string.IsNullOrEmpty(entry.Name))
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (entry.Length > maxEntryBytes || entry.Length > maxTotalBytes - declaredTotal)
+                        throw new IOException("Archive exceeds the uncompressed size limit.");
+                    if (entry.Length > Math.Max(1L, entry.CompressedLength) * maxRatio)
+                        throw new IOException("Archive exceeds the compression ratio limit.");
+                    declaredTotal += entry.Length;
+                }
+                long totalWritten = 0;
+                var createdFiles = new List<string>();
+                try
+                {
+                    foreach (ZipArchiveEntry entry in archive.Entries)
                     {
-                        Directory.CreateDirectory(target);
-                        continue;
-                    }
+                        cancellationToken.ThrowIfCancellationRequested();
+                        string name = entry.FullName.Replace('\\', '/');
+                        if (string.IsNullOrEmpty(name)) continue;
 
-                    // Allowlist gate: skip anything that isn't an inert asset type the caller permits.
-                    if (allowedExtensions != null && allowedExtensions.Count > 0
-                        && !allowedExtensions.Contains(Path.GetExtension(entry.Name).ToLowerInvariant()))
-                    {
-                        continue;
-                    }
+                        // Reject traversal / absolute paths up front.
+                        if (name.Contains("..") || name.Contains(":") || Path.IsPathRooted(name))
+                            throw new IOException($"Unsafe zip entry rejected: {name}");
 
-                    string parent = Path.GetDirectoryName(target);
-                    if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                        string target = Path.GetFullPath(Path.Combine(destDir, name));
+                        if (!target.StartsWith(prefix, StringComparison.Ordinal))
+                            throw new IOException($"Unsafe zip entry escapes destination: {name}");
+                        target = SafePathUtility.ResolveWithinRoot(destFull, target);
 
-                    using (Stream src = entry.Open())
-                    using (FileStream dst = File.Create(target))
-                    {
-                        src.CopyTo(dst);
+                        // A directory entry has an empty Name (FullName ends with a separator).
+                        if (string.IsNullOrEmpty(entry.Name))
+                        {
+                            Directory.CreateDirectory(target);
+                            continue;
+                        }
+
+                        // Allowlist gate: skip anything that isn't an inert asset type the caller permits.
+                        if (allowedExtensions != null && allowedExtensions.Count > 0
+                            && !allowedExtensions.Contains(Path.GetExtension(entry.Name).ToLowerInvariant()))
+                        {
+                            continue;
+                        }
+
+                        string parent = Path.GetDirectoryName(target);
+                        if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+
+                        using (Stream src = entry.Open())
+                        using (FileStream dst = new FileStream(target, FileMode.CreateNew, FileAccess.Write))
+                        {
+                            createdFiles.Add(target);
+                            var buffer = new byte[81920];
+                            long entryWritten = 0;
+                            int count;
+                            while ((count = src.Read(buffer, 0, buffer.Length)) != 0)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                if (count > maxEntryBytes - entryWritten || count > maxTotalBytes - totalWritten ||
+                                    count > entry.Length - entryWritten)
+                                    throw new IOException("Archive exceeds the actual uncompressed size limit.");
+                                dst.Write(buffer, 0, count);
+                                entryWritten += count;
+                                totalWritten += count;
+                            }
+                            if (entryWritten != entry.Length)
+                                throw new IOException("Archive entry size does not match its metadata.");
+                        }
                     }
+                }
+                catch
+                {
+                    foreach (string created in createdFiles)
+                        File.Delete(created);
+                    throw;
                 }
             }
         }
