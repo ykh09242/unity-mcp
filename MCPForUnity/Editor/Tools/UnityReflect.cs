@@ -523,7 +523,7 @@ namespace MCPForUnity.Editor.Tools
         private static string NormalizeGenericName(string name)
         {
             // Parse List<T> -> List`1, Dictionary<K,V> -> Dictionary`2
-            var match = Regex.Match(name, @"^(.+)<(.+)>$");
+            var match = Regex.Match(name, @"^([^<>]+)<(.+)>$");
             if (!match.Success) return name;
 
             string baseName = match.Groups[1].Value;
@@ -535,11 +535,15 @@ namespace MCPForUnity.Editor.Tools
             foreach (char c in typeArgs)
             {
                 if (c == '<') depth++;
-                else if (c == '>') depth--;
+                else if (c == '>')
+                {
+                    if (depth == 0) return name;
+                    depth--;
+                }
                 else if (c == ',' && depth == 0) argCount++;
             }
 
-            return $"{baseName}`{argCount}";
+            return depth == 0 ? $"{baseName}`{argCount}" : name;
         }
 
         // --- Type Name Formatting ---
