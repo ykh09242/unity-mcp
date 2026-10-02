@@ -116,11 +116,15 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
-            EnsureDirectoryExists(fullPath);
 
             Texture2D texture = null;
             try
             {
+                var importSettingsToken = @params["importSettings"];
+                var spriteSettingsToken = @params["spriteSettings"];
+                Action<TextureImporter> applySettings = importSettingsToken != null
+                    ? PrepareTextureImporterSettings(importSettingsToken)
+                    : (asSprite || spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null);
                 var fillColorToken = @params["fillColor"];
                 var patternToken = @params["pattern"];
                 var pixelsToken = @params["pixels"];
@@ -199,23 +203,12 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
+                EnsureDirectoryExists(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
-                // Configure texture importer settings if provided
-                JToken importSettingsToken = @params["importSettings"];
-                JToken spriteSettingsToken = @params["spriteSettings"];
-
-                if (importSettingsToken != null)
-                {
-                    ConfigureTextureImporter(fullPath, importSettingsToken);
-                }
-                else if (asSprite || spriteSettingsToken != null)
-                {
-                    // Legacy sprite configuration
-                    ConfigureAsSprite(fullPath, spriteSettingsToken);
-                }
+                ApplyPreparedImportSettings(fullPath, applySettings);
 
                 foreach (var warning in warnings)
                 {
@@ -271,11 +264,17 @@ namespace MCPForUnity.Editor.Tools
                     if (validationError != null) return validationError;
                 }
 
+                Action<TextureImporter> applySettings = null;
+                if (hasImportSettings)
+                {
+                    var preparationError = PrepareImportSettingsParams(@params, out applySettings);
+                    if (preparationError != null) return preparationError;
+                }
+
                 // Fast path: only import settings, no pixel changes
                 if (setPixelsToken == null && hasImportSettings)
                 {
-                    var error = ApplyImportSettingsParams(fullPath, @params);
-                    if (error != null) return error;
+                    ApplyPreparedImportSettings(fullPath, applySettings);
                     return new SuccessResponse($"Texture modified: {fullPath}");
                 }
 
@@ -343,8 +342,7 @@ namespace MCPForUnity.Editor.Tools
 
                 if (hasImportSettings)
                 {
-                    var importError = ApplyImportSettingsParams(fullPath, @params);
-                    if (importError != null) return importError;
+                    ApplyPreparedImportSettings(fullPath, applySettings);
                 }
 
                 return new SuccessResponse($"Texture modified: {fullPath}");
@@ -412,11 +410,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
-            EnsureDirectoryExists(fullPath);
-
             Texture2D texture = null;
             try
             {
+                var spriteSettingsToken = @params["spriteSettings"];
+                var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
                 texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
 
                 if (gradientType == "radial")
@@ -435,16 +433,13 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
+                EnsureDirectoryExists(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
                 // Configure as sprite if requested
-                JToken spriteSettingsToken = @params["spriteSettings"];
-                if (spriteSettingsToken != null)
-                {
-                    ConfigureAsSprite(fullPath, spriteSettingsToken);
-                }
+                ApplyPreparedImportSettings(fullPath, applySettings);
 
                 foreach (var warning in warnings)
                 {
@@ -501,11 +496,12 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
-            EnsureDirectoryExists(fullPath);
-
-            Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            Texture2D texture = null;
             try
             {
+                var spriteSettingsToken = @params["spriteSettings"];
+                var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
+                texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
                 ApplyPerlinNoise(texture, palette, scale, octaves);
 
                 texture.Apply();
@@ -515,16 +511,13 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
+                EnsureDirectoryExists(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
                 // Configure as sprite if requested
-                JToken spriteSettingsToken = @params["spriteSettings"];
-                if (spriteSettingsToken != null)
-                {
-                    ConfigureAsSprite(fullPath, spriteSettingsToken);
-                }
+                ApplyPreparedImportSettings(fullPath, applySettings);
 
                 foreach (var warning in warnings)
                 {
@@ -755,8 +748,9 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object ApplyImportSettingsParams(string fullPath, JObject @params)
+        private static object PrepareImportSettingsParams(JObject @params, out Action<TextureImporter> apply)
         {
+            apply = null;
             JToken importSettingsToken = @params["import_settings"] ?? @params["importSettings"];
             JToken asSpriteToken = @params["as_sprite"] ?? @params["spriteSettings"];
 
@@ -769,12 +763,12 @@ namespace MCPForUnity.Editor.Tools
 
             if (importSettingsToken != null)
             {
-                ConfigureTextureImporter(fullPath, importSettingsToken);
+                apply = PrepareTextureImporterSettings(importSettingsToken);
             }
             else if (asSpriteToken != null &&
                      (asSpriteToken.Type == JTokenType.Boolean ? asSpriteToken.ToObject<bool>() : true))
             {
-                ConfigureAsSprite(fullPath, asSpriteToken.Type == JTokenType.Object ? asSpriteToken : null);
+                apply = PrepareSpriteSettings(asSpriteToken.Type == JTokenType.Object ? asSpriteToken : null);
             }
 
             return null;
@@ -799,8 +793,9 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse("Either 'import_settings' or 'as_sprite' is required.");
                 }
 
-                var error = ApplyImportSettingsParams(fullPath, @params);
+                var error = PrepareImportSettingsParams(@params, out var applySettings);
                 if (error != null) return error;
+                ApplyPreparedImportSettings(fullPath, applySettings);
 
                 return new SuccessResponse($"Import settings updated for: {fullPath}", new { path = fullPath });
             }
@@ -810,16 +805,24 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static void ConfigureAsSprite(string path, JToken spriteSettings)
+        // Prepare conversions before any file/importer changes. Native setter/import failures
+        // can still leave applied changes; this is not a rollback transaction.
+        private static void ApplyPreparedImportSettings(string path, Action<TextureImporter> apply)
         {
-            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (apply == null) return;
+            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
-            {
                 throw new InvalidOperationException($"Could not get TextureImporter for {path}");
-            }
+            apply(importer);
+        }
 
-            importer.textureType = TextureImporterType.Sprite;
-            importer.spriteImportMode = SpriteImportMode.Single;
+        private static Action<TextureImporter> PrepareSpriteSettings(JToken spriteSettings)
+        {
+            var setters = new List<Action<TextureImporter>>
+            {
+                importer => importer.textureType = TextureImporterType.Sprite,
+                importer => importer.spriteImportMode = SpriteImportMode.Single
+            };
 
             if (spriteSettings != null && spriteSettings.Type == JTokenType.Object)
             {
@@ -829,37 +832,38 @@ namespace MCPForUnity.Editor.Tools
                 var pivotToken = settings["pivot"];
                 if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
                 {
-                    importer.spritePivot = new Vector2(
+                    var pivot = new Vector2(
                         pivotArray[0].ToObject<float>(),
                         pivotArray[1].ToObject<float>()
                     );
+                    setters.Add(importer => importer.spritePivot = pivot);
                 }
 
                 // Pixels per unit
                 var ppuToken = settings["pixelsPerUnit"];
                 if (ppuToken != null)
                 {
-                    importer.spritePixelsPerUnit = ppuToken.ToObject<float>();
+                    float pixelsPerUnit = ppuToken.ToObject<float>();
+                    setters.Add(importer => importer.spritePixelsPerUnit = pixelsPerUnit);
                 }
             }
 
-            importer.SaveAndReimport();
+            return importer =>
+            {
+                foreach (var set in setters) set(importer);
+                importer.SaveAndReimport();
+            };
         }
 
-        private static void ConfigureTextureImporter(string path, JToken importSettings)
+        private static Action<TextureImporter> PrepareTextureImporterSettings(JToken importSettings)
         {
-            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
-            if (importer == null)
-            {
-                throw new InvalidOperationException($"Could not get TextureImporter for {path}");
-            }
-
             if (importSettings == null || importSettings.Type != JTokenType.Object)
             {
-                return;
+                return importer => { };
             }
 
             var settings = importSettings as JObject;
+            var setters = new List<Action<TextureImporter>>();
 
             // Texture Type
             var textureTypeToken = settings["textureType"];
@@ -868,7 +872,7 @@ namespace MCPForUnity.Editor.Tools
                 string typeStr = textureTypeToken.ToString();
                 if (TryParseEnum<TextureImporterType>(typeStr, out var textureType))
                 {
-                    importer.textureType = textureType;
+                    setters.Add(importer => importer.textureType = textureType);
                 }
             }
 
@@ -879,7 +883,7 @@ namespace MCPForUnity.Editor.Tools
                 string shapeStr = textureShapeToken.ToString();
                 if (TryParseEnum<TextureImporterShape>(shapeStr, out var textureShape))
                 {
-                    importer.textureShape = textureShape;
+                    setters.Add(importer => importer.textureShape = textureShape);
                 }
             }
 
@@ -887,7 +891,8 @@ namespace MCPForUnity.Editor.Tools
             var srgbToken = settings["sRGBTexture"];
             if (srgbToken != null)
             {
-                importer.sRGBTexture = srgbToken.ToObject<bool>();
+                bool sRGBTexture = srgbToken.ToObject<bool>();
+                setters.Add(importer => importer.sRGBTexture = sRGBTexture);
             }
 
             // Alpha Source
@@ -897,7 +902,7 @@ namespace MCPForUnity.Editor.Tools
                 string alphaStr = alphaSourceToken.ToString();
                 if (TryParseEnum<TextureImporterAlphaSource>(alphaStr, out var alphaSource))
                 {
-                    importer.alphaSource = alphaSource;
+                    setters.Add(importer => importer.alphaSource = alphaSource);
                 }
             }
 
@@ -905,21 +910,24 @@ namespace MCPForUnity.Editor.Tools
             var alphaTransToken = settings["alphaIsTransparency"];
             if (alphaTransToken != null)
             {
-                importer.alphaIsTransparency = alphaTransToken.ToObject<bool>();
+                bool alphaIsTransparency = alphaTransToken.ToObject<bool>();
+                setters.Add(importer => importer.alphaIsTransparency = alphaIsTransparency);
             }
 
             // Readable
             var readableToken = settings["isReadable"];
             if (readableToken != null)
             {
-                importer.isReadable = readableToken.ToObject<bool>();
+                bool isReadable = readableToken.ToObject<bool>();
+                setters.Add(importer => importer.isReadable = isReadable);
             }
 
             // Mipmaps
             var mipmapToken = settings["mipmapEnabled"];
             if (mipmapToken != null)
             {
-                importer.mipmapEnabled = mipmapToken.ToObject<bool>();
+                bool mipmapEnabled = mipmapToken.ToObject<bool>();
+                setters.Add(importer => importer.mipmapEnabled = mipmapEnabled);
             }
 
             // Mipmap Filter
@@ -929,7 +937,7 @@ namespace MCPForUnity.Editor.Tools
                 string filterStr = mipmapFilterToken.ToString();
                 if (TryParseEnum<TextureImporterMipFilter>(filterStr, out var mipmapFilter))
                 {
-                    importer.mipmapFilter = mipmapFilter;
+                    setters.Add(importer => importer.mipmapFilter = mipmapFilter);
                 }
             }
 
@@ -940,7 +948,7 @@ namespace MCPForUnity.Editor.Tools
                 string wrapStr = wrapModeToken.ToString();
                 if (TryParseEnum<TextureWrapMode>(wrapStr, out var wrapMode))
                 {
-                    importer.wrapMode = wrapMode;
+                    setters.Add(importer => importer.wrapMode = wrapMode);
                 }
             }
 
@@ -951,7 +959,7 @@ namespace MCPForUnity.Editor.Tools
                 string wrapStr = wrapModeUToken.ToString();
                 if (TryParseEnum<TextureWrapMode>(wrapStr, out var wrapMode))
                 {
-                    importer.wrapModeU = wrapMode;
+                    setters.Add(importer => importer.wrapModeU = wrapMode);
                 }
             }
 
@@ -962,7 +970,7 @@ namespace MCPForUnity.Editor.Tools
                 string wrapStr = wrapModeVToken.ToString();
                 if (TryParseEnum<TextureWrapMode>(wrapStr, out var wrapMode))
                 {
-                    importer.wrapModeV = wrapMode;
+                    setters.Add(importer => importer.wrapModeV = wrapMode);
                 }
             }
 
@@ -973,7 +981,7 @@ namespace MCPForUnity.Editor.Tools
                 string filterStr = filterModeToken.ToString();
                 if (TryParseEnum<FilterMode>(filterStr, out var filterMode))
                 {
-                    importer.filterMode = filterMode;
+                    setters.Add(importer => importer.filterMode = filterMode);
                 }
             }
 
@@ -981,14 +989,16 @@ namespace MCPForUnity.Editor.Tools
             var anisoToken = settings["anisoLevel"];
             if (anisoToken != null)
             {
-                importer.anisoLevel = anisoToken.ToObject<int>();
+                int anisoLevel = anisoToken.ToObject<int>();
+                setters.Add(importer => importer.anisoLevel = anisoLevel);
             }
 
             // Max Texture Size
             var maxSizeToken = settings["maxTextureSize"];
             if (maxSizeToken != null)
             {
-                importer.maxTextureSize = maxSizeToken.ToObject<int>();
+                int maxTextureSize = maxSizeToken.ToObject<int>();
+                setters.Add(importer => importer.maxTextureSize = maxTextureSize);
             }
 
             // Compression
@@ -998,7 +1008,7 @@ namespace MCPForUnity.Editor.Tools
                 string compStr = compressionToken.ToString();
                 if (TryParseEnum<TextureImporterCompression>(compStr, out var compression))
                 {
-                    importer.textureCompression = compression;
+                    setters.Add(importer => importer.textureCompression = compression);
                 }
             }
 
@@ -1006,14 +1016,16 @@ namespace MCPForUnity.Editor.Tools
             var crunchedToken = settings["crunchedCompression"];
             if (crunchedToken != null)
             {
-                importer.crunchedCompression = crunchedToken.ToObject<bool>();
+                bool crunchedCompression = crunchedToken.ToObject<bool>();
+                setters.Add(importer => importer.crunchedCompression = crunchedCompression);
             }
 
             // Compression Quality
             var qualityToken = settings["compressionQuality"];
             if (qualityToken != null)
             {
-                importer.compressionQuality = qualityToken.ToObject<int>();
+                int compressionQuality = qualityToken.ToObject<int>();
+                setters.Add(importer => importer.compressionQuality = compressionQuality);
             }
 
             // --- Sprite-specific settings ---
@@ -1025,7 +1037,7 @@ namespace MCPForUnity.Editor.Tools
                 string modeStr = spriteModeToken.ToString();
                 if (TryParseEnum<SpriteImportMode>(modeStr, out var spriteMode))
                 {
-                    importer.spriteImportMode = spriteMode;
+                    setters.Add(importer => importer.spriteImportMode = spriteMode);
                 }
             }
 
@@ -1033,51 +1045,44 @@ namespace MCPForUnity.Editor.Tools
             var ppuToken = settings["spritePixelsPerUnit"];
             if (ppuToken != null)
             {
-                importer.spritePixelsPerUnit = ppuToken.ToObject<float>();
+                float spritePixelsPerUnit = ppuToken.ToObject<float>();
+                setters.Add(importer => importer.spritePixelsPerUnit = spritePixelsPerUnit);
             }
 
             // Sprite Pivot
             var pivotToken = settings["spritePivot"];
             if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
             {
-                importer.spritePivot = new Vector2(
+                var pivot = new Vector2(
                     pivotArray[0].ToObject<float>(),
                     pivotArray[1].ToObject<float>()
                 );
+                setters.Add(importer => importer.spritePivot = pivot);
             }
 
-            // Apply sprite settings using TextureImporterSettings helper
-            TextureImporterSettings importerSettings = new TextureImporterSettings();
-            importer.ReadTextureSettings(importerSettings);
-
-            bool settingsChanged = false;
-
-            // Sprite Mesh Type
+            SpriteMeshType? meshType = null;
             var meshTypeToken = settings["spriteMeshType"];
-            if (meshTypeToken != null)
-            {
-                string meshStr = meshTypeToken.ToString();
-                if (TryParseEnum<SpriteMeshType>(meshStr, out var meshType))
-                {
-                    importerSettings.spriteMeshType = meshType;
-                    settingsChanged = true;
-                }
-            }
+            if (meshTypeToken != null && TryParseEnum<SpriteMeshType>(meshTypeToken.ToString(), out var parsedMeshType))
+                meshType = parsedMeshType;
 
-            // Sprite Extrude
+            uint? extrude = null;
             var extrudeToken = settings["spriteExtrude"];
             if (extrudeToken != null)
-            {
-                importerSettings.spriteExtrude = (uint)extrudeToken.ToObject<int>();
-                settingsChanged = true;
-            }
-            
-            if (settingsChanged)
-            {
-                importer.SetTextureSettings(importerSettings);
-            }
+                extrude = (uint)extrudeToken.ToObject<int>();
 
-            importer.SaveAndReimport();
+            return importer =>
+            {
+                foreach (var set in setters) set(importer);
+
+                var importerSettings = new TextureImporterSettings();
+                importer.ReadTextureSettings(importerSettings);
+                if (meshType.HasValue) importerSettings.spriteMeshType = meshType.Value;
+                if (extrude.HasValue) importerSettings.spriteExtrude = extrude.Value;
+                if (meshType.HasValue || extrude.HasValue)
+                    importer.SetTextureSettings(importerSettings);
+
+                importer.SaveAndReimport();
+            };
         }
 
         private static bool TryParseEnum<T>(string value, out T result) where T : struct
