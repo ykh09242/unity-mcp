@@ -104,68 +104,84 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     $"Feature type '{typeName}' not found. Available: {string.Join(", ", available.Select(t => t.Name))}");
             }
 
-            // Create the feature instance
-            var feature = ScriptableObject.CreateInstance(featureType);
-            if (feature == null)
-                return new ErrorResponse($"Failed to create instance of '{featureType.Name}'.");
-
-            string displayName = p.Get("name") ?? featureType.Name;
-            feature.name = displayName;
-
-            // Add to the renderer data asset
-            Undo.RecordObject(rendererData as UnityEngine.Object, "Add Renderer Feature");
-            AssetDatabase.AddObjectToAsset(feature, rendererData as UnityEngine.Object);
-
-            // Add to the features list via SerializedObject
-            using (var so = new SerializedObject(rendererData as UnityEngine.Object))
+            using (var preflight = new SerializedObject(rendererData as UnityEngine.Object))
             {
+                var rendererFeaturesProp = preflight.FindProperty("m_RendererFeatures");
+                if (rendererFeaturesProp == null || !rendererFeaturesProp.isArray)
+                    return new ErrorResponse("m_RendererFeatures array not found.");
+            }
+
+            ScriptableObject feature = null;
+            try
+            {
+                feature = ScriptableObject.CreateInstance(featureType);
+                if (feature == null)
+                    return new ErrorResponse($"Failed to create instance of '{featureType.Name}'.");
+
+                string displayName = p.Get("name") ?? featureType.Name;
+                feature.name = displayName;
+
+                Undo.RecordObject(rendererData as UnityEngine.Object, "Add Renderer Feature");
+                AssetDatabase.AddObjectToAsset(feature, rendererData as UnityEngine.Object);
+                if (!EditorUtility.IsPersistent(feature))
+                    return new ErrorResponse("Renderer feature was not added to the renderer data asset.");
+
+                // Read a fresh serialized stream after attaching the sub-asset.
+                using var so = new SerializedObject(rendererData as UnityEngine.Object);
                 var rendererFeaturesProp = so.FindProperty("m_RendererFeatures");
-                if (rendererFeaturesProp != null)
-                {
-                    rendererFeaturesProp.arraySize++;
-                    var element = rendererFeaturesProp.GetArrayElementAtIndex(rendererFeaturesProp.arraySize - 1);
-                    element.objectReferenceValue = feature;
-                    so.ApplyModifiedProperties();
-                }
+                if (rendererFeaturesProp == null || !rendererFeaturesProp.isArray)
+                    return new ErrorResponse("m_RendererFeatures array not found.");
 
                 // Also update the map (m_RendererFeatureMap) if it exists
                 // Map stores persistent local file IDs, not transient instance IDs
                 var mapProp = so.FindProperty("m_RendererFeatureMap");
+                long localId = 0;
+                if (mapProp != null &&
+                    !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out localId))
+                    return new ErrorResponse("Could not obtain the renderer feature's persistent local file ID.");
+
+                rendererFeaturesProp.arraySize++;
+                var element = rendererFeaturesProp.GetArrayElementAtIndex(rendererFeaturesProp.arraySize - 1);
+                element.objectReferenceValue = feature;
                 if (mapProp != null)
                 {
-                    long localId = 0;
-                    AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out localId);
                     mapProp.arraySize++;
                     var mapElement = mapProp.GetArrayElementAtIndex(mapProp.arraySize - 1);
                     mapElement.longValue = localId;
-                    so.ApplyModifiedProperties();
                 }
-            }
+                so.ApplyModifiedProperties();
 
-            // Configure initial properties if provided
-            var propertiesToken = p.GetRaw("properties") as JObject;
-            if (propertiesToken != null)
-                ApplyFeatureProperties(feature, propertiesToken);
+                // Configure initial properties if provided
+                var propertiesToken = p.GetRaw("properties") as JObject;
+                if (propertiesToken != null)
+                    ApplyFeatureProperties(feature, propertiesToken);
 
-            // Set material if provided (common for FullScreenPass)
-            string materialPath = p.Get("material");
-            if (!string.IsNullOrEmpty(materialPath))
-                TrySetMaterial(feature, materialPath);
+                // Set material if provided (common for FullScreenPass)
+                string materialPath = p.Get("material");
+                if (!string.IsNullOrEmpty(materialPath))
+                    TrySetMaterial(feature, materialPath);
 
-            EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-            AssetDatabase.SaveAssets();
+                EditorUtility.SetDirty(rendererData as UnityEngine.Object);
+                AssetDatabase.SaveAssets();
 
-            return new
-            {
-                success = true,
-                message = $"Added renderer feature '{displayName}' ({featureType.Name}).",
-                data = new
+                return new
                 {
-                    name = displayName,
-                    type = featureType.Name,
-                    instanceId = feature.GetInstanceIDCompat()
-                }
-            };
+                    success = true,
+                    message = $"Added renderer feature '{displayName}' ({featureType.Name}).",
+                    data = new
+                    {
+                        name = displayName,
+                        type = featureType.Name,
+                        instanceId = feature.GetInstanceIDCompat()
+                    }
+                };
+            }
+            finally
+            {
+                // Later failures must not destroy a feature that was already persisted.
+                if (feature != null && !EditorUtility.IsPersistent(feature))
+                    UnityEngine.Object.DestroyImmediate(feature);
+            }
         }
 
         // === feature_remove ===
@@ -195,24 +211,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var feature = featuresList[targetIndex] as ScriptableObject;
             string featureName = feature?.name ?? "Unknown";
 
-            Undo.RecordObject(rendererData as UnityEngine.Object, "Remove Renderer Feature");
-
             // Remove from the list via SerializedObject
             using (var so = new SerializedObject(rendererData as UnityEngine.Object))
             {
                 var rendererFeaturesPropSo = so.FindProperty("m_RendererFeatures");
-                if (rendererFeaturesPropSo != null)
-                {
-                    rendererFeaturesPropSo.DeleteArrayElementAtIndex(targetIndex);
-                    // SerializedProperty.DeleteArrayElementAtIndex sets to null first for ObjectReference
-                    if (rendererFeaturesPropSo.arraySize > targetIndex)
-                    {
-                        var element = rendererFeaturesPropSo.GetArrayElementAtIndex(targetIndex);
-                        if (element.objectReferenceValue == null)
-                            rendererFeaturesPropSo.DeleteArrayElementAtIndex(targetIndex);
-                    }
-                    so.ApplyModifiedProperties();
-                }
+                if (rendererFeaturesPropSo == null || !rendererFeaturesPropSo.isArray)
+                    return new ErrorResponse("m_RendererFeatures array not found.");
+
+                Undo.RecordObject(rendererData as UnityEngine.Object, "Remove Renderer Feature");
+                RemoveSerializedFeatureSlot(rendererFeaturesPropSo, targetIndex);
+                so.ApplyModifiedProperties();
 
                 // Clean up the map
                 var mapProp = so.FindProperty("m_RendererFeatureMap");
@@ -286,7 +294,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var p = new ToolParams(@params);
             int? index = p.GetInt("index");
             string name = p.Get("name");
-            bool? active = p.GetBool("active");
+            var activeToken = p.GetRaw("active");
+            bool active = activeToken == null || activeToken.Type == JTokenType.Null
+                ? true : p.GetBool("active");
 
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
@@ -312,7 +322,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (setActiveMethod == null)
                 return new ErrorResponse("SetActive method not found on feature.");
 
-            bool newState = active ?? true;
+            bool newState = active;
             Undo.RecordObject(feature, "Toggle Renderer Feature");
             setActiveMethod.Invoke(feature, new object[] { newState });
             EditorUtility.SetDirty(feature);
@@ -399,6 +409,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
         }
 
         // ==================== Helpers ====================
+
+        private static void RemoveSerializedFeatureSlot(SerializedProperty features, int index)
+        {
+            int previousSize = features.arraySize;
+            features.DeleteArrayElementAtIndex(index);
+            // An occupied ObjectReference can be cleared first; an empty slot shrinks immediately.
+            if (features.arraySize == previousSize)
+                features.DeleteArrayElementAtIndex(index);
+        }
 
         private static object GetRendererData(JObject @params)
         {
