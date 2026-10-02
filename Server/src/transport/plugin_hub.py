@@ -232,9 +232,9 @@ class PluginHub(WebSocketEndpoint):
             elif message_type == "register_tools":
                 await self._handle_register_tools(websocket, RegisterToolsMessage(**data))
             elif message_type == "pong":
-                await self._handle_pong(PongMessage(**data))
+                await self._handle_pong(websocket, PongMessage(**data))
             elif message_type == "command_result":
-                await self._handle_command_result(CommandResultMessage(**data))
+                await self._handle_command_result(websocket, CommandResultMessage(**data))
             else:
                 logger.debug("Ignoring unrecognized plugin message")
         except Exception as e:
@@ -337,15 +337,11 @@ class PluginHub(WebSocketEndpoint):
                 params=params,
                 timeout=unity_timeout_s,
             )
+            deadline = asyncio.get_running_loop().time() + server_wait_s
             try:
-                await websocket.send_json(msg.model_dump())
-            except Exception as exc:
-                # If send fails (socket already closing), fail the future so callers don't hang.
-                if not future.done():
-                    future.set_exception(exc)
-                raise
-            try:
-                result = await asyncio.wait_for(future, timeout=server_wait_s)
+                await asyncio.wait_for(websocket.send_json(msg.model_dump()), timeout=server_wait_s)
+                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                result = await asyncio.wait_for(future, timeout=remaining)
                 return result
             except PluginDisconnectedError as exc:
                 return MCPResponse(success=False, error=str(exc), hint="retry").model_dump()
@@ -358,6 +354,11 @@ class PluginHub(WebSocketEndpoint):
                     ).model_dump()
                 raise
         finally:
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                # A disconnect may finish the future while the socket write fails.
+                future.exception()
             async with lock:
                 cls._pending.pop(command_id, None)
 
@@ -676,7 +677,7 @@ class PluginHub(WebSocketEndpoint):
             len(sessions),
         )
 
-    async def _handle_command_result(self, payload: CommandResultMessage) -> None:
+    async def _handle_command_result(self, websocket: WebSocket, payload: CommandResultMessage) -> None:
         cls = type(self)
         lock = cls._lock
         if lock is None:
@@ -690,23 +691,25 @@ class PluginHub(WebSocketEndpoint):
 
         async with lock:
             entry = cls._pending.get(command_id)
-        future = entry.get("future") if isinstance(entry, dict) else None
-        if future and not future.done():
-            future.set_result(result)
+            if entry is None or cls._connections.get(entry["session_id"]) is not websocket:
+                return
+            future = entry.get("future")
+            if future and not future.done():
+                future.set_result(result)
 
-    async def _handle_pong(self, payload: PongMessage) -> None:
+    async def _handle_pong(self, websocket: WebSocket, payload: PongMessage) -> None:
         cls = type(self)
         registry = cls._registry
         lock = cls._lock
-        if registry is None:
+        if registry is None or lock is None:
             return
         session_id = payload.session_id
         if session_id:
-            await registry.touch(session_id)
-            # Record last pong time for staleness detection (under lock for consistency)
-            if lock is not None:
-                async with lock:
-                    cls._last_pong[session_id] = time.monotonic()
+            async with lock:
+                if cls._connections.get(session_id) is not websocket:
+                    return
+                cls._last_pong[session_id] = time.monotonic()
+                await registry.touch(session_id)
 
     @classmethod
     async def _ping_loop(cls, session_id: str, websocket: WebSocket) -> None:
