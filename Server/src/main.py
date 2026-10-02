@@ -563,7 +563,7 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 return JSONResponse(result)
 
             except Exception as e:
-                logger.exception("CLI command error: %s", e)
+                logger.error("CLI command failed (%s)", type(e).__name__)
                 return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
         @mcp.custom_route("/api/instances", methods=["GET"])
@@ -644,7 +644,7 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                     "tools": tools_payload,
                 })
             except Exception as e:
-                logger.exception("CLI custom tools error: %s", e)
+                logger.error("CLI custom tools failed (%s)", type(e).__name__)
                 return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
     # Initialize and register middleware for session-based Unity instance routing

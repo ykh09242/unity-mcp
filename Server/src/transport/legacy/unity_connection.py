@@ -434,7 +434,7 @@ class UnityConnection:
                 return resp.get('result', {})
             except Exception as e:
                 logger.warning(
-                    f"Unity communication attempt {attempt+1} failed: {e}")
+                    "Unity communication attempt %d failed (%s)", attempt + 1, type(e).__name__)
                 try:
                     if self.sock:
                         self.sock.close()

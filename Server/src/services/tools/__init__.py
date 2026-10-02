@@ -158,8 +158,7 @@ async def sync_tool_visibility_from_unity(
 
         if not tools or not isinstance(tools, list):
             logger.debug(
-                "sync_tool_visibility_from_unity: no tool data in Unity response: %s",
-                response,
+                "sync_tool_visibility_from_unity: no tool data in Unity response",
             )
             return {"error": "No tool data returned from Unity"}
 
@@ -226,12 +225,12 @@ async def sync_tool_visibility_from_unity(
                     logger.debug(
                         "Skipping custom tool registration: "
                         "CustomToolService not initialized yet (%s)",
-                        exc,
+                        type(exc).__name__,
                     )
                 except Exception as exc:
                     logger.warning(
                         "Failed to register custom tools from Unity: %s",
-                        exc,
+                        type(exc).__name__,
                     )
         else:
             logger.debug(
@@ -267,7 +266,7 @@ async def sync_tool_visibility_from_unity(
 
     except Exception as exc:
         logger.warning(
-            "Failed to sync tool visibility from Unity: %s", exc,
+            "Failed to sync tool visibility from Unity (%s)", type(exc).__name__,
         )
         return {"error": str(exc)}
 

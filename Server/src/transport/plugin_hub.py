@@ -222,7 +222,7 @@ class PluginHub(WebSocketEndpoint):
 
     async def on_receive(self, websocket: WebSocket, data: Any) -> None:
         if not isinstance(data, dict):
-            logger.warning(f"Received non-object payload from plugin: {data}")
+            logger.warning("Received non-object payload from plugin")
             return
 
         message_type = data.get("type")
@@ -236,9 +236,9 @@ class PluginHub(WebSocketEndpoint):
             elif message_type == "command_result":
                 await self._handle_command_result(CommandResultMessage(**data))
             else:
-                logger.debug(f"Ignoring plugin message: {data}")
+                logger.debug("Ignoring unrecognized plugin message")
         except Exception as e:
-            logger.error(f"Error handling message type {message_type}: {e}")
+            logger.error("Error handling plugin message (%s)", type(e).__name__)
 
     async def on_disconnect(self, websocket: WebSocket, close_code: int) -> None:
         cls = type(self)
@@ -566,13 +566,13 @@ class PluginHub(WebSocketEndpoint):
         except RuntimeError as exc:
             logger.debug(
                 "Skipping global custom tool registration: CustomToolService not initialized yet (%s)",
-                exc,
+                type(exc).__name__,
             )
         except Exception as exc:
             logger.warning(
                 "Unexpected error during global custom tool registration; "
-                "custom tools may not be available globally",
-                exc_info=exc,
+                "custom tools may not be available globally (%s)",
+                type(exc).__name__,
             )
 
     @classmethod
@@ -685,7 +685,7 @@ class PluginHub(WebSocketEndpoint):
         result = payload.result
 
         if not command_id:
-            logger.warning(f"Command result missing id: {payload}")
+            logger.warning("Command result missing id")
             return
 
         async with lock:

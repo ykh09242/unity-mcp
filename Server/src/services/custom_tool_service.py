@@ -149,9 +149,7 @@ class CustomToolService:
         user_id: str | None = None,
     ) -> MCPResponse:
         params = params or {}
-        logger.info(
-            f"Executing tool '{tool_name}' for project '{project_id}' (instance={unity_instance}) with params: {params}"
-        )
+        logger.info("Executing custom tool")
 
         definition = await self.get_tool_definition(project_id, tool_name, user_id=user_id)
         if definition is None:
@@ -170,7 +168,7 @@ class CustomToolService:
 
         if not definition.requires_polling:
             result = self._normalize_response(response)
-            logger.info(f"Tool '{tool_name}' immediate response: {result}")
+            logger.info("Custom tool completed (success=%s, polled=False)", result.success)
             return result
 
         result = await self._poll_until_complete(
@@ -182,7 +180,7 @@ class CustomToolService:
             user_id=user_id,
             max_poll_seconds=definition.max_poll_seconds or 0,
         )
-        logger.info(f"Tool '{tool_name}' polled response: {result}")
+        logger.info("Custom tool completed (success=%s, polled=True)", result.success)
         return result
 
     # --- Internal helpers ------------------------------------------------
@@ -241,7 +239,7 @@ class CustomToolService:
                     user_id=user_id,
                 )
             except Exception as exc:  # pragma: no cover - network/domain reload variability
-                logger.debug(f"Polling {tool_name} failed, will retry: {exc}")
+                logger.debug("Custom tool polling failed; retrying (%s)", type(exc).__name__)
                 # Back off modestly but stay responsive.
                 response = {
                     "_mcp_status": "pending",
@@ -385,7 +383,7 @@ class CustomToolService:
             logger.warning(
                 "Failed to register custom tool '%s' globally: %s",
                 definition.name,
-                exc,
+                type(exc).__name__,
             )
             return
 
