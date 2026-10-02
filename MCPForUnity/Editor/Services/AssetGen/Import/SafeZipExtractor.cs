@@ -38,7 +38,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 : destFull + Path.DirectorySeparatorChar;
 
             using (FileStream fs = File.OpenRead(zipPath))
-            using (var archive = new ZipArchive(fs, ZipArchiveMode.Read))
+            using (var archive = OpenBoundedArchive(fs, maxEntries, cancellationToken))
             {
                 if (archive.Entries.Count > maxEntries)
                     throw new IOException("Archive exceeds the entry count limit.");
@@ -118,6 +118,12 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     throw;
                 }
             }
+        }
+
+        private static ZipArchive OpenBoundedArchive(Stream stream, int maxEntries, CancellationToken cancellationToken)
+        {
+            ZipMetadataPreflight.Validate(stream, maxEntries, cancellationToken);
+            return new ZipArchive(stream, ZipArchiveMode.Read);
         }
     }
 }
