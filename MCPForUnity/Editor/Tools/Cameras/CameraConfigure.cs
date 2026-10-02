@@ -212,7 +212,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             // Set properties on body component
-            SetComponentProperties(bodyComponent, props, new[] { "bodyType", "body_type" });
+            var propertyError = SetComponentProperties(bodyComponent, props, new[] { "bodyType", "body_type" });
+            if (propertyError != null) return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
@@ -247,7 +248,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     return new ErrorResponse("No Aim component found. Provide 'aimType' to add one.");
             }
 
-            SetComponentProperties(aimComponent, props, new[] { "aimType", "aim_type" });
+            var propertyError = SetComponentProperties(aimComponent, props, new[] { "aimType", "aim_type" });
+            if (propertyError != null) return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
@@ -280,7 +282,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             }
 
             Undo.RecordObject(noiseComponent, "Set Cinemachine Noise");
-            SetComponentProperties(noiseComponent, props, Array.Empty<string>());
+            var propertyError = SetComponentProperties(noiseComponent, props, Array.Empty<string>());
+            if (propertyError != null) return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
@@ -314,7 +317,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 return new { success = true, message = $"Extension '{extTypeName}' already exists on '{go.name}'." };
 
             var ext = Undo.AddComponent(go, extType);
-            SetComponentProperties(ext, props, new[] { "extensionType", "extension_type" });
+            var propertyError = SetComponentProperties(ext, props, new[] { "extensionType", "extension_type" });
+            if (propertyError != null) return propertyError;
             CameraHelpers.MarkDirty(go);
 
             return new
@@ -391,9 +395,9 @@ namespace MCPForUnity.Editor.Tools.Cameras
             return comp;
         }
 
-        private static void SetComponentProperties(Component component, JObject props, string[] skipKeys)
+        private static ErrorResponse SetComponentProperties(Component component, JObject props, string[] skipKeys)
         {
-            if (component == null || props == null) return;
+            if (component == null || props == null) return null;
 
             var skipSet = new System.Collections.Generic.HashSet<string>(
                 skipKeys, StringComparer.OrdinalIgnoreCase);
@@ -403,8 +407,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
             foreach (var kv in props)
             {
                 if (skipSet.Contains(kv.Key)) continue;
-                ComponentOps.SetProperty(component, kv.Key, kv.Value, out _);
+                if (!ComponentOps.SetProperty(component, kv.Key, kv.Value, out string error))
+                    return new ErrorResponse($"Failed to set '{kv.Key}' on {component.GetType().Name}: {error}");
             }
+            return null;
         }
 
         #endregion

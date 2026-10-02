@@ -77,7 +77,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 return null;
 
             string searchMethod = ParamCoercion.CoerceString(
-                @params["searchMethod"] ?? @params["search_method"], "by_name");
+                @params["searchMethod"] ?? @params["search_method"], null);
+
+            if (searchMethod != null)
+                return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
 
             if (targetToken.Type == JTokenType.Integer)
             {
@@ -92,7 +95,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 if (byId != null) return byId;
             }
 
-            return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
+            return GameObjectLookup.FindByTarget(targetToken,
+                targetStr.Contains("/") ? "by_path" : "by_name", true);
         }
 
         internal static GameObject ResolveGameObjectRef(object reference)
@@ -111,7 +115,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         var byId = GameObjectLookup.FindById(id);
                         if (byId != null) return byId;
                     }
-                    return GameObjectLookup.FindByTarget(jt, "by_name", true);
+                    return GameObjectLookup.FindByTarget(jt,
+                        str.Contains("/") ? "by_path" : "by_name", true);
                 }
             }
 
@@ -123,7 +128,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     if (byId != null) return byId;
                 }
                 var ids = GameObjectLookup.SearchGameObjects(
-                    GameObjectLookup.SearchMethod.ByName, s, includeInactive: true, maxResults: 1);
+                    s.Contains("/") ? GameObjectLookup.SearchMethod.ByPath : GameObjectLookup.SearchMethod.ByName,
+                    s, includeInactive: true, maxResults: 1);
                 return ids.Count > 0 ? GameObjectLookup.FindById(ids[0]) : null;
             }
 
@@ -156,17 +162,18 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
         internal static JObject ExtractProperties(JObject @params)
         {
-            var props = @params["properties"] as JObject;
-            if (props != null) return props;
-
-            var propsStr = ParamCoercion.CoerceString(@params["properties"], null);
-            if (propsStr != null)
+            var token = @params["properties"];
+            if (token == null || token.Type == JTokenType.Null) return null;
+            if (token is JObject props) return props;
+            if (token.Type == JTokenType.String)
             {
-                try { return JObject.Parse(propsStr); }
-                catch { return null; }
+                try { return JObject.Parse(token.Value<string>()); }
+                catch (Newtonsoft.Json.JsonException ex)
+                {
+                    throw new ArgumentException($"'properties' must be a JSON object: {ex.Message}", ex);
+                }
             }
-
-            return null;
+            throw new ArgumentException("'properties' must be a JSON object.");
         }
 
         internal static object GetReflectionProperty(Component component, string propertyName)

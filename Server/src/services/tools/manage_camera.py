@@ -6,7 +6,10 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import build_screenshot_params, extract_screenshot_images
+from services.tools.utils import (
+    build_screenshot_params, extract_screenshot_images, normalize_properties,
+    coerce_bool, coerce_int,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -151,7 +154,9 @@ async def manage_camera(
             ),
         }
 
-    unity_instance = await get_unity_instance_from_context(ctx)
+    _, properties_error = normalize_properties(properties)
+    if properties_error:
+        return {"success": False, "message": properties_error}
 
     params_dict: dict[str, Any] = {"action": action_normalized}
     if properties is not None:
@@ -163,6 +168,15 @@ async def manage_camera(
 
     # Screenshot params — only relevant for screenshot/screenshot_multiview actions
     if action_normalized in CAPTURE_ACTIONS:
+        for field, value in (
+            ("screenshot_super_size", screenshot_super_size),
+            ("max_resolution", max_resolution),
+            ("orbit_angles", orbit_angles),
+        ):
+            if value is not None and coerce_int(value, default=None) is None:
+                return {"success": False, "message": f"{field} must be an integer."}
+        if include_image is not None and coerce_bool(include_image, default=None) is None:
+            return {"success": False, "message": "include_image must be a boolean."}
         err = build_screenshot_params(
             params_dict,
             screenshot_file_name=screenshot_file_name,
@@ -184,6 +198,7 @@ async def manage_camera(
         if err is not None:
             return err
 
+    unity_instance = await get_unity_instance_from_context(ctx)
     result = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
