@@ -58,7 +58,7 @@ def run_build(target, output_path, development, scripting_backend, subtarget, pr
 
     result = run_command("manage_build", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
             print_info(f"Build started. Poll with: unity-mcp build status {job_id}")
@@ -126,7 +126,7 @@ def settings(property_name: str, value: Optional[str], target: Optional[str]):
     """
     config = get_config()
     params = {"action": "settings", "property": property_name}
-    if value:
+    if value is not None:
         params["value"] = value
     if target:
         params["target"] = target
@@ -207,7 +207,7 @@ def batch(targets, profile_paths, output_dir, development):
         params["development"] = True
     result = run_command("manage_build", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
             print_info(f"Batch started. Poll with: unity-mcp build status {job_id}")

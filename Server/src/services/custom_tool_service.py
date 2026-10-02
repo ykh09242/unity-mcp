@@ -212,6 +212,11 @@ class CustomToolService:
     ) -> MCPResponse:
         poll_params = dict(initial_params)
         poll_params["action"] = poll_action or "status"
+        if poll_params.get("job_id") is None and isinstance(initial_response, dict):
+            data = initial_response.get("data")
+            job_id = data.get("job_id") if isinstance(data, dict) else None
+            if isinstance(job_id, str) and job_id.strip():
+                poll_params["job_id"] = job_id
 
         timeout = max_poll_seconds if max_poll_seconds > 0 else _MAX_POLL_SECONDS
         deadline = time.monotonic() + timeout

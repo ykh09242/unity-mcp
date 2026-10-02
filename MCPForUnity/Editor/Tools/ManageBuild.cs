@@ -79,24 +79,24 @@ namespace MCPForUnity.Editor.Tools
             string subtargetStr = p.Get("subtarget");
             string scriptingBackend = p.Get("scripting_backend");
 
-            // Apply scripting backend if specified (persistent change)
+            // Validate first; apply this persistent setting only after build preparation succeeds.
+            ScriptingImplementation? scriptingImplementation = null;
             if (!string.IsNullOrEmpty(scriptingBackend))
             {
                 string backendLower = scriptingBackend.ToLowerInvariant();
                 if (backendLower != "il2cpp" && backendLower != "mono")
                     return new ErrorResponse(
                         $"Unknown scripting_backend '{scriptingBackend}'. Valid: mono, il2cpp");
-                var namedTarget = BuildTargetMapping.GetNamedBuildTarget(target);
-                var impl = backendLower == "il2cpp"
+                scriptingImplementation = backendLower == "il2cpp"
                     ? ScriptingImplementation.IL2CPP
                     : ScriptingImplementation.Mono2x;
-                PlayerSettings.SetScriptingBackend(namedTarget, impl);
             }
 
 #if UNITY_6000_0_OR_NEWER
             string profilePath = p.Get("profile");
             if (!string.IsNullOrEmpty(profilePath))
-                return HandleProfileBuild(p, profilePath, outputPath, development, optionNames);
+                return HandleProfileBuild(profilePath, outputPath, development, optionNames,
+                    target, scriptingImplementation);
 #else
             string profilePath = p.Get("profile");
             if (!string.IsNullOrEmpty(profilePath))
@@ -107,14 +107,19 @@ namespace MCPForUnity.Editor.Tools
             int subtarget = BuildTargetMapping.ResolveSubtarget(subtargetStr);
             var options = BuildRunner.CreateBuildOptions(target, outputPath, scenes, buildOptions, subtarget);
 
+            if (scriptingImplementation.HasValue)
+                PlayerSettings.SetScriptingBackend(
+                    BuildTargetMapping.GetNamedBuildTarget(target), scriptingImplementation.Value);
+
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
             return BuildRunner.ScheduleBuild(job, options);
         }
 
 #if UNITY_6000_0_OR_NEWER
-        private static object HandleProfileBuild(ToolParams p, string profilePath, string outputPath,
-            bool development, string[] optionNames)
+        private static object HandleProfileBuild(string profilePath, string outputPath,
+            bool development, string[] optionNames, BuildTarget requestedTarget,
+            ScriptingImplementation? scriptingImplementation)
         {
             var profile = UnityEditor.AssetDatabase.LoadAssetAtPath<
                 UnityEditor.Build.Profile.BuildProfile>(profilePath);
@@ -128,6 +133,10 @@ namespace MCPForUnity.Editor.Tools
                 locationPathName = outputPath,
                 options = buildOptions
             };
+
+            if (scriptingImplementation.HasValue)
+                PlayerSettings.SetScriptingBackend(
+                    BuildTargetMapping.GetNamedBuildTarget(requestedTarget), scriptingImplementation.Value);
 
             // BuildPlayerWithProfileOptions derives the actual target from the profile,
             // but we use activeBuildTarget for job metadata/status display
@@ -183,7 +192,14 @@ namespace MCPForUnity.Editor.Tools
             // Check batch jobs first
             var batchJob = BuildJobStore.GetBatchJob(jobId);
             if (batchJob != null)
+            {
+                if (batchJob.State == BuildJobState.Building || batchJob.State == BuildJobState.Pending)
+                    return new PendingResponse(
+                        $"Batch {batchJob.State.ToString().ToLowerInvariant()}...",
+                        pollIntervalSeconds: 10.0,
+                        data: batchJob.ToStatusResponse());
                 return new SuccessResponse($"Batch {batchJob.State}.", batchJob.ToStatusResponse());
+            }
 
             var buildJob = BuildJobStore.GetBuildJob(jobId);
             if (buildJob == null)
@@ -273,7 +289,8 @@ namespace MCPForUnity.Editor.Tools
             if (err != null)
                 return new ErrorResponse(err);
 
-            if (string.IsNullOrEmpty(value))
+            var valueToken = p.GetRaw("value");
+            if (valueToken == null || valueToken.Type == JTokenType.Null)
             {
                 // Read
                 var result = BuildSettingsHelper.ReadProperty(property, namedTarget);
