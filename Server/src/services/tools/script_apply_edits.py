@@ -2,10 +2,12 @@ import asyncio
 import base64
 import hashlib
 import re
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Union
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from core.config import config
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -725,6 +727,62 @@ def _err(code: str, message: str, *, expected: dict[str, Any] | None = None, rew
         payload["data"] = data
     return payload
 
+
+def _prepared_handoff(response: Any, unity_instance: str | None, expected_path: str) -> dict[str, Any]:
+    """Verify a complete Unity snapshot; local native eligibility remains unproven."""
+    if isinstance(response, dict) and not response.get("success"):
+        return response
+    try:
+        data = dict(response["data"])
+        if (data.get("preview") is not True or data.get("complete") is not True
+                or data.get("truncated") is not False or data.get("editsApplied") != 0
+                or data.get("scheduledRefresh") is not False):
+            raise ValueError("Response is not a complete read-only preparation")
+        original, candidate = data["original_contents"], data["new_contents"]
+        if not isinstance(original, str) or not isinstance(candidate, str):
+            raise ValueError("Complete original and proposed contents are required")
+        original_bytes = original.encode("utf-8")
+        original_sha = hashlib.sha256(original_bytes).hexdigest()
+        candidate_bytes = candidate.encode("utf-8")
+        candidate_sha = hashlib.sha256(candidate_bytes).hexdigest()
+        if len(original_bytes) + len(candidate_bytes) > 1024 * 1024:
+            raise ValueError("Complete original/candidate exceeds the 1 MiB preparation payload limit")
+        if (data.get("original_sha256") != original_sha or data.get("sha256") != original_sha
+                or data.get("candidate_sha256") != candidate_sha
+                or data.get("candidate_bytes_sha256") != candidate_sha
+                or data.get("encoding") != "utf-8" or data.get("bom") is not False):
+            raise ValueError("Candidate contents, hashes or encoding are inconsistent")
+        path_type = PureWindowsPath if PureWindowsPath(data["absolute_path"]).drive else PurePosixPath
+        absolute = path_type(data["absolute_path"])
+        root = path_type(data["project_root"])
+        relative = path_type(data["path"])
+        if (not absolute.is_absolute() or not root.is_absolute() or relative.is_absolute()
+                or ".." in relative.parts or ".." in root.parts or ".." in absolute.parts
+                or not relative.parts or path_type(relative.parts[0]) != path_type("Assets")
+                or absolute != root / relative or relative != path_type(expected_path)):
+            raise ValueError("Unity target identity does not match the requested Assets path")
+        no_op = original == candidate
+        if data.get("no_op") is not no_op:
+            raise ValueError("No-op flag does not match the complete candidate")
+        prepared_count = data.get("editsPrepared")
+        if type(prepared_count) is not int or prepared_count < 0 or (prepared_count == 0) is not no_op:
+            raise ValueError("Prepared edit count does not match the no-op status")
+        import difflib
+        from itertools import islice
+        diff = list(islice(difflib.unified_diff(original.splitlines(keepends=True), candidate.splitlines(keepends=True), fromfile="before", tofile="after", n=3), 2001))
+        data["diff_truncated"] = len(diff) > 2000
+        data["diff"] = "".join(diff[:2000]) + ("... (diff truncated) ..." if data["diff_truncated"] else "")
+        data["unity_instance"] = unity_instance
+        status = "not_needed" if no_op else "unavailable_remote" if config.http_remote_hosted else "verification_required"
+        data["native_apply"] = {
+            "status": status,
+            "requirements": ["same local Unity host and permitted workspace", "original logical SHA matches immediately before writing", "native tool preserves exact candidate bytes", "candidate raw byte SHA matches before Unity validation/refresh"],
+            "fallback": "Use the original edit request without options.preview for a direct Unity edit when native application cannot preserve exact bytes or local provenance is unproven.",
+        }
+        return {**response, "message": "Prepared only; no changes applied or refresh scheduled.", "data": data}
+    except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+        return _err("invalid_preview", f"No usable native proposal: {exc}; no changes were applied.")
+
 @mcp_for_unity_tool(
     name="script_apply_edits",
     unity_target="manage_script",
@@ -733,7 +791,10 @@ def _err(code: str, message: str, *, expected: dict[str, Any] | None = None, rew
     Best practices:
     - Method/class edits adapt to local indentation and line endings without changing string values.
     - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
-    - Text preview uses the same spans as a write; method/class/anchor preview is unsupported.
+    - options.preview=true prepares complete proposed contents, target paths and hashes without applying changes.
+    - Mixed text/structured preview is unsupported. Direct edits keep their existing behavior.
+    - For Codex-native file visibility, verify local target/workspace and original SHA, use an exposed native file tool only if it preserves exact candidate bytes, then verify candidate_bytes_sha256 before Unity validate/refresh.
+    - Native patch capabilities vary: CRLF, BOM and missing final newline may require a byte-preserving tool or direct Unity edit fallback. Never normalize string bytes or fabricate file events.
     - Prefer anchor_* ops for pattern-based insert/replace near stable markers
     - Use replace_method/delete_method for whole-method changes (keeps signatures balanced)
     - Avoid whole-file regex deletes; validators will guard unbalanced braces
@@ -1004,11 +1065,19 @@ async def script_apply_edits(
     all_text = ops_set.issubset(TEXT)
     mixed = not (all_struct or all_text)
     preview = bool((options or {}).get("preview"))
-    if preview and not all_text:
-        return _err("unsupported_preview", "Preview supports text edits only; no changes were made.")
+    if preview and mixed:
+        return _err("unsupported_preview", "Mixed text/structured preview is unsupported; no changes were made.")
 
     # If everything is structured (method/class/anchor ops), forward directly to Unity's structured editor.
     if all_struct:
+        if preview:
+            response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_script", {
+                "action": "preview_edit", "name": name, "path": path,
+                "namespace": namespace, "scriptType": script_type,
+                "edits": edits, "options": dict(options or {}),
+            })
+            prepared = _prepared_handoff(response, unity_instance, f"{path}/{name}.cs")
+            return _with_norm(prepared, normalized_for_echo, routing="structured/preview") if prepared.get("success") else prepared
         # Get pre-edit SHA for disconnect verification
         pre_sha = None
         try:
@@ -1083,19 +1152,13 @@ async def script_apply_edits(
         return _with_norm(_err("conversion_failed", f"Text edit conversion failed: {exc}"), normalized_for_echo, routing=routing)
 
     if preview:
-        try:
-            import difflib
-            from itertools import islice
-            preview_text = _preview_text_spans(contents, at_edits)
-            diff = list(islice(difflib.unified_diff(
-                contents.splitlines(keepends=True), preview_text.splitlines(keepends=True),
-                fromfile="before", tofile="after", n=3), 2001))
-            if len(diff) > 2000:
-                diff = diff[:2000] + ["... (diff truncated) ..."]
-            return {"success": True, "message": "Preview only (no write)",
-                    "data": {"diff": "".join(diff), "normalizedEdits": normalized_for_echo}}
-        except Exception:
-            return _err("preview_failed", "Unable to preview the requested edits; no changes were made.")
+        response = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_script", {
+            "action": "preview_text_edits", "name": name, "path": path,
+            "edits": at_edits, "precondition_sha256": hashlib.sha256(contents.encode("utf-8")).hexdigest(),
+            "options": {**dict(options or {}), "preview": True, "applyMode": "atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential")},
+        })
+        prepared = _prepared_handoff(response, unity_instance, f"{path}/{name}.cs")
+        return _with_norm(prepared, normalized_for_echo, routing="text/preview") if prepared.get("success") else prepared
 
     if not at_edits and not mixed:
         return _with_norm(_err("no_spans", "No applicable text edit spans computed (anchor not found or zero-length)."), normalized_for_echo, routing=routing)

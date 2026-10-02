@@ -109,6 +109,7 @@ def _split_uri(uri: str) -> tuple[str, str]:
         - For method/class operations, use script_apply_edits (safer, structured edits)
         - For pattern-based replacements, consider anchor operations in script_apply_edits
         - newText is literal: whitespace and line endings are preserved exactly, with no indentation or newline padding
+        - options.preview=true prepares a complete read-only proposal with target paths and hashes; older Unity packages reject the safe preview action and require an upgrade
         - Lines, columns are 1-indexed
         - Tabs count as 1 column"""
     ),
@@ -327,7 +328,7 @@ async def apply_text_edits(
     except Exception:
         pass
     # Support optional debug preview for span-by-span simulation without write
-    if opts.get("debug_preview"):
+    if opts.get("debug_preview") and not opts.get("preview"):
         try:
             import difflib
             # Apply locally to preview final result
@@ -355,6 +356,18 @@ async def apply_text_edits(
         "options": opts,
     }
     params = {k: v for k, v in params.items() if v is not None}
+
+    if opts.get("preview"):
+        from services.tools.script_apply_edits import _prepared_handoff
+        params["action"] = "preview_text_edits"
+        response = await send_with_unity_instance(
+            transport.legacy.unity_connection.async_send_command_with_retry,
+            unity_instance, "manage_script", params,
+        )
+        prepared = _prepared_handoff(response, unity_instance, f"{directory}/{name}.cs")
+        if prepared.get("success"):
+            prepared["data"]["normalizedEdits"] = normalized_edits
+        return prepared
 
     async def _verify_edit():
         if await verify_edit_by_sha(unity_instance, name, directory, precondition_sha256):

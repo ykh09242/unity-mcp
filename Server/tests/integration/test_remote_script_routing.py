@@ -25,6 +25,10 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
         assert instance == "SameName@samehash"
         assert kwargs["user_id"] == "tenant-a"
         calls.append(params["action"])
+        if params["action"] == "preview_text_edits":
+            from tests.test_script_preparation import prepared
+            original = "class Foo {}\n"
+            return prepared(original, edits_tool._preview_text_spans(original, params["edits"]))
         return {"success": True, "data": {"contents": "class Foo {}\n", "sha256": "remote-sha"}}
 
     monkeypatch.setattr(unity_transport.PluginHub, "send_command_for_instance", plugin)
@@ -38,7 +42,8 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
     assert result["success"], result
     assert calls[0] == ("get_sha" if mode == "structured" else "read")
     if mode == "preview":
-        assert calls == ["read"]
+        assert calls == ["read", "preview_text_edits"]
+        assert result["data"]["native_apply"]["status"] == "unavailable_remote"
     else:
         assert len(calls) >= 2
     legacy.assert_not_called()

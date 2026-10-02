@@ -23,6 +23,7 @@ Apply small text edits to a C# script identified by URI.
         - For method/class operations, use script_apply_edits (safer, structured edits)
         - For pattern-based replacements, consider anchor operations in script_apply_edits
         - newText is literal: whitespace and line endings are preserved exactly, with no indentation or newline padding
+        - options.preview=true prepares a complete read-only proposal with target paths and hashes; older Unity packages reject the safe preview action and require an upgrade
         - Lines, columns are 1-indexed
         - Tabs count as 1 column
 

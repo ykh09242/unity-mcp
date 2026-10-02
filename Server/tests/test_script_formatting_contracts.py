@@ -13,7 +13,20 @@ def wire(monkeypatch):
     reader = AsyncMock()
     writer = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(tools, "get_unity_instance_from_context", AsyncMock(return_value=None))
-    monkeypatch.setattr(tools, "send_with_unity_instance", reader)
+    async def read_or_prepare(*args, **kwargs):
+        response = await reader(*args, **kwargs)
+        params = args[3]
+        if not params.get("options", {}).get("preview"):
+            return response
+        from tests.test_script_preparation import prepared
+        original = response["data"]["contents"]
+        try:
+            candidate = tools._preview_text_spans(original, params["edits"])
+        except ValueError:
+            return {"success": False, "code": "preview_failed"}
+        proposal = prepared(original, candidate)
+        return proposal
+    monkeypatch.setattr(tools, "send_with_unity_instance", read_or_prepare)
     monkeypatch.setattr(tools, "send_mutation", writer)
     return reader, writer
 
@@ -65,9 +78,9 @@ async def test_preview_matches_production_regex_occurrence(wire):
 
 
 @pytest.mark.asyncio
-async def test_structured_preview_rejects_before_io(wire):
+async def test_mixed_preview_rejects_before_io(wire):
     reader, writer = wire
-    result = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", [{"op": "insert_method", "replacement": "void M() {}"}], {"preview": True})
+    result = await tools.script_apply_edits(AsyncMock(), "Foo", "Assets", [{"op": "insert_method", "replacement": "void M() {}"}, {"op": "append", "text": "// literal"}], {"preview": True})
     assert result["code"] == "unsupported_preview"
     reader.assert_not_awaited()
     writer.assert_not_awaited()
