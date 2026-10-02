@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
+using UnityEditor.Animations;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Animation
@@ -18,10 +19,15 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return new { success = false, message = $"No Animator component on '{go.name}'" };
 
+            var runtimeController = animator.runtimeAnimatorController;
+            bool isPlaying = Application.isPlaying;
+            var controller = runtimeController as AnimatorController;
+            if (!isPlaying && runtimeController is AnimatorOverrideController overrideController)
+                controller = overrideController.runtimeAnimatorController as AnimatorController;
+            var definitions = !isPlaying && controller != null ? controller.parameters : animator.parameters;
             var parameters = new List<object>();
-            for (int i = 0; i < animator.parameterCount; i++)
+            foreach (var p in definitions)
             {
-                var p = animator.GetParameter(i);
                 parameters.Add(new
                 {
                     name = p.name,
@@ -33,11 +39,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             var layers = new List<object>();
-            for (int i = 0; i < animator.layerCount; i++)
+            int layerCount = animator.layerCount;
+            for (int i = 0; i < layerCount; i++)
             {
-                var stateInfo = animator.IsInTransition(i)
-                    ? animator.GetNextAnimatorStateInfo(i)
-                    : animator.GetCurrentAnimatorStateInfo(i);
+                bool isInTransition = animator.IsInTransition(i);
+                var stateInfo = animator.GetCurrentAnimatorStateInfo(i);
 
                 layers.Add(new
                 {
@@ -47,14 +53,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                     currentStateHash = stateInfo.fullPathHash,
                     currentStateNormalizedTime = stateInfo.normalizedTime,
                     currentStateLength = stateInfo.length,
-                    isInTransition = animator.IsInTransition(i)
+                    isInTransition
                 });
             }
 
             var clips = new List<object>();
-            if (animator.runtimeAnimatorController != null)
+            if (runtimeController != null)
             {
-                foreach (var clip in animator.runtimeAnimatorController.animationClips)
+                foreach (var clip in runtimeController.animationClips)
                 {
                     clips.Add(new
                     {
@@ -75,13 +81,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                     gameObject = go.name,
                     enabled = animator.enabled,
                     speed = animator.speed,
-                    hasController = animator.runtimeAnimatorController != null,
-                    controllerName = animator.runtimeAnimatorController?.name,
+                    hasController = runtimeController != null,
+                    controllerName = runtimeController?.name,
                     applyRootMotion = animator.applyRootMotion,
                     updateMode = animator.updateMode.ToString(),
                     cullingMode = animator.cullingMode.ToString(),
-                    parameterCount = animator.parameterCount,
-                    layerCount = animator.layerCount,
+                    parameterCount = definitions.Length,
+                    layerCount,
                     parameters,
                     layers,
                     clips
@@ -103,10 +109,15 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(paramName))
                 return new { success = false, message = "'parameterName' is required" };
 
+            bool isPlaying = Application.isPlaying;
+            var runtimeController = animator.runtimeAnimatorController;
+            var controller = runtimeController as AnimatorController;
+            if (!isPlaying && runtimeController is AnimatorOverrideController overrideController)
+                controller = overrideController.runtimeAnimatorController as AnimatorController;
+            var definitions = !isPlaying && controller != null ? controller.parameters : animator.parameters;
             AnimatorControllerParameter found = null;
-            for (int i = 0; i < animator.parameterCount; i++)
+            foreach (var p in definitions)
             {
-                var p = animator.GetParameter(i);
                 if (p.name == paramName)
                 {
                     found = p;
@@ -121,13 +132,13 @@ namespace MCPForUnity.Editor.Tools.Animation
             switch (found.type)
             {
                 case AnimatorControllerParameterType.Float:
-                    value = animator.GetFloat(paramName);
+                    value = isPlaying ? animator.GetFloat(paramName) : found.defaultFloat;
                     break;
                 case AnimatorControllerParameterType.Int:
-                    value = animator.GetInteger(paramName);
+                    value = isPlaying ? animator.GetInteger(paramName) : found.defaultInt;
                     break;
                 case AnimatorControllerParameterType.Bool:
-                    value = animator.GetBool(paramName);
+                    value = isPlaying ? animator.GetBool(paramName) : found.defaultBool;
                     break;
                 case AnimatorControllerParameterType.Trigger:
                     value = animator.GetBool(paramName);
