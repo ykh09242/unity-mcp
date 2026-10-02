@@ -18,13 +18,14 @@
 #   EXTRA_REFS=/c/refs tools/compile-check.sh
 # where /c/refs holds Newtonsoft.Json.dll and nunit.framework.dll, e.g. copied from
 # TestProjects/UnityMCPTests/Library/PackageCache/com.unity.nuget.newtonsoft-json@*/Runtime/ and
-# .../com.unity.ext.nunit@*/net35/unity-custom/. Takes ~1 min per Unity version.
+# .../com.unity.ext.nunit@*/net40/unity-custom/. Takes ~1 min per Unity version.
 #
 # Env:
 #   UNITY_DATA     Editor/Data directory                 (default /opt/unity/Editor/Data)
 #   UNITY_VERSION  e.g. 2021.3.45f2                      (required for version defines)
 #   REPO           repo root                             (default: this script's parent)
 #   EXTRA_REFS     dir holding Newtonsoft/nunit DLLs     (default $REPO/.compile-refs)
+#   TEST_FRAMEWORK_SOURCE  extracted pinned UPM package   (optional; compiles its TestRunner APIs)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
 #
@@ -47,6 +48,10 @@ UNITY_DATA=$(winpath "${UNITY_DATA:-/opt/unity/Editor/Data}")
 REPO=$(winpath "${REPO:-"$(dirname "${BASH_SOURCE[0]}")/.."}")
 EXTRA_REFS=${EXTRA_REFS:-"$REPO/.compile-refs"}
 [ -d "$EXTRA_REFS" ] && EXTRA_REFS=$(winpath "$EXTRA_REFS")
+TEST_FRAMEWORK_SOURCE=${TEST_FRAMEWORK_SOURCE:-}
+if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
+  TEST_FRAMEWORK_SOURCE=$(winpath "$TEST_FRAMEWORK_SOURCE") || exit 2
+fi
 PLATFORMS=${PLATFORMS:-"win osx linux"}
 OUT=${OUT:-/tmp/mcp-compile-check}
 mkdir -p "$OUT" && OUT=$(winpath "$OUT")
@@ -62,6 +67,12 @@ UNITY_VERSION=${UNITY_VERSION:-}
 
 echo "Unity version : $UNITY_VERSION"
 echo "Unity data    : $UNITY_DATA"
+if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
+  echo "Test Framework: $TEST_FRAMEWORK_SOURCE"
+  for assembly in UnityEngine.TestRunner UnityEditor.TestRunner; do
+    [ -d "$TEST_FRAMEWORK_SOURCE/$assembly" ] || die "Test Framework source not found: $assembly"
+  done
+fi
 
 # ---------------------------------------------------------------- defines ----
 # The version ladder must be exact: defining UNITY_2022_1_OR_NEWER on a 2021.3 build
@@ -102,7 +113,12 @@ resolve_ref() {
   case "$1" in
     DATA/*)     echo "$UNITY_DATA/${1#DATA/}" ;;
     EXTRA/*)    echo "$EXTRA_REFS/${1#EXTRA/}" ;;
-    LIBCACHE/*) find "$LIBCACHE" -path '*/ScriptAssemblies/*' -name "${1#LIBCACHE/}" 2>/dev/null | head -1 ;;
+    LIBCACHE/*)
+      if [ -n "$TEST_FRAMEWORK_SOURCE" ] && [[ "$1" == *TestRunner.dll ]]; then
+        echo "$OUT/$platform/${1#LIBCACHE/}"
+      else
+        find "$LIBCACHE" -path '*/ScriptAssemblies/*' -name "${1#LIBCACHE/}" 2>/dev/null | head -1
+      fi ;;
   esac
 }
 
@@ -123,6 +139,7 @@ compile() {
     echo "-preferreduilang:en-US"
     echo "-nowarn:CS1701,CS1702"      # benign netstandard facade version unification
     echo "-out:$dir/$name.dll"
+    case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     # ${var%$'\r'} strips the CR a core.autocrlf checkout appends to every line: a CR inside
     # -define:FOO silently defines the wrong symbol, and inside a LIBCACHE/ name it makes
     # `find -name` match nothing, so the Editor build fails on TestRunner/UI types.
@@ -132,6 +149,10 @@ compile() {
     while read -r entry; do
       entry=${entry%$'\r'}
       [ -n "$entry" ] || continue
+      # Compile the pinned package itself without referencing the template's TestRunner.
+      case "$name:$entry" in
+        UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll) continue ;;
+      esac
       local p; p=$(resolve_ref "$entry")
       if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
       else echo "::warning::reference not found: $entry" >&2; missing=$((missing+1)); fi
@@ -153,6 +174,19 @@ compile() {
 
 failed=0
 for platform in $PLATFORMS; do
+  if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
+    compile UnityEngine.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEngine.TestRunner" "$platform" \
+      "$REPO/tools/compile-refs/Editor.txt" || { failed=1; continue; }
+    cecil_refs=()
+    for dll in Mono.Cecil.dll Mono.Cecil.Pdb.dll Mono.Cecil.Mdb.dll Mono.Cecil.Rocks.dll; do
+      ref="$UNITY_DATA/Tools/Compilation/ApiUpdater/$dll"
+      [ -f "$ref" ] || die "Test Framework reference not found: $ref"
+      cecil_refs+=("$ref")
+    done
+    compile UnityEditor.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEditor.TestRunner" "$platform" \
+      "$REPO/tools/compile-refs/Editor.txt" "$OUT/$platform/UnityEngine.TestRunner.dll" \
+      "${cecil_refs[@]}" || { failed=1; continue; }
+  fi
   compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
     "$REPO/tools/compile-refs/Runtime.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
