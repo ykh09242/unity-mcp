@@ -25,9 +25,16 @@ def _normalize_vfx_params(params: dict[str, Any]) -> dict[str, Any]:
 
     if properties:
         existing = params.get("properties")
+        if isinstance(existing, str):
+            try:
+                parsed = json.loads(existing)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                existing = parsed
         if isinstance(existing, dict):
             params["properties"] = {**properties, **existing}
-        else:
+        elif existing is None:
             params["properties"] = properties
 
     return {k: v for k, v in params.items() if v is not None}
