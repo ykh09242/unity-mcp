@@ -2,6 +2,7 @@ from typing import Annotated, Literal, Any
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import BeforeValidator
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -9,6 +10,12 @@ from services.tools.utils import coerce_int, coerce_bool
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
+
+
+def _reject_boolean_build_index(value: Any) -> Any:
+    if isinstance(value, bool):
+        raise ValueError("build_index must be an integer, not a boolean.")
+    return value
 
 
 @mcp_for_unity_tool(
@@ -44,7 +51,8 @@ async def manage_scene(
     name: Annotated[str, "Scene name."] | None = None,
     path: Annotated[str, "Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/."] | None = None,
     build_index: Annotated[int | str,
-                           "Unity build index (quote as string, e.g., '0')."] | None = None,
+                           "Unity build index (quote as string, e.g., '0').",
+                           BeforeValidator(_reject_boolean_build_index)] | None = None,
     # --- scene_view_frame params ---
     scene_view_target: Annotated[str | int,
                                  "GameObject reference for scene_view_frame (name, path, or instance ID)."] | None = None,

@@ -125,7 +125,7 @@ def load(scene: str, by_index: bool):
 
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Loaded scene: {scene}")
 
 
@@ -152,7 +152,7 @@ def save(path: Optional[str]):
 
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Scene saved")
 
 
@@ -199,7 +199,7 @@ def create(name: str, path: Optional[str], template: Optional[str]):
 
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         label = f" from template '{template}'" if template else ""
         print_success(f"Created scene{label}: {name}")
 
@@ -247,7 +247,7 @@ def open_additive(scene_path: str):
         "additive": True,
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Opened additively: {scene_path}")
 
 
@@ -272,7 +272,7 @@ def close(scene_name: str, remove: bool):
         params["removeScene"] = True
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Closed scene: {scene_name}")
 
 
@@ -292,7 +292,7 @@ def set_active(scene_name: str):
         "sceneName": scene_name,
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set active: {scene_name}")
 
 
@@ -314,7 +314,7 @@ def move_to(target: str, scene_name: str):
         "sceneName": scene_name,
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Moved '{target}' to scene '{scene_name}'")
 
 
@@ -338,7 +338,7 @@ def validate(repair: bool):
         params["autoRepair"] = True
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         data = result.get("data", {})
         total = data.get("totalIssues", 0)
         repaired = data.get("repaired", 0)
