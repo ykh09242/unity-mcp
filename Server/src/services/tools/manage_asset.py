@@ -51,19 +51,18 @@ async def manage_asset(
     page_number: Annotated[int | float | str,
                            "Page number for pagination (1-based)."] | None = None,
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
-
-    # Best-effort guard: if Unity is compiling/reloading or known external changes are pending,
-    # wait/refresh to avoid stale reads and flaky timeouts.
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
-
     # --- Normalize properties using robust module-level helper ---
     properties, parse_error = normalize_properties(properties)
     if parse_error:
         await ctx.error(f"manage_asset: {parse_error}")
         return {"success": False, "message": parse_error}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
+    # Wait/refresh only after rejecting invalid local payloads: preflight can
+    # perform editor I/O, refresh assets and wait for compilation.
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    if gate is not None:
+        return gate.model_dump()
 
     page_size = coerce_int(page_size)
     page_number = coerce_int(page_number)

@@ -6,12 +6,18 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.utils import parse_json_payload, normalize_properties
 from services.tools.preflight import preflight
+
+
+_VALUE_OMITTED = object()
+# Keep the public value optional/nullable while distinguishing a JSON null from omission.
+_VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
 
 
 @mcp_for_unity_tool(
@@ -50,11 +56,11 @@ async def manage_components(
     property: Annotated[Optional[str],
                         "Property name to set (for set_property action)"] = None,
     value: Annotated[Optional[str | int | float | bool | dict | list],
-                     "Value to set (for set_property action). "
+                     "Value to set (required with property for set_property). Null clears an object reference. "
                      "For object references: instance ID (int), asset path (string), "
                      "or {\"guid\": \"...\"} / {\"path\": \"...\"}. "
                      "For Sprite sub-assets: {\"guid\": \"...\", \"spriteName\": \"<name>\"} or "
-                     "{\"guid\": \"...\", \"fileID\": <id>}. Single-sprite textures auto-resolve."] = None,
+                     "{\"guid\": \"...\", \"fileID\": <id>}. Single-sprite textures auto-resolve."] = _VALUE_DEFAULT,
     # For add/set_property - multiple properties
     properties: Annotated[
         Optional[dict[str, Any] | str],
@@ -81,12 +87,6 @@ async def manage_components(
     - Set single property: action="set_property", target="Enemy", component_type="Rigidbody", property="mass", value=5.0
     - Set multiple properties: action="set_property", target="Enemy", component_type="Rigidbody", properties={"mass": 5.0, "useGravity": false}
     """
-    unity_instance = await get_unity_instance_from_context(ctx)
-
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
-
     if not action:
         return {
             "success": False,
@@ -114,6 +114,15 @@ async def manage_components(
     if value is not None and isinstance(value, str) and value in ("[object Object]", "undefined"):
         return {"success": False, "message": f"value received invalid input: '{value}'. Expected an actual value."}
 
+    # Bare Python calls receive FieldInfo; SDK calls receive the factory marker.
+    if action == "set_property" and property and (value is _VALUE_DEFAULT or value is _VALUE_OMITTED):
+        return {"success": False, "message": "Missing required parameter 'value' for single property. Use null to clear an object reference."}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    if gate is not None:
+        return gate.model_dump()
+
     try:
         params = {
             "action": action,
@@ -128,7 +137,7 @@ async def manage_components(
             params["componentIndex"] = component_index
 
         if action == "set_property":
-            if property and value is not None:
+            if property:
                 params["property"] = property
                 params["value"] = value
             if properties:

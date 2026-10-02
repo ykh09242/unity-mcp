@@ -4,9 +4,58 @@ Tests for the manage_components tool.
 This tool handles component lifecycle operations (add, remove, set_property).
 """
 import pytest
+from unittest.mock import AsyncMock
 
 from .test_helpers import DummyContext
 import services.tools.manage_components as manage_comp_mod
+
+
+@pytest.mark.asyncio
+async def test_single_property_explicit_null_is_forwarded(monkeypatch):
+    send = AsyncMock(return_value={"success": True, "data": {}})
+    monkeypatch.setattr(manage_comp_mod, "send_with_unity_instance", send)
+    response = await manage_comp_mod.manage_components(
+        DummyContext(), "set_property", "Player", "Renderer",
+        property="sharedMaterial", value=None,
+    )
+    assert response["success"] is True
+    assert send.call_args.args[3]["property"] == "sharedMaterial"
+    assert "value" in send.call_args.args[3]
+    assert send.call_args.args[3]["value"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [
+    {"property": "sharedMaterial"},
+    {"properties": "[object Object]"},
+    {"property": "mass", "value": "undefined"},
+    {"target": ""},
+    {"component_type": ""},
+])
+async def test_invalid_component_inputs_do_not_preflight_or_dispatch(monkeypatch, arguments):
+    preflight = AsyncMock(return_value=None)
+    send = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(manage_comp_mod, "preflight", preflight)
+    monkeypatch.setattr(manage_comp_mod, "send_with_unity_instance", send)
+    params = {"action": "set_property", "target": "Player", "component_type": "Renderer"}
+    response = await manage_comp_mod.manage_components(DummyContext(), **{**params, **arguments})
+    assert response["success"] is False
+    preflight.assert_not_awaited()
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_partial_component_add_failure_retains_created_component_details(monkeypatch):
+    failure = {"success": False, "error": "Property initialization failed", "data": {
+        "instanceID": 123, "componentType": "Rigidbody", "componentInstanceID": 456,
+        "componentAdded": True,
+        "errors": ["mass: invalid value"],
+    }}
+    monkeypatch.setattr(manage_comp_mod, "send_with_unity_instance", AsyncMock(return_value=failure))
+    response = await manage_comp_mod.manage_components(
+        DummyContext(), "add", "Player", "Rigidbody", properties={"mass": "invalid"},
+    )
+    assert response == failure
 
 
 @pytest.mark.asyncio

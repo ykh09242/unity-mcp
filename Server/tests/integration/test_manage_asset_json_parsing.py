@@ -3,6 +3,7 @@ Tests for JSON string parameter parsing in manage_asset tool.
 """
 import pytest
 import json
+from unittest.mock import AsyncMock
 
 from .test_helpers import DummyContext
 from services.tools.manage_asset import manage_asset
@@ -10,6 +11,20 @@ from services.tools.manage_asset import manage_asset
 
 class TestManageAssetJsonParsing:
     """Test JSON string parameter parsing functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("properties", ['{"broken":', '[1, 2]', '[object Object]'])
+    async def test_invalid_properties_rejected_before_editor_preflight(self, monkeypatch, properties):
+        preflight = AsyncMock(return_value=None)
+        send = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr("services.tools.manage_asset.preflight", preflight)
+        monkeypatch.setattr("services.tools.manage_asset.send_with_unity_instance", send)
+        response = await manage_asset(
+            DummyContext(), "create", "Assets/Test.mat", asset_type="Material", properties=properties,
+        )
+        assert response["success"] is False
+        preflight.assert_not_awaited()
+        send.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_properties_json_string_parsing(self, monkeypatch):
