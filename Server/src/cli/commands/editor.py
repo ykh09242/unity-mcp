@@ -1,6 +1,7 @@
 """Editor CLI commands."""
 
 import sys
+import time
 import click
 from typing import Optional, Any
 
@@ -350,12 +351,10 @@ def run_tests(mode: str, async_mode: bool, wait: Optional[int], details: bool, f
         return
 
     params: dict[str, Any] = {"mode": mode}
-    if wait is not None:
-        params["wait_timeout"] = wait
     if details:
-        params["include_details"] = True
+        params["includeDetails"] = True
     if failed_only:
-        params["include_failed_tests"] = True
+        params["includeFailedTests"] = True
 
     result = run_command("run_tests", params, config)
 
@@ -365,6 +364,12 @@ def run_tests(mode: str, async_mode: bool, wait: Optional[int], details: bool, f
         if job_id:
             click.echo(f"Test job started: {job_id}")
             print_info("Poll with: unity-mcp editor poll-test " + job_id)
+            return
+
+    if wait and result.get("success"):
+        job_id = result.get("data", {}).get("job_id")
+        if job_id:
+            poll_test.callback(job_id, wait, details, failed_only)
             return
 
     click.echo(format_output(result, config.format))
@@ -401,18 +406,44 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
     config = get_config()
 
     params: dict[str, Any] = {"job_id": job_id}
-    if wait:
-        params["wait_timeout"] = wait
     if details:
-        params["include_details"] = True
+        params["includeDetails"] = True
     if failed_only:
-        params["include_failed_tests"] = True
+        params["includeFailedTests"] = True
 
-    result = run_command("get_test_job", params, config)
+    deadline = time.monotonic() + max(wait, 0)
+    if wait > 0:
+        result = run_command("get_test_job", params, config, timeout=min(config.timeout, wait))
+        if time.monotonic() >= deadline:
+            result = {"success": False, "error": "Timeout waiting for test job", "data": {"job_id": job_id}}
+    else:
+        result = run_command("get_test_job", params, config)
+    while wait > 0 and result.get("success"):
+        data = result.get("data")
+        if not isinstance(data, dict):
+            break
+        status = data.get("status")
+        if not status:
+            break
+        if status in ("succeeded", "failed", "cancelled"):
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(2.0, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        response = run_command("get_test_job", params, config, timeout=min(config.timeout, remaining))
+        if time.monotonic() >= deadline:
+            break
+        result = response
     click.echo(format_output(result, config.format))
 
     if isinstance(result, dict) and result.get("success"):
         data = result.get("data", {})
+        if not isinstance(data, dict):
+            return
         status = data.get("status", "unknown")
         if status == "succeeded":
             print_success("Tests completed successfully")
