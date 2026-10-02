@@ -29,7 +29,7 @@ def add_package(package: str):
     config = get_config()
     result = run_command("manage_packages", {"action": "add_package", "package": package}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
             print_info(f"Installation started. Poll with: unity-mcp packages status {job_id}")
@@ -55,7 +55,7 @@ def remove_package(package: str, force: bool):
         params["force"] = True
     result = run_command("manage_packages", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
             print_info(f"Removal started. Poll with: unity-mcp packages status {job_id}")
@@ -140,7 +140,7 @@ def embed_package(package: str):
     config = get_config()
     result = run_command("manage_packages", {"action": "embed_package", "package": package}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
             print_info(f"Embedding started. Poll with: unity-mcp packages status {job_id}")
@@ -160,8 +160,8 @@ def resolve():
     config = get_config()
     result = run_command("manage_packages", {"action": "resolve_packages"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
-        print_success("Packages resolved")
+    if result.get("success") and config.format != "json":
+        print_success("Package resolution triggered")
 
 
 @packages.command("list-registries")
@@ -198,7 +198,7 @@ def add_registry(registry_name: str, url: str, scope: tuple):
         "scopes": list(scope),
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Registry added: {registry_name}")
 
 
@@ -218,7 +218,7 @@ def remove_registry(registry_name: str):
         "name": registry_name,
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Registry removed: {registry_name}")
 
 
