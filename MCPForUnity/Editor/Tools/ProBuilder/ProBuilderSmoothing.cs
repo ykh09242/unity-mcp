@@ -55,7 +55,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("Smoothing type not found in ProBuilder assembly.");
 
             var allFaces = ManageProBuilder.GetFacesArray(pbMesh);
-            var facesList = (System.Collections.IList)allFaces;
 
             // Check for faceIndices to limit scope
             var faceIndicesToken = props["faceIndices"] ?? props["face_indices"];
@@ -90,7 +89,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             return new SuccessResponse($"Auto-smoothed with angle threshold {angleThreshold}°", new
             {
                 angleThreshold,
-                faceCount = facesList.Count,
+                faceCount = ((System.Collections.IList)facesToSmooth).Count,
             });
         }
     }

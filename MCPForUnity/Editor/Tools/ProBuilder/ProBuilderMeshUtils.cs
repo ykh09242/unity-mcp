@@ -74,7 +74,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             Undo.RecordObject(pbMesh, "Freeze Transform");
             Undo.RecordObject(pbMesh.transform, "Freeze Transform");
 
-            // Transform each vertex to world space, then back to identity local space
+            // Preserve world-space geometry while resetting this transform.
             var worldPositions = new Vector3[positions.Count];
             for (int i = 0; i < positions.Count; i++)
                 worldPositions[i] = pbMesh.transform.TransformPoint((Vector3)positions[i]);
@@ -84,7 +84,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             pbMesh.transform.rotation = Quaternion.identity;
             pbMesh.transform.localScale = Vector3.one;
 
-            // Set new positions (now in world space = new local space since identity)
+            // A parent can leave the reset transform's world matrix nonidentity.
+            for (int i = 0; i < worldPositions.Length; i++)
+                worldPositions[i] = pbMesh.transform.InverseTransformPoint(worldPositions[i]);
+
             SetVertexPositions(pbMesh, worldPositions);
 
             ManageProBuilder.RefreshMesh(pbMesh);
