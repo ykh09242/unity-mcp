@@ -18,11 +18,11 @@ Search for GameObjects in the scene by name, tag, layer, component type, or path
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `search_term` | `str` | yes |  |
-| `search_method` | `Literal['by_name', 'by_tag', 'by_layer', 'by_component', 'by_path', 'by_id']` | — |  |
-| `include_inactive` | `bool \| str \| None` | — |  |
-| `page_size` | `int \| str \| None` | — |  |
-| `cursor` | `int \| str \| None` | — |  |
+| `search_term` | `str` | yes | The value to search for (name, tag, layer name, component type, or path) |
+| `search_method` | `Literal['by_name', 'by_tag', 'by_layer', 'by_component', 'by_path', 'by_id']` | — | How to search for GameObjects |
+| `include_inactive` | `bool \| str \| None` | — | Include inactive GameObjects in search |
+| `page_size` | `int \| str \| None` | — | Number of results per page (default: 50, max: 500) |
+| `cursor` | `int \| str \| None` | — | Pagination cursor (offset for next page) |
 
 ## Returns
 

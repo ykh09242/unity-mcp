@@ -145,7 +145,7 @@ URI: mcpforunity://tests/{mode}
 
 **Parameters:**
 
-- `mode` (`Literal['EditMode', 'PlayMode']`, required) — 
+- `mode` (`Literal['EditMode', 'PlayMode']`, required) — The mode to filter tests by (EditMode or PlayMode).
 
 ## `menu_items`
 

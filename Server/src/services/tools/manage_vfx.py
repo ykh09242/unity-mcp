@@ -2,6 +2,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import BeforeValidator, Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -43,6 +44,12 @@ TRAIL_ACTIONS = [
 ALL_ACTIONS = ["ping"] + PARTICLE_ACTIONS + VFX_ACTIONS + LINE_ACTIONS + TRAIL_ACTIONS
 
 
+def _reject_boolean_component_index(value: Any) -> Any:
+    if isinstance(value, bool):
+        raise ValueError("component_index must be an integer, not a boolean")
+    return value
+
+
 @mcp_for_unity_tool(
     group="vfx",
     description=(
@@ -69,8 +76,11 @@ async def manage_vfx(
     ] = None,
     component_index: Annotated[
         Optional[int],
-        "Zero-based index to select which component when multiple of the same type exist (e.g., multiple ParticleSystems). "
-        "If omitted, targets the first instance."
+        Field(description=(
+            "Zero-based index to select which component when multiple of the same type exist (e.g., multiple ParticleSystems). "
+            "If omitted, targets the first instance."
+        )),
+        BeforeValidator(_reject_boolean_component_index),
     ] = None,
 ) -> dict[str, Any]:
     """Unified VFX management tool."""

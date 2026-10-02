@@ -100,7 +100,7 @@ def particle_play(target: str, with_children: bool, search_method: Optional[str]
     result = run_command(
         "manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Playing particle system: {target}")
 
 
@@ -123,7 +123,7 @@ def particle_stop(target: str, with_children: bool, search_method: Optional[str]
     result = run_command(
         "manage_vfx", _normalize_vfx_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Stopped particle system: {target}")
 
 

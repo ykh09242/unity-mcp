@@ -1,5 +1,7 @@
 from typing import Annotated, Union
 
+from pydantic import BeforeValidator, Field
+
 from tools.generate_docs_reference import _annotation_description, _render_type
 
 
@@ -33,3 +35,16 @@ def test_union_description_preserves_nested_annotated_metadata():
 def test_unannotated_unions_have_no_description():
     assert _annotation_description(str | None) is None
     assert _annotation_description(Union[str, None]) is None
+
+
+def test_field_description_survives_validator_metadata_and_optional_union():
+    described = Annotated[int | None, Field(description="Component index"), BeforeValidator(lambda value: value)]
+    assert _annotation_description(described) == "Component index"
+    assert _annotation_description(Annotated[described | str, 7]) == "Component index"
+    assert _render_type(described) == "int | None"
+
+
+def test_existing_string_description_precedes_field_metadata():
+    described = Annotated[int, Field(description="Field description"), "Existing description"]
+    assert _annotation_description(described) == "Existing description"
+    assert _annotation_description(Annotated[int, Field(), 7]) is None

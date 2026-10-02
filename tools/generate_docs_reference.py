@@ -166,7 +166,8 @@ def _render_type(annotation: Any) -> str:
 
 
 def _annotation_description(annotation: Any) -> str | None:
-    """Pull the human-readable string from an Annotated[...] parameter."""
+    """Pull a string or Pydantic Field description from Annotated metadata."""
+    from pydantic.fields import FieldInfo
 
     def _walk(a: Any) -> str | None:
         origin = get_origin(a)
@@ -174,6 +175,9 @@ def _annotation_description(annotation: Any) -> str | None:
             for meta in get_args(a)[1:]:
                 if isinstance(meta, str):
                     return meta
+            for meta in get_args(a)[1:]:
+                if isinstance(meta, FieldInfo) and meta.description is not None:
+                    return meta.description
             # Recurse into the underlying type — e.g. Annotated[str, "..."] | None
             return _walk(get_args(a)[0])
         if origin in (Union, UnionType):
