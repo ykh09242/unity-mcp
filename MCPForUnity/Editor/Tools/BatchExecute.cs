@@ -105,6 +105,22 @@ namespace MCPForUnity.Editor.Tools
                     continue;
                 }
 
+                // CommandRegistry dispatches resources as well as tools. Apply both policies.
+                var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(toolName);
+                if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(toolName))
+                {
+                    invocationFailureCount++;
+                    anyCommandFailed = true;
+                    commandResults.Add(new
+                    {
+                        tool = toolName,
+                        callSucceeded = false,
+                        result = new ErrorResponse($"Resource '{toolName}' is disabled in the Unity Editor.")
+                    });
+                    if (failFast) break;
+                    continue;
+                }
+
                 // Block disabled tools (mirrors TransportCommandDispatcher check)
                 var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName);
                 if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(toolName))
