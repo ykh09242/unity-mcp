@@ -14,6 +14,9 @@ description: "Structured C# edits (methods/classes) with safer boundaries - pref
 
 Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
     Best practices:
+    - Method/class edits adapt to local indentation and line endings without changing string values.
+    - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
+    - Text preview uses the same spans as a write; method/class/anchor preview is unsupported.
     - Prefer anchor_* ops for pattern-based insert/replace near stable markers
     - Use replace_method/delete_method for whole-method changes (keeps signatures balanced)
     - Avoid whole-file regex deletes; validators will guard unbalanced braces

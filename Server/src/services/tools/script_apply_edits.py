@@ -401,15 +401,10 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
 
         if op == "prepend":
             prepend_text = edit.get("text", "")
-            text = (prepend_text if prepend_text.endswith(
-                "\n") else prepend_text + "\n") + text
+            text = prepend_text + text
         elif op == "append":
             append_text = edit.get("text", "")
-            if not text.endswith("\n"):
-                text += "\n"
             text += append_text
-            if not text.endswith("\n"):
-                text += "\n"
         elif op == "anchor_insert":
             anchor = edit.get("anchor", "")
             position = (edit.get("position") or "before").lower()
@@ -459,6 +454,88 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             allowed = "anchor_insert, prepend, append, replace_range, regex_replace"
             raise RuntimeError(
                 f"unknown edit op: {op}; allowed: {allowed}. Use 'op' (aliases accepted: type/mode/operation).")
+    return text
+
+
+class _TextEditError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed: bool = False) -> list[dict[str, Any]]:
+    """Build literal edits against the original buffer for write and preview."""
+    def line_col(index: int) -> tuple[int, int]:
+        line = contents.count("\n", 0, index) + 1
+        return line, index - (contents.rfind("\n", 0, index) + 1) + 1
+
+    spans = []
+    for edit in edits:
+        op = edit.get("op", "")
+        payload = next((edit[field] for field in ("text", "insert", "content", "replacement")
+                        if edit.get(field) is not None), "")
+        if op == "replace_range":
+            fields = ("startLine", "startCol", "endLine", "endCol")
+            if not all(field in edit for field in fields):
+                raise _TextEditError("missing_field", "replace_range requires startLine/startCol/endLine/endCol")
+            span = {field: int(edit[field]) for field in fields}
+        elif op in ("prepend", "append"):
+            line, col = line_col(0 if op == "prepend" else len(contents))
+            span = {"startLine": line, "startCol": col, "endLine": line, "endCol": col}
+        elif op == "regex_replace":
+            pattern = edit.get("pattern") or ""
+            flags = re.MULTILINE | (re.IGNORECASE if edit.get("ignore_case") else 0)
+            # Preserve each existing write route's selection: mixed first match;
+            # pure text uses the established best/last anchor selection.
+            try:
+                if mixed:
+                    match = await asyncio.to_thread(bounded_regex.search, pattern, contents, flags)
+                else:
+                    match = await asyncio.to_thread(_find_best_anchor_match, pattern, contents, flags, True)
+            except Exception as exc:
+                raise _TextEditError("bad_regex", f"Invalid regex pattern: {exc}") from exc
+            if not match:
+                continue
+            payload = re.sub(r"\$(\d+)", lambda group: match.group(int(group.group(1))) or "", payload)
+            start_line, start_col = line_col(match.start())
+            end_line, end_col = line_col(match.end())
+            span = {"startLine": start_line, "startCol": start_col, "endLine": end_line, "endCol": end_col}
+        else:
+            raise _TextEditError("unsupported_op", f"Unsupported text edit op: {op}")
+        spans.append({**span, "newText": payload})
+    return spans
+
+
+def _preview_text_spans(contents: str, spans: list[dict[str, Any]]) -> str:
+    """Replay atomic codepoint spans without rewriting any requested payload."""
+    lines = contents.split("\n")
+    offsets = []
+    offset = 0
+    for line in lines:
+        offsets.append(offset)
+        offset += len(line) + 1
+
+    def index(line: int, col: int) -> int:
+        if line < 1 or line > len(lines) or col < 1 or col > len(lines[line - 1].removesuffix("\r")) + 1:
+            raise ValueError("replace_range out of bounds")
+        return offsets[line - 1] + col - 1
+
+    replacements = []
+    for span in spans:
+        start = index(span["startLine"], span["startCol"])
+        end = index(span["endLine"], span["endCol"])
+        if end < start:
+            raise ValueError("replace_range end precedes start")
+        replacements.append((start, end, span["newText"]))
+    ordered = sorted(replacements, key=lambda item: item[0], reverse=True)
+    for previous, current in zip(ordered, ordered[1:]):
+        if current[1] > previous[0]:
+            raise ValueError("Text edit spans overlap")
+    text = contents
+    # Unity's stable descending-start ordering processes same-position inserts
+    # in input order, so each subsequent insert appears before its predecessor.
+    for start, end, payload in ordered:
+        text = text[:start] + payload + text[end:]
     return text
 
 
@@ -654,6 +731,9 @@ def _err(code: str, message: str, *, expected: dict[str, Any] | None = None, rew
     description=(
         """Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
     Best practices:
+    - Method/class edits adapt to local indentation and line endings without changing string values.
+    - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
+    - Text preview uses the same spans as a write; method/class/anchor preview is unsupported.
     - Prefer anchor_* ops for pattern-based insert/replace near stable markers
     - Use replace_method/delete_method for whole-method changes (keeps signatures balanced)
     - Avoid whole-file regex deletes; validators will guard unbalanced braces
@@ -991,377 +1071,74 @@ async def script_apply_edits(
         except (ValueError, TypeError, OverflowError) as exc:
             return _err("invalid_range", str(exc))
 
-    # Optional preview/dry-run: apply locally and return diff without writing
+    # Compute text spans once: preview and both write routes preserve the same payloads.
+    routing = "mixed/text-first" if mixed else "text"
+    text_edits = [edit for edit in edits if edit.get("op", "") in TEXT]
+    struct_edits = [edit for edit in edits if edit.get("op", "") in STRUCT]
+    try:
+        at_edits = await _text_edit_spans(contents, text_edits, mixed=mixed)
+    except _TextEditError as exc:
+        return _with_norm(_err(exc.code, str(exc)), normalized_for_echo, routing=routing)
+    except Exception as exc:
+        return _with_norm(_err("conversion_failed", f"Text edit conversion failed: {exc}"), normalized_for_echo, routing=routing)
+
     if preview:
         try:
             import difflib
-            preview_text = await _apply_edits_locally(contents, edits)
             from itertools import islice
+            preview_text = _preview_text_spans(contents, at_edits)
             diff = list(islice(difflib.unified_diff(
-                contents.splitlines(), preview_text.splitlines(), fromfile="before", tofile="after", n=3), 2001))
+                contents.splitlines(keepends=True), preview_text.splitlines(keepends=True),
+                fromfile="before", tofile="after", n=3), 2001))
             if len(diff) > 2000:
                 diff = diff[:2000] + ["... (diff truncated) ..."]
             return {"success": True, "message": "Preview only (no write)",
-                    "data": {"diff": "\n".join(diff), "normalizedEdits": normalized_for_echo}}
+                    "data": {"diff": "".join(diff), "normalizedEdits": normalized_for_echo}}
         except Exception:
             return _err("preview_failed", "Unable to preview the requested edits; no changes were made.")
 
-    # If we have a mixed batch (TEXT + STRUCT), apply text first with precondition, then structured
-    if mixed:
-        text_edits = [e for e in edits or [] if (
-            e.get("op") or "").lower() in TEXT]
-        struct_edits = [e for e in edits or [] if (
-            e.get("op") or "").lower() in STRUCT]
-        try:
-            base_text = contents
+    if not at_edits and not mixed:
+        return _with_norm(_err("no_spans", "No applicable text edit spans computed (anchor not found or zero-length)."), normalized_for_echo, routing=routing)
 
-            def line_col_from_index(idx: int) -> tuple[int, int]:
-                line = base_text.count("\n", 0, idx) + 1
-                last_nl = base_text.rfind("\n", 0, idx)
-                col = (idx - (last_nl + 1)) + \
-                    1 if last_nl >= 0 else idx + 1
-                return line, col
-
-            at_edits: list[dict[str, Any]] = []
-            for e in text_edits:
-                opx = (e.get("op") or e.get("operation") or e.get(
-                    "type") or e.get("mode") or "").strip().lower()
-                text_field = e.get("text") or e.get("insert") or e.get(
-                    "content") or e.get("replacement") or ""
-                if opx == "anchor_insert":
-                    anchor = e.get("anchor") or ""
-                    position = (e.get("position") or "after").lower()
-                    flags = re.MULTILINE | (
-                        re.IGNORECASE if e.get("ignore_case") else 0)
-                    try:
-                        # Use improved anchor matching logic
-                        m = await asyncio.to_thread(_find_best_anchor_match,
-                            anchor, base_text, flags, prefer_last=True)
-                    except Exception as ex:
-                        return _with_norm(_err("bad_regex", f"Invalid anchor regex: {ex}", normalized=normalized_for_echo, routing="mixed/text-first", extra={"hint": "Escape parentheses/braces or use a simpler anchor."}), normalized_for_echo, routing="mixed/text-first")
-                    if not m:
-                        return _with_norm({"success": False, "code": "anchor_not_found", "message": f"anchor not found: {anchor}"}, normalized_for_echo, routing="mixed/text-first")
-                    idx = m.start() if position == "before" else m.end()
-                    # Normalize insertion to avoid jammed methods
-                    text_field_norm = text_field
-                    if not text_field_norm.startswith("\n"):
-                        text_field_norm = "\n" + text_field_norm
-                    if not text_field_norm.endswith("\n"):
-                        text_field_norm = text_field_norm + "\n"
-                    sl, sc = line_col_from_index(idx)
-                    at_edits.append(
-                        {"startLine": sl, "startCol": sc, "endLine": sl, "endCol": sc, "newText": text_field_norm})
-                    # do not mutate base_text when building atomic spans
-                elif opx == "replace_range":
-                    if all(k in e for k in ("startLine", "startCol", "endLine", "endCol")):
-                        at_edits.append({
-                            "startLine": int(e.get("startLine", 1)),
-                            "startCol": int(e.get("startCol", 1)),
-                            "endLine": int(e.get("endLine", 1)),
-                            "endCol": int(e.get("endCol", 1)),
-                            "newText": text_field
-                        })
-                    else:
-                        return _with_norm(_err("missing_field", "replace_range requires startLine/startCol/endLine/endCol", normalized=normalized_for_echo, routing="mixed/text-first"), normalized_for_echo, routing="mixed/text-first")
-                elif opx == "regex_replace":
-                    pattern = e.get("pattern") or ""
-                    try:
-                        m = await asyncio.to_thread(bounded_regex.search, pattern, base_text,
-                            re.MULTILINE | (re.IGNORECASE if e.get("ignore_case") else 0))
-                    except Exception as ex:
-                        return _with_norm(_err("bad_regex", f"Invalid regex pattern: {ex}", normalized=normalized_for_echo, routing="mixed/text-first", extra={"hint": "Escape special chars or prefer structured delete for methods."}), normalized_for_echo, routing="mixed/text-first")
-                    if not m:
-                        continue
-                    # Expand $1, $2... in replacement using this match
-
-                    def _expand_dollars(rep: str, _m=m) -> str:
-                        return re.sub(r"\$(\d+)", lambda g: _m.group(int(g.group(1))) or "", rep)
-                    repl = _expand_dollars(text_field)
-                    sl, sc = line_col_from_index(m.start())
-                    el, ec = line_col_from_index(m.end())
-                    at_edits.append(
-                        {"startLine": sl, "startCol": sc, "endLine": el, "endCol": ec, "newText": repl})
-                    # do not mutate base_text when building atomic spans
-                elif opx in ("prepend", "append"):
-                    if opx == "prepend":
-                        sl, sc = 1, 1
-                        at_edits.append(
-                            {"startLine": sl, "startCol": sc, "endLine": sl, "endCol": sc, "newText": text_field})
-                        # prepend can be applied atomically without local mutation
-                    else:
-                        # Insert at true EOF position (handles both \n and \r\n correctly)
-                        eof_idx = len(base_text)
-                        sl, sc = line_col_from_index(eof_idx)
-                        new_text = ("\n" if not base_text.endswith(
-                            "\n") else "") + text_field
-                        at_edits.append(
-                            {"startLine": sl, "startCol": sc, "endLine": sl, "endCol": sc, "newText": new_text})
-                        # do not mutate base_text when building atomic spans
-                else:
-                    return _with_norm(_err("unknown_op", f"Unsupported text edit op: {opx}", normalized=normalized_for_echo, routing="mixed/text-first"), normalized_for_echo, routing="mixed/text-first")
-
-            sha = hashlib.sha256(base_text.encode("utf-8")).hexdigest()
-            if at_edits:
-                params_text: dict[str, Any] = {
-                    "action": "apply_text_edits",
-                    "name": name,
-                    "path": path,
-                    "namespace": namespace,
-                    "scriptType": script_type,
-                    "edits": at_edits,
-                    "precondition_sha256": sha,
-                    "options": {"refresh": (options or {}).get("refresh", "debounced"), "validate": (options or {}).get("validate", "standard"), "applyMode": ("atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential"))}
-                }
-                async def _verify_text():
-                    if await verify_edit_by_sha(unity_instance, name, path, sha):
-                        return {"success": True, "message": "Text edits applied (verified after domain reload)."}
-                    return None
-
-                resp_text = await send_mutation(ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text)
-                if not (isinstance(resp_text, dict) and resp_text.get("success")):
-                    return _with_norm(resp_text if isinstance(resp_text, dict) else {"success": False, "message": str(resp_text)}, normalized_for_echo, routing="mixed/text-first")
-        except Exception as e:
-            return _with_norm({"success": False, "message": f"Text edit conversion failed: {e}"}, normalized_for_echo, routing="mixed/text-first")
-
-        if struct_edits:
-            opts2 = dict(options or {})
-            # Prefer debounced background refresh unless explicitly overridden
-            opts2.setdefault("refresh", "debounced")
-            params_struct: dict[str, Any] = {
-                "action": "edit",
-                "name": name,
-                "path": path,
-                "namespace": namespace,
-                "scriptType": script_type,
-                "edits": struct_edits,
-                "options": opts2
-            }
-            async def _verify_struct():
-                if await verify_edit_by_sha(unity_instance, name, path, sha):
-                    return {"success": True, "message": "Edit applied (verified after domain reload)."}
-                return None
-
-            resp_struct = await send_mutation(ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify_struct)
-            return _with_norm(resp_struct if isinstance(resp_struct, dict) else {"success": False, "message": str(resp_struct)}, normalized_for_echo, routing="mixed/text-first")
-
-        return _with_norm({"success": True, "message": "Applied text edits (no structured ops)"}, normalized_for_echo, routing="mixed/text-first")
-
-    # If the edits are text-ops, prefer sending them to Unity's apply_text_edits with precondition
-    # so header guards and validation run on the C# side.
-    # Supported conversions: anchor_insert, replace_range, regex_replace (first match only).
-    text_ops = {(e.get("op") or e.get("operation") or e.get("type") or e.get(
-        "mode") or "").strip().lower() for e in (edits or [])}
-    structured_kinds = {"replace_class", "delete_class",
-                        "replace_method", "delete_method", "insert_method", "anchor_insert"}
-    if not text_ops.issubset(structured_kinds):
-        # Convert to apply_text_edits payload
-        try:
-            base_text = contents
-
-            def line_col_from_index(idx: int) -> tuple[int, int]:
-                # 1-based line/col against base buffer
-                line = base_text.count("\n", 0, idx) + 1
-                last_nl = base_text.rfind("\n", 0, idx)
-                col = (idx - (last_nl + 1)) + \
-                    1 if last_nl >= 0 else idx + 1
-                return line, col
-
-            at_edits: list[dict[str, Any]] = []
-            for e in edits or []:
-                op = (e.get("op") or e.get("operation") or e.get(
-                    "type") or e.get("mode") or "").strip().lower()
-                # aliasing for text field
-                text_field = e.get("text") or e.get(
-                    "insert") or e.get("content") or e.get("replacement") or ""
-                if op == "anchor_insert":
-                    anchor = e.get("anchor") or ""
-                    position = (e.get("position") or "after").lower()
-                    # Use improved anchor matching logic with helpful errors, honoring ignore_case
-                    try:
-                        flags = re.MULTILINE | (
-                            re.IGNORECASE if e.get("ignore_case") else 0)
-                        m = await asyncio.to_thread(_find_best_anchor_match,
-                            anchor, base_text, flags, prefer_last=True)
-                    except Exception as ex:
-                        return _with_norm(_err("bad_regex", f"Invalid anchor regex: {ex}", normalized=normalized_for_echo, routing="text", extra={"hint": "Escape parentheses/braces or use a simpler anchor."}), normalized_for_echo, routing="text")
-                    if not m:
-                        return _with_norm({"success": False, "code": "anchor_not_found", "message": f"anchor not found: {anchor}"}, normalized_for_echo, routing="text")
-                    idx = m.start() if position == "before" else m.end()
-                    # Normalize insertion newlines
-                    if text_field and not text_field.startswith("\n"):
-                        text_field = "\n" + text_field
-                    if text_field and not text_field.endswith("\n"):
-                        text_field = text_field + "\n"
-                    sl, sc = line_col_from_index(idx)
-                    at_edits.append({
-                        "startLine": sl,
-                        "startCol": sc,
-                        "endLine": sl,
-                        "endCol": sc,
-                        "newText": text_field or ""
-                    })
-                    # Do not mutate base buffer when building an atomic batch
-                elif op == "replace_range":
-                    # Directly forward if already in line/col form
-                    if "startLine" in e:
-                        at_edits.append({
-                            "startLine": int(e.get("startLine", 1)),
-                            "startCol": int(e.get("startCol", 1)),
-                            "endLine": int(e.get("endLine", 1)),
-                            "endCol": int(e.get("endCol", 1)),
-                            "newText": text_field
-                        })
-                    else:
-                        # If only indices provided, skip (we don't support index-based here)
-                        return _with_norm({"success": False, "code": "missing_field", "message": "replace_range requires startLine/startCol/endLine/endCol"}, normalized_for_echo, routing="text")
-                elif op == "regex_replace":
-                    pattern = e.get("pattern") or ""
-                    repl = text_field
-                    flags = re.MULTILINE | (
-                        re.IGNORECASE if e.get("ignore_case") else 0)
-                    # Early compile for clearer error messages
-                    try:
-                        regex_obj = re.compile(pattern, flags)
-                    except Exception as ex:
-                        return _with_norm(_err("bad_regex", f"Invalid regex pattern: {ex}", normalized=normalized_for_echo, routing="text", extra={"hint": "Escape special chars or prefer structured delete for methods."}), normalized_for_echo, routing="text")
-                    # Use smart anchor matching for consistent behavior with anchor_insert
-                    m = await asyncio.to_thread(_find_best_anchor_match,
-                        pattern, base_text, flags, prefer_last=True)
-                    if not m:
-                        continue
-                    # Expand $1, $2... backrefs in replacement using the first match (consistent with mixed-path behavior)
-
-                    def _expand_dollars(rep: str, _m=m) -> str:
-                        return re.sub(r"\$(\d+)", lambda g: _m.group(int(g.group(1))) or "", rep)
-                    repl_expanded = _expand_dollars(repl)
-                    # Let C# side handle validation using Unity's built-in compiler services
-                    sl, sc = line_col_from_index(m.start())
-                    el, ec = line_col_from_index(m.end())
-                    at_edits.append({
-                        "startLine": sl,
-                        "startCol": sc,
-                        "endLine": el,
-                        "endCol": ec,
-                        "newText": repl_expanded
-                    })
-                    # Do not mutate base buffer when building an atomic batch
-                else:
-                    return _with_norm({"success": False, "code": "unsupported_op", "message": f"Unsupported text edit op for server-side apply_text_edits: {op}"}, normalized_for_echo, routing="text")
-
-            if not at_edits:
-                return _with_norm({"success": False, "code": "no_spans", "message": "No applicable text edit spans computed (anchor not found or zero-length)."}, normalized_for_echo, routing="text")
-
-            sha = hashlib.sha256(base_text.encode("utf-8")).hexdigest()
-            params: dict[str, Any] = {
-                "action": "apply_text_edits",
-                "name": name,
-                "path": path,
-                "namespace": namespace,
-                "scriptType": script_type,
-                "edits": at_edits,
-                "precondition_sha256": sha,
-                "options": {
-                    "refresh": (options or {}).get("refresh", "debounced"),
-                    "validate": (options or {}).get("validate", "standard"),
-                    "applyMode": ("atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential"))
-                }
-            }
-            async def _verify_text_only():
-                if await verify_edit_by_sha(unity_instance, name, path, sha):
-                    return {"success": True, "message": "Edit applied (verified after domain reload)."}
-                return None
-
-            resp = await send_mutation(ctx, unity_instance, "manage_script", params, verify_after_disconnect=_verify_text_only)
-            return _with_norm(
-                resp if isinstance(resp, dict)
-                else {"success": False, "message": str(resp)},
-                normalized_for_echo,
-                routing="text",
-            )
-        except Exception as e:
-            return _with_norm({"success": False, "code": "conversion_failed", "message": f"Edit conversion failed: {e}"}, normalized_for_echo, routing="text")
-
-    # For regex_replace, honor preview consistently: if preview=true, always return diff without writing.
-    # If confirm=false (default) and preview not requested, return diff and instruct confirm=true to apply.
-    if "regex_replace" in text_ops and (preview or not (options or {}).get("confirm")):
-        try:
-            preview_text = _apply_edits_locally(contents, edits)
-            import difflib
-            diff = list(difflib.unified_diff(contents.splitlines(
-            ), preview_text.splitlines(), fromfile="before", tofile="after", n=2))
-            if len(diff) > 800:
-                diff = diff[:800] + ["... (diff truncated) ..."]
-            if preview:
-                return {"success": True, "message": "Preview only (no write)", "data": {"diff": "\n".join(diff), "normalizedEdits": normalized_for_echo}}
-            return _with_norm({"success": False, "message": "Preview diff; set options.confirm=true to apply.", "data": {"diff": "\n".join(diff)}}, normalized_for_echo, routing="text")
-        except Exception as e:
-            return _with_norm({"success": False, "code": "preview_failed", "message": f"Preview failed: {e}"}, normalized_for_echo, routing="text")
-    # 2) apply edits locally (only if not text-ops)
-    try:
-        new_contents = _apply_edits_locally(contents, edits)
-    except Exception as e:
-        return {"success": False, "message": f"Edit application failed: {e}"}
-
-    # Short-circuit no-op edits to avoid false "applied" reports downstream
-    if new_contents == contents:
-        return _with_norm({
-            "success": True,
-            "message": "No-op: contents unchanged",
-            "data": {"no_op": True, "evidence": {"reason": "identical_content"}}
-        }, normalized_for_echo, routing="text")
-
-    if preview:
-        # Produce a compact unified diff limited to small context
-        import difflib
-        a = contents.splitlines()
-        b = new_contents.splitlines()
-        diff = list(difflib.unified_diff(
-            a, b, fromfile="before", tofile="after", n=3))
-        # Limit diff size to keep responses small
-        if len(diff) > 2000:
-            diff = diff[:2000] + ["... (diff truncated) ..."]
-        return {"success": True, "message": "Preview only (no write)", "data": {"diff": "\n".join(diff), "normalizedEdits": normalized_for_echo}}
-
-    # 3) update to Unity
-    # Default refresh/validate for natural usage on text path as well
-    options = dict(options or {})
-    options.setdefault("validate", "standard")
-    options.setdefault("refresh", "debounced")
-
-    # Compute the SHA of the current file contents for the precondition
-    old_lines = contents.splitlines(keepends=True)
-    end_line = len(old_lines) + 1  # 1-based exclusive end
     sha = hashlib.sha256(contents.encode("utf-8")).hexdigest()
+    if at_edits:
+        params_text: dict[str, Any] = {
+            "action": "apply_text_edits", "name": name, "path": path,
+            "namespace": namespace, "scriptType": script_type,
+            "edits": at_edits, "precondition_sha256": sha,
+            "options": {
+                "refresh": (options or {}).get("refresh", "debounced"),
+                "validate": (options or {}).get("validate", "standard"),
+                "applyMode": "atomic" if len(at_edits) > 1 else (options or {}).get("applyMode", "sequential"),
+            },
+        }
 
-    # Apply a whole-file text edit rather than the deprecated 'update' action
-    params = {
-        "action": "apply_text_edits",
-        "name": name,
-        "path": path,
-        "namespace": namespace,
-        "scriptType": script_type,
-        "edits": [
-            {
-                "startLine": 1,
-                "startCol": 1,
-                "endLine": end_line,
-                "endCol": 1,
-                "newText": new_contents,
-            }
-        ],
-        "precondition_sha256": sha,
-        "options": options or {"validate": "standard", "refresh": "debounced"},
-    }
+        async def _verify_text():
+            if await verify_edit_by_sha(unity_instance, name, path, sha):
+                return {"success": True, "message": "Text edits applied (verified after domain reload)."}
+            return None
 
-    async def _verify_write():
-        if await verify_edit_by_sha(unity_instance, name, path, sha):
-            return {"success": True, "message": "Edit applied (verified after domain reload)."}
-        return None
+        response = await send_mutation(ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text)
+        if not (isinstance(response, dict) and response.get("success")):
+            return _with_norm(response if isinstance(response, dict) else {"success": False, "message": str(response)}, normalized_for_echo, routing=routing)
+        if not mixed:
+            return _with_norm(response, normalized_for_echo, routing=routing)
 
-    write_resp = await send_mutation(ctx, unity_instance, "manage_script", params, verify_after_disconnect=_verify_write)
-    return _with_norm(
-        write_resp if isinstance(write_resp, dict)
-        else {"success": False, "message": str(write_resp)},
-        normalized_for_echo,
-        routing="text",
-    )
+    if struct_edits:
+        opts2 = dict(options or {})
+        opts2.setdefault("refresh", "debounced")
+        params_struct: dict[str, Any] = {
+            "action": "edit", "name": name, "path": path,
+            "namespace": namespace, "scriptType": script_type,
+            "edits": struct_edits, "options": opts2,
+        }
+
+        async def _verify_struct():
+            if await verify_edit_by_sha(unity_instance, name, path, sha):
+                return {"success": True, "message": "Edit applied (verified after domain reload)."}
+            return None
+
+        response = await send_mutation(ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify_struct)
+        return _with_norm(response if isinstance(response, dict) else {"success": False, "message": str(response)}, normalized_for_echo, routing=routing)
+
+    return _with_norm({"success": True, "message": "Applied text edits (no structured ops)"}, normalized_for_echo, routing=routing)

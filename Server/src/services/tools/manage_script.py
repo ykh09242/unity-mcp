@@ -108,6 +108,7 @@ def _split_uri(uri: str) -> tuple[str, str]:
     Notes:
         - For method/class operations, use script_apply_edits (safer, structured edits)
         - For pattern-based replacements, consider anchor operations in script_apply_edits
+        - newText is literal: whitespace and line endings are preserved exactly, with no indentation or newline padding
         - Lines, columns are 1-indexed
         - Tabs count as 1 column"""
     ),
