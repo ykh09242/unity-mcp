@@ -212,7 +212,7 @@ class CustomToolService:
         poll_params["action"] = poll_action or "status"
 
         timeout = max_poll_seconds if max_poll_seconds > 0 else _MAX_POLL_SECONDS
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         response = initial_response
 
         while True:
@@ -221,23 +221,32 @@ class CustomToolService:
             if status in ("complete", "error", "final"):
                 return self._normalize_response(response)
 
-            if time.time() > deadline:
-                return MCPResponse(
-                    success=False,
-                    message=f"Timeout waiting for {tool_name} to complete",
-                    data=self._safe_response(response),
-                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
 
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(min(poll_interval, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
 
             try:
-                response = await send_with_unity_instance(
-                    async_send_command_with_retry,
-                    unity_instance,
-                    tool_name,
-                    poll_params,
-                    user_id=user_id,
+                response = await asyncio.wait_for(
+                    send_with_unity_instance(
+                        async_send_command_with_retry,
+                        unity_instance,
+                        tool_name,
+                        poll_params,
+                        user_id=user_id,
+                    ),
+                    timeout=remaining,
                 )
+                if time.monotonic() >= deadline:
+                    break
+            except asyncio.TimeoutError:
+                if time.monotonic() >= deadline:
+                    break
+                response = {"_mcp_status": "pending", "_mcp_poll_interval": poll_interval}
             except Exception as exc:  # pragma: no cover - network/domain reload variability
                 logger.debug("Custom tool polling failed; retrying (%s)", type(exc).__name__)
                 # Back off modestly but stay responsive.
@@ -246,6 +255,12 @@ class CustomToolService:
                     "_mcp_poll_interval": min(max(poll_interval * 2, _DEFAULT_POLL_INTERVAL), 5.0),
                     "message": f"Retrying after transient error: {exc}",
                 }
+
+        return MCPResponse(
+            success=False,
+            message=f"Timeout waiting for {tool_name} to complete",
+            data=self._safe_response(response),
+        )
 
     def _interpret_status(self, response) -> tuple[str, float]:
         if response is None:
@@ -284,34 +299,13 @@ class CustomToolService:
             return response
         if isinstance(response, dict):
             return MCPResponse(
-                success=response.get("success", True),
+                success=False if response.get("_mcp_status") == "error" else response.get("success", True),
                 message=response.get("message"),
                 error=response.get("error"),
-                data=response.get(
-                    "data", response) if "data" not in response else response["data"],
+                data=response.get("data", response),
             )
 
-        success = True
-        message = None
-        error = None
-        data = None
-
-        if isinstance(response, dict):
-            success = response.get("success", True)
-            if "_mcp_status" in response and response["_mcp_status"] == "error":
-                success = False
-            message = str(response.get("message")) if response.get(
-                "message") else None
-            error = str(response.get("error")) if response.get(
-                "error") else None
-            data = response.get("data")
-            if "success" not in response and "_mcp_status" not in response:
-                data = response
-        else:
-            success = False
-            message = str(response)
-
-        return MCPResponse(success=success, message=message, error=error, data=data)
+        return MCPResponse(success=False, message=str(response))
 
     def _safe_response(self, response):
         if isinstance(response, dict):
@@ -443,7 +437,7 @@ class CustomToolService:
             params.append(
                 inspect.Parameter(
                     param.name,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
                     default=default,
                     annotation=self._map_param_type(param),
                 )
