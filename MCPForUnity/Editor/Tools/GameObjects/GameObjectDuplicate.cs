@@ -22,6 +22,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? position = VectorParsing.ParseVector3(@params["position"]);
             Vector3? offset = VectorParsing.ParseVector3(@params["offset"]);
             JToken parentToken = @params["parent"];
+            GameObject newParent = null;
+            if (parentToken != null && parentToken.Type != JTokenType.Null &&
+                !(parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString())))
+            {
+                newParent = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
+            }
 
             GameObject duplicatedGo = UnityEngine.Object.Instantiate(sourceGo);
             Undo.RegisterCreatedObjectUndo(duplicatedGo, $"Duplicate {sourceGo.name}");
@@ -52,7 +58,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
                 else
                 {
-                    GameObject newParent = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
                     if (newParent != null)
                     {
                         duplicatedGo.transform.SetParent(newParent.transform, true);
@@ -69,7 +74,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             EditorUtility.SetDirty(duplicatedGo);
-            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            EditorSceneManager.MarkSceneDirty(duplicatedGo.scene);
 
             Selection.activeGameObject = duplicatedGo;
 

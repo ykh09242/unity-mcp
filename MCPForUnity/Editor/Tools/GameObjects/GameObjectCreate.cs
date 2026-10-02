@@ -27,6 +27,22 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             string primitiveType = @params["primitiveType"]?.ToString();
             GameObject newGo = null;
 
+            if (saveAsPrefab && string.IsNullOrEmpty(prefabPath))
+            {
+                return new ErrorResponse("'prefabPath' is required when 'saveAsPrefab' is true and creating a new object.");
+            }
+
+            JToken parentToken = @params["parent"];
+            GameObject parentGo = null;
+            if (parentToken != null)
+            {
+                parentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
+                if (parentGo == null)
+                {
+                    return new ErrorResponse($"Parent specified ('{parentToken}') but not found.");
+                }
+            }
+
             // --- Try Instantiating Prefab First ---
             string originalPrefabPath = prefabPath;
             if (!saveAsPrefab && !string.IsNullOrEmpty(prefabPath))
@@ -171,15 +187,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Undo.RecordObject(newGo, "Set GameObject Properties");
 
             // Set Parent
-            JToken parentToken = @params["parent"];
-            if (parentToken != null)
+            if (parentGo != null)
             {
-                GameObject parentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
-                if (parentGo == null)
-                {
-                    UnityEngine.Object.DestroyImmediate(newGo);
-                    return new ErrorResponse($"Parent specified ('{parentToken}') but not found.");
-                }
                 newGo.transform.SetParent(parentGo.transform, true);
             }
 
@@ -284,11 +293,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (createdNewObject && saveAsPrefab)
             {
                 string finalPrefabPath = prefabPath;
-                if (string.IsNullOrEmpty(finalPrefabPath))
-                {
-                    UnityEngine.Object.DestroyImmediate(newGo);
-                    return new ErrorResponse("'prefabPath' is required when 'saveAsPrefab' is true and creating a new object.");
-                }
                 if (!finalPrefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 {
                     McpLog.Info($"[ManageGameObject.Create] Appending .prefab extension to save path: '{finalPrefabPath}' -> '{finalPrefabPath}.prefab'");
@@ -305,9 +309,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         McpLog.Info($"[ManageGameObject.Create] Created directory for prefab: {directoryPath}");
                     }
 
-                    finalInstance = PrefabUtility.SaveAsPrefabAssetAndConnect(newGo, finalPrefabPath, InteractionMode.UserAction);
+                    GameObject prefabAsset = PrefabUtility.SaveAsPrefabAssetAndConnect(newGo, finalPrefabPath, InteractionMode.UserAction);
 
-                    if (finalInstance == null)
+                    if (prefabAsset == null)
                     {
                         UnityEngine.Object.DestroyImmediate(newGo);
                         return new ErrorResponse($"Failed to save GameObject '{name}' as prefab at '{finalPrefabPath}'. Check path and permissions.");
