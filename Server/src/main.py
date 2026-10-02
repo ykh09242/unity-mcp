@@ -15,6 +15,8 @@ from services.custom_tool_service import (
     resolve_project_id_for_unity_instance,
 )
 from core.config import config
+from core.local_auth import local_auth_token, local_auth_token_path
+from transport.local_auth_middleware import LocalControlAuthMiddleware
 from starlette.routing import WebSocketRoute
 from starlette.responses import JSONResponse
 import argparse
@@ -31,7 +33,7 @@ from contextlib import asynccontextmanager
 import os
 import threading
 import time
-from typing import AsyncIterator, Any
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
 from urllib.parse import urlparse
 
 # Workaround for environments where tool signature evaluation runs with a globals
@@ -62,7 +64,12 @@ except Exception:
     pass
 
 from fastmcp import FastMCP
+from starlette.middleware import Middleware
 from logging.handlers import RotatingFileHandler
+
+if TYPE_CHECKING:
+    from fastmcp.server.http import StarletteWithLifespan
+    from mcp.server.streamable_http import EventStore
 
 
 class WindowsSafeRotatingFileHandler(RotatingFileHandler):
@@ -373,8 +380,36 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
     return None, instance_token
 
 
+class UnityMCP(FastMCP):
+    """Keep the local control plane protected for both run() and ASGI embedding."""
+
+    def http_app(
+        self,
+        path: str | None = None,
+        middleware: list[Middleware] | None = None,
+        json_response: bool | None = None,
+        stateless_http: bool | None = None,
+        transport: Literal["http", "streamable-http", "sse"] = "http",
+        event_store: "EventStore | None" = None,
+        retry_interval: int | None = None,
+    ) -> "StarletteWithLifespan":
+        app = super().http_app(
+            path=path,
+            middleware=middleware,
+            json_response=json_response,
+            stateless_http=stateless_http,
+            transport=transport,
+            event_store=event_store,
+            retry_interval=retry_interval,
+        )
+        if not config.http_remote_hosted:
+            app.add_middleware(
+                LocalControlAuthMiddleware, token=config.local_auth_token)
+        return app
+
+
 def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
-    mcp = FastMCP(
+    mcp = UnityMCP(
         name="mcp-for-unity-server",
         lifespan=server_lifespan,
         instructions=_build_instructions(project_scoped_tools),
@@ -929,7 +964,19 @@ Examples:
             "UNITY_MCP_HTTP_HOST") or parsed_url.hostname or "127.0.0.1"
         port = args.http_port or _env_port or parsed_url.port or 8080
         logger.info(f"Starting FastMCP with HTTP transport on {host}:{port}")
-        mcp.run(transport=transport, host=host, port=port)
+        if config.http_remote_hosted:
+            mcp.run(transport=transport, host=host, port=port)
+        else:
+            with local_auth_token(port) as token:
+                config.local_auth_token = token
+                logger.info(
+                    "Local HTTP authentication enabled; token file: %s",
+                    local_auth_token_path(port),
+                )
+                try:
+                    mcp.run(transport=transport, host=host, port=port)
+                finally:
+                    config.local_auth_token = None
     else:
         # Use stdio transport for traditional MCP
         logger.info("Starting FastMCP with stdio transport")

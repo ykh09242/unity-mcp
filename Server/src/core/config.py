@@ -40,6 +40,8 @@ class ServerConfig:
 
     # HTTP transport behaviour
     http_remote_hosted: bool = False
+    # Set only for this process launch; never include the secret in config reprs.
+    local_auth_token: str | None = field(default=None, repr=False)
 
     # API key authentication (required when http_remote_hosted=True)
     api_key_validation_url: str | None = None  # POST endpoint to validate keys

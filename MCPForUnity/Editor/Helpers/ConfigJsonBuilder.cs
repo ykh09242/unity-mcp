@@ -1,12 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Helpers
@@ -73,24 +71,14 @@ namespace MCPForUnity.Editor.Helpers
                 if (unity["command"] != null) unity.Remove("command");
                 if (unity["args"] != null) unity.Remove("args");
 
-                // Only include API key header for remote-hosted mode
-                if (HttpEndpointUtility.IsRemoteScope())
+                var headers = HttpEndpointUtility.GetAuthHeaders();
+                if (headers.Count > 0)
                 {
-                    string apiKey = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
-                    if (!string.IsNullOrEmpty(apiKey))
-                    {
-                        var headers = new JObject { [AuthConstants.ApiKeyHeader] = apiKey };
-                        unity["headers"] = headers;
-                    }
-                    else
-                    {
-                        if (unity["headers"] != null) unity.Remove("headers");
-                    }
+                    unity["headers"] = JObject.FromObject(headers);
                 }
                 else
                 {
-                    // Local HTTP doesn't use API keys; remove any stale headers
-                    if (unity["headers"] != null) unity.Remove("headers");
+                    unity.Remove("headers");
                 }
 
                 // Per-client override of the HTTP "type" value: Cline/Roo expect "streamableHttp"
@@ -112,6 +100,7 @@ namespace MCPForUnity.Editor.Helpers
                 // Remove url/serverUrl if they exist from previous config
                 if (unity["url"] != null) unity.Remove("url");
                 if (unity["serverUrl"] != null) unity.Remove("serverUrl");
+                unity.Remove("headers");
 
                 // Include type for all clients — standard MCP protocol field. A few clients use a
                 // different token for local transport (e.g. Kilo uses "local").

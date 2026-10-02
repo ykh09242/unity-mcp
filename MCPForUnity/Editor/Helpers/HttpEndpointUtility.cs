@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Models;
@@ -21,6 +23,64 @@ namespace MCPForUnity.Editor.Helpers
         private const string RemotePrefKey = EditorPrefKeys.HttpRemoteBaseUrl;
         private const string DefaultLocalBaseUrl = "http://127.0.0.1:8080";
         private const string DefaultRemoteBaseUrl = "";
+
+        /// <summary>
+        /// Reads the current launch token on every connection, including reconnects.
+        /// This method is safe on background threads and never reads EditorPrefs.
+        /// </summary>
+        public static string ReadLocalAuthToken(Uri endpoint)
+        {
+            string token = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN");
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                return token.Trim();
+            }
+
+            string path = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE");
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                // Do not disclose a local credential to an arbitrary configured host.
+                if (!endpoint.IsLoopback && !IsBindAllInterfacesHost(endpoint.Host))
+                {
+                    return string.Empty;
+                }
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                path = Path.Combine(home, ".unity-mcp", "auth", $"token-{endpoint.Port}");
+            }
+            else if (path.StartsWith("~/", StringComparison.Ordinal)
+                || path.StartsWith("~\\", StringComparison.Ordinal))
+            {
+                path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path.Substring(2));
+            }
+
+            try
+            {
+                return File.ReadAllText(path).Trim();
+            }
+            catch (FileNotFoundException)
+            {
+                return string.Empty;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return string.Empty;
+            }
+        }
+
+        /// <summary>Authentication headers for generated native MCP client configurations.</summary>
+        public static Dictionary<string, string> GetAuthHeaders()
+        {
+            bool remote = IsRemoteScope();
+            string token = remote
+                ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
+                : ReadLocalAuthToken(new Uri(GetLocalBaseUrl()));
+            var headers = new Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(token))
+            {
+                headers[remote ? AuthConstants.ApiKeyHeader : AuthConstants.LocalTokenHeader] = token;
+            }
+            return headers;
+        }
 
         /// <summary>
         /// Returns the normalized base URL for the currently active HTTP scope.

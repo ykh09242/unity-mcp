@@ -38,6 +38,7 @@ namespace MCPForUnity.Editor.Helpers
                 // HTTP mode: Use url field
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 unityMCP["url"] = new TomlString { Value = httpUrl };
+                AddHttpAuthHeaders(unityMCP);
 
                 // Enable Codex's Rust MCP client for HTTP/SSE transport
                 EnsureRmcpClientFeature(table);
@@ -193,6 +194,7 @@ namespace MCPForUnity.Editor.Helpers
                 // HTTP mode: Use url field
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 unityMCP["url"] = new TomlString { Value = httpUrl };
+                AddHttpAuthHeaders(unityMCP);
             }
             else
             {
@@ -227,6 +229,21 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             return unityMCP;
+        }
+
+        private static void AddHttpAuthHeaders(TomlTable server)
+        {
+            var headers = HttpEndpointUtility.GetAuthHeaders();
+            if (headers.Count == 0)
+            {
+                return;
+            }
+            var table = new TomlTable { IsInline = true };
+            foreach (var header in headers)
+            {
+                table[header.Key] = new TomlString { Value = header.Value };
+            }
+            server["http_headers"] = table;
         }
 
         /// <summary>

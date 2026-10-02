@@ -59,6 +59,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private int _isReconnectingFlag;
         private TransportState _state = TransportState.Disconnected(TransportDisplayName, "Transport not started");
         private string _apiKey;
+        private bool _useLocalAuth;
         private bool _disposed;
 
         public WebSocketTransportClient(IToolDiscoveryService toolDiscoveryService = null)
@@ -83,6 +84,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _projectName = ProjectIdentityUtility.GetProjectName();
             _projectHash = ProjectIdentityUtility.GetProjectHash();
             _unityVersion = Application.unityVersion;
+            _useLocalAuth = !HttpEndpointUtility.IsRemoteScope();
             _apiKey = HttpEndpointUtility.IsRemoteScope()
                 ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
                 : string.Empty;
@@ -274,6 +276,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 try
                 {
+                    if (_useLocalAuth)
+                    {
+                        string launchToken = HttpEndpointUtility.ReadLocalAuthToken(candidate);
+                        if (string.IsNullOrEmpty(launchToken))
+                        {
+                            throw new InvalidOperationException("Local authentication token not found. Start the local HTTP server first.");
+                        }
+                        _socket.Options.SetRequestHeader(AuthConstants.LocalTokenHeader, launchToken);
+                    }
                     await _socket.ConnectAsync(candidate, connectionToken).ConfigureAwait(false);
                     connectedEndpoint = candidate;
                     break;

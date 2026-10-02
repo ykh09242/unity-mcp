@@ -181,6 +181,10 @@ class TestOutputFormatting:
 class TestConnection:
     """Tests for connection utilities."""
 
+    @pytest.fixture(autouse=True)
+    def local_auth(self, monkeypatch):
+        monkeypatch.setenv("UNITY_MCP_LOCAL_AUTH_TOKEN", "test-cli-token")
+
     @pytest.mark.asyncio
     async def test_check_connection_success(self):
         """Test successful connection check."""

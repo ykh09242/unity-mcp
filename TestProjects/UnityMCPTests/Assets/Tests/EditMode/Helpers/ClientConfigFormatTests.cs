@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -23,12 +25,26 @@ namespace MCPForUnityTests.Editor.Helpers
 
         private bool _hadHttpTransport;
         private bool _originalHttpTransport;
+        private string _originalScope;
+        private bool _hadScope;
+        private string _originalTokenFile;
+        private string _originalToken;
+        private string _tokenPath;
 
         [SetUp]
         public void SetUp()
         {
             _hadHttpTransport = EditorPrefs.HasKey(UseHttpTransportPrefKey);
             _originalHttpTransport = EditorPrefs.GetBool(UseHttpTransportPrefKey, true);
+            _hadScope = EditorPrefs.HasKey(EditorPrefKeys.HttpTransportScope);
+            _originalScope = EditorPrefs.GetString(EditorPrefKeys.HttpTransportScope, "local");
+            _originalTokenFile = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE");
+            _originalToken = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN");
+            _tokenPath = Path.GetTempFileName();
+            File.WriteAllText(_tokenPath, "first-test-launch");
+            Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", _tokenPath);
+            Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", null);
+            EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
 
             // Force HTTP transport so the remote/streamableHttp branch is exercised.
             EditorPrefs.SetBool(UseHttpTransportPrefKey, true);
@@ -38,6 +54,11 @@ namespace MCPForUnityTests.Editor.Helpers
         [TearDown]
         public void TearDown()
         {
+            Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", _originalTokenFile);
+            Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", _originalToken);
+            File.Delete(_tokenPath);
+            if (_hadScope) EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, _originalScope);
+            else EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
             if (_hadHttpTransport)
                 EditorPrefs.SetBool(UseHttpTransportPrefKey, _originalHttpTransport);
             else
@@ -151,6 +172,51 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.NotNull(unity, "Expected mcpServers.unityMCP node");
             Assert.AreEqual("http", (string)unity["type"],
                 "Clients without HttpTypeValue should keep the generic type:http");
+        }
+
+        [Test]
+        public void ApplyUnityServerToExistingConfig_ReplacesPreviousLaunchCredential()
+        {
+            // Given a client config created for an earlier server launch.
+            var client = new McpClient { name = "Cursor" };
+            var root = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson(null, client));
+            File.WriteAllText(_tokenPath, "second-test-launch");
+
+            // When the user configures the client for the current launch.
+            root = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, client);
+
+            // Then the native HTTP header contains the current credential.
+            Assert.AreEqual("second-test-launch",
+                (string)root.SelectToken("mcpServers.unityMCP.headers.X-Unity-MCP-Token"));
+        }
+
+        [Test]
+        public void ReadLocalAuthToken_OnReconnect_ReadsNewLaunchCredential()
+        {
+            var endpoint = new Uri("ws://127.0.0.1:8080/hub/plugin");
+            Assert.AreEqual("first-test-launch", HttpEndpointUtility.ReadLocalAuthToken(endpoint));
+            File.WriteAllText(_tokenPath, "second-test-launch");
+            Assert.AreEqual("second-test-launch", HttpEndpointUtility.ReadLocalAuthToken(endpoint));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CodexConfiguration_IncludesLocalAuthHeader(bool updateExisting)
+        {
+            string text = updateExisting
+                ? CodexConfigHelper.UpsertCodexServerBlock("", null)
+                : CodexConfigHelper.BuildCodexServerBlock(null);
+            using var reader = new StringReader(text);
+            var root = MCPForUnity.External.Tommy.TOML.Parse(reader);
+            Assert.AreEqual("first-test-launch",
+                root["mcp_servers"]["unityMCP"]["http_headers"]["X-Unity-MCP-Token"].AsString.Value);
+        }
+
+        [Test]
+        public void ReadLocalAuthToken_MissingFile_ReturnsNoCredential()
+        {
+            File.Delete(_tokenPath);
+            Assert.AreEqual(string.Empty, HttpEndpointUtility.ReadLocalAuthToken(new Uri("http://localhost:8080")));
         }
     }
 }

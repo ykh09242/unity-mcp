@@ -310,6 +310,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             {
                 ["enabled"] = true,
                 ["url"] = HttpEndpointUtility.GetMcpRpcUrl(),
+                ["headers"] = JObject.FromObject(HttpEndpointUtility.GetAuthHeaders()),
                 ["transport"] = HttpTransportName,
                 ["toolPrefix"] = ServerName,
                 ["requestTimeoutMs"] = 30000

@@ -5,6 +5,10 @@ import sys
 from pathlib import Path
 import pytest
 
+# The legacy integration suite installs module stubs. Run real ASGI regressions
+# in a subprocess (test_http_security.py) so neither suite pollutes the other.
+collect_ignore = [] if os.environ.get("UNITY_MCP_RUN_HTTP_TESTS") == "1" else ["http"]
+
 logger = logging.getLogger(__name__)
 
 # Add src directory to Python path so tests can import cli, transport, etc.
@@ -70,6 +74,7 @@ def restore_global_config():
     prior = {
         "transport_mode": global_config.transport_mode,
         "http_remote_hosted": global_config.http_remote_hosted,
+        "local_auth_token": global_config.local_auth_token,
         "api_key_validation_url": global_config.api_key_validation_url,
         "api_key_login_url": global_config.api_key_login_url,
         "api_key_cache_ttl": global_config.api_key_cache_ttl,

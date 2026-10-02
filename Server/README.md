@@ -35,7 +35,8 @@ uvx --from mcpforunityserver mcp-for-unity --transport http --http-url http://lo
 {
   "mcpServers": {
     "UnityMCP": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
     }
   }
 }
@@ -116,6 +117,39 @@ uv run src/main.py --transport stdio
 ## Configuration
 
 The server connects to Unity Editor automatically when both are running. Most users do not need to change any settings.
+
+### Local HTTP authentication
+
+Every local HTTP server launch generates a fresh 256-bit token. REST (`/api/*`),
+MCP (`/mcp`, including session requests), and the plugin WebSocket (`/hub/plugin`)
+require the `X-Unity-MCP-Token` header. Only `GET /health` is public. Local control
+requests with an `Origin` or `Sec-Fetch-Site` header are rejected, even with a valid
+token; browser clients are not supported. POST/PUT/PATCH requests must use
+`Content-Type: application/json`.
+
+The token is written atomically to `~/.unity-mcp/auth/token-<port>` (on Windows,
+`%USERPROFILE%\.unity-mcp\auth\token-<port>`), with owner-only file permissions on
+POSIX and the user directory's inherited ACL on Windows. The token is never served
+over HTTP or printed in server logs. A clean shutdown removes it, and every restart
+replaces it. Do not commit or share this file.
+
+Start the server **before configuring MCP clients** in the Unity window. Unity's
+WebSocket and the `unity-mcp` CLI read the current token on each new connection or
+request. Generated JSON, Codex TOML, and Claude Code configurations include the
+header. After restarting the server, configure your HTTP MCP clients again and
+reconnect them so they use the new token. For manual configuration, use the current
+file contents as the header value; Codex calls this setting `http_headers`.
+
+Set `UNITY_MCP_LOCAL_AUTH_TOKEN_FILE` to an absolute private file path to change
+the server's output location and the native clients' lookup location. The server
+always generates its own token; it does not reuse a pre-existing file. For a client
+on another machine, explicitly provide the current token through
+`UNITY_MCP_LOCAL_AUTH_TOKEN`, a securely transferred token file, or the MCP header.
+Automatic file discovery only sends credentials to local hosts. Local HTTP is
+unencrypted; use a trusted tunnel across machines. For Docker, share a private token
+file/directory with authorized clients, or use remote-hosted authentication.
+
+Stdio and remote-hosted API key authentication keep their existing behavior.
 
 ### CLI options
 

@@ -202,6 +202,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             {
                 ["type"] = RemoteType,
                 ["url"] = HttpEndpointUtility.GetMcpRpcUrl(),
+                ["headers"] = JObject.FromObject(HttpEndpointUtility.GetAuthHeaders()),
                 ["enabled"] = true
             };
         }

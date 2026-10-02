@@ -6,5 +6,6 @@ namespace MCPForUnity.Editor.Constants
     internal static class AuthConstants
     {
         internal const string ApiKeyHeader = "X-API-Key";
+        internal const string LocalTokenHeader = "X-Unity-MCP-Token";
     }
 }

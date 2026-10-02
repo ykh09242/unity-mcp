@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional, TypeVar
 import httpx
 
 from cli.utils.config import get_config, CLIConfig
+from core.local_auth import LOCAL_AUTH_HEADER, read_local_auth_token
 
 
 class UnityConnectionError(Exception):
@@ -60,8 +61,8 @@ def warn_if_remote_host(config: CLIConfig) -> None:
     if config.host.lower() not in local_hosts:
         click.echo(
             "⚠️  Security Warning: Connecting to non-localhost server.\n"
-            "   The MCP CLI has no authentication. Anyone on the network could\n"
-            "   intercept commands or send unauthorized commands to Unity.\n"
+            "   HTTP does not encrypt the launch token or Unity commands.\n"
+            "   Use a trusted tunnel when connecting across machines.\n"
             "   Only proceed if you trust this network.\n",
             err=True
         )
@@ -103,6 +104,7 @@ async def send_command(
             response = await client.post(
                 url,
                 json=payload,
+                headers=_auth_headers(cfg),
                 timeout=timeout or cfg.timeout,
             )
             response.raise_for_status()
@@ -186,7 +188,7 @@ async def list_unity_instances(config: Optional[CLIConfig] = None) -> Dict[str, 
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=10)
+            response = await client.get(url, headers=_auth_headers(cfg), timeout=10)
             response.raise_for_status()
             data = response.json()
             if "instances" in data:
@@ -227,7 +229,8 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params, timeout=cfg.timeout)
+            response = await client.get(
+                url, params=params, headers=_auth_headers(cfg), timeout=cfg.timeout)
             response.raise_for_status()
             return response.json()
     except httpx.ConnectError as e:
@@ -252,3 +255,14 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
 def run_list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any]:
     """Synchronous wrapper for list_custom_tools."""
     return asyncio.run(list_custom_tools(config))
+
+
+def _auth_headers(config: CLIConfig) -> dict[str, str]:
+    """Resolve the current launch credential immediately before each request."""
+    token = read_local_auth_token(config.host, config.port)
+    if not token:
+        raise UnityConnectionError(
+            "Local authentication token not found. Start the local server first, or set "
+            "UNITY_MCP_LOCAL_AUTH_TOKEN_FILE to its token file."
+        )
+    return {LOCAL_AUTH_HEADER: token}
