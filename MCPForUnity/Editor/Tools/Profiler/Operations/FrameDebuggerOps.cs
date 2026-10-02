@@ -64,9 +64,6 @@ namespace MCPForUnity.Editor.Tools.Profiler
             if (!Available)
                 return new ErrorResponse("FrameDebuggerUtility not found via reflection.");
 
-            // Open the Frame Debugger window (required for event capture)
-            EditorApplication.ExecuteMenuItem("Window/Analysis/Frame Debugger");
-
             // Frame Debugger requires game to be paused before enabling to capture events.
             if (EditorApplication.isPlaying && !EditorApplication.isPaused)
             {
@@ -74,6 +71,9 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     "Game must be paused before enabling Frame Debugger. "
                     + "Call manage_editor action=pause first, then retry frame_debugger_enable.");
             }
+
+            // Open the Frame Debugger window only after the request passes preflight.
+            EditorApplication.ExecuteMenuItem("Window/Analysis/Frame Debugger");
 
             try
             {
@@ -129,17 +129,12 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
 
             // Try GetFrameEvents() for the event descriptor array (has type/name info)
-            object[] frameEvents = null;
-            if (GetFrameEventsMethod != null)
+            Array frameEvents = null;
+            if (GetFrameEventsMethod != null && cursor < totalEvents)
             {
                 try
                 {
-                    var raw = GetFrameEventsMethod.Invoke(null, null);
-                    if (raw is Array arr)
-                    {
-                        frameEvents = new object[arr.Length];
-                        arr.CopyTo(frameEvents, 0);
-                    }
+                    frameEvents = GetFrameEventsMethod.Invoke(null, null) as Array;
                 }
                 catch { /* fall through */ }
             }
@@ -161,9 +156,9 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 // Get fields from FrameDebuggerEvent descriptor
                 if (frameEvents != null && i < frameEvents.Length)
                 {
-                    var desc = frameEvents[i];
+                    var desc = frameEvents.GetValue(i);
                     var descType = desc.GetType();
-                    TryAddField(descType, desc, "type", entry, "event_type");
+                    TryAddField(descType, desc, "type", entry, "event_type", "m_Type");
                     TryAddField(descType, desc, "gameObjectInstanceID", entry);
                 }
 
@@ -192,15 +187,18 @@ namespace MCPForUnity.Editor.Tools.Profiler
                         if (eventData != null)
                         {
                             var edType = eventData.GetType();
-                            TryAddField(edType, eventData, "shaderName", entry);
-                            TryAddField(edType, eventData, "passName", entry);
-                            TryAddField(edType, eventData, "rtName", entry);
-                            TryAddField(edType, eventData, "rtWidth", entry);
-                            TryAddField(edType, eventData, "rtHeight", entry);
-                            TryAddField(edType, eventData, "vertexCount", entry);
-                            TryAddField(edType, eventData, "indexCount", entry);
-                            TryAddField(edType, eventData, "instanceCount", entry);
+                            TryAddField(edType, eventData, "shaderName", entry, null, "m_OriginalShaderName");
+                            TryAddField(edType, eventData, "passName", entry, null, "m_PassName");
+                            TryAddField(edType, eventData, "rtName", entry, null, "m_RenderTargetName");
+                            TryAddField(edType, eventData, "rtWidth", entry, null, "m_RenderTargetWidth");
+                            TryAddField(edType, eventData, "rtHeight", entry, null, "m_RenderTargetHeight");
+                            TryAddField(edType, eventData, "vertexCount", entry, null, "m_VertexCount");
+                            TryAddField(edType, eventData, "indexCount", entry, null, "m_IndexCount");
+                            TryAddField(edType, eventData, "instanceCount", entry, null, "m_InstanceCount");
                             TryAddField(edType, eventData, "meshName", entry);
+                            if (!entry.ContainsKey("meshName") &&
+                                ReadFieldOrProperty(edType, eventData, "mesh", "m_Mesh") is UnityEngine.Mesh mesh && mesh != null)
+                                entry["meshName"] = mesh.name;
                         }
                     }
                     catch { /* skip event data for this index */ }
@@ -239,21 +237,34 @@ namespace MCPForUnity.Editor.Tools.Profiler
             catch { return 0; }
         }
 
-        private static void TryAddField(Type type, object obj, string fieldName, Dictionary<string, object> dict, string outputKey = null)
+        private static void TryAddField(Type type, object obj, string fieldName, Dictionary<string, object> dict,
+            string outputKey = null, string alias = null)
         {
-            try
+            object val = ReadFieldOrProperty(type, obj, fieldName, alias);
+            if (val != null)
+                dict[outputKey ?? fieldName] = val.GetType().IsEnum ? val.ToString() : val;
+        }
+
+        private static object ReadFieldOrProperty(Type type, object obj, string fieldName, string alias = null)
+        {
+            for (int i = 0; i < (alias == null ? 1 : 2); i++)
             {
-                var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.Instance)
-                         ?? type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
-                var prop = type.GetProperty(fieldName, BindingFlags.Public | BindingFlags.Instance)
-                        ?? type.GetProperty(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
-                object val = field != null ? field.GetValue(obj)
-                           : prop != null ? prop.GetValue(obj)
-                           : null;
-                if (val != null)
-                    dict[outputKey ?? fieldName] = val.GetType().IsEnum ? val.ToString() : val;
+                try
+                {
+                    string name = i == 0 ? fieldName : alias;
+                    var field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance)
+                             ?? type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+                    var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                            ?? type.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance);
+                    object val = field != null ? field.GetValue(obj)
+                               : prop != null ? prop.GetValue(obj)
+                               : null;
+                    if (val != null)
+                        return val;
+                }
+                catch { /* skip unavailable fields */ }
             }
-            catch { /* skip unavailable fields */ }
+            return null;
         }
 
     }
