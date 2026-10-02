@@ -325,6 +325,10 @@ class UnityInstanceMiddleware(Middleware):
         """Inject active Unity instance and user_id into context if available."""
         ctx = context.fastmcp_context
 
+        # Shadow transient values persisted by older server versions in this session.
+        for key in ("unity_instance", "unity_session_id", "user_id"):
+            await ctx.set_state(key, None, serializable=False)
+
         # Resolve user_id from the HTTP request's API key header
         user_id = await self._resolve_user_id()
         if config.http_remote_hosted and user_id is None:
@@ -332,7 +336,7 @@ class UnityInstanceMiddleware(Middleware):
                 "API key authentication required. Provide a valid X-API-Key header."
             )
         if user_id:
-            await ctx.set_state("user_id", user_id)
+            await ctx.set_state("user_id", user_id, serializable=False)
 
         # Per-call routing: check if this tool call explicitly specifies unity_instance.
         # context.message.arguments is a mutable dict on CallToolRequestParams; resource
@@ -393,9 +397,9 @@ class UnityInstanceMiddleware(Middleware):
                         exc_info=True
                     )
 
-            await ctx.set_state("unity_instance", active_instance)
+            await ctx.set_state("unity_instance", active_instance, serializable=False)
             if session_id is not None:
-                await ctx.set_state("unity_session_id", session_id)
+                await ctx.set_state("unity_session_id", session_id, serializable=False)
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into tool context if available."""
