@@ -6,13 +6,31 @@ from typing import Optional, Any
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
-from cli.utils.connection import run_command, handle_unity_errors
+from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
 
 
 @click.group()
 def ui():
     """UI operations - create and modify UI elements."""
     pass
+
+
+def _created_instance_id(result: dict) -> int:
+    """Keep follow-up edits on the object returned by create, even with duplicate names."""
+    data = result.get("data")
+    value = data.get("instanceID") if isinstance(data, dict) else None
+    if isinstance(value, (int, str)) and not isinstance(value, bool):
+        try:
+            instance_id = int(value)
+            if instance_id != 0:
+                return instance_id
+        except ValueError:
+            pass
+    raise UnityCommandError({
+        "success": False,
+        "error": "GameObject creation returned no valid instanceID; follow-up UI edits were not applied.",
+        "data": data,
+    })
 
 
 @ui.command("create-canvas")
@@ -45,12 +63,15 @@ def create_canvas(name: str, render_mode: str):
         click.echo(format_output(result, config.format))
         return
 
+    target_id = _created_instance_id(result)
+
     # Step 2: Add Canvas components
     failed_components = []
     for component in ["Canvas", "CanvasScaler", "GraphicRaycaster"]:
         comp_result = run_command("manage_components", {
             "action": "add",
-            "target": name,
+            "target": target_id,
+            "searchMethod": "by_id",
             "componentType": component,
         }, config)
         if not (comp_result.get("success") or comp_result.get("data")):
@@ -65,7 +86,8 @@ def create_canvas(name: str, render_mode: str):
                          "ScreenSpaceCamera": 1, "WorldSpace": 2}.get(render_mode, 0)
     run_command("manage_components", {
         "action": "set_property",
-        "target": name,
+        "target": target_id,
+        "searchMethod": "by_id",
         "componentType": "Canvas",
         "property": "renderMode",
         "value": render_mode_value,
@@ -116,17 +138,21 @@ def create_text(name: str, parent: str, text: str, position: tuple):
         click.echo(format_output(result, config.format))
         return
 
+    target_id = _created_instance_id(result)
+
     # Step 2: Add RectTransform and TextMeshProUGUI
     run_command("manage_components", {
         "action": "add",
-        "target": name,
+        "target": target_id,
+        "searchMethod": "by_id",
         "componentType": "TextMeshProUGUI",
     }, config)
 
     # Step 3: Set text content
     run_command("manage_components", {
         "action": "set_property",
-        "target": name,
+        "target": target_id,
+        "searchMethod": "by_id",
         "componentType": "TextMeshProUGUI",
         "property": "text",
         "value": text,
@@ -169,31 +195,38 @@ def create_button(name: str, parent: str, text: str):  # text current placeholde
         click.echo(format_output(result, config.format))
         return
 
+    target_id = _created_instance_id(result)
+
     # Step 2: Add Button and Image components
     for component in ["Image", "Button"]:
         run_command("manage_components", {
             "action": "add",
-            "target": name,
+            "target": target_id,
+            "searchMethod": "by_id",
             "componentType": component,
         }, config)
 
     # Step 3: Create child label GameObject
     label_name = f"{name}_Label"
-    run_command("manage_gameobject", {
+    label_result = run_command("manage_gameobject", {
         "action": "create",
         "name": label_name,
-        "parent": name,
+        "parent": target_id,
     }, config)
+
+    label_id = _created_instance_id(label_result)
 
     # Step 4: Add TextMeshProUGUI to label and set text
     run_command("manage_components", {
         "action": "add",
-        "target": label_name,
+        "target": label_id,
+        "searchMethod": "by_id",
         "componentType": "TextMeshProUGUI",
     }, config)
     run_command("manage_components", {
         "action": "set_property",
-        "target": label_name,
+        "target": label_id,
+        "searchMethod": "by_id",
         "componentType": "TextMeshProUGUI",
         "property": "text",
         "value": text,
@@ -237,10 +270,13 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
         click.echo(format_output(result, config.format))
         return
 
+    target_id = _created_instance_id(result)
+
     # Step 2: Add Image component
     run_command("manage_components", {
         "action": "add",
-        "target": name,
+        "target": target_id,
+        "searchMethod": "by_id",
         "componentType": "Image",
     }, config)
 
@@ -248,7 +284,8 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
     if sprite:
         run_command("manage_components", {
             "action": "set_property",
-            "target": name,
+            "target": target_id,
+            "searchMethod": "by_id",
             "componentType": "Image",
             "property": "sprite",
             "value": sprite,

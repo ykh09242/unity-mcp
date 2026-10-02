@@ -163,12 +163,6 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"File already exists at {path}. Use 'update' action to overwrite.");
             }
 
-            string dir = Path.GetDirectoryName(fullPath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
             bool isUxml = path.EndsWith(".uxml", StringComparison.OrdinalIgnoreCase);
             var validationWarnings = new List<string>();
 
@@ -180,6 +174,12 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"UXML validation failed — file was NOT written. {xmlError}");
                 }
                 contents = EnsureEditorExtensionMode(contents);
+            }
+
+            string dir = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
             }
 
             File.WriteAllText(fullPath, contents, Utf8NoBom);
@@ -870,8 +870,15 @@ namespace MCPForUnity.Editor.Tools
 
                     int captureW = captureTex.width;
                     int captureH = captureTex.height;
-                    byte[] capturePng = captureTex.EncodeToPNG();
-                    UnityEngine.Object.DestroyImmediate(captureTex);
+                    byte[] capturePng;
+                    try
+                    {
+                        capturePng = captureTex.EncodeToPNG();
+                    }
+                    finally
+                    {
+                        UnityEngine.Object.DestroyImmediate(captureTex);
+                    }
 
                     File.WriteAllBytes(playFullPath, capturePng);
                     if (ScreenshotUtility.IsUnderAssets(playProjectRelPath))
@@ -893,9 +900,10 @@ namespace MCPForUnity.Editor.Tools
                     {
                         int targetMax = maxResolution > 0 ? maxResolution : 640;
                         Texture2D downscaled = null;
+                        Texture2D fullTex = null;
                         try
                         {
-                            var fullTex = new Texture2D(captureW, captureH, TextureFormat.RGBA32, false);
+                            fullTex = new Texture2D(captureW, captureH, TextureFormat.RGBA32, false);
                             fullTex.LoadImage(capturePng);
                             if (captureW > targetMax || captureH > targetMax)
                             {
@@ -910,11 +918,11 @@ namespace MCPForUnity.Editor.Tools
                                 playData["imageWidth"] = captureW;
                                 playData["imageHeight"] = captureH;
                             }
-                            UnityEngine.Object.DestroyImmediate(fullTex);
                         }
                         finally
                         {
                             if (downscaled != null) UnityEngine.Object.DestroyImmediate(downscaled);
+                            if (fullTex != null) UnityEngine.Object.DestroyImmediate(fullTex);
                         }
                     }
 
@@ -956,6 +964,7 @@ namespace MCPForUnity.Editor.Tools
             UIDocument uiDoc = null;
             GameObject tempGo = null;
             PanelSettings tempPs = null;
+            Texture2D tex = null;
 
             try
             {
@@ -1073,11 +1082,17 @@ namespace MCPForUnity.Editor.Tools
 
                 // Read pixels from the RT
                 RenderTexture prevActive = RenderTexture.active;
-                RenderTexture.active = rt;
-                var tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
-                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                tex.Apply();
-                RenderTexture.active = prevActive;
+                try
+                {
+                    RenderTexture.active = rt;
+                    tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                    tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                    tex.Apply();
+                }
+                finally
+                {
+                    RenderTexture.active = prevActive;
+                }
 
                 // Restore targetTexture to null so the UI renders back to the
                 // actual display / camera.  The RT stays cached in s_panelRTs
@@ -1156,8 +1171,6 @@ namespace MCPForUnity.Editor.Tools
                     }
                 }
 
-                UnityEngine.Object.DestroyImmediate(tex);
-
                 string msg = hasContent
                     ? $"UI rendered to '{projectRelPath}'."
                     : rtJustAssigned
@@ -1168,6 +1181,7 @@ namespace MCPForUnity.Editor.Tools
             }
             finally
             {
+                if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
                 if (tempGo != null) UnityEngine.Object.DestroyImmediate(tempGo);
                 if (tempPs != null)
                 {
@@ -1788,7 +1802,7 @@ namespace MCPForUnity.Editor.Tools
             if (isEncoded)
             {
                 string encoded = p.Get("encoded_contents") ?? p.Get("encodedContents");
-                if (!string.IsNullOrEmpty(encoded))
+                if (encoded != null)
                 {
                     try
                     {

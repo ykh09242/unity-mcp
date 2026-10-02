@@ -194,11 +194,11 @@ async def manage_ui(
     }
 
     # File operations: base64-encode contents for transport
-    if action_lower in ("create", "update") and contents:
+    if action_lower in ("create", "update") and contents is not None:
         params_dict["encodedContents"] = base64.b64encode(
             contents.encode("utf-8")).decode("utf-8")
         params_dict["contentsEncoded"] = True
-    elif action_lower in ("create", "update") and not contents:
+    elif action_lower in ("create", "update") and contents is None:
         # Let Unity-side validate and return the error
         pass
 
@@ -289,7 +289,7 @@ async def manage_ui(
         # Decode base64 contents in read responses
         if action_lower == "read" and result.get("success"):
             data = result.get("data", {})
-            if data.get("contentsEncoded") and data.get("encodedContents"):
+            if data.get("contentsEncoded") and data.get("encodedContents") is not None:
                 try:
                     decoded = base64.b64decode(
                         data["encodedContents"]).decode("utf-8")
