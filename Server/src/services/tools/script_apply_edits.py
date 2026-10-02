@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import re
@@ -8,6 +9,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools import bounded_regex
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import parse_json_payload
 from transport.unity_transport import send_with_unity_instance
@@ -376,6 +378,8 @@ def _is_in_string_context(text: str, position: int) -> bool:
 
 
 async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) -> str:
+    if len(edits or []) > 32:
+        raise ValueError("At most 32 edits are permitted per request")
     text = original_text
     for edit in edits or []:
         op = (
@@ -413,7 +417,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
                 re.IGNORECASE if edit.get("ignore_case") else 0)
 
             # Find the best match using improved heuristics
-            match = _find_best_anchor_match(
+            match = await asyncio.to_thread(_find_best_anchor_match,
                 anchor, text, flags, bool(edit.get("prefer_last", True)))
             if not match:
                 if edit.get("allow_noop", True):
@@ -449,7 +453,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             flags = re.MULTILINE
             if edit.get("ignore_case"):
                 flags |= re.IGNORECASE
-            text = re.sub(pattern, repl_py, text, count=count, flags=flags)
+            text = await asyncio.to_thread(bounded_regex.substitute, pattern, repl_py, text, count, flags)
         else:
             allowed = "anchor_insert, prepend, append, replace_range, regex_replace"
             raise RuntimeError(
@@ -479,7 +483,7 @@ def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bo
     """
 
     # Find all matches
-    matches = list(re.finditer(pattern, text, flags))
+    matches = bounded_regex.find_matches(pattern, text, flags)
     if not matches:
         return None
 
@@ -744,6 +748,8 @@ async def script_apply_edits(
     edits = parse_json_payload(edits)
     if not isinstance(edits, list):
         return {"success": False, "message": f"Edits must be a list or JSON string of a list, got {type(edits)}"}
+    if len(edits) > 32:
+        return {"success": False, "message": "At most 32 edits are permitted per request"}
 
     # Normalize locator first so downstream calls target the correct script file.
     name, path = _normalize_script_locator(name, path)
@@ -1035,7 +1041,7 @@ async def script_apply_edits(
                         re.IGNORECASE if e.get("ignore_case") else 0)
                     try:
                         # Use improved anchor matching logic
-                        m = _find_best_anchor_match(
+                        m = await asyncio.to_thread(_find_best_anchor_match,
                             anchor, base_text, flags, prefer_last=True)
                     except Exception as ex:
                         return _with_norm(_err("bad_regex", f"Invalid anchor regex: {ex}", normalized=normalized_for_echo, routing="mixed/text-first", extra={"hint": "Escape parentheses/braces or use a simpler anchor."}), normalized_for_echo, routing="mixed/text-first")
@@ -1066,11 +1072,10 @@ async def script_apply_edits(
                 elif opx == "regex_replace":
                     pattern = e.get("pattern") or ""
                     try:
-                        regex_obj = re.compile(pattern, re.MULTILINE | (
-                            re.IGNORECASE if e.get("ignore_case") else 0))
+                        m = await asyncio.to_thread(bounded_regex.search, pattern, base_text,
+                            re.MULTILINE | (re.IGNORECASE if e.get("ignore_case") else 0))
                     except Exception as ex:
                         return _with_norm(_err("bad_regex", f"Invalid regex pattern: {ex}", normalized=normalized_for_echo, routing="mixed/text-first", extra={"hint": "Escape special chars or prefer structured delete for methods."}), normalized_for_echo, routing="mixed/text-first")
-                    m = regex_obj.search(base_text)
                     if not m:
                         continue
                     # Expand $1, $2... in replacement using this match
@@ -1181,7 +1186,7 @@ async def script_apply_edits(
                     try:
                         flags = re.MULTILINE | (
                             re.IGNORECASE if e.get("ignore_case") else 0)
-                        m = _find_best_anchor_match(
+                        m = await asyncio.to_thread(_find_best_anchor_match,
                             anchor, base_text, flags, prefer_last=True)
                     except Exception as ex:
                         return _with_norm(_err("bad_regex", f"Invalid anchor regex: {ex}", normalized=normalized_for_echo, routing="text", extra={"hint": "Escape parentheses/braces or use a simpler anchor."}), normalized_for_echo, routing="text")

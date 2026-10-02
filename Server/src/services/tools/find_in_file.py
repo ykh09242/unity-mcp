@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import os
 import re
@@ -9,6 +10,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools import bounded_regex
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -129,15 +131,10 @@ async def find_in_file(
         flags |= re.IGNORECASE
 
     try:
-        regex = re.compile(pattern, flags)
-    except re.error as e:
-        return {"success": False, "message": f"Invalid regex pattern: {e}"}
-
-    # If the regex is not multiline specific (doesn't contain \n literal match logic),
-    # we could iterate lines. But users might use multiline regexes.
-    # Let's search the whole content and map back to lines.
-
-    found = list(regex.finditer(contents))
+        found = await asyncio.to_thread(bounded_regex.find_matches, pattern, contents, flags)
+    except (ValueError, TimeoutError, bounded_regex.regex.error) as e:
+        return {"success": False, "message": f"Regex search rejected: {e}"}
+    max_results = max(1, min(max_results, 1000))
 
     results = []
     count = 0
@@ -168,8 +165,8 @@ async def find_in_file(
 
         results.append({
             "line": line_num,
-            "content": line_content.strip(),  # detailed match info?
-            "match": m.group(0),
+            "content": line_content.strip()[:2000],
+            "match": m.group(0)[:2000],
             "start": start_idx,
             "end": end_idx
         })
