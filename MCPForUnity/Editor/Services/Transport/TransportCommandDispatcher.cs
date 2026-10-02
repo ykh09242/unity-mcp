@@ -110,6 +110,14 @@ namespace MCPForUnity.Editor.Services.Transport
                 Pending[id] = pending;
             }
 
+            // Register can invoke cancellation before the pending entry is inserted.
+            // Recheck after insertion so cancellation never depends on an editor frame.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                CancelPending(id, cancellationToken);
+                return tcs.Task;
+            }
+
             // Proactively wake up the main thread execution loop. This improves responsiveness
             // in scenarios where EditorApplication.update is throttled or temporarily not firing
             // (e.g., Unity unfocused, compiling, or during domain reload transitions).
@@ -228,7 +236,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             try
             {
-            List<(string id, PendingCommand pending)> ready;
+            List<(string id, PendingCommand pending)> ready = null;
 
             lock (PendingLock)
             {
@@ -238,7 +246,6 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 }
 
-                ready = new List<(string, PendingCommand)>(Pending.Count);
                 foreach (var kvp in Pending)
                 {
                     if (kvp.Value.IsExecuting)
@@ -247,10 +254,11 @@ namespace MCPForUnity.Editor.Services.Transport
                     }
 
                     kvp.Value.IsExecuting = true;
+                    ready ??= new List<(string, PendingCommand)>(Pending.Count);
                     ready.Add((kvp.Key, kvp.Value));
                 }
 
-                if (ready.Count == 0)
+                if (ready == null)
                 {
                     UnhookUpdateIfIdle();
                     return;
@@ -368,7 +376,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
                 if (result == null)
                 {
-                    // Async command – cleanup after completion on next editor frame to preserve order.
+                    // Async cleanup only touches locked managed state; no editor frame is needed.
                     var capturedType = logName;
                     var capturedParams = parameters;
                     var capturedLogType = logType;
@@ -397,7 +405,7 @@ namespace MCPForUnity.Editor.Services.Transport
                         }
                         McpLogRecord.Log(capturedType, capturedParams, capturedLogType,
                             logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
-                        EditorApplication.delayCall += () => RemovePending(id, pending);
+                        RemovePending(id, pending);
                     }, TaskScheduler.Default);
                     return;
                 }
