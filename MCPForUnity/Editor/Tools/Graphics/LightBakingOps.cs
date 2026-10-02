@@ -179,6 +179,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (settingsToken == null || !settingsToken.HasValues)
                 return new ErrorResponse("'settings' parameter is required (dict of property name to value).");
 
+            var prepared = new List<(string name, Func<LightingSettings, bool> apply)>();
+            foreach (var prop in settingsToken.Properties())
+            {
+                TryPrepareLightingSetting(prop.Name, prop.Value, out var apply);
+                prepared.Add((prop.Name, apply));
+            }
+            if (prepared.All(entry => entry.apply == null))
+                return new ErrorResponse($"Failed to set any settings. Invalid properties: {string.Join(", ", prepared.Select(entry => entry.name))}");
+
             var lightingSettings = EnsureLightingSettings();
             if (lightingSettings == null)
                 return new ErrorResponse(
@@ -189,14 +198,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var changed = new List<string>();
             var failed = new List<string>();
 
-            foreach (var prop in settingsToken.Properties())
+            foreach (var (name, apply) in prepared)
             {
-                string name = prop.Name;
-                JToken value = prop.Value;
-
                 try
                 {
-                    if (TrySetLightingSetting(lightingSettings, name, value))
+                    if (apply != null && apply(lightingSettings))
                         changed.Add(name);
                     else
                         failed.Add(name);
@@ -244,47 +250,57 @@ namespace MCPForUnity.Editor.Tools.Graphics
             int gridZ = gridToken != null && gridToken.Count >= 3 ? gridToken[2].Value<int>() : 3;
 
             var go = new GameObject(name);
-            go.transform.position = position;
-            Undo.RegisterCreatedObjectUndo(go, $"Create Light Probe Group '{name}'");
-
-            var probeGroup = go.AddComponent<LightProbeGroup>();
-
-            var positions = new List<Vector3>();
-            float halfX = (gridX - 1) * spacing * 0.5f;
-            float halfY = (gridY - 1) * spacing * 0.5f;
-            float halfZ = (gridZ - 1) * spacing * 0.5f;
-
-            for (int x = 0; x < gridX; x++)
+            bool completed = false;
+            try
             {
-                for (int y = 0; y < gridY; y++)
+                go.transform.position = position;
+                Undo.RegisterCreatedObjectUndo(go, $"Create Light Probe Group '{name}'");
+                var probeGroup = go.AddComponent<LightProbeGroup>();
+                if (probeGroup == null)
+                    return new ErrorResponse("Could not add LightProbeGroup component.");
+
+                var positions = new List<Vector3>();
+                float halfX = (gridX - 1) * spacing * 0.5f;
+                float halfY = (gridY - 1) * spacing * 0.5f;
+                float halfZ = (gridZ - 1) * spacing * 0.5f;
+
+                for (int x = 0; x < gridX; x++)
                 {
-                    for (int z = 0; z < gridZ; z++)
+                    for (int y = 0; y < gridY; y++)
                     {
-                        positions.Add(new Vector3(
-                            x * spacing - halfX,
-                            y * spacing - halfY,
-                            z * spacing - halfZ
-                        ));
+                        for (int z = 0; z < gridZ; z++)
+                        {
+                            positions.Add(new Vector3(
+                                x * spacing - halfX,
+                                y * spacing - halfY,
+                                z * spacing - halfZ
+                            ));
+                        }
                     }
                 }
-            }
 
-            probeGroup.probePositions = positions.ToArray();
-            GraphicsHelpers.MarkDirty(probeGroup);
-
-            return new
-            {
-                success = true,
-                message = $"Created Light Probe Group '{name}' with {positions.Count} probes ({gridX}x{gridY}x{gridZ} grid, spacing {spacing}).",
-                data = new
+                probeGroup.probePositions = positions.ToArray();
+                GraphicsHelpers.MarkDirty(probeGroup);
+                completed = true;
+                return new
                 {
-                    instanceID = go.GetInstanceIDCompat(),
-                    probeCount = positions.Count,
-                    gridSize = new[] { gridX, gridY, gridZ },
-                    spacing,
-                    position = new[] { position.x, position.y, position.z }
-                }
-            };
+                    success = true,
+                    message = $"Created Light Probe Group '{name}' with {positions.Count} probes ({gridX}x{gridY}x{gridZ} grid, spacing {spacing}).",
+                    data = new
+                    {
+                        instanceID = go.GetInstanceIDCompat(),
+                        probeCount = positions.Count,
+                        gridSize = new[] { gridX, gridY, gridZ },
+                        spacing,
+                        position = new[] { position.x, position.y, position.z }
+                    }
+                };
+            }
+            finally
+            {
+                if (!completed && go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
+            }
         }
 
         // === bake_create_reflection_probe ===
@@ -313,33 +329,43 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     $"Invalid mode '{modeStr}'. Valid values: Baked, Realtime, Custom.");
 
             var go = new GameObject(name);
-            go.transform.position = position;
-            Undo.RegisterCreatedObjectUndo(go, $"Create Reflection Probe '{name}'");
-
-            var probe = go.AddComponent<ReflectionProbe>();
-            probe.size = size;
-            probe.resolution = resolution;
-            probe.mode = mode;
-            probe.hdr = hdr;
-            probe.boxProjection = boxProjection;
-
-            GraphicsHelpers.MarkDirty(probe);
-
-            return new
+            bool completed = false;
+            try
             {
-                success = true,
-                message = $"Created Reflection Probe '{name}' (mode: {mode}, resolution: {resolution}, HDR: {hdr}).",
-                data = new
+                go.transform.position = position;
+                Undo.RegisterCreatedObjectUndo(go, $"Create Reflection Probe '{name}'");
+                var probe = go.AddComponent<ReflectionProbe>();
+                if (probe == null)
+                    return new ErrorResponse("Could not add ReflectionProbe component.");
+                probe.size = size;
+                probe.resolution = resolution;
+                probe.mode = mode;
+                probe.hdr = hdr;
+                probe.boxProjection = boxProjection;
+
+                GraphicsHelpers.MarkDirty(probe);
+                completed = true;
+                return new
                 {
-                    instanceID = go.GetInstanceIDCompat(),
-                    mode = mode.ToString(),
-                    resolution,
-                    hdr,
-                    boxProjection,
-                    size = new[] { size.x, size.y, size.z },
-                    position = new[] { position.x, position.y, position.z }
-                }
-            };
+                    success = true,
+                    message = $"Created Reflection Probe '{name}' (mode: {mode}, resolution: {resolution}, HDR: {hdr}).",
+                    data = new
+                    {
+                        instanceID = go.GetInstanceIDCompat(),
+                        mode = mode.ToString(),
+                        resolution,
+                        hdr,
+                        boxProjection,
+                        size = new[] { size.x, size.y, size.z },
+                        position = new[] { position.x, position.y, position.z }
+                    }
+                };
+            }
+            finally
+            {
+                if (!completed && go != null)
+                    UnityEngine.Object.DestroyImmediate(go);
+            }
         }
 
         // === bake_set_probe_positions ===
@@ -363,8 +389,6 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (positionsToken == null || positionsToken.Count == 0)
                 return new ErrorResponse("'positions' parameter is required (array of [x,y,z] arrays).");
 
-            Undo.RecordObject(probeGroup, "Set Light Probe Positions");
-
             var positions = new Vector3[positionsToken.Count];
             for (int i = 0; i < positionsToken.Count; i++)
             {
@@ -378,6 +402,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 );
             }
 
+            Undo.RecordObject(probeGroup, "Set Light Probe Positions");
             probeGroup.probePositions = positions;
             GraphicsHelpers.MarkDirty(probeGroup);
 
@@ -403,13 +428,19 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
             catch { /* getter throws when no asset exists */ }
 
+            LightingSettings created = null;
             try
             {
-                var settings = new LightingSettings { name = "LightingSettings" };
-                Lightmapping.lightingSettings = settings;
-                return Lightmapping.lightingSettings;
+                created = new LightingSettings { name = "LightingSettings" };
+                Lightmapping.lightingSettings = created;
+                return Lightmapping.TryGetLightingSettings(out var assigned) && assigned == created ? created : null;
             }
             catch { return null; }
+            finally
+            {
+                if (created != null && (!Lightmapping.TryGetLightingSettings(out var assigned) || assigned != created))
+                    UnityEngine.Object.DestroyImmediate(created);
+            }
         }
 
         // --- Helper: Find a GameObject by name or instanceID ---
@@ -446,65 +477,73 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 data["maxBounces"] = prop.GetValue(settings);
         }
 
-        // --- Helper: Set a single lighting setting by name ---
-        private static bool TrySetLightingSetting(LightingSettings settings, string name, JToken value)
+        // Prepare supported settings before creating or modifying LightingSettings.
+        // Scalar fallback values are read at application time to retain ordered alias behavior.
+        private static bool TryPrepareLightingSetting(string name, JToken value, out Func<LightingSettings, bool> apply)
         {
+            apply = null;
             switch (name.ToLowerInvariant())
             {
                 case "bakedgi":
                 case "baked_gi":
-                    settings.bakedGI = ParamCoercion.CoerceBool(value, settings.bakedGI);
+                    apply = settings => { settings.bakedGI = ParamCoercion.CoerceBool(value, settings.bakedGI); return true; };
                     return true;
 
                 case "realtimegi":
                 case "realtime_gi":
-                    settings.realtimeGI = ParamCoercion.CoerceBool(value, settings.realtimeGI);
+                    apply = settings => { settings.realtimeGI = ParamCoercion.CoerceBool(value, settings.realtimeGI); return true; };
                     return true;
 
                 case "lightmapper":
                     if (TryParseEnum<LightingSettings.Lightmapper>(value, out var lm))
                     {
-                        settings.lightmapper = lm;
+                        apply = settings => { settings.lightmapper = lm; return true; };
                         return true;
                     }
                     return false;
 
                 case "lightmapresolution":
                 case "lightmap_resolution":
-                    settings.lightmapResolution = ParamCoercion.CoerceFloat(value, settings.lightmapResolution);
+                    apply = settings => { settings.lightmapResolution = ParamCoercion.CoerceFloat(value, settings.lightmapResolution); return true; };
                     return true;
 
                 case "lightmapmaxsize":
                 case "lightmap_max_size":
-                    settings.lightmapMaxSize = ParamCoercion.CoerceInt(value, settings.lightmapMaxSize);
+                    apply = settings => { settings.lightmapMaxSize = ParamCoercion.CoerceInt(value, settings.lightmapMaxSize); return true; };
                     return true;
 
                 case "directsamplecount":
                 case "direct_sample_count":
-                    settings.directSampleCount = ParamCoercion.CoerceInt(value, settings.directSampleCount);
+                    apply = settings => { settings.directSampleCount = ParamCoercion.CoerceInt(value, settings.directSampleCount); return true; };
                     return true;
 
                 case "indirectsamplecount":
                 case "indirect_sample_count":
-                    settings.indirectSampleCount = ParamCoercion.CoerceInt(value, settings.indirectSampleCount);
+                    apply = settings => { settings.indirectSampleCount = ParamCoercion.CoerceInt(value, settings.indirectSampleCount); return true; };
                     return true;
 
                 case "environmentsamplecount":
                 case "environment_sample_count":
-                    settings.environmentSampleCount = ParamCoercion.CoerceInt(value, settings.environmentSampleCount);
+                    apply = settings => { settings.environmentSampleCount = ParamCoercion.CoerceInt(value, settings.environmentSampleCount); return true; };
                     return true;
 
                 case "bouncecount":
                 case "bounce_count":
                 case "maxbounces":
                 case "max_bounces":
-                    return TrySetBounceCount(settings, ParamCoercion.CoerceInt(value, 2));
+                    var bounceProperty = typeof(LightingSettings).GetProperty("bounceCount", BindingFlags.Public | BindingFlags.Instance);
+                    if (bounceProperty == null || !bounceProperty.CanWrite)
+                        bounceProperty = typeof(LightingSettings).GetProperty("maxBounces", BindingFlags.Public | BindingFlags.Instance);
+                    if (bounceProperty == null || !bounceProperty.CanWrite) return false;
+                    int bounceCount = ParamCoercion.CoerceInt(value, 2);
+                    apply = settings => TrySetBounceCount(settings, bounceCount);
+                    return true;
 
                 case "mixedbakemode":
                 case "mixed_bake_mode":
                     if (TryParseEnum<MixedLightingMode>(value, out var mlm))
                     {
-                        settings.mixedBakeMode = mlm;
+                        apply = settings => { settings.mixedBakeMode = mlm; return true; };
                         return true;
                     }
                     return false;
@@ -514,24 +553,26 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 case "lightmapcompression":
                 case "lightmap_compression":
                     var strVal = value?.ToString() ?? "";
-                    if (System.Enum.TryParse<LightmapCompression>(strVal, true, out var compression))
-                        settings.lightmapCompression = compression;
-                    else if (bool.TryParse(strVal, out var boolVal))
-                        settings.lightmapCompression = boolVal
+                    if (!System.Enum.TryParse<LightmapCompression>(strVal, true, out var compression))
+                    {
+                        if (bool.TryParse(strVal, out var boolVal))
+                            compression = boolVal
                             ? LightmapCompression.NormalQuality : LightmapCompression.None;
-                    else if (int.TryParse(strVal, out var intVal))
-                        settings.lightmapCompression = (LightmapCompression)intVal;
-                    else
-                        return false;
+                        else if (int.TryParse(strVal, out var intVal))
+                            compression = (LightmapCompression)intVal;
+                        else
+                            return false;
+                    }
+                    apply = settings => { settings.lightmapCompression = compression; return true; };
                     return true;
 
                 case "ao":
-                    settings.ao = ParamCoercion.CoerceBool(value, settings.ao);
+                    apply = settings => { settings.ao = ParamCoercion.CoerceBool(value, settings.ao); return true; };
                     return true;
 
                 case "aomaxdistance":
                 case "ao_max_distance":
-                    settings.aoMaxDistance = ParamCoercion.CoerceFloat(value, settings.aoMaxDistance);
+                    apply = settings => { settings.aoMaxDistance = ParamCoercion.CoerceFloat(value, settings.aoMaxDistance); return true; };
                     return true;
 
                 default:
