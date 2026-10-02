@@ -44,7 +44,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             if (string.IsNullOrEmpty(searchMethod))
             {
-                if (targetToken?.Type == JTokenType.Integer)
+                if (targetToken?.Type == JTokenType.Integer || int.TryParse(searchTerm, out _))
                     searchMethod = "by_id";
                 else if (!string.IsNullOrEmpty(searchTerm) && searchTerm.Contains('/'))
                     searchMethod = "by_path";

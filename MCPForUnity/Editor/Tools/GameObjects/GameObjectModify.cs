@@ -53,6 +53,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Invalid layer specified: '{layerName}'. Use a valid layer name.");
             }
 
+            bool? isStatic = @params["isStatic"]?.ToObject<bool?>();
+
             Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
             Undo.RecordObject(targetGo, "Modify GameObject Properties");
 
@@ -155,7 +157,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
             }
 
-            bool? isStatic = @params["isStatic"]?.ToObject<bool?>();
             if (isStatic.HasValue)
             {
                 var desiredFlags = isStatic.Value ? (StaticEditorFlags)~0 : 0;
@@ -248,16 +249,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             EditorUtility.SetDirty(targetGo);
 
-            // Mark the appropriate scene as dirty (handles both regular scenes and prefab stages)
-            var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (prefabStage != null)
-            {
-                EditorSceneManager.MarkSceneDirty(prefabStage.scene);
-            }
-            else
-            {
-                EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
-            }
+            EditorSceneManager.MarkSceneDirty(targetGo.scene);
 
             return new SuccessResponse(
                 $"GameObject '{targetGo.name}' modified successfully.",

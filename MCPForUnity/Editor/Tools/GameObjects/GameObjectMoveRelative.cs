@@ -34,8 +34,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? customOffset = VectorParsing.ParseVector3(@params["offset"]);
             bool useWorldSpace = @params["world_space"]?.ToObject<bool>() ?? true;
 
-            Undo.RecordObject(targetGo.transform, $"Move {targetGo.name} relative to {referenceGo.name}");
-
             Vector3 newPosition;
 
             if (customOffset.HasValue)
@@ -59,10 +57,11 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse("Either 'direction' or 'offset' parameter is required for 'move_relative' action.");
             }
 
+            Undo.RecordObject(targetGo.transform, $"Move {targetGo.name} relative to {referenceGo.name}");
             targetGo.transform.position = newPosition;
 
             EditorUtility.SetDirty(targetGo);
-            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            EditorSceneManager.MarkSceneDirty(targetGo.scene);
 
             return new SuccessResponse(
                 $"Moved '{targetGo.name}' relative to '{referenceGo.name}'.",
