@@ -42,7 +42,7 @@ namespace MCPForUnity.Editor.Services
             string lastCheckDate = EditorPrefs.GetString(lastCheckKey, "");
             string cachedLatestVersion = EditorPrefs.GetString(cachedVersionKey, "");
 
-            if (lastCheckDate == DateTime.Now.ToString("yyyy-MM-dd") && !string.IsNullOrEmpty(cachedLatestVersion))
+            if (lastCheckDate == DateTime.Now.ToString("yyyy-MM-dd") && TryParseVersion(cachedLatestVersion, out _))
             {
                 return new UpdateCheckResult
                 {
@@ -57,7 +57,7 @@ namespace MCPForUnity.Editor.Services
                 ? FetchLatestVersionFromGitHub(gitBranch)
                 : FetchLatestVersionFromAssetStoreJson();
 
-            if (!string.IsNullOrEmpty(latestVersion))
+            if (TryParseVersion(latestVersion, out _))
             {
                 // Cache the result
                 EditorPrefs.SetString(lastCheckKey, DateTime.Now.ToString("yyyy-MM-dd"));
@@ -76,7 +76,9 @@ namespace MCPForUnity.Editor.Services
             {
                 CheckSucceeded = false,
                 UpdateAvailable = false,
-                Message = isGitInstallation
+                Message = !string.IsNullOrEmpty(latestVersion)
+                    ? "Failed to check for updates (invalid version metadata)"
+                    : isGitInstallation
                     ? "Failed to check for updates (network issue or offline)"
                     : "Failed to check for Asset Store updates (network issue or offline)"
             };
@@ -99,7 +101,7 @@ namespace MCPForUnity.Editor.Services
             string lastCheckDate = EditorPrefs.GetString(lastCheckKey, "");
             string cachedLatestVersion = EditorPrefs.GetString(cachedVersionKey, "");
 
-            if (lastCheckDate == DateTime.Now.ToString("yyyy-MM-dd") && !string.IsNullOrEmpty(cachedLatestVersion))
+            if (lastCheckDate == DateTime.Now.ToString("yyyy-MM-dd") && TryParseVersion(cachedLatestVersion, out _))
             {
                 return new UpdateCheckResult
                 {
@@ -128,7 +130,7 @@ namespace MCPForUnity.Editor.Services
                 ? FetchLatestVersionFromGitHub(gitBranch)
                 : FetchLatestVersionFromAssetStoreJson();
 
-            if (!string.IsNullOrEmpty(latestVersion))
+            if (TryParseVersion(latestVersion, out _))
             {
                 return new UpdateCheckResult
                 {
@@ -143,7 +145,9 @@ namespace MCPForUnity.Editor.Services
             {
                 CheckSucceeded = false,
                 UpdateAvailable = false,
-                Message = isGitInstallation
+                Message = !string.IsNullOrEmpty(latestVersion)
+                    ? "Failed to check for updates (invalid version metadata)"
+                    : isGitInstallation
                     ? "Failed to check for updates (network issue or offline)"
                     : "Failed to check for Asset Store updates (network issue or offline)"
             };
@@ -152,7 +156,7 @@ namespace MCPForUnity.Editor.Services
         /// <inheritdoc/>
         public void CacheFetchResult(string currentVersion, string fetchedVersion)
         {
-            if (string.IsNullOrEmpty(fetchedVersion)) return;
+            if (!TryParseVersion(fetchedVersion, out _)) return;
 
             bool isGitInstallation = IsGitInstallation();
             string gitBranch = isGitInstallation ? GetGitUpdateBranch(currentVersion) : "main";
@@ -257,9 +261,10 @@ namespace MCPForUnity.Editor.Services
 
             string prereleaseLabel = match.Groups["label"].Success ? match.Groups["label"].Value : string.Empty;
             int prereleaseNumber = 0;
-            if (match.Groups["number"].Success)
+            if (match.Groups["number"].Success &&
+                !int.TryParse(match.Groups["number"].Value, out prereleaseNumber))
             {
-                int.TryParse(match.Groups["number"].Value, out prereleaseNumber);
+                return false;
             }
 
             parsed = new ParsedVersion
@@ -291,13 +296,15 @@ namespace MCPForUnity.Editor.Services
             {
                 var packageInfo = PackageInfo.FindForAssembly(typeof(PackageUpdateService).Assembly);
                 string packageId = packageInfo?.packageId ?? string.Empty;
+                int revisionStart = packageId.IndexOf('#');
+                string revision = revisionStart >= 0 ? packageId.Substring(revisionStart + 1) : string.Empty;
 
-                if (packageId.IndexOf("#beta", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (string.Equals(revision, "beta", StringComparison.OrdinalIgnoreCase))
                 {
                     return "beta";
                 }
 
-                if (packageId.IndexOf("#main", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (string.Equals(revision, "main", StringComparison.OrdinalIgnoreCase))
                 {
                     return "main";
                 }
