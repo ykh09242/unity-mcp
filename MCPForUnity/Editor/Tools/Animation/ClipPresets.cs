@@ -28,6 +28,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(preset))
                 return new { success = false, message = $"'preset' is required. Valid: {string.Join(", ", ValidPresets)}" };
 
+            if (Array.IndexOf(ValidPresets, preset) < 0)
+                return new { success = false, message = $"Unknown preset '{preset}'. Valid: {string.Join(", ", ValidPresets)}" };
+
             float duration = @params["duration"]?.ToObject<float>() ?? 1f;
             float amplitude = @params["amplitude"]?.ToObject<float>() ?? 1f;
             bool loop = @params["loop"]?.ToObject<bool>() ?? true;
@@ -53,93 +56,103 @@ namespace MCPForUnity.Editor.Tools.Animation
                 );
             }
 
+            var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(clipPath);
+            if (existing != null)
+                return new { success = false, message = $"An asset already exists at '{clipPath}'. Delete it first or use a different path." };
+
             string dir = Path.GetDirectoryName(clipPath)?.Replace('\\', '/');
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
                 CreateFoldersRecursive(dir);
 
-            var existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
-            if (existing != null)
-                return new { success = false, message = $"AnimationClip already exists at '{clipPath}'. Delete it first or use a different path." };
-
             var clip = new AnimationClip();
-            clip.name = Path.GetFileNameWithoutExtension(clipPath);
-            clip.frameRate = 60f;
-
-            var settings = AnimationUtility.GetAnimationClipSettings(clip);
-            settings.loopTime = loop;
-            settings.stopTime = duration;
-            AnimationUtility.SetAnimationClipSettings(clip, settings);
-
-            switch (preset)
+            try
             {
-                case "bounce":
-                    ApplyBounce(clip, duration, amplitude, offset);
-                    break;
-                case "rotate":
-                    ApplyRotate(clip, duration, amplitude);
-                    break;
-                case "pulse":
-                    ApplyPulse(clip, duration, amplitude);
-                    break;
-                case "fade":
-                    ApplyFade(clip, duration);
-                    break;
-                case "shake":
-                    ApplyShake(clip, duration, amplitude, offset);
-                    break;
-                case "hover":
-                    ApplyHover(clip, duration, amplitude, offset);
-                    break;
-                case "spin":
-                    ApplySpin(clip, duration, amplitude);
-                    break;
-                case "sway":
-                    ApplySway(clip, duration, amplitude);
-                    break;
-                case "bob":
-                    ApplyBob(clip, duration, amplitude, offset);
-                    break;
-                case "wiggle":
-                    ApplyWiggle(clip, duration, amplitude);
-                    break;
-                case "blink":
-                    ApplyBlink(clip, duration);
-                    break;
-                case "slide_in":
-                    ApplySlideIn(clip, duration, amplitude, offset);
-                    break;
-                case "elastic":
-                    ApplyElastic(clip, duration, amplitude);
-                    break;
-                case "grow":
-                    ApplyGrow(clip, duration, amplitude);
-                    break;
-                case "shrink":
-                    ApplyShrink(clip, duration, amplitude);
-                    break;
-                default:
-                    return new { success = false, message = $"Unknown preset '{preset}'. Valid: {string.Join(", ", ValidPresets)}" };
-            }
+                clip.name = Path.GetFileNameWithoutExtension(clipPath);
+                clip.frameRate = 60f;
 
-            AssetDatabase.CreateAsset(clip, clipPath);
-            AssetDatabase.SaveAssets();
+                var settings = AnimationUtility.GetAnimationClipSettings(clip);
+                settings.loopTime = loop;
+                settings.stopTime = duration;
+                AnimationUtility.SetAnimationClipSettings(clip, settings);
 
-            return new
-            {
-                success = true,
-                message = $"Created '{preset}' preset clip at '{clipPath}'" + (offset != Vector3.zero ? $" (offset: {offset})" : ""),
-                data = new
+                switch (preset)
                 {
-                    path = clipPath,
-                    name = clip.name,
-                    preset,
-                    duration,
-                    amplitude,
-                    isLooping = loop,
-                    offset = new { x = offset.x, y = offset.y, z = offset.z },
-                    curveCount = AnimationUtility.GetCurveBindings(clip).Length
+                    case "bounce":
+                        ApplyBounce(clip, duration, amplitude, offset);
+                        break;
+                    case "rotate":
+                        ApplyRotate(clip, duration, amplitude);
+                        break;
+                    case "pulse":
+                        ApplyPulse(clip, duration, amplitude);
+                        break;
+                    case "fade":
+                        ApplyFade(clip, duration);
+                        break;
+                    case "shake":
+                        ApplyShake(clip, duration, amplitude, offset);
+                        break;
+                    case "hover":
+                        ApplyHover(clip, duration, amplitude, offset);
+                        break;
+                    case "spin":
+                        ApplySpin(clip, duration, amplitude);
+                        break;
+                    case "sway":
+                        ApplySway(clip, duration, amplitude);
+                        break;
+                    case "bob":
+                        ApplyBob(clip, duration, amplitude, offset);
+                        break;
+                    case "wiggle":
+                        ApplyWiggle(clip, duration, amplitude);
+                        break;
+                    case "blink":
+                        ApplyBlink(clip, duration);
+                        break;
+                    case "slide_in":
+                        ApplySlideIn(clip, duration, amplitude, offset);
+                        break;
+                    case "elastic":
+                        ApplyElastic(clip, duration, amplitude);
+                        break;
+                    case "grow":
+                        ApplyGrow(clip, duration, amplitude);
+                        break;
+                    case "shrink":
+                        ApplyShrink(clip, duration, amplitude);
+                        break;
+                    default:
+                        return new { success = false, message = $"Unknown preset '{preset}'. Valid: {string.Join(", ", ValidPresets)}" };
                 }
-            };
+
+                AssetDatabase.CreateAsset(clip, clipPath);
+                if (!EditorUtility.IsPersistent(clip))
+                    return new { success = false, message = $"Failed to create AnimationClip at '{clipPath}'." };
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    message = $"Created '{preset}' preset clip at '{clipPath}'" + (offset != Vector3.zero ? $" (offset: {offset})" : ""),
+                    data = new
+                    {
+                        path = clipPath,
+                        name = clip.name,
+                        preset,
+                        duration,
+                        amplitude,
+                        isLooping = loop,
+                        offset = new { x = offset.x, y = offset.y, z = offset.z },
+                        curveCount = AnimationUtility.GetCurveBindings(clip).Length
+                    }
+                };
+            }
+            finally
+            {
+                if (!EditorUtility.IsPersistent(clip))
+                    UnityEngine.Object.DestroyImmediate(clip);
+            }
         }
 
         private static void ApplyBounce(AnimationClip clip, float duration, float amplitude, Vector3 offset)

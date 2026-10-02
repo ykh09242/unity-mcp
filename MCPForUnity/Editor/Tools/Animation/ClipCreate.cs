@@ -25,6 +25,15 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (!clipPath.EndsWith(".anim", StringComparison.OrdinalIgnoreCase))
                 clipPath += ".anim";
 
+            float length = @params["length"]?.ToObject<float>() ?? 1f;
+            float frameRate = @params["frameRate"]?.ToObject<float>() ?? 60f;
+            bool loop = @params["loop"]?.ToObject<bool>() ?? false;
+
+            // Check any existing asset before preparing directories or allocating a clip.
+            var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(clipPath);
+            if (existing != null)
+                return new { success = false, message = $"An asset already exists at '{clipPath}'. Delete it first or use a different path." };
+
             // Ensure directory exists
             string dir = Path.GetDirectoryName(clipPath)?.Replace('\\', '/');
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
@@ -32,56 +41,58 @@ namespace MCPForUnity.Editor.Tools.Animation
                 CreateFoldersRecursive(dir);
             }
 
-            // Check if already exists
-            var existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
-            if (existing != null)
-                return new { success = false, message = $"AnimationClip already exists at '{clipPath}'. Delete it first or use a different path." };
-
             var clip = new AnimationClip();
-            string name = @params["name"]?.ToString();
-            clip.name = !string.IsNullOrEmpty(name)
-                ? name
-                : Path.GetFileNameWithoutExtension(clipPath);
-
-            float length = @params["length"]?.ToObject<float>() ?? 1f;
-            clip.frameRate = @params["frameRate"]?.ToObject<float>() ?? 60f;
-
-            bool loop = @params["loop"]?.ToObject<bool>() ?? false;
-            var settings = AnimationUtility.GetAnimationClipSettings(clip);
-            settings.loopTime = loop;
-            settings.stopTime = length;
-            AnimationUtility.SetAnimationClipSettings(clip, settings);
-
-            AssetDatabase.CreateAsset(clip, clipPath);
-
-            // Set m_WrapMode via SerializedObject — clip.wrapMode is a runtime property
-            // that doesn't serialize to m_WrapMode, so we set it directly for the legacy system
-            if (loop)
+            try
             {
-                var so = new SerializedObject(clip);
-                var wrapProp = so.FindProperty("m_WrapMode");
-                if (wrapProp != null)
+                string name = @params["name"]?.ToString();
+                clip.name = !string.IsNullOrEmpty(name)
+                    ? name
+                    : Path.GetFileNameWithoutExtension(clipPath);
+
+                clip.frameRate = frameRate;
+                var settings = AnimationUtility.GetAnimationClipSettings(clip);
+                settings.loopTime = loop;
+                settings.stopTime = length;
+                AnimationUtility.SetAnimationClipSettings(clip, settings);
+
+                AssetDatabase.CreateAsset(clip, clipPath);
+                if (!EditorUtility.IsPersistent(clip))
+                    return new { success = false, message = $"Failed to create AnimationClip at '{clipPath}'." };
+
+                // Set m_WrapMode via SerializedObject — clip.wrapMode is a runtime property
+                // that doesn't serialize to m_WrapMode, so we set it directly for the legacy system
+                if (loop)
                 {
-                    wrapProp.intValue = (int)WrapMode.Loop;
-                    so.ApplyModifiedProperties();
+                    using var so = new SerializedObject(clip);
+                    var wrapProp = so.FindProperty("m_WrapMode");
+                    if (wrapProp != null)
+                    {
+                        wrapProp.intValue = (int)WrapMode.Loop;
+                        so.ApplyModifiedProperties();
+                    }
                 }
+
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    message = $"Created AnimationClip at '{clipPath}'",
+                    data = new
+                    {
+                        path = clipPath,
+                        name = clip.name,
+                        length,
+                        frameRate = clip.frameRate,
+                        isLooping = loop
+                    }
+                };
             }
-
-            AssetDatabase.SaveAssets();
-
-            return new
+            finally
             {
-                success = true,
-                message = $"Created AnimationClip at '{clipPath}'",
-                data = new
-                {
-                    path = clipPath,
-                    name = clip.name,
-                    length,
-                    frameRate = clip.frameRate,
-                    isLooping = loop
-                }
-            };
+                if (!EditorUtility.IsPersistent(clip))
+                    UnityEngine.Object.DestroyImmediate(clip);
+            }
         }
 
         public static object GetInfo(JObject @params)
@@ -463,6 +474,10 @@ namespace MCPForUnity.Editor.Tools.Animation
                             kf.outWeight = obj["outWeight"].ToObject<float>();
 
                         keyframes.Add(kf);
+                    }
+                    else
+                    {
+                        return null;
                     }
                 }
 
