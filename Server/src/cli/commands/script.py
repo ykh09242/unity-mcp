@@ -12,6 +12,15 @@ from cli.utils.parsers import parse_json_list_or_exit
 from cli.utils.confirmation import confirm_destructive_action
 
 
+def _split_script_path(path: str) -> tuple[str, str]:
+    """Resolve a CLI script path to Unity's name/directory locator."""
+    parts = path.replace("\\", "/").rsplit("/", 1)
+    filename = parts[-1]
+    directory = parts[0] if len(parts) > 1 else "Assets"
+    name = filename[:-3] if filename.lower().endswith(".cs") else filename
+    return name, directory
+
+
 @click.group()
 def script():
     """Script operations - create, read, edit C# scripts."""
@@ -79,13 +88,13 @@ def create(name: str, path: str, script_type: str, namespace: Optional[str], con
 @click.option(
     "--start-line", "-s",
     default=None,
-    type=int,
+    type=click.IntRange(min=1),
     help="Starting line number (1-based)."
 )
 @click.option(
     "--line-count", "-n",
     default=None,
-    type=int,
+    type=click.IntRange(min=1),
     help="Number of lines to read."
 )
 @handle_unity_errors
@@ -99,10 +108,7 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     """
     config = get_config()
 
-    parts = path.rsplit("/", 1)
-    filename = parts[-1]
-    directory = parts[0] if len(parts) > 1 else "Assets"
-    name = filename[:-3] if filename.endswith(".cs") else filename
+    name, directory = _split_script_path(path)
 
     params: dict[str, Any] = {
         "action": "read",
@@ -110,17 +116,17 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
         "path": directory,
     }
 
-    if start_line:
-        params["startLine"] = start_line
-    if line_count:
-        params["lineCount"] = line_count
-
     result = run_command("manage_script", params, config)
     # For read, just output the content directly
     if result.get("success") and result.get("data"):
         data = result.get("data", {})
         if isinstance(data, dict) and "contents" in data:
-            click.echo(data["contents"])
+            contents = data["contents"]
+            if start_line is not None or line_count is not None:
+                start = (start_line or 1) - 1
+                end = start + line_count if line_count is not None else None
+                contents = "".join(contents.splitlines(keepends=True)[start:end])
+            click.echo(contents)
         else:
             click.echo(format_output(result, config.format))
     else:
@@ -146,10 +152,7 @@ def delete(path: str, force: bool):
 
     confirm_destructive_action("Delete", "script", path, force)
 
-    parts = path.rsplit("/", 1)
-    filename = parts[-1]
-    directory = parts[0] if len(parts) > 1 else "Assets"
-    name = filename[:-3] if filename.endswith(".cs") else filename
+    name, directory = _split_script_path(path)
 
     params: dict[str, Any] = {
         "action": "delete",
@@ -181,13 +184,16 @@ def edit(path: str, edits: str):
     config = get_config()
 
     edits_list = parse_json_list_or_exit(edits, "edits")
+    name, directory = _split_script_path(path)
 
     params: dict[str, Any] = {
-        "uri": path,
+        "action": "apply_text_edits",
+        "name": name,
+        "path": directory,
         "edits": edits_list,
     }
 
-    result = run_command("apply_text_edits", params, config)
+    result = run_command("manage_script", params, config)
     click.echo(format_output(result, config.format))
     if result.get("success"):
         print_success(f"Applied edits to: {path}")
@@ -211,12 +217,14 @@ def validate(path: str, level: str):
         unity-mcp script validate "Assets/Scripts/Player.cs" --level standard
     """
     config = get_config()
+    name, directory = _split_script_path(path)
 
     params: dict[str, Any] = {
-        "uri": path,
+        "action": "validate",
+        "name": name,
+        "path": directory,
         "level": level,
-        "include_diagnostics": True,
     }
 
-    result = run_command("validate_script", params, config)
+    result = run_command("manage_script", params, config)
     click.echo(format_output(result, config.format))
