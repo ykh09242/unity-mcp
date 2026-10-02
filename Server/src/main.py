@@ -10,6 +10,7 @@ from core.telemetry import record_milestone, record_telemetry, MilestoneType, Re
 from services.resources import register_all_resources
 from transport.plugin_registry import PluginRegistry
 from transport.plugin_hub import PluginHub
+from transport.models import SessionDetails, SessionList
 from services.custom_tool_service import (
     CustomToolService,
     resolve_project_id_for_unity_instance,
@@ -381,6 +382,22 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
     return None, instance_token
 
 
+def _select_local_session(
+    sessions: SessionList, instance_token: str,
+) -> tuple[str | None, SessionDetails | None]:
+    """Prefer a concrete hash over every project-name match in the catalog."""
+    instance_name, instance_hash = _normalize_instance_token(instance_token)
+    for session_id, details in sessions.sessions.items():
+        if details.hash == instance_hash:
+            return session_id, details
+    if instance_hash and "@" in instance_token:
+        return None, None
+    for session_id, details in sessions.sessions.items():
+        if details.project in (instance_name, instance_token):
+            return session_id, details
+    return None, None
+
+
 class UnityMCP(FastMCP):
     """Protect the control plane for both run() and ASGI embedding."""
 
@@ -478,15 +495,8 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 # Find target session
                 session_id = None
                 session_details = None
-                instance_name, instance_hash = _normalize_instance_token(
-                    unity_instance)
                 if unity_instance:
-                    # Try to match by hash or project name
-                    for sid, details in sessions.sessions.items():
-                        if details.hash == instance_hash or details.project in (instance_name, unity_instance):
-                            session_id = sid
-                            session_details = details
-                            break
+                    session_id, session_details = _select_local_session(sessions, unity_instance)
 
                 # If a specific unity_instance was requested but not found, return an error
                 # (Check done here so execute_custom_tool can also validate the instance)
@@ -597,9 +607,6 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
             """REST endpoint to list custom tools for the active Unity project."""
             try:
                 unity_instance = request.query_params.get("instance")
-                instance_name, instance_hash = _normalize_instance_token(
-                    unity_instance)
-
                 sessions = await PluginHub.get_sessions()
                 if not sessions.sessions:
                     return JSONResponse({
@@ -609,11 +616,7 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
 
                 session_details = None
                 if unity_instance:
-                    # Try to match by hash or project name
-                    for _, details in sessions.sessions.items():
-                        if details.hash == instance_hash or details.project in (instance_name, unity_instance):
-                            session_details = details
-                            break
+                    _, session_details = _select_local_session(sessions, unity_instance)
                     if not session_details:
                         return JSONResponse(
                             {
