@@ -179,7 +179,7 @@ namespace MCPForUnity.Editor.Tools
                     }
 
                     // Check for direct pixel data
-                    if (pixelsToken != null)
+                    if (pixelsToken != null && pixelsToken.Type != JTokenType.Null)
                     {
                         TextureOps.ApplyPixelData(texture, pixelsToken, width, height);
                     }
@@ -258,7 +258,10 @@ namespace MCPForUnity.Editor.Tools
             Texture2D editableTexture = null;
             try
             {
-                var setPixelsToken = @params["setPixels"] as JObject;
+                var rawSetPixels = @params["setPixels"];
+                if (rawSetPixels != null && rawSetPixels.Type != JTokenType.Null && rawSetPixels is not JObject)
+                    return new ErrorResponse("setPixels must be an object.");
+                var setPixelsToken = rawSetPixels as JObject;
                 bool hasImportSettings = HasImportSettingsParams(@params);
 
                 // Validate import settings before any writes
@@ -286,7 +289,8 @@ namespace MCPForUnity.Editor.Tools
                     string absolutePath = GetAbsolutePath(fullPath);
                     byte[] fileData = File.ReadAllBytes(absolutePath);
                     editableTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
-                    editableTexture.LoadImage(fileData);
+                    if (!editableTexture.LoadImage(fileData))
+                        return new ErrorResponse($"Failed to decode texture at path: {fullPath}");
 
                     int x = setPixelsToken["x"]?.ToObject<int>() ?? 0;
                     int y = setPixelsToken["y"]?.ToObject<int>() ?? 0;
@@ -307,11 +311,11 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else if (colorToken != null)
                     {
-                        Color32 color = TextureOps.ParseColor32(colorToken as JArray);
+                        Color32 color = TextureOps.ParseRequiredColor32(colorToken as JArray);
                         int startX = Mathf.Max(0, x);
                         int startY = Mathf.Max(0, y);
-                        int endX = Mathf.Min(x + w, editableTexture.width);
-                        int endY = Mathf.Min(y + h, editableTexture.height);
+                        int endX = (int)Math.Min((long)x + w, editableTexture.width);
+                        int endY = (int)Math.Min((long)y + h, editableTexture.height);
 
                         for (int py = startY; py < endY; py++)
                         {
