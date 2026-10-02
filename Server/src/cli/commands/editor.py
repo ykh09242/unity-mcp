@@ -7,7 +7,7 @@ from typing import Optional, Any
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
-from cli.utils.connection import run_command, run_list_custom_tools, handle_unity_errors, UnityConnectionError
+from cli.utils.connection import run_command, run_list_custom_tools, handle_unity_errors, UnityConnectionError, UnityCommandError
 from cli.utils.suggestions import suggest_matches, format_suggestions
 from cli.utils.parsers import parse_json_dict_or_exit
 
@@ -531,10 +531,13 @@ def custom_tool(tool_name: str, params: str):
 
     params_dict = parse_json_dict_or_exit(params, "params")
 
-    result = run_command("execute_custom_tool", {
-        "tool_name": tool_name,
-        "parameters": params_dict,
-    }, config)
+    try:
+        result = run_command("execute_custom_tool", {
+            "tool_name": tool_name,
+            "parameters": params_dict,
+        }, config)
+    except UnityCommandError as error:
+        result = error.response
     click.echo(format_output(result, config.format))
     if result.get("success"):
         print_success(f"Executed custom tool: {tool_name}")
@@ -557,3 +560,4 @@ def custom_tool(tool_name: str, params: str):
                     print_info(f'Example: unity-mcp editor custom-tool "{matches[0]}"')
             except UnityConnectionError:
                 pass
+        sys.exit(1)

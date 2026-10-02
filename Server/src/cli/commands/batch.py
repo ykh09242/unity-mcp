@@ -57,8 +57,8 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
         print_error("JSON file must contain an array of commands")
         sys.exit(1)
 
-    if len(commands) > 40:
-        print_error(f"Maximum 40 commands per batch, got {len(commands)}")
+    if len(commands) > 100:
+        print_error(f"Maximum 100 commands per batch, got {len(commands)}")
         sys.exit(1)
 
     params: dict[str, Any] = {"commands": commands}
@@ -67,14 +67,16 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
     if fail_fast:
         params["failFast"] = True
 
-    click.echo(f"Executing {len(commands)} commands...")
+    if config.format == "text":
+        click.echo(f"Executing {len(commands)} commands...")
 
     result = run_command("batch_execute", params, config)
     click.echo(format_output(result, config.format))
 
-    if isinstance(result, dict):
-        results = result.get("data", {}).get("results", [])
-        succeeded = sum(1 for r in results if r.get("success"))
+    if config.format == "text" and isinstance(result, dict):
+        data = result.get("data") or {}
+        results = data.get("results", [])
+        succeeded = sum(1 for r in results if r.get("callSucceeded", r.get("success", False)))
         failed = len(results) - succeeded
 
         if failed == 0:
@@ -105,8 +107,8 @@ def batch_inline(commands_json: str, parallel: bool, fail_fast: bool):
 
     commands = parse_json_list_or_exit(commands_json, "commands")
 
-    if len(commands) > 40:
-        print_error(f"Maximum 40 commands per batch, got {len(commands)}")
+    if len(commands) > 100:
+        print_error(f"Maximum 100 commands per batch, got {len(commands)}")
         sys.exit(1)
 
     params: dict[str, Any] = {"commands": commands}

@@ -9,6 +9,7 @@ import httpx
 
 from cli.utils.config import get_config, CLIConfig
 from core.local_auth import LOCAL_AUTH_HEADER, read_local_auth_token
+from models.unity_response import normalize_unity_response
 
 
 class UnityConnectionError(Exception):
@@ -16,14 +17,22 @@ class UnityConnectionError(Exception):
     pass
 
 
+class UnityCommandError(Exception):
+    """A completed Unity command failed, retaining its diagnostic payload."""
+
+    def __init__(self, response: Dict[str, Any]):
+        self.response = response
+        super().__init__(response.get("error") or response.get("message") or "Unity command failed")
+
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
 def handle_unity_errors(func: F) -> F:
-    """Decorator that handles UnityConnectionError consistently.
+    """Handle failed Unity commands and transport errors consistently.
 
-    Wraps a CLI command function and catches UnityConnectionError,
-    printing a formatted error message and exiting with code 1.
+    Preserve completed command responses in the requested output format;
+    print transport errors separately. Both exit with code 1.
 
     Usage:
         @scene.command("active")
@@ -33,12 +42,16 @@ def handle_unity_errors(func: F) -> F:
             result = run_command("manage_scene", {"action": "get_active"}, config)
             click.echo(format_output(result, config.format))
     """
-    from cli.utils.output import print_error
+    import click
+    from cli.utils.output import format_output, print_error
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
+        except UnityCommandError as e:
+            click.echo(format_output(e.response, get_config().format))
+            sys.exit(1)
         except UnityConnectionError as e:
             print_error(str(e))
             sys.exit(1)
@@ -108,7 +121,7 @@ async def send_command(
                 timeout=timeout or cfg.timeout,
             )
             response.raise_for_status()
-            return response.json()
+            return normalize_unity_response(response.json())
     except httpx.ConnectError as e:
         raise UnityConnectionError(
             f"Cannot connect to Unity MCP server at {cfg.host}:{cfg.port}. "
@@ -144,8 +157,15 @@ def run_command(
 
     Returns:
         Response dict from Unity
+
+    Raises:
+        UnityCommandError: If Unity explicitly reports a failed operation.
+        UnityConnectionError: If the request cannot complete.
     """
-    return asyncio.run(send_command(command_type, params, config, timeout))
+    response = asyncio.run(send_command(command_type, params, config, timeout))
+    if isinstance(response, dict) and response.get("success") is False:
+        raise UnityCommandError(response)
+    return response
 
 
 async def check_connection(config: Optional[CLIConfig] = None) -> bool:

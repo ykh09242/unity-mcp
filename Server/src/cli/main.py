@@ -15,6 +15,7 @@ from cli.utils.connection import (
     run_check_connection,
     run_list_instances,
     UnityConnectionError,
+    handle_unity_errors,
     warn_if_remote_host,
 )
 
@@ -187,6 +188,7 @@ def list_instances(ctx: Context):
 @click.argument("command_type")
 @click.argument("params", nargs=-1)
 @pass_context
+@handle_unity_errors
 def raw_command(ctx: Context, command_type: str, params: tuple):
     """Send a raw command to Unity.
 
