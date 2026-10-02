@@ -259,9 +259,20 @@ namespace MCPForUnity.Editor.Services
                 PersistedState snapshot;
                 lock (LockObj)
                 {
+                    // Bound completed results in memory as well as SessionState. An active
+                    // run must survive even when it is older than the completed history.
+                    if (Jobs.Count > MaxJobsToKeep)
+                    {
+                        var expiredIds = Jobs.Values
+                            .Where(j => j.Status != TestJobStatus.Running)
+                            .OrderBy(j => j.LastUpdateUnixMs)
+                            .Take(Jobs.Count - MaxJobsToKeep)
+                            .Select(j => j.JobId)
+                            .ToList();
+                        foreach (string id in expiredIds) Jobs.Remove(id);
+                    }
                     var jobs = Jobs.Values
                         .OrderByDescending(j => j.LastUpdateUnixMs)
-                        .Take(MaxJobsToKeep)
                         .Select(j => new PersistedJob
                         {
                             job_id = j.JobId,
@@ -539,7 +550,7 @@ namespace MCPForUnity.Editor.Services
             }
 
             object resultPayload = null;
-            if (job.Status == TestJobStatus.Succeeded && job.Result != null)
+            if (job.Status != TestJobStatus.Running && job.Result != null)
             {
                 resultPayload = job.Result.ToSerializable(job.Mode, includeDetails, includeFailedTests);
             }

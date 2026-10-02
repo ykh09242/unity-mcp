@@ -225,9 +225,20 @@ namespace MCPForUnity.Editor.Services
                 PersistedState snapshot;
                 lock (LockObj)
                 {
+                    // Keep every in-flight request; evict only completed history. This also
+                    // bounds the managed dictionary between domain reloads.
+                    if (Jobs.Count > MaxJobsToKeep)
+                    {
+                        var expiredIds = Jobs.Values
+                            .Where(j => j.Status != PackageJobStatus.Running)
+                            .OrderBy(j => j.LastUpdateUnixMs)
+                            .Take(Jobs.Count - MaxJobsToKeep)
+                            .Select(j => j.JobId)
+                            .ToList();
+                        foreach (string id in expiredIds) Jobs.Remove(id);
+                    }
                     var jobs = Jobs.Values
                         .OrderByDescending(j => j.LastUpdateUnixMs)
-                        .Take(MaxJobsToKeep)
                         .Select(j => new PersistedJob
                         {
                             job_id = j.JobId,
