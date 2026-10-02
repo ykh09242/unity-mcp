@@ -183,7 +183,14 @@ class ApiKeyService:
 
                     if response.status_code == 200:
                         data = response.json()
-                        if data.get("valid"):
+                        verdict = data.get("valid")
+                        if verdict is not True and verdict is not False:
+                            return ValidationResult(
+                                valid=False,
+                                error="Auth service error (invalid validation verdict)",
+                                cacheable=False,
+                            )
+                        if verdict is True:
                             return ValidationResult(
                                 valid=True,
                                 user_id=data.get("user_id"),
