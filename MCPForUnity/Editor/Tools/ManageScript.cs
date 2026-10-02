@@ -188,6 +188,7 @@ namespace MCPForUnity.Editor.Tools
                 case "delete":
                     return DeleteScript(fullPath, relativePath);
                 case "apply_text_edits":
+                case "preview_text_edits":
                     {
                         var textEdits = p.GetRaw("edits") as JArray;
                         string precondition = p.Get("precondition_sha256");
@@ -195,7 +196,8 @@ namespace MCPForUnity.Editor.Tools
                         var optionsObj = p.GetRaw("options") as JObject;
                         string refreshOpt = optionsObj?["refresh"]?.ToString()?.ToLowerInvariant();
                         string validateOpt = optionsObj?["validate"]?.ToString()?.ToLowerInvariant();
-                        return ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt);
+                        bool preview = action == "preview_text_edits" || optionsObj?.Value<bool?>("preview") == true;
+                        return ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt, preview);
                     }
                 case "validate":
                     {
@@ -232,10 +234,11 @@ namespace MCPForUnity.Editor.Tools
                                    : new ErrorResponse("Validation failed.", result);
                     }
                 case "edit":
+                case "preview_edit":
                     McpLog.Warn("manage_script.edit is deprecated; prefer apply_text_edits. Serving structured edit for backward compatibility.");
                     var structEdits = @params["edits"] as JArray;
                     var options = @params["options"] as JObject;
-                    return EditScript(fullPath, relativePath, name, structEdits, options);
+                    return EditScript(fullPath, relativePath, name, structEdits, options, action == "preview_edit");
                 case "get_sha":
                     {
                         try
@@ -471,6 +474,7 @@ namespace MCPForUnity.Editor.Tools
         /// Apply simple text edits specified by line/column ranges. Applies transactionally and validates result.
         /// </summary>
         private const int MaxEditPayloadBytes = 64 * 1024;
+        private const int MaxPreviewTextBytes = 1024 * 1024;
 
         private static object ApplyTextEdits(
             string fullPath,
@@ -479,7 +483,8 @@ namespace MCPForUnity.Editor.Tools
             JArray edits,
             string preconditionSha256,
             string refreshModeFromCaller = null,
-            string validateMode = null)
+            string validateMode = null,
+            bool preview = false)
         {
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
@@ -577,6 +582,7 @@ namespace MCPForUnity.Editor.Tools
             // No-op guard: if resulting text is identical, avoid writes and return explicit no-op
             if (string.Equals(working, original, StringComparison.Ordinal))
             {
+                if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, 0);
                 string noChangeSha = ComputeSha256(original);
                 return new SuccessResponse(
                     $"No-op: contents unchanged for '{relativePath}'.",
@@ -625,6 +631,7 @@ namespace MCPForUnity.Editor.Tools
             string newSha = ComputeSha256(working);
 
             // Atomic write and schedule refresh
+            if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, spans.Count);
             try
             {
                 var enc = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -685,6 +692,41 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Failed to write edits: {ex.Message}");
             }
+        }
+
+        private static object ScriptPreviewResponse(string fullPath, string relativePath, string original, string candidate, int preparedCount)
+        {
+            long textBytes = (long)System.Text.Encoding.UTF8.GetByteCount(original) + System.Text.Encoding.UTF8.GetByteCount(candidate);
+            if (textBytes > MaxPreviewTextBytes)
+                return new ErrorResponse("too_large", new { status = "too_large", preview = true, limitBytes = MaxPreviewTextBytes, hint = "Inline preparation is limited to 1 MiB of combined original and candidate UTF-8 text." });
+
+            bool noOp = string.Equals(original, candidate, StringComparison.Ordinal);
+            string originalSha = ComputeSha256(original);
+            string candidateSha = ComputeSha256(candidate);
+            return new SuccessResponse(noOp ? $"Preview no-op for '{relativePath}'." : $"Prepared {preparedCount} edit(s) for '{relativePath}' without writing.", new
+            {
+                path = relativePath,
+                uri = $"mcpforunity://path/{relativePath}",
+                absolute_path = Path.GetFullPath(fullPath),
+                project_root = Path.GetDirectoryName(Path.GetFullPath(Application.dataPath)),
+                preview = true,
+                no_op = noOp,
+                editsApplied = 0,
+                editsPrepared = noOp ? 0 : preparedCount,
+                scheduledRefresh = false,
+                complete = true,
+                truncated = false,
+                original_contents = original,
+                new_contents = candidate,
+                original_sha256 = originalSha,
+                sha256 = originalSha,
+                candidate_sha256 = candidateSha,
+                // Direct writes use UTF-8 without BOM, so these declared bytes share
+                // the logical candidate hash. Original hashes exclude any input BOM.
+                candidate_bytes_sha256 = candidateSha,
+                encoding = "utf-8",
+                bom = false
+            });
         }
 
         private static bool TryIndexFromLineCol(string text, int line1, int col1, out int index)
@@ -1114,7 +1156,8 @@ namespace MCPForUnity.Editor.Tools
             string relativePath,
             string name,
             JArray edits,
-            JObject options)
+            JObject options,
+            bool preview = false)
         {
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"Script not found at '{relativePath}'.");
@@ -1132,6 +1175,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 var replacements = new List<(int start, int length, string text)>();
+                preview = preview || options?.Value<bool?>("preview") == true;
                 var structuralInsertions = new HashSet<int>();
                 int appliedCount = 0;
 
@@ -1478,6 +1522,7 @@ namespace MCPForUnity.Editor.Tools
                 // No-op guard for structured edits: if text unchanged, return explicit no-op
                 if (string.Equals(working, original, StringComparison.Ordinal))
                 {
+                    if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, 0);
                     var sameSha = ComputeSha256(original);
                     return new SuccessResponse(
                         $"No-op: contents unchanged for '{relativePath}'.",
@@ -1517,6 +1562,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"Script validation warnings for {name}:\n" + string.Join("\n", errors));
 
                 // Atomic write with backup; schedule refresh
+                if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, appliedCount);
                 // Decide refresh behavior
                 string refreshMode = options?["refresh"]?.ToString()?.ToLowerInvariant();
                 bool immediate = refreshMode == "immediate" || refreshMode == "sync";
