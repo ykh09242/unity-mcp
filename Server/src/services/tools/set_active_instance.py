@@ -9,6 +9,7 @@ from transport.legacy.unity_connection import get_unity_connection_pool
 from transport.unity_instance_middleware import get_unity_instance_middleware
 from transport.plugin_hub import PluginHub
 from core.config import config
+from transport.protocol import is_sessionless
 
 
 @mcp_for_unity_tool(
@@ -28,6 +29,12 @@ async def set_active_instance(
         ctx: Context,
         instance: Annotated[str, "Target instance (Name@hash, hash prefix, or port number in stdio mode)"]
 ) -> dict[str, Any]:
+    if is_sessionless(ctx):
+        return {
+            "success": False,
+            "error": "This MCP protocol is sessionless, so active instance selection cannot persist. "
+                     "Pass unity_instance on each tool call, or use a client with a stateful MCP handshake.",
+        }
     transport = (config.transport_mode or "stdio").lower()
 
     # Port number shorthand (stdio only) — resolve to Name@hash via pool discovery

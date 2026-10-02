@@ -46,7 +46,7 @@ def _bounded_request(func):
         token = _request_budget.set((asyncio.Semaphore(2), time.monotonic() + REQUEST_TIMEOUT_SECONDS))
         try:
             return await asyncio.wait_for(func(*args, **kwargs), REQUEST_TIMEOUT_SECONDS)
-        except (TimeoutError, ConnectionError) as exc:
+        except (asyncio.TimeoutError, TimeoutError, ConnectionError) as exc:
             return {"success": False, "message": "Documentation request exceeded its time or resource budget.",
                     "error_type": type(exc).__name__}
         finally:

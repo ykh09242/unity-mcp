@@ -55,30 +55,16 @@ def _read_bounded_wait_env(name: str, default_s: float, max_s: float) -> float:
 
 
 # ---------- MCP session tracking ----------
-# FastMCP doesn't expose active MCP client sessions.  We patch
-# ``MiddlewareServerSession.__aenter__`` once to register every new
-# session so we can send ``tools/list_changed`` notifications later.
+# Track stable SDK connections, rather than SDK v2's per-request sessions.
 _active_mcp_sessions: weakref.WeakSet = weakref.WeakSet()
-_session_tracking_installed = False
 
 
-def _install_session_tracking() -> None:
-    """Patch *MiddlewareServerSession* to track active MCP client sessions."""
-    global _session_tracking_installed
-    if _session_tracking_installed:
-        return
-    _session_tracking_installed = True
+def _install_session_tracking(mcp: "FastMCP") -> None:
+    """Observe client connections through FastMCP's middleware lifecycle."""
+    from transport.session_tracking import SessionTrackingMiddleware
 
-    from fastmcp.server.low_level import MiddlewareServerSession
-
-    _original_aenter = MiddlewareServerSession.__aenter__
-
-    async def _tracking_aenter(self):  # type: ignore[override]
-        result = await _original_aenter(self)
-        _active_mcp_sessions.add(self)
-        return result
-
-    MiddlewareServerSession.__aenter__ = _tracking_aenter  # type: ignore[assignment]
+    if not any(isinstance(item, SessionTrackingMiddleware) for item in mcp.middleware):
+        mcp.add_middleware(SessionTrackingMiddleware(_active_mcp_sessions))
 
 
 class PluginDisconnectedError(RuntimeError):
@@ -162,7 +148,7 @@ class PluginHub(WebSocketEndpoint):
         cls._lock = asyncio.Lock()
         # Start tracking MCP client sessions for tool-change notifications
         if mcp is not None:
-            _install_session_tracking()
+            _install_session_tracking(mcp)
 
     @classmethod
     def is_configured(cls) -> bool:

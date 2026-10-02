@@ -5,13 +5,14 @@ This tool lets the AI assistant (or user) discover available tool groups
 and selectively enable / disable them for the current session. Activating
 a group makes its tools appear in tool listings; deactivating hides them.
 
-Works on all transports (stdio, HTTP, SSE) via FastMCP 3.x native
-per-session visibility.
+Session visibility requires a stateful MCP handshake. Modern sessionless
+requests can inspect groups and sync the server's Unity-provided defaults.
 """
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from transport.protocol import is_sessionless
 
 from services.registry import (
     mcp_for_unity_tool,
@@ -53,6 +54,11 @@ async def manage_tools(
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys()))
     ] = None,
 ) -> dict[str, Any]:
+    if action in ("activate", "deactivate", "reset") and is_sessionless(ctx):
+        return {
+            "error": "This MCP protocol is sessionless, so tool group visibility cannot persist. "
+                     "Use a client with a stateful MCP handshake, or sync the server defaults from Unity.",
+        }
     if action == "list_groups":
         return await _list_groups(ctx)
 
@@ -161,7 +167,7 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
     return {
         "groups": groups,
         "note": (
-            "Use activate/deactivate to toggle groups for this session. "
+            "Use activate/deactivate with a stateful MCP handshake to toggle groups for this session. "
             "Tools with group=None (server meta-tools) are always visible."
         ),
     }

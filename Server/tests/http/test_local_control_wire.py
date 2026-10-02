@@ -84,11 +84,18 @@ async def test_native_clients_work_and_browser_requests_fail_on_real_server(
     headers = {LOCAL_AUTH_HEADER: token}
 
     # Native MCP protocol initialization and session requests retain authentication.
-    async with Client(StreamableHttpTransport(f"{url}/mcp", headers=headers)) as mcp:
+    async with Client(StreamableHttpTransport(f"{url}/mcp", headers=headers), mode="legacy") as mcp:
         assert await mcp.ping()
         assert any(
             tool.name == "set_active_instance" for tool in await mcp.list_tools()
         )
+
+    # Modern clients discover and call the same authenticated tool surface.
+    async with Client(StreamableHttpTransport(f"{url}/mcp", headers=headers)) as mcp:
+        assert any(tool.name == "set_active_instance" for tool in await mcp.list_tools())
+        selection = await mcp.call_tool("set_active_instance", {"instance": "unused"})
+        assert selection.structured_content["success"] is False
+        assert "sessionless" in selection.structured_content["error"]
 
     websocket_url = f"ws://127.0.0.1:{port}/hub/plugin"
     with pytest.raises(InvalidStatus) as denied:

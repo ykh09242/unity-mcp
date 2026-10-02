@@ -29,22 +29,22 @@ classifiers = [
 keywords = ["mcp", "unity", "ai", "model context protocol", "gamedev", "unity3d", "automation", "llm", "agent"]
 requires-python = ">=3.10"
 dependencies = [
- "httpx>=0.27.2",
- "fastmcp>=3.0.2,<4",
- "mcp>=1.16.0",
- "pydantic>=2.12.5",
- "tomli>=2.3.0",
- "fastapi>=0.104.0",
- "uvicorn>=0.35.0",
- "click>=8.1.0",
- "regex>=2024.11.6",
+ "httpx>=0.28.1",
+ "fastmcp>=4.0.10,<5",
+ "mcp>=2.2.0,<3",
+ "pydantic>=2.13.5",
+ "tomli>=2.4.1",
+ "fastapi>=0.142.2",
+ "uvicorn>=0.54.0",
+ "click>=8.5.0",
+ "regex>=2026.9.29",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23",
-    "pytest-cov>=4.1.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [project.urls]
@@ -59,7 +59,7 @@ mcp-for-unity = "main:main"
 unity-mcp = "cli.main:main"
 
 [build-system]
-requires = ["setuptools>=64.0.0", "wheel"]
+requires = ["setuptools>=84.0.0", "wheel>=0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

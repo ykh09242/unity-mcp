@@ -198,3 +198,39 @@ def test_uninitialized_local_auth_fails_closed(monkeypatch):
     monkeypatch.setattr(config, "local_auth_token", None)
     response = TestClient(create_mcp_server(False).http_app()).get("/api/instances")
     assert response.status_code == 401
+
+
+def test_explicit_host_policy_preserves_local_authentication(monkeypatch):
+    from main import UnityMCP
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(config, "local_auth_token", "test-launch-token")
+    app = UnityMCP("host-policy-regression").http_app(
+        json_response=True,
+        stateless_http=True,
+        host_origin_protection=True,
+        allowed_hosts=["trusted.example"],
+        allowed_origins=["https://trusted.example"],
+    )
+    payload = {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-03-26", "capabilities": {},
+            "clientInfo": {"name": "host-policy-regression", "version": "1"},
+        },
+    }
+    headers = {
+        "X-Unity-MCP-Token": "test-launch-token",
+        "Accept": "application/json, text/event-stream",
+    }
+    with TestClient(app, base_url="http://trusted.example") as client:
+        response = client.post("/mcp", headers=headers, json=payload)
+        assert response.status_code == 200, response.text
+        assert "result" in response.json()
+        assert client.post("/mcp", json=payload).status_code == 401
+        assert client.post(
+            "/mcp", headers={**headers, "Host": "untrusted.example"}, json=payload,
+        ).status_code == 421
+        assert client.post(
+            "/mcp", headers={**headers, "Origin": "https://trusted.example"},
+            json=payload,
+        ).status_code == 403

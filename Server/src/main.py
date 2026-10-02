@@ -410,6 +410,10 @@ class UnityMCP(FastMCP):
         transport: Literal["http", "streamable-http", "sse"] = "http",
         event_store: "EventStore | None" = None,
         retry_interval: int | None = None,
+        host_origin_protection: bool | Literal["auto"] | None = None,
+        allowed_hosts: list[str] | None = None,
+        allowed_origins: list[str] | None = None,
+        session_idle_timeout: float | None = None,
     ) -> "StarletteWithLifespan":
         if config.http_remote_hosted and not config.http_behind_tls_proxy:
             raise ValueError(
@@ -424,6 +428,10 @@ class UnityMCP(FastMCP):
             transport=transport,
             event_store=event_store,
             retry_interval=retry_interval,
+            host_origin_protection=host_origin_protection,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+            session_idle_timeout=session_idle_timeout,
         )
         if not config.http_remote_hosted:
             app.add_middleware(

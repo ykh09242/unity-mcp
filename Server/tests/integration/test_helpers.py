@@ -29,6 +29,8 @@ class DummyContext:
         self._request_state = {}
 
         class _RequestContext:
+            protocol_version = "2025-03-26"
+
             def __init__(self, meta):
                 self.meta = meta
 

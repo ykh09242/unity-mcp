@@ -1,7 +1,7 @@
 """Real FastMCP requests keep per-call Unity routing isolated."""
 
 import asyncio  # noqa: ANYIO_OK -- synchronize actual concurrent MCP requests.
-from typing import TypedDict
+from typing_extensions import TypedDict
 from unittest.mock import AsyncMock
 
 import pytest
@@ -36,13 +36,14 @@ async def routing_server(monkeypatch: pytest.MonkeyPatch) -> FastMCP:
 
 
 @pytest.mark.asyncio
-async def test_inline_override_is_visible_to_handler_but_does_not_pin_next_request(routing_server: FastMCP) -> None:
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_inline_override_is_visible_to_handler_but_does_not_pin_next_request(routing_server: FastMCP, mode: str) -> None:
     # Given a real MCP session with two available plugins and no selected default.
     @routing_server.tool
     async def routing_probe(ctx: Context) -> RoutingSnapshot:
         return {"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id"), "user": await ctx.get_state("user_id")}
 
-    async with Client(routing_server) as client:
+    async with Client(routing_server, mode=mode) as client:
         first = await client.call_tool("routing_probe", {"unity_instance": "First@aaaa1111"})
         assert first.structured_content["instance"] == "First@aaaa1111"
         assert first.structured_content["session"] == "first"
@@ -54,7 +55,8 @@ async def test_inline_override_is_visible_to_handler_but_does_not_pin_next_reque
 
 
 @pytest.mark.asyncio
-async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(routing_server: FastMCP) -> None:
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(routing_server: FastMCP, mode: str) -> None:
     # Given concurrent requests in one real MCP session.
     both_entered = asyncio.Event()
     arrivals = 0
@@ -68,7 +70,7 @@ async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(ro
         await asyncio.wait_for(both_entered.wait(), timeout=2)
         return {"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id"), "user": await ctx.get_state("user_id")}
 
-    async with Client(routing_server) as client:
+    async with Client(routing_server, mode=mode) as client:
         # When both middleware writes finish before either handler reads state.
         first, second = await asyncio.gather(
             client.call_tool("concurrent_probe", {"unity_instance": "First@aaaa1111"}),
@@ -94,7 +96,7 @@ async def test_persisted_active_selection_survives_a_per_call_override(routing_s
     async def pinned_probe(ctx: Context) -> str | None:
         return await ctx.get_state("unity_instance")
 
-    async with Client(routing_server) as client:
+    async with Client(routing_server, mode="legacy") as client:
         await client.call_tool("pin_route")
         override = await client.call_tool("pinned_probe", {"unity_instance": "Second@bbbb2222"})
         assert override.data == "Second@bbbb2222"
@@ -117,7 +119,7 @@ async def test_old_persisted_transient_values_are_shadowed_per_request(routing_s
     async def migration_probe(ctx: Context) -> RoutingSnapshot:
         return {"instance": await ctx.get_state("unity_instance"), "session": await ctx.get_state("unity_session_id"), "user": await ctx.get_state("user_id")}
 
-    async with Client(routing_server) as client:
+    async with Client(routing_server, mode="legacy") as client:
         await client.call_tool("seed_old_state")
         # When the next unpinned request goes through the actual middleware.
         result = await client.call_tool("migration_probe")

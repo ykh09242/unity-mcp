@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Keep Python output unbuffered and disable pip's cache to shrink layers
 ENV PYTHONUNBUFFERED=1 \
@@ -22,7 +22,7 @@ COPY . /app
 
 WORKDIR /app/Server
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev
 
 EXPOSE 8080
 

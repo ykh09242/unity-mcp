@@ -63,7 +63,7 @@ class _DummyFastMCP:
 
 
 class _DummyContext:
-    pass
+    request_context = None
 
 
 class _DummyMiddleware:

@@ -9,6 +9,14 @@
 
 Model Context Protocol server for Unity Editor integration. Control Unity through natural language using AI assistants like Claude, Cursor, and more.
 
+The server uses FastMCP 4 and MCP SDK 2, supporting Python 3.10 and newer.
+Stateful MCP clients can use `set_active_instance` to select a Unity Editor for their session.
+Clients using the modern sessionless protocol must pass `unity_instance` on each tool call;
+`set_active_instance` returns an explanatory error instead of reporting a selection that cannot persist.
+When using FastMCP's Python client and session selection is needed, connect with `Client(..., mode="legacy")`.
+The `activate`, `deactivate`, and `reset` actions of `manage_tools` also require a stateful handshake.
+Sessionless clients can list groups and use `sync` to refresh server defaults from Unity's tool toggles.
+
 **Maintained by [Coplay](https://www.coplay.dev/?ref=unity-mcp)** - This project is not affiliated with Unity Technologies.
 
 💬 **Join our community:** [Discord Server](https://discord.gg/y4p8KfzrN4)
