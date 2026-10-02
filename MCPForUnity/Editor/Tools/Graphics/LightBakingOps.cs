@@ -25,7 +25,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             if (async_)
             {
-                Lightmapping.BakeAsync();
+                if (!Lightmapping.BakeAsync())
+                    return new ErrorResponse("Light bake could not be started (async). Check the Unity Console for details.");
                 return new PendingResponse(
                     "Light bake started (async). Use bake_status to check progress.",
                     pollIntervalSeconds: 2.0,
@@ -33,7 +34,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 );
             }
 
-            Lightmapping.Bake();
+            if (!Lightmapping.Bake())
+                return new ErrorResponse("Light bake failed (synchronous). Check the Unity Console for details.");
             return new
             {
                 success = true,
@@ -133,10 +135,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
         // === bake_get_settings ===
         internal static object GetSettings(JObject @params)
         {
-            var settings = EnsureLightingSettings();
+            if (!Lightmapping.TryGetLightingSettings(out var settings))
+                settings = Lightmapping.lightingSettingsDefaults;
             if (settings == null)
                 return new ErrorResponse(
-                    "Failed to create LightingSettings. Open Window > Rendering > Lighting manually.");
+                    "LightingSettings are unavailable. Open Window > Rendering > Lighting manually.");
 
             var data = new Dictionary<string, object>
             {

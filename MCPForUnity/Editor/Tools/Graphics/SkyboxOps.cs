@@ -236,19 +236,20 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             var p = new ToolParams(@params);
 
-            var enabledToken = p.GetRaw("fog_enabled") ?? p.GetRaw("enabled");
-            if (enabledToken != null && enabledToken.Type != JTokenType.Null)
-                RenderSettings.fog = ParamCoercion.CoerceBool(enabledToken, RenderSettings.fog);
-
             string modeStr = p.Get("fog_mode") ?? p.Get("mode");
+            var fogMode = RenderSettings.fogMode;
             if (!string.IsNullOrEmpty(modeStr))
             {
-                if (Enum.TryParse<FogMode>(modeStr, true, out var fogMode))
-                    RenderSettings.fogMode = fogMode;
-                else
+                if (!Enum.TryParse(modeStr, true, out fogMode) || !Enum.IsDefined(typeof(FogMode), fogMode))
                     return new ErrorResponse(
                         $"Invalid fog mode '{modeStr}'. Valid: Linear, Exponential, ExponentialSquared.");
             }
+
+            var enabledToken = p.GetRaw("fog_enabled") ?? p.GetRaw("enabled");
+            if (enabledToken != null && enabledToken.Type != JTokenType.Null)
+                RenderSettings.fog = ParamCoercion.CoerceBool(enabledToken, RenderSettings.fog);
+            if (!string.IsNullOrEmpty(modeStr))
+                RenderSettings.fogMode = fogMode;
 
             var fogColor = ParseColorToken(p.GetRaw("fog_color") ?? p.GetRaw("color"));
             if (fogColor.HasValue)
@@ -291,6 +292,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
         {
             var p = new ToolParams(@params);
 
+            string modeStr = p.Get("reflection_mode") ?? p.Get("mode");
+            var mode = RenderSettings.defaultReflectionMode;
+            if (!string.IsNullOrEmpty(modeStr) &&
+                (!Enum.TryParse(modeStr, true, out mode) || !Enum.IsDefined(typeof(DefaultReflectionMode), mode)))
+                return new ErrorResponse(
+                    $"Invalid reflection mode '{modeStr}'. Valid: Skybox, Custom.");
+
             var intensity = p.GetFloat("intensity");
             if (intensity.HasValue)
                 RenderSettings.reflectionIntensity = intensity.Value;
@@ -299,14 +307,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (bounces.HasValue)
                 RenderSettings.reflectionBounces = bounces.Value;
 
-            string modeStr = p.Get("reflection_mode") ?? p.Get("mode");
             if (!string.IsNullOrEmpty(modeStr))
             {
-                if (Enum.TryParse<DefaultReflectionMode>(modeStr, true, out var mode))
-                    RenderSettings.defaultReflectionMode = mode;
-                else
-                    return new ErrorResponse(
-                        $"Invalid reflection mode '{modeStr}'. Valid: Skybox, Custom.");
+                RenderSettings.defaultReflectionMode = mode;
             }
 
             var resolution = p.GetInt("resolution");

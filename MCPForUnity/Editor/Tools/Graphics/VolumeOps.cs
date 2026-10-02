@@ -26,11 +26,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
             string profilePath = p.Get("profile_path");
             if (!string.IsNullOrEmpty(profilePath))
             {
-                if (!profilePath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) &&
-                    !profilePath.StartsWith("Assets\\", StringComparison.OrdinalIgnoreCase))
-                    profilePath = "Assets/" + profilePath;
                 if (!profilePath.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
                     profilePath += ".asset";
+                try { profilePath = AssetPathUtility.GetContainedAssetPath(profilePath); }
+                catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+                {
+                    return new ErrorResponse($"Invalid profile_path: {ex.Message}");
+                }
             }
 
             var go = new GameObject(name);
@@ -54,7 +56,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     profile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
                     // Ensure directory exists
-                    var dir = System.IO.Path.GetDirectoryName(profilePath);
+                    var dir = System.IO.Path.GetDirectoryName(AssetPathUtility.GetFullAssetPath(profilePath));
                     if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
                         System.IO.Directory.CreateDirectory(dir);
                     AssetDatabase.CreateAsset((UnityEngine.Object)profile, profilePath);
@@ -413,13 +415,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' parameter is required (e.g., 'Settings/MyProfile' or 'Assets/Settings/MyProfile.asset').");
 
-            // Auto-prepend Assets/ if missing (paths are relative to Assets/ by convention)
-            if (!path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) &&
-                !path.StartsWith("Assets\\", StringComparison.OrdinalIgnoreCase))
-                path = "Assets/" + path;
-
             if (!path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
                 path += ".asset";
+            try { path = AssetPathUtility.GetContainedAssetPath(path); }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                return new ErrorResponse($"Invalid path: {ex.Message}");
+            }
 
             // Ensure directory exists
             var dir = System.IO.Path.GetDirectoryName(path);
