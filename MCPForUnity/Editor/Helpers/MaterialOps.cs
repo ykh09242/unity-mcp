@@ -52,14 +52,7 @@ namespace MCPForUnity.Editor.Helpers
                     try
                     {
                         Color newColor = ParseColor(colArr, serializer);
-                        if (mat.HasProperty(propName))
-                        {
-                            if (mat.GetColor(propName) != newColor)
-                            {
-                                mat.SetColor(propName, newColor);
-                                modified = true;
-                            }
-                        }
+                        modified |= ApplyStructuredColor(mat, propName, newColor, colArr, serializer);
                     }
                     catch (Exception ex)
                     {
@@ -73,11 +66,7 @@ namespace MCPForUnity.Editor.Helpers
                 try
                 {
                     Color newColor = ParseColor(colorArr, serializer);
-                    if (mat.HasProperty(propName) && mat.GetColor(propName) != newColor)
-                    {
-                        mat.SetColor(propName, newColor);
-                        modified = true;
-                    }
+                    modified |= ApplyStructuredColor(mat, propName, newColor, colorArr, serializer);
                 }
                 catch (Exception ex)
                 {
@@ -96,10 +85,15 @@ namespace MCPForUnity.Editor.Helpers
                     try
                     {
                         float newVal = floatProps["value"].ToObject<float>();
-                        if (mat.HasProperty(propName) && mat.GetFloat(propName) != newVal)
+                        int propertyIndex = mat.shader.FindPropertyIndex(propName);
+                        if (mat.HasProperty(propName) && propertyIndex >= 0)
                         {
-                            mat.SetFloat(propName, newVal);
-                            modified = true;
+                            var type = mat.shader.GetPropertyType(propertyIndex);
+                            bool changed = type == UnityEngine.Rendering.ShaderPropertyType.Int
+                                ? mat.GetInteger(propName) != floatProps["value"].ToObject<decimal>()
+                                : (type == UnityEngine.Rendering.ShaderPropertyType.Float || type == UnityEngine.Rendering.ShaderPropertyType.Range) && mat.GetFloat(propName) != newVal;
+                            if (changed)
+                                modified |= TrySetShaderProperty(mat, propName, floatProps["value"], serializer);
                         }
                     }
                     catch (Exception ex)
@@ -126,7 +120,9 @@ namespace MCPForUnity.Editor.Helpers
                         string candidateName = string.IsNullOrEmpty(rawName) ? "_BaseMap" : rawName;
                         string targetProp = ResolvePropertyName(mat, candidateName);
 
-                        if (!string.IsNullOrEmpty(targetProp) && mat.HasProperty(targetProp))
+                        int propertyIndex = mat.shader.FindPropertyIndex(targetProp);
+                        if (!string.IsNullOrEmpty(targetProp) && mat.HasProperty(targetProp) && propertyIndex >= 0 &&
+                            mat.shader.GetPropertyType(propertyIndex) == UnityEngine.Rendering.ShaderPropertyType.Texture)
                         {
                             if (mat.GetTexture(targetProp) != newTex)
                             {
@@ -185,6 +181,23 @@ namespace MCPForUnity.Editor.Helpers
             return name;
         }
 
+        private static bool ApplyStructuredColor(Material material, string propertyName, Color color, JArray value, JsonSerializer serializer)
+        {
+            int index = material.shader.FindPropertyIndex(propertyName);
+            if (index < 0 || !material.HasProperty(propertyName)) return false;
+            var type = material.shader.GetPropertyType(index);
+            if (type == UnityEngine.Rendering.ShaderPropertyType.Color)
+                return material.GetColor(propertyName) != color && TrySetShaderProperty(material, propertyName, value, serializer);
+            if (type == UnityEngine.Rendering.ShaderPropertyType.Vector)
+            {
+                // Structured color retains its alpha default even when targeting a vector property.
+                var vector = new Vector4(color.r, color.g, color.b, color.a);
+                return material.GetVector(propertyName) != vector && TrySetShaderProperty(material, propertyName,
+                    new JArray(vector.x, vector.y, vector.z, vector.w), serializer);
+            }
+            return false;
+        }
+
         /// <summary>
         /// Auto-detects the main color property name for a material's shader.
         /// </summary>
@@ -208,137 +221,112 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static bool TrySetShaderProperty(Material material, string propertyName, JToken value, JsonSerializer serializer)
         {
-            if (material == null || string.IsNullOrEmpty(propertyName) || value == null)
+            if (!TryPrepareShaderProperty(material, propertyName, value, serializer, out Action apply))
+                return false;
+            try
+            {
+                apply();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"[MaterialOps] Failed to set property '{propertyName}': {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Resolves and converts one declared shader property without mutating the material.
+        /// The returned setter retains the caller's Undo/dirty ordering.
+        /// </summary>
+        public static bool TryPrepareShaderProperty(Material material, string propertyName, JToken value, JsonSerializer serializer, out Action apply)
+        {
+            apply = null;
+            if (material == null || material.shader == null || string.IsNullOrEmpty(propertyName) || value == null)
+                return false;
+            int index = material.shader.FindPropertyIndex(propertyName);
+            if (index < 0 || !material.HasProperty(propertyName))
                 return false;
 
-            // Handle stringified JSON
-            if (value.Type == JTokenType.String)
+            try
             {
-                string s = value.ToString();
-                if (s.TrimStart().StartsWith("[") || s.TrimStart().StartsWith("{"))
+                if (value.Type == JTokenType.String)
                 {
-                    try
-                    {
-                        JToken parsed = JToken.Parse(s);
-                        return TrySetShaderProperty(material, propertyName, parsed, serializer);
-                    }
-                    catch { }
+                    string text = value.ToString();
+                    if (text.TrimStart().StartsWith("[") || text.TrimStart().StartsWith("{"))
+                        value = JToken.Parse(text);
                 }
-            }
 
-            // Use the serializer to convert the JToken value first
-            if (value is JArray jArray)
-            {
-                if (jArray.Count == 4)
+                switch (material.shader.GetPropertyType(index))
                 {
-                    if (material.HasProperty(propertyName))
-                    {
-                        try { material.SetColor(propertyName, ParseColor(value, serializer)); return true; }
-                        catch (Exception ex)
+                    case UnityEngine.Rendering.ShaderPropertyType.Color:
+                        // Retain the accepted two-component shorthand's original Vector2 setter semantics.
+                        if (value is JArray colorArray && colorArray.Count == 2)
                         {
-                            // Log at Debug level since we'll try other conversions
-                            McpLog.Info($"[MaterialOps] SetColor attempt for '{propertyName}' failed: {ex.Message}");
-                        }
-
-                        try { Vector4 vec = value.ToObject<Vector4>(serializer); material.SetVector(propertyName, vec); return true; }
-                        catch (Exception ex)
-                        {
-                            McpLog.Info($"[MaterialOps] SetVector (Vec4) attempt for '{propertyName}' failed: {ex.Message}");
-                        }
-                    }
-                }
-                else if (jArray.Count == 3)
-                {
-                    if (material.HasProperty(propertyName))
-                    {
-                        try { material.SetColor(propertyName, ParseColor(value, serializer)); return true; }
-                        catch (Exception ex)
-                        {
-                            McpLog.Info($"[MaterialOps] SetColor (Vec3) attempt for '{propertyName}' failed: {ex.Message}");
-                        }
-                    }
-                }
-                else if (jArray.Count == 2)
-                {
-                    if (material.HasProperty(propertyName))
-                    {
-                        try { Vector2 vec = value.ToObject<Vector2>(serializer); material.SetVector(propertyName, vec); return true; }
-                        catch (Exception ex)
-                        {
-                            McpLog.Info($"[MaterialOps] SetVector (Vec2) attempt for '{propertyName}' failed: {ex.Message}");
-                        }
-                    }
-                }
-            }
-            else if (value.Type == JTokenType.Float || value.Type == JTokenType.Integer)
-            {
-                if (!material.HasProperty(propertyName))
-                    return false;
-
-                try { material.SetFloat(propertyName, value.ToObject<float>(serializer)); return true; }
-                catch (Exception ex)
-                {
-                    McpLog.Info($"[MaterialOps] SetFloat attempt for '{propertyName}' failed: {ex.Message}");
-                }
-            }
-            else if (value.Type == JTokenType.Boolean)
-            {
-                if (!material.HasProperty(propertyName))
-                    return false;
-
-                try { material.SetFloat(propertyName, value.ToObject<bool>(serializer) ? 1f : 0f); return true; }
-                catch (Exception ex)
-                {
-                    McpLog.Info($"[MaterialOps] SetFloat (bool) attempt for '{propertyName}' failed: {ex.Message}");
-                }
-            }
-            else if (value.Type == JTokenType.String)
-            {
-                try
-                {
-                    // Try loading as asset path first (most common case for strings in this context)
-                    string path = value.ToString();
-                    if (!string.IsNullOrEmpty(path) && path.Contains("/")) // Heuristic: paths usually have slashes
-                    {
-                        // We need to handle texture assignment here. 
-                        // Since we don't have easy access to AssetDatabase here directly without using UnityEditor namespace (which is imported),
-                        // we can try to load it.
-                        var sanitizedPath = AssetPathUtility.SanitizeAssetPath(path);
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(sanitizedPath);
-                        if (tex != null && material.HasProperty(propertyName))
-                        {
-                            material.SetTexture(propertyName, tex);
+                            Vector2 pair = colorArray.ToObject<Vector2>(serializer);
+                            apply = () => material.SetVector(propertyName, pair);
                             return true;
                         }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    McpLog.Warn($"SetTexture (string path) for '{propertyName}' failed: {ex.Message}");
-                }
-            }
-
-            if (value.Type == JTokenType.Object)
-            {
-                try
-                {
-                    Texture texture = value.ToObject<Texture>(serializer);
-                    if (texture != null && material.HasProperty(propertyName))
-                    {
-                        material.SetTexture(propertyName, texture);
+                        if (value is not JArray && value is not JObject) return false;
+                        Color color = ParseColor(value, serializer);
+                        apply = () => material.SetColor(propertyName, color);
                         return true;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    McpLog.Warn($"SetTexture (object) for '{propertyName}' failed: {ex.Message}");
+                    case UnityEngine.Rendering.ShaderPropertyType.Vector:
+                        Vector4 vector;
+                        if (value is JArray array)
+                        {
+                            if (array.Count == 2) vector = array.ToObject<Vector2>(serializer);
+                            else if (array.Count == 3) vector = array.ToObject<Vector3>(serializer);
+                            else if (array.Count == 4) vector = array.ToObject<Vector4>(serializer);
+                            else return false;
+                        }
+                        else if (value is JObject obj)
+                        {
+                            if (obj["w"] != null) vector = obj.ToObject<Vector4>(serializer);
+                            else if (obj["z"] != null) vector = obj.ToObject<Vector3>(serializer);
+                            else vector = obj.ToObject<Vector2>(serializer);
+                        }
+                        else return false;
+                        apply = () => material.SetVector(propertyName, vector);
+                        return true;
+                    case UnityEngine.Rendering.ShaderPropertyType.Float:
+                    case UnityEngine.Rendering.ShaderPropertyType.Range:
+                        if (value.Type != JTokenType.Float && value.Type != JTokenType.Integer && value.Type != JTokenType.Boolean)
+                            return false;
+                        float number = value.Type == JTokenType.Boolean ? (value.ToObject<bool>(serializer) ? 1f : 0f) : value.ToObject<float>(serializer);
+                        apply = () => material.SetFloat(propertyName, number);
+                        return true;
+                    case UnityEngine.Rendering.ShaderPropertyType.Int:
+                        if (value.Type != JTokenType.Float && value.Type != JTokenType.Integer && value.Type != JTokenType.Boolean)
+                            return false;
+                        decimal integer = value.Type == JTokenType.Boolean ? (value.ToObject<bool>(serializer) ? 1m : 0m) : value.ToObject<decimal>(serializer);
+                        if (integer != decimal.Truncate(integer) || integer < int.MinValue || integer > int.MaxValue)
+                            return false;
+                        int count = (int)integer;
+                        apply = () => material.SetInteger(propertyName, count);
+                        return true;
+                    case UnityEngine.Rendering.ShaderPropertyType.Texture:
+                        Texture texture = null;
+                        if (value.Type == JTokenType.String)
+                        {
+                            string path = value.ToString();
+                            if (!string.IsNullOrEmpty(path) && path.Contains("/"))
+                                texture = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.SanitizeAssetPath(path));
+                        }
+                        else if (value is JObject)
+                            texture = value.ToObject<Texture>(serializer);
+                        if (texture == null) return false;
+                        apply = () => material.SetTexture(propertyName, texture);
+                        return true;
+                    default:
+                        return false;
                 }
             }
-
-            McpLog.Warn(
-                $"[MaterialOps] Unsupported or failed conversion for material property '{propertyName}' from value: {value.ToString(Formatting.None)}"
-            );
-            return false;
+            catch (Exception ex)
+            {
+                McpLog.Warn($"[MaterialOps] Failed to convert property '{propertyName}': {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
