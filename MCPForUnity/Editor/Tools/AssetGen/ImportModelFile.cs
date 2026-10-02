@@ -38,6 +38,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 if (Array.IndexOf(SupportedExt, ext) < 0)
                     return new ErrorResponse(
                         $"Unsupported model extension '{ext}'. Supported: .fbx, .obj, .glb, .gltf, .zip.");
+                if ((ext == ".glb" || ext == ".gltf") && !ModelImportPipeline.IsGltfastAvailable())
+                    return new ErrorResponse("GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
 
                 string baseName = p.Get("name");
                 if (string.IsNullOrWhiteSpace(baseName))

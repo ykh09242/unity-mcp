@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Reflection;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Tools.AssetGen;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -62,6 +64,36 @@ namespace MCPForUnityTests.Editor.AssetGen
             JObject resp = Call(new JObject { ["sourcePath"] = txt });
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("unsupported", ((string)resp["error"]).ToLowerInvariant());
+        }
+
+        [TestCase(".glb")]
+        [TestCase(".gltf")]
+        public void MissingGltfast_DoesNotStageDirectModel(string extension)
+        {
+            var availability = typeof(ModelImportPipeline).GetField("_gltfastAvailable",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(availability);
+            object previous = availability.GetValue(null);
+            string outputFolder = TestFolder + "/missing_gltf_" + Guid.NewGuid().ToString("N");
+            string absoluteOutput = Path.Combine(Path.GetDirectoryName(Application.dataPath), outputFolder);
+            string source = Path.Combine(_tempDir, "source" + extension);
+            File.WriteAllBytes(source, new byte[] { 0 });
+            try
+            {
+                availability.SetValue(null, false);
+                JObject response = Call(new JObject
+                {
+                    ["sourcePath"] = source, ["outputFolder"] = outputFolder
+                });
+                Assert.AreEqual(false, (bool)response["success"]);
+                StringAssert.Contains("glTFast", (string)response["error"]);
+                Assert.IsFalse(Directory.Exists(absoluteOutput), "rejected input must not create a staging folder");
+                Assert.IsTrue(File.Exists(source), "source must remain intact");
+            }
+            finally
+            {
+                availability.SetValue(null, previous);
+            }
         }
 
         [Test]
