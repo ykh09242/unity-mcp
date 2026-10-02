@@ -10,7 +10,7 @@ namespace MCPForUnity.Editor.Helpers
 {
     internal static class McpLogRecord
     {
-        private static readonly string LogDir = Path.Combine(Application.dataPath, "UnityMCP", "Log");
+        private static readonly string LogDir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Library", "MCPForUnity", "Logs"));
         private static readonly string LogPath = Path.Combine(LogDir, "mcp.log");
         private static readonly string ErrorLogPath = Path.Combine(LogDir, "mcpError.log");
         private const long MaxLogSizeBytes = 1024 * 1024; // 1 MB
@@ -49,15 +49,8 @@ namespace MCPForUnity.Editor.Helpers
                     ["ms"] = durationMs
                 };
 
-                var action = parameters?.Value<string>("action");
-                if (!string.IsNullOrEmpty(action))
-                    entry["action"] = action;
-
-                if (parameters != null)
-                    entry["params"] = parameters;
-
-                if (error != null)
-                    entry["error"] = error;
+                // Parameters (including action) and error text can contain credentials, scripts,
+                // signed URLs or other project data. Record execution metadata only.
 
                 var line = entry.ToString(Formatting.None);
 

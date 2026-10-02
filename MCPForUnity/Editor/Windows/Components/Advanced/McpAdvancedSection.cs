@@ -108,7 +108,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             }
             if (logRecordToggle != null)
             {
-                logRecordToggle.tooltip = "Log every MCP tool execution (tool, action, status, duration) to Assets/UnityMCP/Log/mcp.log.";
+                logRecordToggle.tooltip = "Log execution metadata (tool, status, duration) to Library/MCPForUnity/Logs/mcp.log. Parameters and error text are excluded.";
                 var logRecordLabel = logRecordToggle?.parent?.Q<Label>();
                 if (logRecordLabel != null)
                     logRecordLabel.tooltip = logRecordToggle.tooltip;

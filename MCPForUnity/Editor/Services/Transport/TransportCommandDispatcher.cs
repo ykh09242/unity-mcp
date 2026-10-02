@@ -362,13 +362,14 @@ namespace MCPForUnity.Editor.Services.Transport
                 }
 
                 var logType = resourceMeta != null ? "resource" : toolMeta != null ? "tool" : "unknown";
+                var logName = resourceMeta?.Name ?? toolMeta?.Name ?? "unknown";
                 var sw = McpLogRecord.IsEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
                 var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource);
 
                 if (result == null)
                 {
                     // Async command – cleanup after completion on next editor frame to preserve order.
-                    var capturedType = command.type;
+                    var capturedType = logName;
                     var capturedParams = parameters;
                     var capturedLogType = logType;
                     pending.CompletionSource.Task.ContinueWith(t =>
@@ -410,7 +411,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     syncLogStatus = "ERROR";
                     syncLogError = errResp.Error;
                 }
-                McpLogRecord.Log(command.type, parameters, logType, syncLogStatus, sw?.ElapsedMilliseconds ?? 0, syncLogError);
+                McpLogRecord.Log(logName, parameters, logType, syncLogStatus, sw?.ElapsedMilliseconds ?? 0, syncLogError);
 
                 var response = new { status = "success", result };
                 pending.TrySetResult(JsonConvert.SerializeObject(response));
