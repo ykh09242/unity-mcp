@@ -1,3 +1,5 @@
+import json
+
 import click
 
 from cli.utils.connection import handle_unity_errors, run_command, get_config
@@ -60,7 +62,15 @@ def get_settings(dimension):
 def set_settings(dimension, key, value):
     """Set a physics setting (key value)."""
     config = get_config()
-    coerced = _coerce_cli_value(value)
+    if key.lower() == "gravity":
+        try:
+            coerced = json.loads(value)
+        except ValueError:
+            raise click.BadParameter("Gravity must be a JSON array, such as [0, -9.81, 0].", param_hint="value") from None
+        if not isinstance(coerced, list):
+            raise click.BadParameter("Gravity must be a JSON array, such as [0, -9.81, 0].", param_hint="value")
+    else:
+        coerced = _coerce_cli_value(value)
     result = run_command(
         "manage_physics",
         {"action": "set_settings", "dimension": dimension, "settings": {key: coerced}},
