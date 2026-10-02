@@ -148,27 +148,25 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             // 8. Create the prefab
             try
             {
-                GameObject result = CreatePrefabAsset(sourceObject, finalPath, replaceExisting);
-
-                if (result == null)
+                if (!CreatePrefabAsset(sourceObject, finalPath, replaceExisting))
                 {
                     return new ErrorResponse($"Failed to create prefab asset at '{finalPath}'.");
                 }
 
                 // 9. Select the newly created instance
-                Selection.activeGameObject = result;
+                Selection.activeGameObject = sourceObject;
 
                 return new SuccessResponse(
                     $"Prefab created at '{finalPath}' and instance linked.",
                     new
                     {
                         prefabPath = finalPath,
-                        instanceId = result.GetInstanceIDCompat(),
-                        instanceName = result.name,
+                        instanceId = sourceObject.GetInstanceIDCompat(),
+                        instanceName = sourceObject.name,
                         wasUnlinked = unlinkIfInstance && objectValidation.shouldUnlink,
                         wasReplaced = replaceExisting && fileExistedAtPath,
-                        componentCount = result.GetComponents<Component>().Length,
-                        childCount = result.transform.childCount,
+                        componentCount = sourceObject.GetComponents<Component>().Length,
+                        childCount = sourceObject.transform.childCount,
                         materialsPersisted = persistResult.count
                     }
                 );
@@ -264,25 +262,26 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Creates a prefab asset from a GameObject.
         /// </summary>
-        private static GameObject CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting)
+        private static bool CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting)
         {
             path = AssetPathUtility.GetContainedAssetPath(path);
-            GameObject result = PrefabUtility.SaveAsPrefabAssetAndConnect(
+            PrefabUtility.SaveAsPrefabAssetAndConnect(
                 sourceObject,
                 path,
-                InteractionMode.AutomatedAction
+                InteractionMode.AutomatedAction,
+                out bool success
             );
 
             string action = replaceExisting ? "Replaced existing" : "Created new";
             McpLog.Info($"[ManagePrefabs] {action} prefab at '{path}'.");
 
-            if (result != null)
+            if (success)
             {
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
             }
 
-            return result;
+            return success;
         }
 
         /// <summary>
@@ -1385,6 +1384,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                 string prefabPath = prefabStage.assetPath;
                 StageUtility.GoToMainStage();
+                if (PrefabStageUtility.GetCurrentPrefabStage() != null)
+                {
+                    return new ErrorResponse($"Failed to exit prefab stage for '{prefabPath}'. The stage switch was cancelled or unsuccessful.");
+                }
                 return new SuccessResponse($"Exited prefab stage for '{prefabPath}'.", new { prefabPath });
             }
             catch (Exception e)
