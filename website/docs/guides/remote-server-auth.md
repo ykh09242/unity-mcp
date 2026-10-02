@@ -128,7 +128,7 @@ Enabling `--http-remote-hosted` changes several server behaviours compared to th
 
 ### Authentication Enforcement
 
-All MCP tool and resource calls require a valid API key. The `X-API-Key` header must be present on every HTTP request to the `/mcp` endpoint. If the key is missing or invalid, the middleware raises a `RuntimeError` that surfaces as an MCP error response.
+Every MCP HTTP request requires exactly one valid `X-API-Key` header, including initialization, resource and template catalogs, tool listings, calls, and session operations. Missing, duplicate, invalid, or unverifiable credentials receive HTTP `401` before body parsing or session creation. A session ID or query parameter cannot substitute for the header. Only `GET /health` and `GET /api/auth/login-url` are public.
 
 ### WebSocket Auth Gate
 
@@ -136,10 +136,11 @@ Unity plugins connecting via WebSocket (`/hub/plugin`) are validated during the 
 
 | Scenario | WebSocket Close Code | Reason |
 | -------- | -------------------- | ------ |
-| No API key header | `4401` | API key required |
-| Invalid API key | `4403` | Invalid API key |
-| Auth service unavailable | `1013` | Try again later |
+| Missing, duplicate, or invalid API key | `1008` before acceptance | API key authentication required |
+| Auth service unavailable | `1008` before acceptance | API key authentication required |
 | Valid API key | Connection accepted | user_id stored in connection state |
+
+The ASGI server may report a pre-acceptance rejection as HTTP `403` during the WebSocket upgrade.
 
 ### Session Isolation
 
@@ -227,11 +228,8 @@ Transient failures (5xx, timeouts, network errors) are **not cached**, so subseq
 
 | Context | Condition | Response |
 | ------- | --------- | -------- |
-| MCP tool/resource | Missing API key (remote-hosted) | `RuntimeError` → MCP `isError: true` |
-| MCP tool/resource | Invalid API key | `RuntimeError` → MCP `isError: true` |
-| WebSocket connect | Missing API key | Close `4401` "API key required" |
-| WebSocket connect | Invalid API key | Close `4403` "Invalid API key" |
-| WebSocket connect | Auth service down | Close `1013` "Try again later" |
+| Any MCP HTTP request | Missing, duplicate, invalid, or unverifiable API key | HTTP `401` before dispatch |
+| WebSocket connect | Missing, duplicate, invalid, or unverifiable API key | Upgrade rejected (ASGI close `1008`) |
 | `/api/auth/login-url` | Login URL not configured | HTTP `404` with admin guidance message |
 | Server startup | Remote-hosted without validation URL | `SystemExit(1)` |
 
@@ -251,13 +249,9 @@ The server is in remote-hosted mode but no API key is being sent. Ensure the MCP
 
 The `--http-remote-hosted` flag requires `--api-key-validation-url`. Provide the URL via CLI argument or `UNITY_MCP_API_KEY_VALIDATION_URL` environment variable.
 
-### WebSocket connection closes with 4401
+### WebSocket upgrade is rejected
 
-The Unity plugin is not sending an API key. Enter the key in the MCP for Unity window's connection settings.
-
-### WebSocket connection closes with 1013
-
-The external auth service is unreachable. Check network connectivity between the MCP server and the validation URL. The Unity plugin can retry the connection.
+Check that the Unity plugin sends a valid API key in the MCP for Unity window's connection settings. If the key is valid, check network connectivity between the MCP server and the validation URL; authentication fails closed when the external service is unavailable.
 
 ### User cannot see their Unity instance
 

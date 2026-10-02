@@ -6,8 +6,7 @@ from typing import Awaitable, Callable, TypeVar
 
 from transport.plugin_hub import InstanceSelectionRequiredError, PluginHub
 from core.config import config
-from core.constants import API_KEY_HEADER
-from services.api_key_service import ApiKeyService
+from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from models.models import MCPResponse
 from models.unity_response import normalize_unity_response
 
@@ -20,22 +19,14 @@ def _is_http_transport() -> bool:
 
 
 async def _resolve_user_id_from_request() -> str | None:
-    """Extract user_id from the current HTTP request's API key header."""
+    """Read identity validated by the outer HTTP authentication boundary."""
     if not config.http_remote_hosted:
         return None
-    if not ApiKeyService.is_initialized():
-        return None
     try:
-        from fastmcp.server.dependencies import get_http_headers
-        headers = get_http_headers(include_all=True)
-        api_key = headers.get(API_KEY_HEADER.lower())
-        if not api_key:
-            return None
-        service = ApiKeyService.get_instance()
-        result = await service.validate(api_key)
-        return result.user_id if result.valid else None
-    except Exception as e:
-        logger.debug("Failed to resolve user_id from HTTP request: %s", e)
+        from fastmcp.server.dependencies import get_http_request
+        user_id = getattr(get_http_request().state, AUTHENTICATED_USER_STATE, None)
+        return user_id if isinstance(user_id, str) and user_id else None
+    except (ImportError, LookupError, RuntimeError):
         return None
 
 

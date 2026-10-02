@@ -17,6 +17,7 @@ from services.custom_tool_service import (
 from core.config import config
 from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
+from transport.remote_auth_middleware import RemoteControlAuthMiddleware
 from starlette.routing import WebSocketRoute
 from starlette.responses import JSONResponse
 import argparse
@@ -381,7 +382,7 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
 
 
 class UnityMCP(FastMCP):
-    """Keep the local control plane protected for both run() and ASGI embedding."""
+    """Protect the control plane for both run() and ASGI embedding."""
 
     def http_app(
         self,
@@ -405,6 +406,8 @@ class UnityMCP(FastMCP):
         if not config.http_remote_hosted:
             app.add_middleware(
                 LocalControlAuthMiddleware, token=config.local_auth_token)
+        else:
+            app.add_middleware(RemoteControlAuthMiddleware)
         return app
 
 

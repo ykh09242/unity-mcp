@@ -407,6 +407,14 @@ class UnityInstanceMiddleware(Middleware):
         await self._inject_unity_instance(context)
         return await call_next(context)
 
+    async def on_list_resources(self, context: MiddlewareContext, call_next):
+        await self._inject_unity_instance(context)
+        return await call_next(context)
+
+    async def on_list_resource_templates(self, context: MiddlewareContext, call_next):
+        await self._inject_unity_instance(context)
+        return await call_next(context)
+
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         """Filter MCP tool listing to the Unity-enabled set when session data is available."""
         try:
