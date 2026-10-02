@@ -11,6 +11,13 @@ from transport.plugin_hub import PluginHub
 SENTINEL = "PRIVATE_CODE_CREDENTIAL_IMAGE_SENTINEL"
 
 
+@pytest.fixture(autouse=True)
+def capture_server_logs(monkeypatch):
+    # main installs file handlers and disables propagation. Capture records even
+    # when startup tests have already imported main earlier in the same process.
+    monkeypatch.setattr(logging.getLogger("mcp-for-unity-server"), "propagate", True)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("level", [logging.INFO, logging.DEBUG])
 async def test_decorators_do_not_log_arguments_results_or_exceptions(caplog, level):
@@ -61,3 +68,4 @@ async def test_invalid_plugin_messages_do_not_log_payloads(caplog):
                     {"type": "command_result", "id": [], "result": SENTINEL}):
         await hub.on_receive(AsyncMock(), payload)
     assert SENTINEL not in caplog.text
+    assert caplog.records

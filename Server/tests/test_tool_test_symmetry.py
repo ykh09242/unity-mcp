@@ -29,7 +29,6 @@ NOT_TOOLS = {"__init__", "utils", "preflight", "debug_request_context"}
 KNOWN_UNTESTED = {
     "execute_menu_item",
     "manage_shader",
-    "manage_tools",
 }
 
 
