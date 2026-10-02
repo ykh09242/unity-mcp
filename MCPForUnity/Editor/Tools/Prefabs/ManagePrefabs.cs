@@ -316,7 +316,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     if (!isRuntimeInstance && !isNullWithPropertyBlock)
                         continue;
 
-                    // Derive a unique asset path from the GameObject name and slot
+                    // Derive a candidate path; same-name renderers and earlier prefab saves may already use it.
                     string goName = renderer.gameObject.name.Replace(" ", "_");
                     string suffix = slot > 0 ? $"_slot{slot}" : "";
                     string matPath = $"{materialsFolder}/{goName}{suffix}_mat.mat";
@@ -330,29 +330,21 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     // Ensure the Materials directory exists (recursive)
                     EnsureAssetFolderExists(materialsFolder);
 
-                    Material persisted = AssetDatabase.LoadAssetAtPath<Material>(matPath);
-                    if (persisted == null)
-                    {
-                        // Create a new material with the correct shader for the active pipeline
-                        Shader shader = isRuntimeInstance && mat.shader != null
-                            ? mat.shader
-                            : RenderPipelineUtility.ResolveShader("Standard");
-                        persisted = new Material(shader);
-                        AssetDatabase.CreateAsset(persisted, matPath);
-                    }
+                    matPath = AssetDatabase.GenerateUniqueAssetPath(matPath);
+                    // Never update an existing asset just because its generated name matches this slot.
+                    Shader shader = isRuntimeInstance && mat.shader != null
+                        ? mat.shader
+                        : RenderPipelineUtility.ResolveShader("Standard");
+                    Material persisted = new Material(shader);
+                    AssetDatabase.CreateAsset(persisted, matPath);
 
                     // Copy properties from the runtime instance if available
                     if (isRuntimeInstance)
                     {
                         persisted.CopyPropertiesFromMaterial(mat);
-                        EditorUtility.SetDirty(persisted);
                     }
-                    else if (isNullWithPropertyBlock)
-                    {
-                        // Extract color from the property block and apply to the new material
-                        ApplyPropertyBlockToMaterial(renderer, slot, persisted);
-                        EditorUtility.SetDirty(persisted);
-                    }
+                    ApplyPropertyBlockToMaterial(renderer, slot, persisted);
+                    EditorUtility.SetDirty(persisted);
 
                     sharedMats[slot] = persisted;
                     changed = true;
@@ -364,11 +356,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     Undo.RecordObject(renderer, "Persist runtime materials for prefab");
                     renderer.sharedMaterials = sharedMats;
-                    // Clear any property blocks now that the material is persisted
-                    for (int slot = 0; slot < sharedMats.Length; slot++)
-                    {
-                        renderer.SetPropertyBlock(null, slot);
-                    }
+                    // Keep source overrides, including unsupported properties that were not baked into the asset.
                     EditorUtility.SetDirty(renderer);
                 }
             }
@@ -405,7 +393,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         {
             MaterialPropertyBlock block = new MaterialPropertyBlock();
             renderer.GetPropertyBlock(block, slot);
-            return !block.isEmpty;
+            if (block.isEmpty) renderer.GetPropertyBlock(block);
+            return block.HasColor("_BaseColor") || block.HasColor("_Color");
         }
 
         /// <summary>
@@ -415,6 +404,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         {
             MaterialPropertyBlock block = new MaterialPropertyBlock();
             renderer.GetPropertyBlock(block, slot);
+            // A nonempty per-material block takes precedence over the renderer-level block.
+            if (block.isEmpty) renderer.GetPropertyBlock(block);
 
             // Try the standard color property names
             string[] colorProps = { "_BaseColor", "_Color" };
