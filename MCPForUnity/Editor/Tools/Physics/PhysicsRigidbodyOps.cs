@@ -33,7 +33,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string searchMethod = p.Get("search_method");
             string dimensionParam = p.Get("dimension")?.ToLowerInvariant();
 
-            var go = GameObjectLookup.FindByTarget(targetToken, searchMethod ?? "by_name");
+            var go = FindTarget(targetToken, searchMethod);
             if (go == null)
                 return new ErrorResponse($"GameObject not found: '{targetToken}'.");
 
@@ -48,6 +48,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 is2D = true;
             else if (dimensionParam == "3d")
                 is2D = false;
+            else if (!string.IsNullOrEmpty(dimensionParam))
+                return new ErrorResponse($"Invalid dimension: '{dimensionParam}'. Use '3d' or '2d'.");
             else
                 is2D = has2D && !has3D;
 
@@ -165,7 +167,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string searchMethod = p.Get("search_method");
             string dimensionParam = p.Get("dimension")?.ToLowerInvariant();
 
-            var go = GameObjectLookup.FindByTarget(targetToken, searchMethod ?? "by_name");
+            var go = FindTarget(targetToken, searchMethod);
             if (go == null)
                 return new ErrorResponse($"GameObject not found: '{targetToken}'.");
 
@@ -177,6 +179,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 is2D = true;
             else if (dimensionParam == "3d")
                 is2D = false;
+            else if (!string.IsNullOrEmpty(dimensionParam))
+                return new ErrorResponse($"Invalid dimension: '{dimensionParam}'. Use '3d' or '2d'.");
             else
                 is2D = has2D && !has3D;
 
@@ -184,6 +188,20 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return ConfigureRigidbody2D(go, properties);
 
             return ConfigureRigidbody3D(go, properties);
+        }
+
+        private static GameObject FindTarget(JToken target, string searchMethod)
+        {
+            if (!string.IsNullOrEmpty(searchMethod))
+                return GameObjectLookup.FindByTarget(target, searchMethod);
+
+            if (int.TryParse(target.ToString(), out int instanceId))
+            {
+                var byId = GameObjectLookup.FindById(instanceId);
+                if (byId != null) return byId.activeInHierarchy ? byId : null;
+            }
+
+            return GameObjectLookup.FindByTarget(target, "by_name");
         }
 
         private static object ConfigureRigidbody3D(GameObject go, JObject properties)
@@ -204,7 +222,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse(
                     $"Unknown Rigidbody property(ies): {string.Join(", ", unknown)}.");
 
-            Undo.RecordObject(rb, "Configure Rigidbody");
+            var changes = new List<Action>();
 
             var changed = new List<string>();
 
@@ -214,33 +232,40 @@ namespace MCPForUnity.Editor.Tools.Physics
                 switch (key)
                 {
                     case "mass":
-                        rb.mass = prop.Value.Value<float>();
+                        var newMass = prop.Value.Value<float>();
+                        changes.Add(() => rb.mass = newMass);
                         changed.Add("mass");
                         break;
                     case "drag":
                     case "lineardamping":
 #if UNITY_6000_0_OR_NEWER
-                        rb.linearDamping = prop.Value.Value<float>();
+                        var newLinearDamping = prop.Value.Value<float>();
+                        changes.Add(() => rb.linearDamping = newLinearDamping);
 #else
-                        rb.drag = prop.Value.Value<float>();
+                        var newDrag = prop.Value.Value<float>();
+                        changes.Add(() => rb.drag = newDrag);
 #endif
                         changed.Add("linearDamping");
                         break;
                     case "angulardrag":
                     case "angulardamping":
 #if UNITY_6000_0_OR_NEWER
-                        rb.angularDamping = prop.Value.Value<float>();
+                        var newAngularDamping = prop.Value.Value<float>();
+                        changes.Add(() => rb.angularDamping = newAngularDamping);
 #else
-                        rb.angularDrag = prop.Value.Value<float>();
+                        var newAngularDrag = prop.Value.Value<float>();
+                        changes.Add(() => rb.angularDrag = newAngularDrag);
 #endif
                         changed.Add("angularDamping");
                         break;
                     case "usegravity":
-                        rb.useGravity = prop.Value.Value<bool>();
+                        var newUseGravity = prop.Value.Value<bool>();
+                        changes.Add(() => rb.useGravity = newUseGravity);
                         changed.Add("useGravity");
                         break;
                     case "iskinematic":
-                        rb.isKinematic = prop.Value.Value<bool>();
+                        var newIsKinematic = prop.Value.Value<bool>();
+                        changes.Add(() => rb.isKinematic = newIsKinematic);
                         changed.Add("isKinematic");
                         break;
                     case "interpolation":
@@ -248,7 +273,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         string val = prop.Value.ToString();
                         if (Enum.TryParse<RigidbodyInterpolation>(val, true, out var interp))
                         {
-                            rb.interpolation = interp;
+                            changes.Add(() => rb.interpolation = interp);
                             changed.Add("interpolation");
                         }
                         else
@@ -263,7 +288,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         string val = prop.Value.ToString();
                         if (Enum.TryParse<CollisionDetectionMode>(val, true, out var mode))
                         {
-                            rb.collisionDetectionMode = mode;
+                            changes.Add(() => rb.collisionDetectionMode = mode);
                             changed.Add("collisionDetectionMode");
                         }
                         else
@@ -278,7 +303,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var token = prop.Value;
                         if (token.Type == JTokenType.Integer)
                         {
-                            rb.constraints = (RigidbodyConstraints)token.Value<int>();
+                            var newConstraints = (RigidbodyConstraints)token.Value<int>();
+                            changes.Add(() => rb.constraints = newConstraints);
                             changed.Add("constraints");
                         }
                         else
@@ -286,7 +312,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                             string val = token.ToString();
                             if (Enum.TryParse<RigidbodyConstraints>(val, true, out var c))
                             {
-                                rb.constraints = c;
+                                changes.Add(() => rb.constraints = c);
                                 changed.Add("constraints");
                             }
                             else
@@ -300,6 +326,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
+            Undo.RecordObject(rb, "Configure Rigidbody");
+            foreach (var change in changes) change();
             EditorUtility.SetDirty(rb);
 
             return new
@@ -328,7 +356,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse(
                     $"Unknown Rigidbody2D property(ies): {string.Join(", ", unknown)}.");
 
-            Undo.RecordObject(rb2d, "Configure Rigidbody2D");
+            var changes = new List<Action>();
 
             var changed = new List<string>();
 
@@ -338,28 +366,34 @@ namespace MCPForUnity.Editor.Tools.Physics
                 switch (key)
                 {
                     case "mass":
-                        rb2d.mass = prop.Value.Value<float>();
+                        var newMass = prop.Value.Value<float>();
+                        changes.Add(() => rb2d.mass = newMass);
                         changed.Add("mass");
                         break;
                     case "gravityscale":
-                        rb2d.gravityScale = prop.Value.Value<float>();
+                        var newGravityScale = prop.Value.Value<float>();
+                        changes.Add(() => rb2d.gravityScale = newGravityScale);
                         changed.Add("gravityScale");
                         break;
                     case "drag":
                     case "lineardamping":
 #if UNITY_6000_0_OR_NEWER
-                        rb2d.linearDamping = prop.Value.Value<float>();
+                        var newLinearDamping = prop.Value.Value<float>();
+                        changes.Add(() => rb2d.linearDamping = newLinearDamping);
 #else
-                        rb2d.drag = prop.Value.Value<float>();
+                        var newDrag = prop.Value.Value<float>();
+                        changes.Add(() => rb2d.drag = newDrag);
 #endif
                         changed.Add("linearDamping");
                         break;
                     case "angulardrag":
                     case "angulardamping":
 #if UNITY_6000_0_OR_NEWER
-                        rb2d.angularDamping = prop.Value.Value<float>();
+                        var newAngularDamping = prop.Value.Value<float>();
+                        changes.Add(() => rb2d.angularDamping = newAngularDamping);
 #else
-                        rb2d.angularDrag = prop.Value.Value<float>();
+                        var newAngularDrag = prop.Value.Value<float>();
+                        changes.Add(() => rb2d.angularDrag = newAngularDrag);
 #endif
                         changed.Add("angularDamping");
                         break;
@@ -368,7 +402,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         string val = prop.Value.ToString();
                         if (Enum.TryParse<RigidbodyType2D>(val, true, out var bt))
                         {
-                            rb2d.bodyType = bt;
+                            changes.Add(() => rb2d.bodyType = bt);
                             changed.Add("bodyType");
                         }
                         else
@@ -379,7 +413,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         break;
                     }
                     case "simulated":
-                        rb2d.simulated = prop.Value.Value<bool>();
+                        var newSimulated = prop.Value.Value<bool>();
+                        changes.Add(() => rb2d.simulated = newSimulated);
                         changed.Add("simulated");
                         break;
                     case "collisiondetectionmode":
@@ -387,7 +422,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         string val = prop.Value.ToString();
                         if (Enum.TryParse<CollisionDetectionMode2D>(val, true, out var mode))
                         {
-                            rb2d.collisionDetectionMode = mode;
+                            changes.Add(() => rb2d.collisionDetectionMode = mode);
                             changed.Add("collisionDetectionMode");
                         }
                         else
@@ -402,7 +437,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var token = prop.Value;
                         if (token.Type == JTokenType.Integer)
                         {
-                            rb2d.constraints = (RigidbodyConstraints2D)token.Value<int>();
+                            var newConstraints = (RigidbodyConstraints2D)token.Value<int>();
+                            changes.Add(() => rb2d.constraints = newConstraints);
                             changed.Add("constraints");
                         }
                         else
@@ -410,7 +446,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                             string val = token.ToString();
                             if (Enum.TryParse<RigidbodyConstraints2D>(val, true, out var c))
                             {
-                                rb2d.constraints = c;
+                                changes.Add(() => rb2d.constraints = c);
                                 changed.Add("constraints");
                             }
                             else
@@ -424,6 +460,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
+            Undo.RecordObject(rb2d, "Configure Rigidbody2D");
+            foreach (var change in changes) change();
             EditorUtility.SetDirty(rb2d);
 
             return new

@@ -112,6 +112,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
+            var properties = p.GetRaw("properties") as JObject;
+            var propertyChanges = PrepareProperties(jointComponentType, properties);
+
             var joint = Undo.AddComponent(go, jointComponentType);
             if (joint == null)
                 return new ErrorResponse($"Failed to add {jointComponentType.Name} to '{go.name}'.");
@@ -126,11 +129,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             // Set properties via reflection if provided
-            var properties = p.GetRaw("properties") as JObject;
-            if (properties != null)
-            {
-                SetPropertiesViaReflection(joint, properties);
-            }
+            foreach (var change in propertyChanges) change(joint);
 
             EditorUtility.SetDirty(go);
 
@@ -186,7 +185,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse($"No joint found on '{go.name}'.");
             }
 
-            Undo.RecordObject(joint, $"Configure {joint.GetType().Name}");
+            var changes = new List<Action>();
 
             var configured = new List<string>();
 
@@ -203,8 +202,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         motor.force = motorToken["force"].Value<float>();
                     if (motorToken["freeSpin"] != null)
                         motor.freeSpin = motorToken["freeSpin"].Value<bool>();
-                    hingeForMotor.motor = motor;
-                    hingeForMotor.useMotor = true;
+                    changes.Add(() => hingeForMotor.motor = motor);
+                    changes.Add(() => hingeForMotor.useMotor = true);
                     configured.Add("motor");
                 }
                 else
@@ -226,8 +225,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         limits.max = limitsToken["max"].Value<float>();
                     if (limitsToken["bounciness"] != null)
                         limits.bounciness = limitsToken["bounciness"].Value<float>();
-                    hingeForLimits.limits = limits;
-                    hingeForLimits.useLimits = true;
+                    changes.Add(() => hingeForLimits.limits = limits);
+                    changes.Add(() => hingeForLimits.useLimits = true);
                     configured.Add("limits");
                 }
                 else
@@ -249,18 +248,27 @@ namespace MCPForUnity.Editor.Tools.Physics
                         spring.damper = springToken["damper"].Value<float>();
                     if (springToken["targetPosition"] != null)
                         spring.targetPosition = springToken["targetPosition"].Value<float>();
-                    hingeForSpring.spring = spring;
-                    hingeForSpring.useSpring = true;
+                    changes.Add(() => hingeForSpring.spring = spring);
+                    changes.Add(() => hingeForSpring.useSpring = true);
                     configured.Add("spring");
                 }
                 else if (joint is SpringJoint springJoint)
                 {
                     if (springToken["spring"] != null)
-                        springJoint.spring = springToken["spring"].Value<float>();
+                    {
+                        var newSpring = springToken["spring"].Value<float>();
+                        changes.Add(() => springJoint.spring = newSpring);
+                    }
                     if (springToken["damper"] != null)
-                        springJoint.damper = springToken["damper"].Value<float>();
+                    {
+                        var newDamper = springToken["damper"].Value<float>();
+                        changes.Add(() => springJoint.damper = newDamper);
+                    }
                     if (springToken["targetPosition"] != null)
-                        springJoint.minDistance = springToken["targetPosition"].Value<float>();
+                    {
+                        var newMinDistance = springToken["targetPosition"].Value<float>();
+                        changes.Add(() => springJoint.minDistance = newMinDistance);
+                    }
                     configured.Add("spring");
                 }
                 else
@@ -285,7 +293,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                             xDrive.positionDamper = xDriveToken["positionDamper"].Value<float>();
                         if (xDriveToken["maximumForce"] != null)
                             xDrive.maximumForce = xDriveToken["maximumForce"].Value<float>();
-                        configJoint.xDrive = xDrive;
+                        changes.Add(() => configJoint.xDrive = xDrive);
                     }
                     configured.Add("drive");
                 }
@@ -299,10 +307,13 @@ namespace MCPForUnity.Editor.Tools.Physics
             var properties = p.GetRaw("properties") as JObject;
             if (properties != null)
             {
-                SetPropertiesViaReflection(joint, properties);
+                foreach (var change in PrepareProperties(joint.GetType(), properties))
+                    changes.Add(() => change(joint));
                 configured.Add("properties");
             }
 
+            Undo.RecordObject(joint, $"Configure {joint.GetType().Name}");
+            foreach (var change in changes) change();
             EditorUtility.SetDirty(joint);
 
             return new
@@ -465,40 +476,43 @@ namespace MCPForUnity.Editor.Tools.Physics
             return null;
         }
 
-        private static void SetPropertiesViaReflection(Component component, JObject properties)
+        private static List<Action<Component>> PrepareProperties(Type type, JObject properties)
         {
-            var type = component.GetType();
+            var changes = new List<Action<Component>>();
+            if (properties == null) return changes;
+
             foreach (var prop in properties.Properties())
             {
                 var propInfo = type.GetProperty(prop.Name, BindingFlags.Public | BindingFlags.Instance);
                 if (propInfo != null && propInfo.CanWrite)
                 {
-                    try
+                    object value = ConvertValue(prop.Value, propInfo.PropertyType);
+                    changes.Add(component =>
                     {
-                        object value = ConvertValue(prop.Value, propInfo.PropertyType);
-                        propInfo.SetValue(component, value);
-                    }
-                    catch (Exception ex)
-                    {
-                        McpLog.Warn($"[JointOps] Failed to set property '{prop.Name}': {ex.Message}");
-                    }
+                        try { propInfo.SetValue(component, value); }
+                        catch (Exception ex)
+                        {
+                            McpLog.Warn($"[JointOps] Failed to set property '{prop.Name}': {ex.Message}");
+                        }
+                    });
                     continue;
                 }
 
                 var fieldInfo = type.GetField(prop.Name, BindingFlags.Public | BindingFlags.Instance);
                 if (fieldInfo != null)
                 {
-                    try
+                    object value = ConvertValue(prop.Value, fieldInfo.FieldType);
+                    changes.Add(component =>
                     {
-                        object value = ConvertValue(prop.Value, fieldInfo.FieldType);
-                        fieldInfo.SetValue(component, value);
-                    }
-                    catch (Exception ex)
-                    {
-                        McpLog.Warn($"[JointOps] Failed to set field '{prop.Name}': {ex.Message}");
-                    }
+                        try { fieldInfo.SetValue(component, value); }
+                        catch (Exception ex)
+                        {
+                            McpLog.Warn($"[JointOps] Failed to set field '{prop.Name}': {ex.Message}");
+                        }
+                    });
                 }
             }
+            return changes;
         }
 
         private static object ConvertValue(JToken token, Type targetType)
