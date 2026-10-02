@@ -1143,6 +1143,8 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
+                var output = ScreenshotUtility.PrepareCaptureResult(cmd.fileName, 1, true,
+                    ScreenshotPreferences.Resolve(cmd.outputFolder), false);
                 int maxRes = cmd.maxResolution ?? 640;
 
                 // Resolve where to aim
@@ -1211,22 +1213,7 @@ namespace MCPForUnity.Editor.Tools
                     }
                     Directory.CreateDirectory(folderAbsolute);
 
-                    string fileName = !string.IsNullOrEmpty(cmd.fileName)
-                        ? (cmd.fileName.EndsWith(".png", System.StringComparison.OrdinalIgnoreCase) ? cmd.fileName : cmd.fileName + ".png")
-                        : $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}.png";
-                    string fullPath = Path.Combine(folderAbsolute, fileName);
-                    // Ensure unique filename
-                    if (File.Exists(fullPath))
-                    {
-                        string baseName = Path.GetFileNameWithoutExtension(fullPath);
-                        string ext = Path.GetExtension(fullPath);
-                        int counter = 1;
-                        while (File.Exists(fullPath))
-                        {
-                            fullPath = Path.Combine(folderAbsolute, $"{baseName}_{counter}{ext}");
-                            counter++;
-                        }
-                    }
+                    string fullPath = output.FullPath;
                     byte[] pngBytes = System.Convert.FromBase64String(b64);
                     File.WriteAllBytes(fullPath, pngBytes);
 

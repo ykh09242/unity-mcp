@@ -839,6 +839,8 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 resolvedFolderAbs = ScreenshotUtility.ResolveFolderAbsolute(resolvedFolderSpec);
+                // Validate caller-supplied names before rendering or scheduling a capture.
+                ScreenshotUtility.PrepareCaptureResult(fileName, 1, true, resolvedFolderSpec, false);
             }
             catch (InvalidOperationException ex)
             {
@@ -862,8 +864,7 @@ namespace MCPForUnity.Editor.Tools
                     resolvedPlayName += ".png";
 
                 Directory.CreateDirectory(resolvedFolderAbs);
-                string playFullPath = Path.Combine(resolvedFolderAbs, resolvedPlayName).Replace('\\', '/');
-                playFullPath = EnsureUniqueFilePath(playFullPath);
+                string playFullPath = ScreenshotUtility.PrepareCaptureResult(resolvedPlayName, 1, true, resolvedFolderSpec, false).FullPath;
                 string playProjectRelPath = ScreenshotUtility.ToProjectRelativePath(playFullPath);
 
                 // ── Case 1: capture is ready ──────────────────────────────────────
@@ -1109,8 +1110,7 @@ namespace MCPForUnity.Editor.Tools
                     resolvedName += ".png";
 
                 Directory.CreateDirectory(resolvedFolderAbs);
-                string fullPath = Path.Combine(resolvedFolderAbs, resolvedName).Replace('\\', '/');
-                fullPath = EnsureUniqueFilePath(fullPath);
+                string fullPath = ScreenshotUtility.PrepareCaptureResult(resolvedName, 1, true, resolvedFolderSpec, false).FullPath;
 
                 byte[] png = tex.EncodeToPNG();
                 File.WriteAllBytes(fullPath, png);

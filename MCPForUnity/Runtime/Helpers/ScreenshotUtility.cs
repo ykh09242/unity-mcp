@@ -617,19 +617,20 @@ namespace MCPForUnity.Runtime.Helpers
                 UnityEngine.Object.DestroyImmediate(tex);
         }
 
-        private static ScreenshotCaptureResult PrepareCaptureResult(string fileName, int superSize, bool ensureUniqueFileName, string folderOverride, bool isAsync)
+        public static ScreenshotCaptureResult PrepareCaptureResult(string fileName, int superSize, bool ensureUniqueFileName, string folderOverride, bool isAsync)
         {
             int size = Mathf.Max(1, superSize);
             string resolvedName = BuildFileName(fileName);
             string folderAbsolute = ResolveFolderAbsolute(folderOverride);
             Directory.CreateDirectory(folderAbsolute);
 
-            string fullPath = Path.Combine(folderAbsolute, resolvedName);
+            string fullPath = SafePathUtility.ResolveWithinRoot(folderAbsolute, resolvedName);
             if (ensureUniqueFileName)
             {
                 fullPath = EnsureUnique(fullPath);
             }
 
+            fullPath = SafePathUtility.ResolveWithinRoot(folderAbsolute, fullPath);
             string normalizedFullPath = fullPath.Replace('\\', '/');
             string projectRelativePath = ToProjectRelativePath(normalizedFullPath);
 
@@ -666,7 +667,7 @@ namespace MCPForUnity.Runtime.Helpers
                     $"Use a project-relative path (e.g. 'Assets/Screenshots' or 'Captures').");
             }
 
-            return fullFolder;
+            return SafePathUtility.ResolveWithinRoot(projectRoot, fullFolder);
         }
 
         /// <summary>
@@ -703,6 +704,10 @@ namespace MCPForUnity.Runtime.Helpers
             string name = string.IsNullOrWhiteSpace(fileName)
                 ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}"
                 : fileName.Trim();
+
+            if (name == "." || name == ".." || name.IndexOfAny(new[] { '/', '\\', ':', '*', '?', '"', '<', '>', '|' }) >= 0 ||
+                name.Any(char.IsControl) || name.EndsWith(".") || name.Length > 200)
+                throw new InvalidOperationException("Screenshot filename must be a simple filename without directory components.");
 
             name = SanitizeFileName(name);
 
