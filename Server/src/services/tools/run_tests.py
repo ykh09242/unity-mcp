@@ -282,11 +282,28 @@ async def get_test_job(
         poll_interval = 2.0  # Poll Unity every 2 seconds
         prev_last_update_unix_ms = None
 
-        # Get project path once for focus nudging (multi-instance support)
-        project_path = await _get_unity_project_path(unity_instance)
+        # Resolve the project lazily, inside the same deadline as status I/O.
+        project_path = None
+        response = None
+
+        async def _nudge_project() -> bool:
+            nonlocal project_path
+            if project_path is None:
+                project_path = await _get_unity_project_path(unity_instance)
+            return await nudge_unity_focus(unity_project_path=project_path)
 
         while True:
-            response = await _fetch_status()
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                if response is None:
+                    return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
+                return GetTestJobResponse(**response)
+            try:
+                response = await asyncio.wait_for(_fetch_status(), timeout=remaining)
+            except asyncio.TimeoutError:
+                if response is None:
+                    return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
+                return GetTestJobResponse(**response)
 
             if not isinstance(response, dict):
                 return MCPResponse(success=False, error=str(response))
@@ -324,11 +341,11 @@ async def get_test_job(
                 # Use default stall_threshold_ms (3s)
             ):
                 logger.info(f"Test job {job_id} appears stalled (unfocused Unity), attempting nudge...")
-                # Lazily resolve project path if not yet available (registry may have become ready)
-                if project_path is None:
-                    project_path = await _get_unity_project_path(unity_instance)
-                # Pass project path for multi-instance support
-                nudged = await nudge_unity_focus(unity_project_path=project_path)
+                try:
+                    nudged = await asyncio.wait_for(
+                        _nudge_project(), timeout=max(0.0, deadline - asyncio.get_event_loop().time()))
+                except asyncio.TimeoutError:
+                    return GetTestJobResponse(**response)
                 if nudged:
                     logger.info(f"Test job {job_id} nudge completed")
 
