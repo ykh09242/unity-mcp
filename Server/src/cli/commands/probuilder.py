@@ -1,7 +1,9 @@
 """ProBuilder CLI commands for managing Unity ProBuilder meshes."""
 
+import json
+from typing import Any, Optional
+
 import click
-from typing import Optional, Any
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
@@ -15,7 +17,6 @@ _PB_TOP_LEVEL_KEYS = {"action", "target", "searchMethod", "properties"}
 
 def _parse_edges_param(edges: str) -> dict[str, Any]:
     """Parse edge JSON into either 'edges' (vertex pairs) or 'edgeIndices' (flat indices)."""
-    import json
     try:
         parsed = json.loads(edges)
     except json.JSONDecodeError:
@@ -36,6 +37,14 @@ def _normalize_pb_params(params: dict[str, Any]) -> dict[str, Any]:
 
     if properties:
         existing = params.get("properties")
+        if isinstance(existing, str):
+            try:
+                parsed = json.loads(existing)
+            except json.JSONDecodeError:
+                return {k: v for k, v in params.items() if v is not None}
+            if not isinstance(parsed, dict):
+                return {k: v for k, v in params.items() if v is not None}
+            existing = parsed
         if isinstance(existing, dict):
             params["properties"] = {**properties, **existing}
         else:
@@ -106,7 +115,7 @@ def create_shape(shape_type: str, name: Optional[str], position, rotation, param
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created ProBuilder {shape_type}")
 
 
@@ -138,7 +147,7 @@ def create_poly(points: str, height: float, name: Optional[str], flip_normals: b
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Created ProBuilder poly shape")
 
 
@@ -178,7 +187,7 @@ def extrude_faces(target: str, faces: str, distance: float, method: str,
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Extruded faces by {distance}")
 
 
@@ -218,7 +227,7 @@ def extrude_edges(target: str, edges: str, distance: float, as_group: bool,
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Extruded edges by {distance}")
 
 
@@ -251,7 +260,7 @@ def bevel_edges(target: str, edges: str, amount: float, search_method: Optional[
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Beveled edges with amount {amount}")
 
 
@@ -280,7 +289,7 @@ def delete_faces(target: str, faces: str, search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Deleted faces")
 
 
@@ -310,7 +319,7 @@ def subdivide(target: str, faces: Optional[str], search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Subdivided mesh")
 
 
@@ -382,7 +391,7 @@ def move_vertices(target: str, vertices: str, offset, search_method: Optional[st
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Moved vertices")
 
 
@@ -414,7 +423,7 @@ def weld_vertices(target: str, vertices: str, radius: float,
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Welded vertices")
 
 
@@ -446,7 +455,7 @@ def set_material(target: str, faces: str, material: str,
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Set material on faces")
 
 
@@ -509,7 +518,7 @@ def auto_smooth(target: str, angle: float, search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Auto-smoothed with angle {angle}°")
 
 
@@ -541,7 +550,7 @@ def set_smoothing(target: str, faces: str, group: int, search_method: Optional[s
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set smoothing group {group}")
 
 
@@ -567,7 +576,7 @@ def center_pivot(target: str, search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Pivot centered")
 
 
@@ -595,7 +604,7 @@ def set_pivot(target: str, position, search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Pivot set")
 
 
@@ -617,7 +626,7 @@ def freeze_transform(target: str, search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Transform frozen")
 
 
@@ -659,7 +668,7 @@ def repair_mesh(target: str, search_method: Optional[str]):
 
     result = run_command("manage_probuilder", _normalize_pb_params(request), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Mesh repaired")
 
 
