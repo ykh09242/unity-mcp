@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -223,14 +225,16 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            if (result is JToken token)
+            if (result is IDictionary dictionary && dictionary.Contains("success") && dictionary["success"] is bool success)
             {
-                var successToken = token["success"];
-                if (successToken != null && successToken.Type == JTokenType.Boolean)
-                {
-                    return successToken.Value<bool>();
-                }
+                return success;
             }
+
+            // Built-in handlers also return anonymous objects. Inspect only their
+            // explicit boolean status; serializing the full result can be expensive.
+            var status = result.GetType().GetProperty("success", BindingFlags.Public | BindingFlags.Instance);
+            if (status?.PropertyType == typeof(bool) && status.GetMethod?.IsPublic == true && status.GetIndexParameters().Length == 0)
+                return (bool)status.GetValue(result);
 
             return true;
         }
