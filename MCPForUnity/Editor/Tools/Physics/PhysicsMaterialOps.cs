@@ -23,14 +23,14 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (string.IsNullOrEmpty(folder))
                 return new ErrorResponse("Invalid folder path.");
 
+            if (dimension != "3d" && dimension != "2d")
+                return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
+
             if (!EnsureFolderExists(folder, out string folderError))
                 return new ErrorResponse(folderError);
 
             if (dimension == "2d")
                 return Create2D(name, folder, p);
-
-            if (dimension != "3d")
-                return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
 
             return Create3D(name, folder, p);
         }
@@ -77,11 +77,11 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (string.IsNullOrEmpty(materialPath))
                 return new ErrorResponse("Invalid material path.");
 
-            string searchMethod = p.Get("search_method") ?? "by_name";
+            string searchMethod = p.Get("search_method");
             string colliderType = p.Get("collider_type");
             int? componentIndex = ParamCoercion.CoerceIntNullable(p.GetRaw("componentIndex") ?? p.GetRaw("component_index"));
 
-            var go = GameObjectLookup.FindByTarget(targetToken, searchMethod);
+            var go = FindTarget(targetToken, searchMethod);
             if (go == null)
                 return new ErrorResponse($"GameObject not found: '{targetToken}'.");
 
@@ -220,24 +220,34 @@ namespace MCPForUnity.Editor.Tools.Physics
                 mat.bounceCombine = bc;
 #endif
 
-            AssetDatabase.CreateAsset(mat, assetPath);
-            AssetDatabase.SaveAssets();
-
-            return new
+            try
             {
-                success = true,
-                message = $"Created 3D physics material '{name}' at '{assetPath}'.",
-                data = new
+                AssetDatabase.CreateAsset(mat, assetPath);
+                if (!EditorUtility.IsPersistent(mat))
+                    return new ErrorResponse($"Failed to create physics material at '{assetPath}'.");
+                AssetDatabase.SaveAssets();
+
+                return new
                 {
-                    path = assetPath,
-                    dimension = "3d",
-                    dynamicFriction,
-                    staticFriction,
-                    bounciness,
-                    frictionCombine = mat.frictionCombine.ToString(),
-                    bounceCombine = mat.bounceCombine.ToString()
-                }
-            };
+                    success = true,
+                    message = $"Created 3D physics material '{name}' at '{assetPath}'.",
+                    data = new
+                    {
+                        path = assetPath,
+                        dimension = "3d",
+                        dynamicFriction,
+                        staticFriction,
+                        bounciness,
+                        frictionCombine = mat.frictionCombine.ToString(),
+                        bounceCombine = mat.bounceCombine.ToString()
+                    }
+                };
+            }
+            finally
+            {
+                if (!EditorUtility.IsPersistent(mat))
+                    UnityEngine.Object.DestroyImmediate(mat);
+            }
         }
 
         private static object Create2D(string name, string folder, ToolParams p)
@@ -256,21 +266,31 @@ namespace MCPForUnity.Editor.Tools.Physics
                 bounciness = bounciness
             };
 
-            AssetDatabase.CreateAsset(mat, assetPath);
-            AssetDatabase.SaveAssets();
-
-            return new
+            try
             {
-                success = true,
-                message = $"Created 2D physics material '{name}' at '{assetPath}'.",
-                data = new
+                AssetDatabase.CreateAsset(mat, assetPath);
+                if (!EditorUtility.IsPersistent(mat))
+                    return new ErrorResponse($"Failed to create 2D physics material at '{assetPath}'.");
+                AssetDatabase.SaveAssets();
+
+                return new
                 {
-                    path = assetPath,
-                    dimension = "2d",
-                    friction,
-                    bounciness
-                }
-            };
+                    success = true,
+                    message = $"Created 2D physics material '{name}' at '{assetPath}'.",
+                    data = new
+                    {
+                        path = assetPath,
+                        dimension = "2d",
+                        friction,
+                        bounciness
+                    }
+                };
+            }
+            finally
+            {
+                if (!EditorUtility.IsPersistent(mat))
+                    UnityEngine.Object.DestroyImmediate(mat);
+            }
         }
 
         // =====================================================================
@@ -304,24 +324,26 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (mat == null)
                 return new ErrorResponse($"No 3D physics material found at: '{path}'.");
 
-            Undo.RecordObject(mat, "Configure Physics Material");
-
             var changed = new List<string>();
+            var setters = new List<Action>();
             foreach (var prop in properties.Properties())
             {
                 string key = prop.Name.ToLowerInvariant().Replace("_", "");
                 switch (key)
                 {
                     case "dynamicfriction":
-                        mat.dynamicFriction = prop.Value.Value<float>();
+                        float dynamicFriction = prop.Value.Value<float>();
+                        setters.Add(() => mat.dynamicFriction = dynamicFriction);
                         changed.Add("dynamicFriction");
                         break;
                     case "staticfriction":
-                        mat.staticFriction = prop.Value.Value<float>();
+                        float staticFriction = prop.Value.Value<float>();
+                        setters.Add(() => mat.staticFriction = staticFriction);
                         changed.Add("staticFriction");
                         break;
                     case "bounciness":
-                        mat.bounciness = prop.Value.Value<float>();
+                        float bounciness = prop.Value.Value<float>();
+                        setters.Add(() => mat.bounciness = bounciness);
                         changed.Add("bounciness");
                         break;
                     case "frictioncombine":
@@ -329,12 +351,12 @@ namespace MCPForUnity.Editor.Tools.Physics
 #if UNITY_6000_0_OR_NEWER
                         if (!Enum.TryParse<PhysicsMaterialCombine>(prop.Value.ToString(), true, out var fc))
                             return new ErrorResponse($"Invalid friction_combine value: '{prop.Value}'. Valid values: Average, Minimum, Maximum, Multiply.");
-                        mat.frictionCombine = fc;
+                        setters.Add(() => mat.frictionCombine = fc);
                         changed.Add("frictionCombine");
 #else
                         if (!Enum.TryParse<PhysicMaterialCombine>(prop.Value.ToString(), true, out var fc))
                             return new ErrorResponse($"Invalid friction_combine value: '{prop.Value}'. Valid values: Average, Minimum, Maximum, Multiply.");
-                        mat.frictionCombine = fc;
+                        setters.Add(() => mat.frictionCombine = fc);
                         changed.Add("frictionCombine");
 #endif
                         break;
@@ -344,12 +366,12 @@ namespace MCPForUnity.Editor.Tools.Physics
 #if UNITY_6000_0_OR_NEWER
                         if (!Enum.TryParse<PhysicsMaterialCombine>(prop.Value.ToString(), true, out var bc))
                             return new ErrorResponse($"Invalid bounce_combine value: '{prop.Value}'. Valid values: Average, Minimum, Maximum, Multiply.");
-                        mat.bounceCombine = bc;
+                        setters.Add(() => mat.bounceCombine = bc);
                         changed.Add("bounceCombine");
 #else
                         if (!Enum.TryParse<PhysicMaterialCombine>(prop.Value.ToString(), true, out var bc))
                             return new ErrorResponse($"Invalid bounce_combine value: '{prop.Value}'. Valid values: Average, Minimum, Maximum, Multiply.");
-                        mat.bounceCombine = bc;
+                        setters.Add(() => mat.bounceCombine = bc);
                         changed.Add("bounceCombine");
 #endif
                         break;
@@ -357,6 +379,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
+            Undo.RecordObject(mat, "Configure Physics Material");
+            foreach (var setter in setters) setter();
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
 
@@ -391,25 +415,28 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (mat == null)
                 return new ErrorResponse($"No 2D physics material found at: '{path}'.");
 
-            Undo.RecordObject(mat, "Configure Physics Material 2D");
-
             var changed = new List<string>();
+            var setters = new List<Action>();
             foreach (var prop in properties.Properties())
             {
                 string key = prop.Name.ToLowerInvariant().Replace("_", "");
                 switch (key)
                 {
                     case "friction":
-                        mat.friction = prop.Value.Value<float>();
+                        float friction = prop.Value.Value<float>();
+                        setters.Add(() => mat.friction = friction);
                         changed.Add("friction");
                         break;
                     case "bounciness":
-                        mat.bounciness = prop.Value.Value<float>();
+                        float bounciness = prop.Value.Value<float>();
+                        setters.Add(() => mat.bounciness = bounciness);
                         changed.Add("bounciness");
                         break;
                 }
             }
 
+            Undo.RecordObject(mat, "Configure Physics Material 2D");
+            foreach (var setter in setters) setter();
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
 
@@ -424,6 +451,21 @@ namespace MCPForUnity.Editor.Tools.Physics
         // =====================================================================
         // Assign helpers
         // =====================================================================
+
+        private static GameObject FindTarget(JToken target, string searchMethod)
+        {
+            if (!string.IsNullOrEmpty(searchMethod))
+                return GameObjectLookup.FindByTarget(target, searchMethod);
+
+            if (int.TryParse(target.ToString(), out int id))
+            {
+                var byId = GameObjectLookup.FindById(id);
+                if (byId != null)
+                    return byId.activeInHierarchy ? byId : null;
+            }
+
+            return GameObjectLookup.FindByTarget(target, "by_name");
+        }
 
         private static Collider FindCollider3D(GameObject go, string colliderType, int? index = null)
         {
