@@ -172,7 +172,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (posToken == null)
                 return new ErrorResponse("position parameter is required ([x,y,z] in world space).");
 
-            var worldPosition = VectorParsing.ParseVector3OrDefault(posToken);
+            var parsedPosition = VectorParsing.ParseVector3(posToken);
+            if (!parsedPosition.HasValue)
+                return new ErrorResponse("position must be a valid vector ([x,y,z] or {x,y,z}) in world space.");
+            var worldPosition = parsedPosition.Value;
 
             Undo.RecordObject(pbMesh, "Set Pivot");
             Undo.RecordObject(pbMesh.transform, "Set Pivot");

@@ -291,13 +291,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var toMeshMethod = _proBuilderMeshType.GetMethod("ToMesh", Type.EmptyTypes)
                 ?? _proBuilderMeshType.GetMethod("ToMesh", BindingFlags.Instance | BindingFlags.Public);
             toMeshMethod?.Invoke(pbMesh, toMeshMethod.GetParameters().Length > 0
-                ? new object[toMeshMethod.GetParameters().Length]
+                ? toMeshMethod.GetParameters().Select(parameter => parameter.DefaultValue).ToArray()
                 : null);
 
             var refreshMethod = _proBuilderMeshType.GetMethod("Refresh", Type.EmptyTypes)
                 ?? _proBuilderMeshType.GetMethod("Refresh", BindingFlags.Instance | BindingFlags.Public);
             refreshMethod?.Invoke(pbMesh, refreshMethod.GetParameters().Length > 0
-                ? new object[refreshMethod.GetParameters().Length]
+                ? refreshMethod.GetParameters().Select(parameter => parameter.DefaultValue).ToArray()
                 : null);
 
             if (_editorMeshUtilityType != null)
@@ -333,6 +333,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     allResult.SetValue(facesList[i], i);
                 return allResult;
             }
+
+            if (faceIndicesToken.Type == JTokenType.Null)
+                throw new ArgumentException("faceIndices must be an array.");
 
             var indices = faceIndicesToken.ToObject<int[]>();
             var result = Array.CreateInstance(_faceType, indices.Length);
@@ -500,10 +503,17 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (edgePairsToken != null && edgePairsToken.Type == JTokenType.Array)
             {
                 // Edge specification by vertex pairs: [{a: 0, b: 1}, ...]
+                int vertexCount = GetVertexCount(pbMesh);
                 foreach (var pair in edgePairsToken)
                 {
-                    int a = pair["a"]?.Value<int>() ?? 0;
-                    int b = pair["b"]?.Value<int>() ?? 0;
+                    if (!(pair is JObject edgePair)
+                        || edgePair["a"] == null || edgePair["b"] == null)
+                        throw new ArgumentException("Each edge must specify integer vertices a and b.");
+
+                    int a = ParseEdgeVertex(edgePair["a"]);
+                    int b = ParseEdgeVertex(edgePair["b"]);
+                    if (a < 0 || a >= vertexCount || b < 0 || b >= vertexCount)
+                        throw new ArgumentException($"Edge vertices ({a}, {b}) out of range (0-{vertexCount - 1}).");
                     edgeList.Add(CreateEdge(a, b));
                 }
             }
@@ -529,6 +539,23 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             for (int i = 0; i < edgeList.Count; i++)
                 edgeArray.SetValue(edgeList[i], i);
             return edgeArray;
+        }
+
+        private static int ParseEdgeVertex(JToken token)
+        {
+            if ((token.Type == JTokenType.Integer || token.Type == JTokenType.String)
+                && int.TryParse(token.ToString(), System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out int vertex))
+                return vertex;
+
+            if (token.Type == JTokenType.Float)
+            {
+                double number = token.Value<double>();
+                if (number >= int.MinValue && number <= int.MaxValue && number == Math.Truncate(number))
+                    return (int)number;
+            }
+
+            throw new ArgumentException("Each edge must specify integer vertices a and b.");
         }
 
         /// <summary>
@@ -1739,7 +1766,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("offset parameter is required ([x,y,z]).");
 
             var vertexIndices = vertexIndicesToken.ToObject<int[]>();
-            var offset = ParseVector3(offsetToken);
+            var parsedOffset = VectorParsing.ParseVector3(offsetToken);
+            if (!parsedOffset.HasValue)
+                return new ErrorResponse("offset must be a valid vector ([x,y,z] or {x,y,z}).");
+            var offset = parsedOffset.Value;
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Move Vertices");
 
