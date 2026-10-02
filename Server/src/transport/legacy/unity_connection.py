@@ -52,6 +52,8 @@ class UnityConnection:
 
     def connect(self, connect_timeout: float | None = None) -> bool:
         """Establish a connection to the Unity Editor."""
+        if config.http_remote_hosted:
+            raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
         if self.sock:
             return True
         with self._conn_lock:
@@ -282,6 +284,8 @@ class UnityConnection:
             max_attempts: Maximum retry attempts (None = use config default, 0 = no retries)
             deadline: Shared monotonic() ceiling across retries (None = derive from command_total_timeout)
         """
+        if config.http_remote_hosted:
+            raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
         # Defensive guard: catch empty/placeholder invocations early
         if not command_type:
             raise ValueError("MCP call missing command_type")
@@ -734,6 +738,8 @@ _pool_init_lock = threading.Lock()
 
 def get_unity_connection_pool() -> UnityConnectionPool:
     """Get or create the global Unity connection pool"""
+    if config.http_remote_hosted:
+        raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
     global _unity_connection_pool
 
     if _unity_connection_pool is not None:

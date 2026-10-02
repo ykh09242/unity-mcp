@@ -954,15 +954,17 @@ async def script_apply_edits(
     all_struct = ops_set.issubset(STRUCT)
     all_text = ops_set.issubset(TEXT)
     mixed = not (all_struct or all_text)
+    preview = bool((options or {}).get("preview"))
+    if preview and not all_text:
+        return _err("unsupported_preview", "Preview supports text edits only; no changes were made.")
 
     # If everything is structured (method/class/anchor ops), forward directly to Unity's structured editor.
     if all_struct:
         # Get pre-edit SHA for disconnect verification
         pre_sha = None
         try:
-            sha_resp = await async_send_command_with_retry(
+            sha_resp = await send_with_unity_instance(async_send_command_with_retry, unity_instance,
                 "manage_script", {"action": "get_sha", "name": name, "path": path},
-                instance_id=unity_instance,
             )
             if isinstance(sha_resp, dict) and sha_resp.get("success"):
                 pre_sha = (sha_resp.get("data") or {}).get("sha256")
@@ -990,13 +992,13 @@ async def script_apply_edits(
         return _with_norm(resp_struct if isinstance(resp_struct, dict) else {"success": False, "message": str(resp_struct)}, normalized_for_echo, routing="structured")
 
     # 1) read from Unity
-    read_resp = await async_send_command_with_retry("manage_script", {
+    read_resp = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "manage_script", {
         "action": "read",
         "name": name,
         "path": path,
         "namespace": namespace,
         "scriptType": script_type,
-    }, instance_id=unity_instance)
+    })
     if not isinstance(read_resp, dict) or not read_resp.get("success"):
         return read_resp if isinstance(read_resp, dict) else {"success": False, "message": str(read_resp)}
 
@@ -1010,7 +1012,19 @@ async def script_apply_edits(
         return {"success": False, "message": "No contents returned from Unity read."}
 
     # Optional preview/dry-run: apply locally and return diff without writing
-    preview = bool((options or {}).get("preview"))
+    if preview:
+        try:
+            import difflib
+            preview_text = await _apply_edits_locally(contents, edits)
+            from itertools import islice
+            diff = list(islice(difflib.unified_diff(
+                contents.splitlines(), preview_text.splitlines(), fromfile="before", tofile="after", n=3), 2001))
+            if len(diff) > 2000:
+                diff = diff[:2000] + ["... (diff truncated) ..."]
+            return {"success": True, "message": "Preview only (no write)",
+                    "data": {"diff": "\n".join(diff), "normalizedEdits": normalized_for_echo}}
+        except Exception:
+            return _err("preview_failed", "Unable to preview the requested edits; no changes were made.")
 
     # If we have a mixed batch (TEXT + STRUCT), apply text first with precondition, then structured
     if mixed:

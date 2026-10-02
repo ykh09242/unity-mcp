@@ -934,7 +934,7 @@ Examples:
     # If not explicitly set, check Unity status files for the default instance.
     # In stdio mode there is typically only one instance, so "first match wins" is fine.
     project_scoped_tools = project_scoped_tools_explicit
-    if not project_scoped_tools_explicit:
+    if not project_scoped_tools_explicit and not config.http_remote_hosted:
         try:
             from transport.legacy.unity_connection import get_unity_connection_pool
             pool = get_unity_connection_pool()
