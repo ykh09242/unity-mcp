@@ -129,13 +129,22 @@ def _normalize_sprite_settings(value: Any) -> tuple[dict | None, str | None]:
         if "pivot" in value:
             pivot = value["pivot"]
             if isinstance(pivot, (list, tuple)) and len(pivot) == 2:
-                result["pivot"] = [float(pivot[0]), float(pivot[1])]
+                try:
+                    result["pivot"] = [float(pivot[0]), float(pivot[1])]
+                except (TypeError, ValueError):
+                    return None, "sprite pivot must contain numeric values"
             else:
                 return None, f"sprite pivot must be [x, y], got {pivot}"
         if "pixels_per_unit" in value:
-            result["pixelsPerUnit"] = float(value["pixels_per_unit"])
+            try:
+                result["pixelsPerUnit"] = float(value["pixels_per_unit"])
+            except (TypeError, ValueError):
+                return None, "sprite pixels_per_unit must be a number"
         elif "pixelsPerUnit" in value:
-            result["pixelsPerUnit"] = float(value["pixelsPerUnit"])
+            try:
+                result["pixelsPerUnit"] = float(value["pixelsPerUnit"])
+            except (TypeError, ValueError):
+                return None, "sprite pixelsPerUnit must be a number"
         return result, None
 
     if isinstance(value, bool) and value:
@@ -235,14 +244,14 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     # Texture type
     if "texture_type" in value:
         tt = value["texture_type"].lower() if isinstance(value["texture_type"], str) else value["texture_type"]
-        if tt not in _TEXTURE_TYPES:
+        if not isinstance(tt, str) or tt not in _TEXTURE_TYPES:
             return None, f"Invalid texture_type '{tt}'. Valid: {list(_TEXTURE_TYPES.keys())}"
         result["textureType"] = _TEXTURE_TYPES[tt]
 
     # Texture shape
     if "texture_shape" in value:
         ts = value["texture_shape"].lower() if isinstance(value["texture_shape"], str) else value["texture_shape"]
-        if ts not in _TEXTURE_SHAPES:
+        if not isinstance(ts, str) or ts not in _TEXTURE_SHAPES:
             return None, f"Invalid texture_shape '{ts}'. Valid: {list(_TEXTURE_SHAPES.keys())}"
         result["textureShape"] = _TEXTURE_SHAPES[ts]
 
@@ -264,7 +273,7 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     # Alpha source
     if "alpha_source" in value:
         alpha = value["alpha_source"].lower() if isinstance(value["alpha_source"], str) else value["alpha_source"]
-        if alpha not in _ALPHA_SOURCES:
+        if not isinstance(alpha, str) or alpha not in _ALPHA_SOURCES:
             return None, f"Invalid alpha_source '{alpha}'. Valid: {list(_ALPHA_SOURCES.keys())}"
         result["alphaSource"] = _ALPHA_SOURCES[alpha]
 
@@ -272,28 +281,28 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     for snake, camel in [("wrap_mode", "wrapMode"), ("wrap_mode_u", "wrapModeU"), ("wrap_mode_v", "wrapModeV")]:
         if snake in value:
             wm = value[snake].lower() if isinstance(value[snake], str) else value[snake]
-            if wm not in _WRAP_MODES:
+            if not isinstance(wm, str) or wm not in _WRAP_MODES:
                 return None, f"Invalid {snake} '{wm}'. Valid: {list(_WRAP_MODES.keys())}"
             result[camel] = _WRAP_MODES[wm]
 
     # Filter mode
     if "filter_mode" in value:
         fm = value["filter_mode"].lower() if isinstance(value["filter_mode"], str) else value["filter_mode"]
-        if fm not in _FILTER_MODES:
+        if not isinstance(fm, str) or fm not in _FILTER_MODES:
             return None, f"Invalid filter_mode '{fm}'. Valid: {list(_FILTER_MODES.keys())}"
         result["filterMode"] = _FILTER_MODES[fm]
 
     # Mipmap filter
     if "mipmap_filter" in value:
         mf = value["mipmap_filter"].lower() if isinstance(value["mipmap_filter"], str) else value["mipmap_filter"]
-        if mf not in _MIPMAP_FILTERS:
+        if not isinstance(mf, str) or mf not in _MIPMAP_FILTERS:
             return None, f"Invalid mipmap_filter '{mf}'. Valid: {list(_MIPMAP_FILTERS.keys())}"
         result["mipmapFilter"] = _MIPMAP_FILTERS[mf]
 
     # Compression
     if "compression" in value:
         comp = value["compression"].lower() if isinstance(value["compression"], str) else value["compression"]
-        if comp not in _COMPRESSIONS:
+        if not isinstance(comp, str) or comp not in _COMPRESSIONS:
             return None, f"Invalid compression '{comp}'. Valid: {list(_COMPRESSIONS.keys())}"
         result["textureCompression"] = _COMPRESSIONS[comp]
 
@@ -335,7 +344,7 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     # Sprite-specific settings
     if "sprite_mode" in value:
         sm = value["sprite_mode"].lower() if isinstance(value["sprite_mode"], str) else value["sprite_mode"]
-        if sm not in _SPRITE_MODES:
+        if not isinstance(sm, str) or sm not in _SPRITE_MODES:
             return None, f"Invalid sprite_mode '{sm}'. Valid: {list(_SPRITE_MODES.keys())}"
         result["spriteImportMode"] = _SPRITE_MODES[sm]
 
@@ -349,13 +358,16 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     if "sprite_pivot" in value:
         pivot = value["sprite_pivot"]
         if isinstance(pivot, (list, tuple)) and len(pivot) == 2:
-            result["spritePivot"] = [float(pivot[0]), float(pivot[1])]
+            try:
+                result["spritePivot"] = [float(pivot[0]), float(pivot[1])]
+            except (TypeError, ValueError):
+                return None, "sprite_pivot must contain numeric values"
         else:
             return None, f"sprite_pivot must be [x, y], got {pivot}"
 
     if "sprite_mesh_type" in value:
         mt = value["sprite_mesh_type"].lower() if isinstance(value["sprite_mesh_type"], str) else value["sprite_mesh_type"]
-        if mt not in _SPRITE_MESH_TYPES:
+        if not isinstance(mt, str) or mt not in _SPRITE_MESH_TYPES:
             return None, f"Invalid sprite_mesh_type '{mt}'. Valid: {list(_SPRITE_MESH_TYPES.keys())}"
         result["spriteMeshType"] = _SPRITE_MESH_TYPES[mt]
 
@@ -462,13 +474,6 @@ async def manage_texture(
         "sprite_mesh_type (full_rect/tight), sprite_extrude (0-32)"] | None = None,
 
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
-
-    # Preflight check
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
-
     # --- Normalize parameters ---
     fill_color, fill_error = _normalize_color_int(fill_color)
     if fill_error:
@@ -578,6 +583,11 @@ async def manage_texture(
 
     # Remove None values
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    if gate is not None:
+        return gate.model_dump()
 
     # Send to Unity
     result = await send_with_unity_instance(
