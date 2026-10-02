@@ -152,21 +152,6 @@ namespace MCPForUnity.Editor.Tools
             try { fullPath = AssetPathUtility.GetFullAssetPath(relativePath); }
             catch (Exception) { return new ErrorResponse("Unsafe script path: linked or unreadable paths are not permitted."); }
 
-            // Ensure the target directory exists for create/update
-            if (action == "create" || action == "update")
-            {
-                try
-                {
-                    Directory.CreateDirectory(fullPathDir);
-                }
-                catch (Exception e)
-                {
-                    return new ErrorResponse(
-                        $"Could not create directory '{fullPathDir}': {e.Message}"
-                    );
-                }
-            }
-
             // Route to specific action handlers
             switch (action)
             {
@@ -330,19 +315,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // Atomic create without BOM; schedule refresh after reply
-                var enc = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-                var tmp = fullPath + ".tmp";
-                File.WriteAllText(tmp, contents, enc);
-                try
-                {
-                    File.Move(tmp, fullPath);
-                }
-                catch (IOException)
-                {
-                    File.Copy(tmp, fullPath, overwrite: true);
-                    try { File.Delete(tmp); } catch { }
-                }
+                Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+                WriteScriptFile(fullPath, contents, overwrite: false);
 
                 var uri = $"mcpforunity://path/{relativePath}";
                 var ok = new SuccessResponse(
@@ -357,6 +331,58 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception e)
             {
                 return new ErrorResponse($"Failed to create script '{relativePath}': {e.Message}");
+            }
+        }
+
+        private static void WriteScriptFile(string fullPath, string contents, bool overwrite)
+        {
+            string attempt = Guid.NewGuid().ToString("N");
+            string tempPath = fullPath + "." + attempt + ".tmp";
+            string backupPath = fullPath + "." + attempt + ".bak";
+            bool ownsTemp = false;
+            bool writeCompleted = false;
+            try
+            {
+                using (var stream = File.Open(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    ownsTemp = true;
+                    using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
+                        writer.Write(contents);
+                }
+
+                if (!overwrite)
+                {
+                    // A destination created since validation belongs to another writer.
+                    File.Move(tempPath, fullPath);
+                }
+                else
+                {
+                    try
+                    {
+                        File.Replace(tempPath, fullPath, backupPath);
+                    }
+                    catch (PlatformNotSupportedException)
+                    {
+                        File.Copy(tempPath, fullPath, true);
+                    }
+                    catch (IOException)
+                    {
+                        File.Copy(tempPath, fullPath, true);
+                    }
+                }
+                writeCompleted = true;
+            }
+            finally
+            {
+                if (ownsTemp)
+                {
+                    try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+                }
+                // Keep this attempt's recovery backup if replacement/fallback failed.
+                if (writeCompleted)
+                {
+                    try { if (File.Exists(backupPath)) File.Delete(backupPath); } catch { }
+                }
             }
         }
 
@@ -428,29 +454,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // Safe write with atomic replace when available, without BOM
-                var encoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-                string tempPath = fullPath + ".tmp";
-                File.WriteAllText(tempPath, contents, encoding);
-
-                string backupPath = fullPath + ".bak";
-                try
-                {
-                    File.Replace(tempPath, fullPath, backupPath);
-                    try { if (File.Exists(backupPath)) File.Delete(backupPath); } catch { }
-                }
-                catch (PlatformNotSupportedException)
-                {
-                    File.Copy(tempPath, fullPath, true);
-                    try { File.Delete(tempPath); } catch { }
-                    try { if (File.Exists(backupPath)) File.Delete(backupPath); } catch { }
-                }
-                catch (IOException)
-                {
-                    File.Copy(tempPath, fullPath, true);
-                    try { File.Delete(tempPath); } catch { }
-                    try { if (File.Exists(backupPath)) File.Delete(backupPath); } catch { }
-                }
+                WriteScriptFile(fullPath, contents, overwrite: true);
 
                 // Prepare success response BEFORE any operation that can trigger a domain reload
                 var uri = $"mcpforunity://path/{relativePath}";
@@ -634,27 +638,7 @@ namespace MCPForUnity.Editor.Tools
             if (preview) return ScriptPreviewResponse(fullPath, relativePath, original, working, spans.Count);
             try
             {
-                var enc = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-                var tmp = fullPath + ".tmp";
-                File.WriteAllText(tmp, working, enc);
-                string backup = fullPath + ".bak";
-                try
-                {
-                    File.Replace(tmp, fullPath, backup);
-                    try { if (File.Exists(backup)) File.Delete(backup); } catch { /* ignore */ }
-                }
-                catch (PlatformNotSupportedException)
-                {
-                    File.Copy(tmp, fullPath, true);
-                    try { File.Delete(tmp); } catch { }
-                    try { if (File.Exists(backup)) File.Delete(backup); } catch { }
-                }
-                catch (IOException)
-                {
-                    File.Copy(tmp, fullPath, true);
-                    try { File.Delete(tmp); } catch { }
-                    try { if (File.Exists(backup)) File.Delete(backup); } catch { }
-                }
+                WriteScriptFile(fullPath, working, overwrite: true);
 
                 // Respect refresh mode: immediate vs debounced
                 bool immediate = string.Equals(refreshModeFromCaller, "immediate", StringComparison.OrdinalIgnoreCase) ||
@@ -1568,27 +1552,7 @@ namespace MCPForUnity.Editor.Tools
                 bool immediate = refreshMode == "immediate" || refreshMode == "sync";
 
                 // Persist changes atomically (no BOM), then compute/return new file SHA
-                var enc = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-                var tmp = fullPath + ".tmp";
-                File.WriteAllText(tmp, working, enc);
-                var backup = fullPath + ".bak";
-                try
-                {
-                    File.Replace(tmp, fullPath, backup);
-                    try { if (File.Exists(backup)) File.Delete(backup); } catch { }
-                }
-                catch (PlatformNotSupportedException)
-                {
-                    File.Copy(tmp, fullPath, true);
-                    try { File.Delete(tmp); } catch { }
-                    try { if (File.Exists(backup)) File.Delete(backup); } catch { }
-                }
-                catch (IOException)
-                {
-                    File.Copy(tmp, fullPath, true);
-                    try { File.Delete(tmp); } catch { }
-                    try { if (File.Exists(backup)) File.Delete(backup); } catch { }
-                }
+                WriteScriptFile(fullPath, working, overwrite: true);
 
                 var newSha = ComputeSha256(working);
                 var ok = new SuccessResponse(
