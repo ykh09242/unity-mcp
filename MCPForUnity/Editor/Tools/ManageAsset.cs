@@ -635,6 +635,11 @@ namespace MCPForUnity.Editor.Tools
             int pageNumber = @params["pageNumber"]?.ToObject<int?>() ?? 1; // Default page number (1-based)
             bool generatePreview = @params["generatePreview"]?.ToObject<bool>() ?? false;
 
+            if (pageSize <= 0 || pageNumber <= 0)
+                return new ErrorResponse("'pageSize' and 'pageNumber' must be greater than zero.");
+
+            long startIndex = ((long)pageNumber - 1) * pageSize;
+
             List<string> searchFilters = new List<string>();
             if (!string.IsNullOrEmpty(searchPattern))
                 searchFilters.Add(searchPattern);
@@ -705,22 +710,20 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
 
-                    totalFound++; // Count matching assets before pagination
-                    results.Add(GetAssetData(assetPath, generatePreview));
+                    // Only load assets and generate previews for the requested page.
+                    if (totalFound >= startIndex && results.Count < pageSize)
+                        results.Add(GetAssetData(assetPath, generatePreview));
+                    totalFound++;
                 }
 
-                // Apply pagination
-                int startIndex = (pageNumber - 1) * pageSize;
-                var pagedResults = results.Skip(startIndex).Take(pageSize).ToList();
-
                 return new SuccessResponse(
-                    $"Found {totalFound} asset(s). Returning page {pageNumber} ({pagedResults.Count} assets).",
+                    $"Found {totalFound} asset(s). Returning page {pageNumber} ({results.Count} assets).",
                     new
                     {
                         totalAssets = totalFound,
                         pageSize = pageSize,
                         pageNumber = pageNumber,
-                        assets = pagedResults,
+                        assets = results,
                     }
                 );
             }
