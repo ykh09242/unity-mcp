@@ -66,13 +66,18 @@ namespace MCPForUnity.Editor.Tools
             if (!BuildTargetMapping.TryResolveBuildTarget(targetName, out var target))
                 return new ErrorResponse(BuildTargetMapping.GetUnknownBuildTargetMessage(targetName));
 
+            string profilePath = p.Get("profile");
+            bool useProfile = false;
+#if UNITY_6000_0_OR_NEWER
+            useProfile = !string.IsNullOrEmpty(profilePath);
+#endif
             var group = BuildTargetMapping.GetTargetGroup(target);
-            if (!BuildPipeline.IsBuildTargetSupported(group, target))
+            if (!useProfile && !BuildPipeline.IsBuildTargetSupported(group, target))
                 return new ErrorResponse(
                     $"Platform '{target}' is not installed. Install it via Unity Hub.");
 
             string outputPath = p.Get("output_path")
-                ?? BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName);
+                ?? (useProfile ? null : BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName));
             string[] scenes = p.GetStringArray("scenes");
             bool development = p.GetBool("development");
             string[] optionNames = p.GetStringArray("options");
@@ -93,12 +98,10 @@ namespace MCPForUnity.Editor.Tools
             }
 
 #if UNITY_6000_0_OR_NEWER
-            string profilePath = p.Get("profile");
-            if (!string.IsNullOrEmpty(profilePath))
+            if (useProfile)
                 return HandleProfileBuild(profilePath, outputPath, development, optionNames,
-                    target, scriptingImplementation);
+                    scriptingImplementation);
 #else
-            string profilePath = p.Get("profile");
             if (!string.IsNullOrEmpty(profilePath))
                 McpLog.Warn($"Build Profile param ignored — requires Unity 6+. Current: {UnityEngine.Application.unityVersion}");
 #endif
@@ -118,13 +121,19 @@ namespace MCPForUnity.Editor.Tools
 
 #if UNITY_6000_0_OR_NEWER
         private static object HandleProfileBuild(string profilePath, string outputPath,
-            bool development, string[] optionNames, BuildTarget requestedTarget,
-            ScriptingImplementation? scriptingImplementation)
+            bool development, string[] optionNames, ScriptingImplementation? scriptingImplementation)
         {
             var profile = UnityEditor.AssetDatabase.LoadAssetAtPath<
                 UnityEditor.Build.Profile.BuildProfile>(profilePath);
             if (profile == null)
                 return new ErrorResponse($"Build profile not found at: {profilePath}");
+
+            if (!TryGetProfileBuildTarget(profile, out var target, out var subtarget, out var targetError))
+                return new ErrorResponse(targetError);
+            var targetGroup = BuildPipeline.GetBuildTargetGroup(target);
+            if (!BuildPipeline.IsBuildTargetSupported(targetGroup, target))
+                return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
+            outputPath ??= BuildTargetMapping.GetDefaultOutputPath(target, PlayerSettings.productName);
 
             var buildOptions = BuildRunner.ParseBuildOptions(optionNames, development);
             var options = new BuildPlayerWithProfileOptions
@@ -136,14 +145,33 @@ namespace MCPForUnity.Editor.Tools
 
             if (scriptingImplementation.HasValue)
                 PlayerSettings.SetScriptingBackend(
-                    BuildTargetMapping.GetNamedBuildTarget(requestedTarget), scriptingImplementation.Value);
+                    targetGroup == BuildTargetGroup.Standalone && subtarget == StandaloneBuildSubtarget.Server
+                        ? NamedBuildTarget.Server : NamedBuildTarget.FromBuildTargetGroup(targetGroup),
+                    scriptingImplementation.Value);
 
-            // BuildPlayerWithProfileOptions derives the actual target from the profile,
-            // but we use activeBuildTarget for job metadata/status display
-            var target = EditorUserBuildSettings.activeBuildTarget;
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
             return BuildRunner.ScheduleProfileBuild(job, options);
+        }
+
+        private static bool TryGetProfileBuildTarget(UnityEditor.Build.Profile.BuildProfile profile,
+            out BuildTarget target, out StandaloneBuildSubtarget subtarget, out string error)
+        {
+            // Unity 6 stores this target in the profile; its CLR getter is internal.
+            using var serializedProfile = new SerializedObject(profile);
+            var targetProperty = serializedProfile.FindProperty("m_BuildTarget");
+            target = targetProperty != null ? (BuildTarget)targetProperty.intValue : BuildTarget.NoTarget;
+            var subtargetProperty = serializedProfile.FindProperty("m_Subtarget");
+            subtarget = subtargetProperty != null
+                ? (StandaloneBuildSubtarget)subtargetProperty.intValue : StandaloneBuildSubtarget.Player;
+            if (targetProperty == null || !Enum.IsDefined(typeof(BuildTarget), target)
+                || BuildPipeline.GetBuildTargetGroup(target) == BuildTargetGroup.Unknown)
+            {
+                error = "Build profile does not contain a supported build target.";
+                return false;
+            }
+            error = null;
+            return true;
         }
 #endif
 
@@ -264,7 +292,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // SwitchActiveBuildTarget is synchronous — blocks until reimport completes
-            EditorUserBuildSettings.SwitchActiveBuildTarget(group, target);
+            if (!EditorUserBuildSettings.SwitchActiveBuildTarget(group, target))
+                return new ErrorResponse($"Failed to switch to build platform '{target}'.");
 
             return new SuccessResponse(
                 $"Switched to {target}. Assets reimported for new platform.",
@@ -492,7 +521,10 @@ namespace MCPForUnity.Editor.Tools
                     // Platform switch is required — ensures correct shader variants,
                     // asset import settings, and scripting defines for the target
                     if (EditorUserBuildSettings.activeBuildTarget != child.Target)
-                        EditorUserBuildSettings.SwitchActiveBuildTarget(group, child.Target);
+                    {
+                        if (!EditorUserBuildSettings.SwitchActiveBuildTarget(group, child.Target))
+                            throw new InvalidOperationException($"Failed to switch to build platform '{child.Target}'.");
+                    }
 
                     int subtarget = (int)StandaloneBuildSubtarget.Player;
                     var options = BuildRunner.CreateBuildOptions(
@@ -512,13 +544,19 @@ namespace MCPForUnity.Editor.Tools
             {
                 // Validate all profiles exist before creating any store entries
                 var loadedProfiles = new List<UnityEditor.Build.Profile.BuildProfile>();
+                var profileTargets = new List<BuildTarget>();
                 foreach (var profilePath in profiles)
                 {
                     var profile = AssetDatabase.LoadAssetAtPath<
                         UnityEditor.Build.Profile.BuildProfile>(profilePath);
                     if (profile == null)
                         return new ErrorResponse($"Profile not found: {profilePath}");
+                    if (!TryGetProfileBuildTarget(profile, out var target, out _, out var targetError))
+                        return new ErrorResponse(targetError);
+                    if (!BuildPipeline.IsBuildTargetSupported(BuildPipeline.GetBuildTargetGroup(target), target))
+                        return new ErrorResponse($"Platform '{target}' is not installed. Install it via Unity Hub.");
                     loadedProfiles.Add(profile);
+                    profileTargets.Add(target);
                 }
 
                 string batchId = BuildJobStore.CreateBatchId();
@@ -528,7 +566,7 @@ namespace MCPForUnity.Editor.Tools
 
                 for (int i = 0; i < profiles.Length; i++)
                 {
-                    var target = EditorUserBuildSettings.activeBuildTarget;
+                    var target = profileTargets[i];
                     string name = System.IO.Path.GetFileNameWithoutExtension(profiles[i]);
                     string path = $"{outputDir}/{name}/{PlayerSettings.productName}";
                     var child = new BuildJob(BuildJobStore.CreateJobId(), target, path);
