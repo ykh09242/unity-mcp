@@ -32,6 +32,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
                 AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate);
                 ApplyAudioImporterSettings(rel);
+                if (AssetDatabase.LoadAssetAtPath<AudioClip>(rel) == null)
+                    return Fail(job, "Audio import did not produce a usable AudioClip after reimport.");
 
                 job.AssetPath = rel;
                 job.AssetGuid = AssetDatabase.AssetPathToGUID(rel);
@@ -50,10 +52,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
         private static void ApplyAudioImporterSettings(string rel)
         {
-            if (!(AssetImporter.GetAtPath(rel) is AudioImporter importer)) return;
+            if (!(AssetImporter.GetAtPath(rel) is AudioImporter importer))
+                throw new InvalidOperationException("Audio import did not produce an AudioImporter.");
 
             AudioClip clip = AssetDatabase.LoadAssetAtPath<AudioClip>(rel);
-            float len = clip != null ? clip.length : 0f;
+            if (clip == null)
+                throw new InvalidOperationException("Audio import did not produce a usable AudioClip.");
+            float len = clip.length;
 
             AudioImporterSampleSettings s = importer.defaultSampleSettings;
             if (len > 30f) s.loadType = AudioClipLoadType.Streaming;              // long BGM
