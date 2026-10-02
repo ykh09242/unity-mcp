@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -66,14 +67,18 @@ namespace MCPForUnity.Editor.Tools
             string relativeDir = path ?? "Shaders"; // Default to "Shaders" if path is null
             if (!string.IsNullOrEmpty(relativeDir))
             {
-                relativeDir = AssetPathUtility.NormalizeSeparators(relativeDir).Trim('/');
+                relativeDir = AssetPathUtility.NormalizeSeparators(relativeDir);
+                if (Path.IsPathRooted(relativeDir) || relativeDir.Contains(":") ||
+                    relativeDir.Split('/').Any(segment => segment == ".." || segment.EndsWith(".") || segment.EndsWith(" ")))
+                    return new ErrorResponse("Shader path must be a relative directory inside Assets.");
+                relativeDir = relativeDir.TrimEnd('/');
                 if (string.Equals(relativeDir, "Assets", StringComparison.OrdinalIgnoreCase))
                 {
                     relativeDir = "";
                 }
                 else if (relativeDir.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
                 {
-                    relativeDir = relativeDir.Substring("Assets/".Length).TrimStart('/');
+                    relativeDir = relativeDir.Substring("Assets/".Length);
                 }
             }
             // Handle empty string case explicitly after processing
@@ -84,8 +89,16 @@ namespace MCPForUnity.Editor.Tools
 
             // Construct paths
             string shaderFileName = $"{name}.shader";
-            string fullPathDir = Path.Combine(Application.dataPath, relativeDir);
-            string fullPath = Path.Combine(fullPathDir, shaderFileName);
+            string fullPath;
+            try
+            {
+                fullPath = SafePathUtility.ResolveWithinRoot(Application.dataPath, Path.Combine(relativeDir, shaderFileName));
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is InvalidOperationException || ex is UnauthorizedAccessException || ex is NotSupportedException)
+            {
+                return new ErrorResponse($"Invalid shader path: {ex.Message}");
+            }
+            string fullPathDir = Path.GetDirectoryName(fullPath);
             string relativePath = AssetPathUtility.NormalizeSeparators(
                 Path.Combine("Assets", relativeDir, shaderFileName)
             ); // Ensure "Assets/" prefix and forward slashes
