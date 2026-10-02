@@ -60,7 +60,8 @@ def test_read_respects_requested_line_window(command_sender):
     result = CliRunner().invoke(script_cli.script, ["read", "Assets/Foo.cs", "--start-line", "2", "--line-count", "1"])
     # Then: output contains precisely the requested window, with no ignored wire fields.
     assert result.exit_code == 0, result.output
-    assert result.output.strip() == "second"
+    import json
+    assert json.loads(result.output)["data"]["contents"] == "second\n"
     assert command_sender.call_args.args[1] == {"action": "read", "name": "Foo", "path": "Assets"}
 
 

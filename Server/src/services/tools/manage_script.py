@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse, unquote
 
@@ -21,6 +22,17 @@ def _is_missing_script_read(response: dict[str, Any]) -> bool:
     error = response.get("error")
     return (response.get("success") is False and isinstance(error, str)
             and error.startswith("Script not found at '") and error.endswith("'."))
+
+
+def _script_lines_and_starts(text: str) -> tuple[list[str], list[int]]:
+    """Match Unity's CR, LF and CRLF lines with codepoint start offsets."""
+    lines: list[str] = []
+    starts = [0]
+    for newline in re.finditer(r"\r\n|\r|\n", text):
+        lines.append(text[starts[-1]:newline.start()])
+        starts.append(newline.end())
+    lines.append(text[starts[-1]:])
+    return lines, starts
 
 
 def _lsp_position_to_line_col(lines: list[str], position: dict[str, int]) -> tuple[int, int]:
@@ -168,18 +180,18 @@ async def apply_text_edits(
                     "utf-8")).decode("utf-8", "replace")
             except Exception:
                 contents = contents or ""
-        source_lines = contents.split("\n") if isinstance(contents, str) else []
+        source_lines, line_starts = (
+            _script_lines_and_starts(contents) if isinstance(contents, str) else ([], [])
+        )
 
         # Helper to map 0-based character index to 1-based line/col
         def line_col_from_index(idx: int) -> tuple[int, int]:
             if idx <= 0:
                 return 1, 1
-            # Count lines up to idx and position within line
-            nl_count = contents.count("\n", 0, idx)
-            line = nl_count + 1
-            last_nl = contents.rfind("\n", 0, idx)
-            col = (idx - (last_nl + 1)) + 1 if last_nl >= 0 else idx + 1
-            return line, col
+            for line in range(len(line_starts) - 1, -1, -1):
+                if idx >= line_starts[line]:
+                    return line + 1, idx - line_starts[line] + 1
+            return 1, idx + 1
 
         for e in edits or []:
             e2 = dict(e)

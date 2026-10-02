@@ -1,9 +1,11 @@
 """Script CLI commands."""
 
-import sys
+import base64
 import json
+import sys
+from typing import Any, Optional
+
 import click
-from typing import Optional, Any
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
@@ -79,7 +81,7 @@ def create(name: str, path: str, script_type: str, namespace: Optional[str], con
 
     result = run_command("manage_script", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created script: {name}.cs")
 
 
@@ -126,7 +128,18 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
                 start = (start_line or 1) - 1
                 end = start + line_count if line_count is not None else None
                 contents = "".join(contents.splitlines(keepends=True)[start:end])
-            click.echo(contents)
+            if config.format == "json":
+                result = dict(result)
+                result["data"] = dict(result["data"])
+                result["data"]["contents"] = contents
+                if start_line is not None or line_count is not None:
+                    if result["data"].get("contentsEncoded"):
+                        result["data"]["encodedContents"] = base64.b64encode(
+                            contents.encode("utf-8")
+                        ).decode("ascii")
+                click.echo(format_output(result, config.format))
+            else:
+                click.echo(contents)
         else:
             click.echo(format_output(result, config.format))
     else:
@@ -162,7 +175,7 @@ def delete(path: str, force: bool):
 
     result = run_command("manage_script", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Deleted: {path}")
 
 
@@ -195,7 +208,7 @@ def edit(path: str, edits: str):
 
     result = run_command("manage_script", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Applied edits to: {path}")
 
 
