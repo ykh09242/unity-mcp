@@ -246,9 +246,10 @@ class PluginHub(WebSocketEndpoint):
         if lock is None:
             return
         async with lock:
-            session_id = next(
-                (sid for sid, ws in cls._connections.items() if ws is websocket), None)
-            if session_id:
+            session_ids = [
+                sid for sid, ws in cls._connections.items() if ws is websocket
+            ]
+            for session_id in session_ids:
                 cls._connections.pop(session_id, None)
                 # Stop the ping loop for this session
                 ping_task = cls._ping_tasks.pop(session_id, None)
@@ -265,7 +266,7 @@ class PluginHub(WebSocketEndpoint):
                 if pending_ids:
                     logger.debug(f"Cancelling {len(pending_ids)} pending commands for disconnected session")
                 for command_id in pending_ids:
-                    entry = cls._pending.get(command_id)
+                    entry = cls._pending.pop(command_id, None)
                     future = entry.get("future") if isinstance(
                         entry, dict) else None
                     if future and not future.done():
@@ -434,6 +435,13 @@ class PluginHub(WebSocketEndpoint):
             await websocket.close(code=1011)
             raise RuntimeError("PluginHub not configured")
 
+        async with lock:
+            registered = getattr(websocket.state, "plugin_registered", False)
+            websocket.state.plugin_registered = True
+        if registered:
+            await websocket.close(code=4409, reason="Plugin already registered")
+            return
+
         project_name = payload.project_name
         project_hash = payload.project_hash
         unity_version = payload.unity_version
@@ -448,11 +456,11 @@ class PluginHub(WebSocketEndpoint):
         user_id = getattr(websocket.state, "user_id", None)
 
         session_id = str(uuid.uuid4())
-        # Inform the plugin of its assigned session ID
-        response = RegisteredMessage(session_id=session_id)
-        await websocket.send_json(response.model_dump())
-
-        session, evicted_session_id = await registry.register(session_id, project_name, project_hash, unity_version, project_path, user_id=user_id)
+        try:
+            session, evicted_session_id = await registry.register(session_id, project_name, project_hash, unity_version, project_path, user_id=user_id)
+        except ValueError:
+            await websocket.close(code=4429, reason="Plugin session limit reached")
+            return
         evicted_ws = None
         async with lock:
             # Clean up the evicted session's connection, ping loop, and pending commands
@@ -493,6 +501,9 @@ class PluginHub(WebSocketEndpoint):
             # Start the server-side ping loop
             ping_task = asyncio.create_task(cls._ping_loop(session_id, websocket))
             cls._ping_tasks[session_id] = ping_task
+
+        response = RegisteredMessage(session_id=session_id)
+        await websocket.send_json(response.model_dump())
 
         # Close evicted WebSocket outside the lock to avoid blocking
         if evicted_ws is not None:

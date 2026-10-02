@@ -39,6 +39,9 @@ class PluginRegistry:
     to ensure session isolation between users.
     """
 
+    MAX_SESSIONS = 256
+    MAX_SESSIONS_PER_USER = 32
+
     def __init__(self) -> None:
         self._sessions: dict[str, PluginSession] = {}
         # In local mode: project_hash -> session_id
@@ -70,6 +73,17 @@ class PluginRegistry:
             raise ValueError("user_id is required in remote-hosted mode")
 
         async with self._lock:
+            previous = (
+                self._user_hash_to_session.get((user_id, project_hash))
+                if user_id else self._hash_to_session.get(project_hash)
+            )
+            if previous is None:
+                if len(self._sessions) >= self.MAX_SESSIONS:
+                    raise ValueError("Plugin session limit reached")
+                if user_id and sum(
+                    session.user_id == user_id for session in self._sessions.values()
+                ) >= self.MAX_SESSIONS_PER_USER:
+                    raise ValueError("User plugin session limit reached")
             now = datetime.now(timezone.utc)
             session = PluginSession(
                 session_id=session_id,
