@@ -21,6 +21,18 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 _VALID_EXTENSIONS = {".uxml", ".uss"}
 
 
+def _canonical_ui_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    if not parts or parts[0].lower() != "assets":
+        raise ValueError("path must be under 'Assets/'.")
+    if any(part in ("", ".", "..") for part in parts) or any(c in normalized for c in ':*?"<>|\x00\r\n'):
+        raise ValueError("path must not contain rooted or traversal sequences.")
+    if os.path.splitext(normalized)[1].lower() not in _VALID_EXTENSIONS:
+        raise ValueError("Invalid file extension. Must be .uxml or .uss.")
+    return "Assets/" + "/".join(parts[1:])
+
+
 @mcp_for_unity_tool(
     group="ui",
     description=(
@@ -168,17 +180,13 @@ async def manage_ui(
     action_lower = action.lower()
 
     # --- Path validation for file operations ---
-    if action_lower in ("create", "read", "update", "delete") and path:
-        norm_path = os.path.normpath(
-            (path or "").replace("\\", "/")).replace("\\", "/")
-        if ".." in norm_path.split("/"):
-            return {"success": False, "message": "path must not contain traversal sequences."}
-        parts = norm_path.split("/")
-        if not parts or parts[0].lower() != "assets":
-            return {"success": False, "message": f"path must be under 'Assets/'; got '{path}'."}
-        ext = os.path.splitext(path)[1].lower()
-        if ext not in _VALID_EXTENSIONS:
-            return {"success": False, "message": f"Invalid file extension '{ext}'. Must be .uxml or .uss."}
+    try:
+        if action_lower in ("create", "read", "update", "delete", "link_stylesheet", "render_ui") and path:
+            path = _canonical_ui_path(path)
+        if action_lower == "link_stylesheet" and stylesheet:
+            stylesheet = _canonical_ui_path(stylesheet)
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
 
     # --- Build params dict ---
     params_dict: dict[str, Any] = {

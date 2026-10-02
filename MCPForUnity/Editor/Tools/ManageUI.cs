@@ -118,7 +118,7 @@ namespace MCPForUnity.Editor.Tools
                 return null;
             }
 
-            path = AssetPathUtility.SanitizeAssetPath(path);
+            path = AssetPathUtility.GetContainedAssetPath(path);
             if (path == null)
             {
                 error = "Invalid path: contains traversal sequences.";
@@ -156,9 +156,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'contents' parameter is required for create.");
             }
 
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length));
-            fullPath = fullPath.Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
 
             if (File.Exists(fullPath))
             {
@@ -210,9 +208,7 @@ namespace MCPForUnity.Editor.Tools
             string path = ValidatePath(p.Get("path"), out string pathError);
             if (pathError != null) return new ErrorResponse(pathError);
 
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length));
-            fullPath = fullPath.Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
 
             if (!File.Exists(fullPath))
             {
@@ -254,9 +250,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'contents' parameter is required for update.");
             }
 
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length));
-            fullPath = fullPath.Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
 
             if (!File.Exists(fullPath))
             {
@@ -308,7 +302,7 @@ namespace MCPForUnity.Editor.Tools
             var sourceError = sourceResult.GetOrError(out string sourceAssetPath);
             if (sourceError != null) return sourceError;
 
-            sourceAssetPath = AssetPathUtility.SanitizeAssetPath(sourceAssetPath);
+            sourceAssetPath = AssetPathUtility.GetContainedAssetPath(sourceAssetPath);
             if (sourceAssetPath == null)
             {
                 return new ErrorResponse("Invalid source_asset path.");
@@ -335,7 +329,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (!string.IsNullOrEmpty(panelSettingsPath))
             {
-                panelSettingsPath = AssetPathUtility.SanitizeAssetPath(panelSettingsPath);
+                panelSettingsPath = AssetPathUtility.GetContainedAssetPath(panelSettingsPath);
                 if (panelSettingsPath != null)
                 {
                     panelSettings = AssetDatabase.LoadAssetAtPath<PanelSettings>(panelSettingsPath);
@@ -400,7 +394,7 @@ namespace MCPForUnity.Editor.Tools
             var pathError = pathResult.GetOrError(out string path);
             if (pathError != null) return pathError;
 
-            path = AssetPathUtility.SanitizeAssetPath(path);
+            path = AssetPathUtility.GetContainedAssetPath(path);
             if (path == null)
             {
                 return new ErrorResponse("Invalid path: contains traversal sequences.");
@@ -467,7 +461,7 @@ namespace MCPForUnity.Editor.Tools
             var pathError = pathResult.GetOrError(out string path);
             if (pathError != null) return pathError;
 
-            path = AssetPathUtility.SanitizeAssetPath(path);
+            path = AssetPathUtility.GetContainedAssetPath(path);
             if (path == null)
                 return new ErrorResponse("Invalid path: contains traversal sequences.");
 
@@ -593,7 +587,7 @@ namespace MCPForUnity.Editor.Tools
                         string tsPath = val?.ToString();
                         if (!string.IsNullOrEmpty(tsPath))
                         {
-                            var ts = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(tsPath);
+                            var ts = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(AssetPathUtility.GetContainedAssetPath(tsPath));
                             if (ts != null) { ps.themeStyleSheet = ts; changes.Add("themeStyleSheet"); }
                         }
                         break;
@@ -978,7 +972,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
-                    uxmlPath = AssetPathUtility.SanitizeAssetPath(uxmlPath);
+                    uxmlPath = AssetPathUtility.GetContainedAssetPath(uxmlPath);
                     if (uxmlPath == null)
                         return new ErrorResponse("Invalid UXML path.");
 
@@ -1204,7 +1198,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(stylesheetPath))
                 return new ErrorResponse("'stylesheet' parameter is required.");
 
-            stylesheetPath = AssetPathUtility.SanitizeAssetPath(stylesheetPath);
+            stylesheetPath = AssetPathUtility.GetContainedAssetPath(stylesheetPath);
             if (stylesheetPath == null)
                 return new ErrorResponse("Invalid stylesheet path: contains traversal sequences.");
 
@@ -1212,8 +1206,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'stylesheet' must point to a .uss file.");
 
             // Read the UXML file
-            string fullPath = Path.Combine(Application.dataPath,
-                uxmlPath.Substring("Assets/".Length)).Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = AssetPathUtility.GetFullAssetPath(uxmlPath);
 
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"UXML file not found: {uxmlPath}");
@@ -1251,9 +1244,7 @@ namespace MCPForUnity.Editor.Tools
             string path = ValidatePath(p.Get("path"), out string pathError);
             if (pathError != null) return new ErrorResponse(pathError);
 
-            string fullPath = Path.Combine(Application.dataPath,
-                path.Substring("Assets/".Length));
-            fullPath = fullPath.Replace('/', Path.DirectorySeparatorChar);
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
 
             if (!File.Exists(fullPath))
             {
@@ -1293,7 +1284,7 @@ namespace MCPForUnity.Editor.Tools
             int pageSize = p.GetInt("page_size") ?? p.GetInt("pageSize") ?? 50;
             int pageNumber = p.GetInt("page_number") ?? p.GetInt("pageNumber") ?? 1;
 
-            scope = AssetPathUtility.SanitizeAssetPath(scope);
+            scope = AssetPathUtility.GetContainedAssetPath(scope);
             if (scope == null)
             {
                 return new ErrorResponse("Invalid path: contains traversal sequences.");

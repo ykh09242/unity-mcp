@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -15,6 +16,36 @@ namespace MCPForUnity.Editor.Helpers
     /// </summary>
     public static class AssetPathUtility
     {
+        /// <summary>Returns a canonical Assets path after checking the physical filesystem boundary.</summary>
+        public static string GetContainedAssetPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("An Assets path is required.");
+            string normalized = NormalizeSeparators(path);
+            if (normalized.StartsWith("/", StringComparison.Ordinal) || normalized.IndexOf(':') >= 0)
+                throw new ArgumentException("Rooted asset paths are not permitted.");
+            foreach (string part in normalized.Split('/'))
+                if (part.Length == 0 || part == "." || part == ".." ||
+                    part.IndexOfAny(new[] { '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0)
+                    throw new ArgumentException("Invalid asset path segment.");
+            if (normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+                normalized = "Assets";
+            else if (normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                normalized = "Assets/" + normalized.Substring(7);
+            else
+                normalized = "Assets/" + normalized;
+            SafePathUtility.ResolveWithinRoot(Application.dataPath,
+                normalized.Length == 6 ? "." : normalized.Substring(7));
+            return normalized;
+        }
+
+        public static string GetFullAssetPath(string path)
+        {
+            string canonical = GetContainedAssetPath(path);
+            return SafePathUtility.ResolveWithinRoot(Application.dataPath,
+                canonical.Length == 6 ? "." : canonical.Substring(7));
+        }
+
         /// <summary>
         /// Normalizes path separators to forward slashes without modifying the path structure.
         /// Use this for non-asset paths (e.g., file system paths, relative directories).
