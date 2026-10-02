@@ -71,6 +71,7 @@ namespace MCPForUnity.Editor.Helpers
         public static Dictionary<string, string> GetAuthHeaders()
         {
             bool remote = IsRemoteScope();
+            if (remote) ValidateRemoteConfigurationUrl();
             string token = remote
                 ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
                 : ReadLocalAuthToken(new Uri(GetLocalBaseUrl()));
@@ -157,7 +158,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string GetMcpRpcUrl()
         {
-            return AppendPathSegment(GetBaseUrl(), "mcp");
+            return IsRemoteScope() ? GetRemoteMcpRpcUrl() : GetLocalMcpRpcUrl();
         }
 
         /// <summary>
@@ -174,6 +175,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string GetRemoteMcpRpcUrl()
         {
+            ValidateRemoteConfigurationUrl();
             string remoteBase = GetRemoteBaseUrl();
             return string.IsNullOrEmpty(remoteBase) ? string.Empty : AppendPathSegment(remoteBase, "mcp");
         }
@@ -328,6 +330,12 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
+            if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
+            {
+                error = "HTTP Remote URLs must not contain credentials or fragments.";
+                return false;
+            }
+
             if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -354,6 +362,14 @@ namespace MCPForUnity.Editor.Helpers
         public static bool IsCurrentRemoteUrlAllowed(out string error)
         {
             return IsRemoteUrlAllowed(GetRemoteBaseUrl(), out error);
+        }
+
+        private static void ValidateRemoteConfigurationUrl()
+        {
+            if (!IsCurrentRemoteUrlAllowed(out string error))
+                throw new InvalidOperationException(error);
+            if (new Uri(GetRemoteBaseUrl()).Scheme == Uri.UriSchemeHttp)
+                McpLog.Warn("Insecure remote HTTP is enabled: client credentials will be sent without TLS.");
         }
 
         /// <summary>
