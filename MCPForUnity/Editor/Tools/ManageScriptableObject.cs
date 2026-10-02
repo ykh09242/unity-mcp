@@ -77,6 +77,29 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleCreate(JObject @params)
         {
+            var patchesToken = @params["patches"];
+            if (patchesToken != null && patchesToken.Type != JTokenType.Null && patchesToken is not JArray)
+            {
+                return new ErrorResponse(CodeInvalidParams, new { message = "'patches' must be an array." });
+            }
+            if (patchesToken is JArray createPatches)
+            {
+                for (int i = 0; i < createPatches.Count; i++)
+                {
+                    if (createPatches[i] is not JObject patch)
+                        return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} must be an object." });
+                    string op = patch["op"]?.ToString()?.Trim();
+                    if (!string.IsNullOrEmpty(op) && !string.Equals(op, "set", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase))
+                        return new ErrorResponse(CodeInvalidParams, new { message = $"Unknown patch operation: '{op}'." });
+                    if ((string.IsNullOrEmpty(op) || string.Equals(op, "set", StringComparison.OrdinalIgnoreCase))
+                        && patch["value"] == null && patch["ref"] == null)
+                        return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} requires 'value' or 'ref'." });
+                    if (string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase)
+                        && (patch["value"] == null || patch["value"].Type == JTokenType.Null))
+                        return new ErrorResponse(CodeInvalidParams, new { message = $"Patch at index {i} requires integer 'value'." });
+                }
+            }
             string typeName = @params["typeName"]?.ToString() ?? @params["type_name"]?.ToString();
             string folderPath = @params["folderPath"]?.ToString() ?? @params["folder_path"]?.ToString();
             string assetName = @params["assetName"]?.ToString() ?? @params["asset_name"]?.ToString();
@@ -107,15 +130,16 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(CodeInvalidFolderPath, new { message = folderNormalizeError, folderPath });
             }
 
+            var resolvedType = ResolveType(typeName);
+            if (resolvedType == null || !typeof(ScriptableObject).IsAssignableFrom(resolvedType)
+                || resolvedType.IsAbstract || resolvedType.ContainsGenericParameters)
+            {
+                return new ErrorResponse(CodeTypeNotFound, new { message = $"ScriptableObject type not found: '{typeName}'", typeName });
+            }
+
             if (!EnsureFolderExists(normalizedFolder, out var folderError))
             {
                 return new ErrorResponse(CodeInvalidFolderPath, new { message = folderError, folderPath = normalizedFolder });
-            }
-
-            var resolvedType = ResolveType(typeName);
-            if (resolvedType == null || !typeof(ScriptableObject).IsAssignableFrom(resolvedType))
-            {
-                return new ErrorResponse(CodeTypeNotFound, new { message = $"ScriptableObject type not found: '{typeName}'", typeName });
             }
 
             string fileName = assetName.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)
@@ -183,7 +207,6 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string guid = AssetDatabase.AssetPathToGUID(finalPath);
-            var patchesToken = @params["patches"];
             object patchResults = null;
             var warnings = new List<string>();
 
@@ -294,7 +317,17 @@ namespace MCPForUnity.Editor.Tools
 
                 // Normalize the path
                 string normalizedPath = NormalizePropertyPath(propertyPath);
-                string normalizedOp = op.ToLowerInvariant();
+                string normalizedOp = string.IsNullOrWhiteSpace(op) ? "set" : op.ToLowerInvariant();
+                if (normalizedOp != "set" && normalizedOp != "array_resize")
+                {
+                    results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = $"Unknown patch operation: '{op}'." });
+                    continue;
+                }
+                if (normalizedOp == "set" && patchObj["value"] == null && patchObj["ref"] == null)
+                {
+                    results.Add(new { index = i, propertyPath = normalizedPath, op, ok = false, message = "Missing required field: value or ref" });
+                    continue;
+                }
 
                 // For array_resize, check if the array exists
                 if (normalizedOp == "array_resize")
@@ -396,7 +429,11 @@ namespace MCPForUnity.Editor.Tools
                     
                     // Enhanced dry-run: validate value format for AnimationCurve and Quaternion
                     // Uses shared validators from VectorParsing
-                    if (valueToken != null && valueToken.Type != JTokenType.Null)
+                    if (prop.propertyType == SerializedPropertyType.Integer)
+                    {
+                        valueFormatOk = TryParseIntegerValue(prop, valueToken, out _, out valueValidationMsg);
+                    }
+                    else if (valueToken != null && valueToken.Type != JTokenType.Null)
                     {
                         switch (prop.propertyType)
                         {
@@ -507,8 +544,9 @@ namespace MCPForUnity.Editor.Tools
                     case "array_resize":
                         return ApplyArrayResize(so, normalizedPath, patchObj, out changed);
                     case "set":
-                    default:
                         return ApplySet(so, normalizedPath, patchObj, out changed);
+                    default:
+                        return new { propertyPath, op, ok = false, message = $"Unknown patch operation: '{op}'." };
                 }
             }
             catch (Exception ex)
@@ -697,6 +735,10 @@ namespace MCPForUnity.Editor.Tools
         private static object ApplySet(SerializedObject so, string propertyPath, JObject patchObj, out bool changed)
         {
             changed = false;
+            if (patchObj["value"] == null && patchObj["ref"] == null)
+            {
+                return new { propertyPath, op = "set", ok = false, message = "Missing required field: value or ref" };
+            }
             
             // Phase 1.2: Auto-resize arrays if targeting an index beyond current bounds
             if (!EnsureArrayCapacity(so, propertyPath, out bool arrayResized))
@@ -902,21 +944,12 @@ namespace MCPForUnity.Editor.Tools
                 switch (prop.propertyType)
                 {
                     case SerializedPropertyType.Integer:
-                        if (valueToken == null || valueToken.Type == JTokenType.Null)
-                        {
-                            message = "Expected integer value.";
+                        if (!TryParseIntegerValue(prop, valueToken, out long integerValue, out message))
                             return false;
-                        }
-                        if (valueToken.Type != JTokenType.Integer && valueToken.Type != JTokenType.Float
-                            && !long.TryParse(valueToken.ToString(), out _))
-                        {
-                            message = "Expected integer value.";
-                            return false;
-                        }
                         if (prop.type == "long")
-                            prop.longValue = ParamCoercion.CoerceLong(valueToken, 0);
+                            prop.longValue = integerValue;
                         else
-                            prop.intValue = ParamCoercion.CoerceInt(valueToken, 0);
+                            prop.intValue = (int)integerValue;
                         message = prop.type == "long" ? "Set long." : "Set int.";
                         return true;
 
@@ -1036,6 +1069,33 @@ namespace MCPForUnity.Editor.Tools
                                   "or using Unity's Inspector. For complex types, check if there's a supported alternative format.";
                         return false;
                 }
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryParseIntegerValue(SerializedProperty prop, JToken token, out long value, out string message)
+        {
+            value = 0;
+            message = "Expected integer value.";
+            if (token == null || token.Type == JTokenType.Null
+                || (token.Type != JTokenType.Integer && token.Type != JTokenType.Float
+                    && !long.TryParse(token.ToString(), out _)))
+                return false;
+
+            try
+            {
+                value = token.Type == JTokenType.Float ? checked((long)token.Value<double>()) : token.Value<long>();
+                if (prop.type != "long" && (value < int.MinValue || value > int.MaxValue))
+                {
+                    message = "Integer value is outside the Int32 range.";
+                    return false;
+                }
+                message = null;
+                return true;
             }
             catch (Exception ex)
             {

@@ -55,6 +55,12 @@ async def manage_scriptable_object(
     dry_run: Annotated[bool | str | None,
                        "If true, validate patches without applying (modify only)."] = None,
 ) -> dict[str, Any]:
+    parsed_overwrite = coerce_bool(overwrite, default=None)
+    parsed_dry_run = coerce_bool(dry_run, default=None)
+    if overwrite is not None and parsed_overwrite is None:
+        return {"success": False, "message": "manage_scriptable_object: 'overwrite' must be a boolean or a recognized boolean string."}
+    if dry_run is not None and parsed_dry_run is None:
+        return {"success": False, "message": "manage_scriptable_object: 'dry_run' must be a boolean or a recognized boolean string."}
     unity_instance = await get_unity_instance_from_context(ctx)
 
     # Tolerate JSON-string payloads (LLMs sometimes stringify complex objects)
@@ -72,10 +78,10 @@ async def manage_scriptable_object(
         "typeName": type_name,
         "folderPath": folder_path,
         "assetName": asset_name,
-        "overwrite": coerce_bool(overwrite, default=None),
+        "overwrite": parsed_overwrite,
         "target": parsed_target,
         "patches": parsed_patches,
-        "dryRun": coerce_bool(dry_run, default=None),
+        "dryRun": parsed_dry_run,
     }
 
     # Remove None values to keep Unity handler simpler

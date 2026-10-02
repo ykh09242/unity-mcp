@@ -4,6 +4,52 @@ from .test_helpers import DummyContext
 import services.tools.manage_scriptable_object as mod
 
 
+@pytest.mark.parametrize("flag", ["dry_run", "overwrite"])
+@pytest.mark.parametrize("value", ["garbage", "tru", ""])
+@pytest.mark.asyncio
+async def test_invalid_boolean_flag_fails_before_routing(monkeypatch, flag, value):
+    calls = []
+
+    async def fake_instance(ctx):
+        calls.append("instance")
+        return None
+
+    async def fake_send(*args):
+        calls.append("send")
+        return {"success": True}
+
+    monkeypatch.setattr(mod, "get_unity_instance_from_context", fake_instance)
+    monkeypatch.setattr(mod, "send_with_unity_instance", fake_send)
+    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", **{flag: value})
+    assert result["success"] is False
+    assert flag in result["message"]
+    assert calls == []
+
+
+@pytest.mark.parametrize("flag,wire", [("dry_run", "dryRun"), ("overwrite", "overwrite")])
+@pytest.mark.parametrize("value,expected", [(None, None), (True, True), (False, False),
+                                           ("true", True), ("false", False), ("yes", True), ("0", False)])
+@pytest.mark.asyncio
+async def test_supported_boolean_flags_preserve_defaults(monkeypatch, flag, wire, value, expected):
+    captured = {}
+
+    async def fake_instance(ctx):
+        return None
+
+    async def fake_send(fn, instance, command, params):
+        captured.update(params)
+        return {"success": False, "message": "controlled Unity failure"}
+
+    monkeypatch.setattr(mod, "get_unity_instance_from_context", fake_instance)
+    monkeypatch.setattr(mod, "send_with_unity_instance", fake_send)
+    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", **{flag: value})
+    assert result == {"success": False, "message": "controlled Unity failure"}
+    if expected is None:
+        assert wire not in captured
+    else:
+        assert captured[wire] is expected
+
+
 @pytest.mark.asyncio
 async def test_manage_scriptable_object_forwards_create_params(monkeypatch):
     captured = {}
