@@ -1,5 +1,7 @@
 import asyncio
+import functools
 import inspect
+import keyword
 import logging
 import time
 from hashlib import sha256
@@ -364,14 +366,27 @@ class CustomToolService:
                 )
             return
 
-        handler = self._build_global_tool_handler(definition)
-        wrapped = log_execution(definition.name, "Tool")(handler)
-        wrapped = telemetry_tool(definition.name)(wrapped)
-
         try:
+            handler = self._build_global_tool_handler(definition)
+            tool_handler = handler
+            if not definition.structured_output:
+                from fastmcp.tools import ToolResult
+                from mcp.types import TextContent
+
+                @functools.wraps(handler)
+                async def content_only_handler(*args, **kwargs):
+                    response = await handler(*args, **kwargs)
+                    return ToolResult(content=[TextContent(type="text", text=response.model_dump_json())])
+
+                tool_handler = content_only_handler
+            wrapped = log_execution(definition.name, "Tool")(tool_handler)
+            wrapped = telemetry_tool(definition.name)(wrapped)
+            # Python 3.14 wraps copies __annotate__, not dynamically assigned annotations.
+            wrapped.__annotations__ = dict(handler.__annotations__)
             wrapped = self._mcp.tool(
                 name=definition.name,
                 description=definition.description,
+                **({"output_schema": None} if not definition.structured_output else {}),
             )(wrapped)
         except Exception as exc:  # pragma: no cover - defensive against tool conflicts
             logger.warning(
@@ -424,14 +439,14 @@ class CustomToolService:
                 annotation=Context,
             )
         ]
+        # Context injection and middleware routing consume these argument names.
+        parameter_names = {"ctx", "unity_instance"}
         for param in definition.parameters:
-            if not param.name.isidentifier():
-                logger.warning(
-                    "Custom tool '%s' has non-identifier parameter '%s'; exposing via kwargs only.",
-                    definition.name,
-                    param.name,
+            if not param.name.isidentifier() or keyword.iskeyword(param.name) or param.name in parameter_names:
+                raise ValueError(
+                    f"Custom tool '{definition.name}' has an invalid or duplicate parameter name '{param.name}'"
                 )
-                continue
+            parameter_names.add(param.name)
             default = inspect._empty if param.required else self._coerce_default(
                 param.default_value, param.type)
             params.append(
