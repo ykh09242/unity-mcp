@@ -16,6 +16,13 @@ import transport.legacy.unity_connection
 _background_tasks: set = set()
 
 
+def _is_missing_script_read(response: dict[str, Any]) -> bool:
+    """Recognize Unity ReadScript's explicit missing-file response."""
+    error = response.get("error")
+    return (response.get("success") is False and isinstance(error, str)
+            and error.startswith("Script not found at '") and error.endswith("'."))
+
+
 def _split_uri(uri: str) -> tuple[str, str]:
     """Split an incoming URI or path into (name, directory) suitable for Unity.
 
@@ -466,7 +473,7 @@ async def delete_script(
             unity_instance, "manage_script",
             {"action": "read", "name": name, "path": directory},
         )
-        if isinstance(verify, dict) and not verify.get("success"):
+        if isinstance(verify, dict) and _is_missing_script_read(verify):
             return {"success": True, "message": "Script deleted (verified after domain reload)."}
         return None
 
@@ -584,7 +591,7 @@ async def manage_script(
                 )
                 if action == "create" and isinstance(verify, dict) and verify.get("success"):
                     return {"success": True, "message": "Script created (verified after domain reload).", "data": verify.get("data")}
-                elif action == "delete" and isinstance(verify, dict) and not verify.get("success"):
+                elif action == "delete" and isinstance(verify, dict) and _is_missing_script_read(verify):
                     return {"success": True, "message": "Script deleted (verified after domain reload)."}
                 return None
 
