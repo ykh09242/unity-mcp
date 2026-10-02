@@ -114,6 +114,10 @@ class CustomToolService:
         project_id: str,
         user_id: str | None = None,
     ) -> list[ToolDefinitionModel]:
+        if config.http_remote_hosted:
+            if not user_id:
+                return []
+            return await PluginHub.get_tools_for_project(project_id, user_id=user_id)
         legacy = list(self._project_tools.get(project_id, {}).values())
         hub_tools = await PluginHub.get_tools_for_project(project_id, user_id=user_id)
         return legacy + hub_tools
@@ -124,6 +128,10 @@ class CustomToolService:
         tool_name: str,
         user_id: str | None = None,
     ) -> ToolDefinitionModel | None:
+        if config.http_remote_hosted:
+            if not user_id:
+                return None
+            return await PluginHub.get_tool_definition(project_id, tool_name, user_id=user_id)
         tool = self._project_tools.get(project_id, {}).get(tool_name)
         if tool:
             return tool
@@ -186,6 +194,8 @@ class CustomToolService:
             definition.name] = definition
 
     def get_project_id_for_hash(self, project_hash: str | None) -> str | None:
+        if config.http_remote_hosted:
+            return None
         if not project_hash:
             return None
         return self._hash_to_project.get(project_hash.lower())
@@ -351,6 +361,8 @@ class CustomToolService:
         return {tool["name"] for tool in get_registered_tools()}
 
     def _register_global_tool(self, definition: ToolDefinitionModel) -> None:
+        if config.http_remote_hosted:
+            return
         existing = self._global_tools.get(definition.name)
         if existing:
             if existing.model_dump() != definition.model_dump():

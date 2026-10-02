@@ -422,6 +422,10 @@ class UnityInstanceMiddleware(Middleware):
 
         tools = await call_next(context)
 
+        if config.http_remote_hosted:
+            builtin_names = {tool["name"] for tool in get_registered_tools()}
+            tools = [tool for tool in tools if getattr(tool, "name", None) in builtin_names]
+
         tool_names_from_fastmcp = sorted(getattr(t, "name", "?") for t in tools)
         _diag.debug(
             "on_list_tools: FastMCP returned %d tools: %s",
@@ -628,8 +632,8 @@ class UnityInstanceMiddleware(Middleware):
         if unity_target:
             return unity_target in enabled_tool_names
 
-        # Keep unknown tools visible for forward compatibility.
+        # Only local servers expose globally registered extension tools.
         if tool_name not in self._unity_managed_tool_names:
-            return True
+            return not config.http_remote_hosted
 
         return False

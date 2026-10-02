@@ -237,6 +237,12 @@ Transient failures (5xx, timeouts, network errors) are **not cached**, so subseq
 
 ## Troubleshooting
 
+### Custom tools on shared servers
+
+Remote plugin tool definitions are scoped to the authenticated user's selected Unity session. Read `mcpforunity://custom-tools` and call `execute_custom_tool` to use them. Hosted servers do not publish plugin-defined tools as process-global MCP methods or let plugin registration change global tool-group visibility. Re-read the resource after reconnecting or changing the Editor's tool selection; one tenant's changes do not broadcast notifications to other tenants.
+
+Each plugin can register at most 256 tools with 512 KiB of serialized metadata. A socket registers only one session; the server permits at most 32 sessions per user and 256 sessions overall. Reconnecting an existing project replaces its previous session without consuming another quota slot.
+
 ### "API key authentication required" error on every tool call
 
 The server is in remote-hosted mode but no API key is being sent. Ensure the MCP client configuration includes the `X-API-Key` header, or set it in the Unity plugin's connection settings.

@@ -528,6 +528,10 @@ class PluginHub(WebSocketEndpoint):
         if registry is None or lock is None:
             return
 
+        if len(payload.model_dump_json().encode("utf-8")) > 512 * 1024:
+            await websocket.close(code=4400, reason="Tool registration exceeds size limit")
+            return
+
         # Find session_id for this websocket
         async with lock:
             session_id = next(
@@ -540,6 +544,11 @@ class PluginHub(WebSocketEndpoint):
         await registry.register_tools_for_session(session_id, payload.tools)
         logger.info(
             f"Registered {len(payload.tools)} tools for session {session_id}")
+
+        # Hosted catalogs are read from the authenticated plugin session through
+        # custom_tools / execute_custom_tool, never installed process-wide.
+        if config.http_remote_hosted:
+            return
 
         # Sync server-level FastMCP visibility so new MCP client sessions
         # (e.g. new Claude Code conversations) see the correct tool set.
@@ -582,6 +591,8 @@ class PluginHub(WebSocketEndpoint):
         the startup defaults.  FastMCP processes transforms in order so later
         ``enable`` calls override earlier ``disable`` calls.
         """
+        if config.http_remote_hosted:
+            return
         mcp = cls._mcp
         if mcp is None:
             return

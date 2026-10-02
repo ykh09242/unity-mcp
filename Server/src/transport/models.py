@@ -34,14 +34,14 @@ class PingMessage(BaseModel):
 class RegisterMessage(BaseModel):
     type: str = "register"
     project_name: str = Field(default="Unknown Project", max_length=256)
-    project_hash: str = Field(min_length=1, max_length=256)
+    project_hash: str = Field(max_length=256)
     unity_version: str = Field(default="Unknown", max_length=64)
     project_path: str | None = Field(default=None, max_length=4096)
 
 
 class RegisterToolsMessage(BaseModel):
     type: str = "register_tools"
-    tools: list[ToolDefinitionModel]
+    tools: list[ToolDefinitionModel] = Field(max_length=256)
 
 
 class PongMessage(BaseModel):
