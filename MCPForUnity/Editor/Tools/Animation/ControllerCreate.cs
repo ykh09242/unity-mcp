@@ -25,15 +25,30 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (!controllerPath.EndsWith(".controller", StringComparison.OrdinalIgnoreCase))
                 controllerPath += ".controller";
 
+            if (AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
+                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets)))
+                return new { success = false, message = $"An asset already exists at '{controllerPath}'. Delete it first or use a different path." };
+
             string dir = Path.GetDirectoryName(controllerPath)?.Replace('\\', '/');
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
                 CreateFoldersRecursive(dir);
 
-            var existing = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
-            if (existing != null)
-                return new { success = false, message = $"AnimatorController already exists at '{controllerPath}'. Delete it first or use a different path." };
-
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            if (controller == null)
+                return new { success = false, message = $"Failed to create AnimatorController at '{controllerPath}'." };
+            if (!AssetDatabase.Contains(controller))
+            {
+                // The factory creates fresh layer state machines before returning.
+                foreach (var layer in controller.layers)
+                {
+                    if (layer.stateMachine != null && !AssetDatabase.Contains(layer.stateMachine))
+                        UnityEngine.Object.DestroyImmediate(layer.stateMachine);
+                }
+                UnityEngine.Object.DestroyImmediate(controller);
+                return new { success = false, message = $"AnimatorController was not persisted at '{controllerPath}'." };
+            }
+            if (!string.Equals(AssetDatabase.GetAssetPath(controller), controllerPath, StringComparison.OrdinalIgnoreCase))
+                return new { success = false, message = $"AnimatorController was not persisted at the requested path '{controllerPath}'." };
             AssetDatabase.SaveAssets();
 
             return new
@@ -73,25 +88,26 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return new { success = false, message = $"State '{stateName}' already exists in layer {layerIndex}" };
             }
 
-            var state = rootStateMachine.AddState(stateName);
-
             // Optionally assign a clip
+            AnimationClip clip = null;
             string clipPath = @params["clipPath"]?.ToString();
             if (!string.IsNullOrEmpty(clipPath))
             {
                 clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
-                if (clipPath != null)
-                {
-                    var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
-                    if (clip != null)
-                        state.motion = clip;
-                }
+                if (clipPath == null)
+                    return new { success = false, message = "Invalid clip asset path" };
+                clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+                if (clip == null)
+                    return new { success = false, message = $"AnimationClip not found at '{clipPath}'." };
             }
 
             float speed = @params["speed"]?.ToObject<float>() ?? 1f;
-            state.speed = speed;
-
             bool isDefault = @params["isDefault"]?.ToObject<bool>() ?? false;
+
+            var state = rootStateMachine.AddState(stateName);
+            if (clip != null)
+                state.motion = clip;
+            state.speed = speed;
             if (isDefault)
                 rootStateMachine.defaultState = state;
 
@@ -144,15 +160,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (toState == null)
                 return new { success = false, message = $"State '{toStateName}' not found in layer {layerIndex}" };
 
-            AnimatorStateTransition transition;
-            if (isAnyState)
+            AnimatorState fromState = null;
+            if (!isAnyState)
             {
-                transition = rootStateMachine.AddAnyStateTransition(toState);
-                fromStateName = "AnyState";
-            }
-            else
-            {
-                AnimatorState fromState = null;
                 foreach (var cs in rootStateMachine.states)
                 {
                     if (cs.state.name == fromStateName) fromState = cs.state;
@@ -161,21 +171,15 @@ namespace MCPForUnity.Editor.Tools.Animation
                 if (fromState == null)
                     return new { success = false, message = $"State '{fromStateName}' not found in layer {layerIndex}" };
 
-                transition = fromState.AddTransition(toState);
             }
 
             bool hasExitTime = @params["hasExitTime"]?.ToObject<bool>() ?? true;
-            transition.hasExitTime = hasExitTime;
-
             float duration = @params["duration"]?.ToObject<float>() ?? 0.25f;
-            transition.duration = duration;
-
             float exitTime = @params["exitTime"]?.ToObject<float>() ?? 0.75f;
-            transition.exitTime = exitTime;
 
-            // Add conditions
+            // Prepare all conditions before creating a transition subasset.
             JToken conditionsToken = @params["conditions"];
-            int conditionCount = 0;
+            var conditions = new List<AnimatorCondition>();
             if (conditionsToken is JArray conditionsArray)
             {
                 foreach (var condItem in conditionsArray)
@@ -204,10 +208,26 @@ namespace MCPForUnity.Editor.Tools.Animation
                         default: mode = AnimatorConditionMode.Greater; break;
                     }
 
-                    transition.AddCondition(mode, threshold, paramName);
-                    conditionCount++;
+                    conditions.Add(new AnimatorCondition { mode = mode, threshold = threshold, parameter = paramName });
                 }
             }
+
+            AnimatorStateTransition transition;
+            if (isAnyState)
+            {
+                transition = rootStateMachine.AddAnyStateTransition(toState);
+                fromStateName = "AnyState";
+            }
+            else
+            {
+                transition = fromState.AddTransition(toState);
+            }
+            transition.hasExitTime = hasExitTime;
+            transition.duration = duration;
+            transition.exitTime = exitTime;
+            foreach (var condition in conditions)
+                transition.AddCondition(condition.mode, condition.threshold, condition.parameter);
+            int conditionCount = conditions.Count;
 
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
@@ -259,28 +279,37 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return new { success = false, message = $"Parameter '{paramName}' already exists" };
             }
 
-            controller.AddParameter(paramName, paramType);
-
-            // Set default value if provided
+            // Convert the default before adding the parameter to the controller.
             JToken defaultValue = @params["defaultValue"];
+            float defaultFloat = 0f;
+            int defaultInt = 0;
+            bool defaultBool = false;
+            if (defaultValue != null)
+            {
+                switch (paramType)
+                {
+                    case AnimatorControllerParameterType.Float:
+                        defaultFloat = defaultValue.ToObject<float>();
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        defaultInt = defaultValue.ToObject<int>();
+                        break;
+                    case AnimatorControllerParameterType.Bool:
+                        defaultBool = defaultValue.ToObject<bool>();
+                        break;
+                }
+            }
+            controller.AddParameter(paramName, paramType);
             if (defaultValue != null)
             {
                 var allParams = controller.parameters;
                 var addedParam = allParams[allParams.Length - 1];
-
                 switch (paramType)
                 {
-                    case AnimatorControllerParameterType.Float:
-                        addedParam.defaultFloat = defaultValue.ToObject<float>();
-                        break;
-                    case AnimatorControllerParameterType.Int:
-                        addedParam.defaultInt = defaultValue.ToObject<int>();
-                        break;
-                    case AnimatorControllerParameterType.Bool:
-                        addedParam.defaultBool = defaultValue.ToObject<bool>();
-                        break;
+                    case AnimatorControllerParameterType.Float: addedParam.defaultFloat = defaultFloat; break;
+                    case AnimatorControllerParameterType.Int: addedParam.defaultInt = defaultInt; break;
+                    case AnimatorControllerParameterType.Bool: addedParam.defaultBool = defaultBool; break;
                 }
-
                 controller.parameters = allParams;
             }
 
