@@ -106,22 +106,24 @@ namespace MCPForUnity.Editor.Services
                 return Fail("Could not locate the installed MCP package. Check Packages/manifest.json.");
             }
 
-            if (PathsEqual(sourcePath, targetPath))
+            if (PathsOverlap(sourcePath, targetPath))
             {
-                return Fail("Source and target are the same. Choose a different MCPForUnity folder.");
+                return Fail("Source and target folders must not be the same or contain one another.");
             }
 
             try
             {
                 EditorUtility.DisplayProgressBar("Deploy MCP for Unity", "Creating backup...", 0.25f);
-                string backupPath = CreateBackup(targetPath);
+                string backupRoot = Path.Combine(GetProjectRoot(), "Library", BackupRootFolderName);
+                string backupPath = CreateBackup(targetPath, backupRoot);
 
-                EditorUtility.DisplayProgressBar("Deploy MCP for Unity", "Replacing package contents...", 0.7f);
-                CopyCoreFolders(sourcePath, targetPath);
-
+                // Publish the completed backup before any destructive replacement, so a failed copy can be recovered.
                 EditorPrefs.SetString(EditorPrefKeys.PackageDeployLastBackupPath, backupPath);
                 EditorPrefs.SetString(EditorPrefKeys.PackageDeployLastTargetPath, targetPath);
                 EditorPrefs.SetString(EditorPrefKeys.PackageDeployLastSourcePath, sourcePath);
+
+                EditorUtility.DisplayProgressBar("Deploy MCP for Unity", "Replacing package contents...", 0.7f);
+                CopyCoreFolders(sourcePath, targetPath);
 
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                 return Success("Deployment completed.", sourcePath, targetPath, backupPath);
@@ -147,14 +149,19 @@ namespace MCPForUnity.Editor.Services
                 return Fail("No backup available to restore.");
             }
 
-            if (string.IsNullOrEmpty(targetPath) || !Directory.Exists(targetPath))
+            if (string.IsNullOrEmpty(targetPath))
             {
                 targetPath = GetTargetPath();
             }
 
-            if (string.IsNullOrEmpty(targetPath) || !Directory.Exists(targetPath))
+            if (string.IsNullOrEmpty(targetPath))
             {
                 return Fail("Could not locate target package path.");
+            }
+
+            if (PathsOverlap(backupPath, targetPath))
+            {
+                return Fail("Backup and target folders must not be the same or contain one another.");
             }
 
             try
@@ -195,18 +202,12 @@ namespace MCPForUnity.Editor.Services
             FileUtil.CopyFileOrDirectory(source, destination);
         }
 
-        private string CreateBackup(string targetPath)
+        private string CreateBackup(string targetPath, string backupRoot)
         {
-            string backupRoot = Path.Combine(GetProjectRoot(), "Library", BackupRootFolderName);
             Directory.CreateDirectory(backupRoot);
 
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string backupPath = Path.Combine(backupRoot, $"backup_{stamp}");
-
-            if (Directory.Exists(backupPath))
-            {
-                FileUtil.DeleteFileOrDirectory(backupPath);
-            }
+            string backupPath = Path.Combine(backupRoot, $"backup_{stamp}_{Guid.NewGuid():N}");
 
             FileUtil.CopyFileOrDirectory(targetPath, backupPath);
             return backupPath;
@@ -273,11 +274,13 @@ namespace MCPForUnity.Editor.Services
             return Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         }
 
-        private static bool PathsEqual(string a, string b)
+        private static bool PathsOverlap(string a, string b)
         {
             string normA = Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string normB = Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return string.Equals(normA, normB, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(normA, normB, StringComparison.OrdinalIgnoreCase)
+                || normA.StartsWith(normB + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || normB.StartsWith(normA + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
 
         private static PackageDeploymentResult Success(string message, string source, string target, string backup)
