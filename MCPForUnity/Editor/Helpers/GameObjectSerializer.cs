@@ -94,6 +94,7 @@ namespace MCPForUnity.Editor.Helpers
                 // components = go.GetComponents<Component>().Select(c => GetComponentData(c)).ToList()
                 // Or just component names:
                 componentNames = go.GetComponents<Component>()
+                    .Where(c => c != null)
                     .Select(c => c.GetType().FullName)
                     .ToList(),
             };
@@ -548,11 +549,10 @@ namespace MCPForUnity.Editor.Helpers
                     // McpLog.Info($"[GetComponentData] Accessing: {componentType.Name}.{propName}");
                     // --- End detailed logging ---
 
-                    // --- Special handling for material/mesh properties in edit mode ---
+                    // Read shared references in every mode to avoid instantiating materials or meshes.
                     object value;
-                    if (!Application.isPlaying && (propName == "material" || propName == "materials" || propName == "mesh"))
+                    if (propName == "material" || propName == "materials" || propName == "mesh")
                     {
-                        // In edit mode, use sharedMaterial/sharedMesh to avoid instantiation warnings
                         if ((propName == "material" || propName == "materials") && c is Renderer renderer)
                         {
                             if (propName == "material")
