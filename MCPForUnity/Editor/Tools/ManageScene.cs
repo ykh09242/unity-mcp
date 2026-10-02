@@ -152,7 +152,7 @@ namespace MCPForUnity.Editor.Tools
                 var scene = SceneManager.GetSceneAt(i);
                 if (!string.IsNullOrEmpty(scenePath) && scene.path == scenePath)
                     return scene;
-                if (!string.IsNullOrEmpty(sceneName) && scene.name == sceneName)
+                if (string.IsNullOrEmpty(scenePath) && !string.IsNullOrEmpty(sceneName) && scene.name == sceneName)
                     return scene;
             }
             return null;
@@ -209,6 +209,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string sceneFileName = string.IsNullOrEmpty(name) ? null : $"{name}.unity";
+            if (action == "save" && string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(path)
+                && path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+            {
+                sceneFileName = Path.GetFileName(AssetPathUtility.NormalizeSeparators(path));
+            }
             // Construct full system path correctly: ProjectRoot/<rootFolder>/relativeDir/sceneFileName
             string fullPathDir = rootFolder == "Assets"
                 ? Path.Combine(Application.dataPath, relativeDir) // Application.dataPath ends in Assets
@@ -221,21 +226,6 @@ namespace MCPForUnity.Editor.Tools
                 ? null
                 : AssetPathUtility.NormalizeSeparators(Path.Combine(rootFolder, relativeDir, sceneFileName));
 
-            // Ensure directory exists for 'create'
-            if (action == "create" && !string.IsNullOrEmpty(fullPathDir))
-            {
-                try
-                {
-                    Directory.CreateDirectory(fullPathDir);
-                }
-                catch (Exception e)
-                {
-                    return new ErrorResponse(
-                        $"Could not create directory '{fullPathDir}': {e.Message}"
-                    );
-                }
-            }
-
             // Route action
             try { McpLog.Info($"[ManageScene] Route action='{action}' name='{name}' path='{path}' buildIndex={(buildIndex.HasValue ? buildIndex.Value.ToString() : "null")}", always: false); } catch { }
             switch (action)
@@ -245,6 +235,22 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse(
                             "'name' parameter is required for 'create' action. 'path' is optional (defaults to 'Assets/Scenes/')."
                         );
+                    if (!string.IsNullOrEmpty(cmd.template)
+                        && cmd.template != "empty" && cmd.template != "default"
+                        && cmd.template != "3d_basic" && cmd.template != "2d_basic")
+                        return new ErrorResponse($"Unknown template: '{cmd.template}'. Valid: empty, default, 3d_basic, 2d_basic.");
+                    if (File.Exists(fullPath))
+                        return new ErrorResponse(string.IsNullOrEmpty(cmd.template)
+                            ? $"Scene already exists at '{relativePath}'."
+                            : $"Scene already exists at '{relativePath}'. Delete it first or use a different name.");
+                    try
+                    {
+                        Directory.CreateDirectory(fullPathDir);
+                    }
+                    catch (Exception e)
+                    {
+                        return new ErrorResponse($"Could not create directory '{fullPathDir}': {e.Message}");
+                    }
                     if (!string.IsNullOrEmpty(cmd.template))
                         return CreateSceneFromTemplate(fullPath, relativePath, cmd.template);
                     return CreateScene(fullPath, relativePath);
@@ -262,7 +268,7 @@ namespace MCPForUnity.Editor.Tools
                         return LoadScene(loadPath);
                     }
                     else if (buildIndex.HasValue)
-                        return LoadScene(buildIndex.Value);
+                        return LoadScene(buildIndex.Value, cmd.additive == true);
                     else
                         return new ErrorResponse(
                             "Either 'name'/'path' or 'buildIndex' must be provided for 'load' action."
@@ -417,7 +423,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object LoadScene(int buildIndex)
+        private static object LoadScene(int buildIndex, bool additive)
         {
             if (buildIndex < 0 || buildIndex >= SceneManager.sceneCountInBuildSettings)
             {
@@ -427,7 +433,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Check for unsaved changes
-            if (EditorSceneManager.GetActiveScene().isDirty)
+            if (!additive && EditorSceneManager.GetActiveScene().isDirty)
             {
                 return new ErrorResponse(
                     "Current scene has unsaved changes. Please save or discard changes before loading a new scene."
@@ -437,6 +443,8 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 string scenePath = SceneUtility.GetScenePathByBuildIndex(buildIndex);
+                if (additive)
+                    return LoadSceneAdditive(scenePath);
                 EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
                 return new SuccessResponse(
                     $"Scene at build index {buildIndex} ('{scenePath}') loaded successfully.",
