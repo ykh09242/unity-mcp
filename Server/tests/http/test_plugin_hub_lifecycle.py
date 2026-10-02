@@ -187,3 +187,63 @@ async def test_failed_send_does_not_leave_unconsumed_future(isolated_hub: Plugin
         assert observed == []
     finally:
         loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginRegistry) -> None:
+    PluginHub.configure(isolated_hub)
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def blocked_send(payload) -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    ws = AsyncMock()
+    ws.send_json.side_effect = blocked_send
+    PluginHub._connections["session"] = ws
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    command = asyncio.create_task(PluginHub.send_command("session", "manage_scene", {}))
+    try:
+        await entered.wait()
+        await hub.on_disconnect(ws, 1001)
+        done, _ = await asyncio.wait({command}, timeout=0.2)
+        assert command in done, "Disconnect must interrupt a blocked write immediately"
+        assert command.result()["hint"] == "retry"
+        assert stopped.is_set()
+        assert PluginHub._pending == {}
+    finally:
+        command.cancel()
+        await asyncio.gather(command, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_before_pending_registration_does_not_send(
+    isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    PluginHub.configure(isolated_hub)
+    ws = AsyncMock()
+    PluginHub._connections["session"] = ws
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    lookup = PluginHub._get_connection
+
+    async def disconnect_after_lookup(session_id):
+        connection = await lookup(session_id)
+        await hub.on_disconnect(connection, 1001)
+        return connection
+
+    monkeypatch.setattr(PluginHub, "_get_connection", disconnect_after_lookup)
+    command = asyncio.create_task(PluginHub.send_command("session", "manage_scene", {}))
+    try:
+        done, _ = await asyncio.wait({command}, timeout=0.2)
+        assert command in done, "A disconnected socket must not gain new pending commands"
+        with pytest.raises(RuntimeError, match="not connected"):
+            command.result()
+        ws.send_json.assert_not_awaited()
+        assert PluginHub._pending == {}
+    finally:
+        command.cancel()
+        await asyncio.gather(command, return_exceptions=True)

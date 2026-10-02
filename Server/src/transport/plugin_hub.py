@@ -310,12 +310,17 @@ class PluginHub(WebSocketEndpoint):
             raise RuntimeError("PluginHub not configured")
 
         async with lock:
+            # Disconnect can run between the initial lookup and this lock.
+            if cls._connections.get(session_id) is not websocket:
+                future.cancel()
+                raise RuntimeError(f"Plugin session {session_id} not connected")
             if command_id in cls._pending:
                 raise RuntimeError(
                     f"Duplicate command id generated: {command_id}")
             cls._pending[command_id] = {
                 "future": future, "session_id": session_id}
 
+        send_task: asyncio.Task | None = None
         try:
             msg = ExecuteCommandMessage(
                 id=command_id,
@@ -325,7 +330,17 @@ class PluginHub(WebSocketEndpoint):
             )
             deadline = asyncio.get_running_loop().time() + server_wait_s
             try:
-                await asyncio.wait_for(websocket.send_json(msg.model_dump()), timeout=server_wait_s)
+                send_task = asyncio.create_task(websocket.send_json(msg.model_dump()))
+                done, _ = await asyncio.wait(
+                    {send_task, future}, timeout=server_wait_s,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # A disconnect must also interrupt a blocked socket write.
+                if future in done:
+                    return future.result()
+                if send_task not in done:
+                    raise asyncio.TimeoutError
+                send_task.result()
                 remaining = max(0.0, deadline - asyncio.get_running_loop().time())
                 result = await asyncio.wait_for(future, timeout=remaining)
                 return result
@@ -340,6 +355,10 @@ class PluginHub(WebSocketEndpoint):
                     ).model_dump()
                 raise
         finally:
+            if send_task is not None:
+                if not send_task.done():
+                    send_task.cancel()
+                await asyncio.gather(send_task, return_exceptions=True)
             if not future.done():
                 future.cancel()
             elif not future.cancelled():
