@@ -1,13 +1,23 @@
 """Shader CLI commands for managing Unity shaders."""
 
+import os
 import sys
-import click
 from typing import Optional
+
+import click
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.confirmation import confirm_destructive_action
+
+
+def _shader_file_parts(path: str) -> tuple[str, str]:
+    """Keep explicit non-shader paths from addressing a shader sibling."""
+    name, suffix = os.path.splitext(os.path.basename(path))
+    if suffix and suffix.lower() != ".shader":
+        raise click.BadParameter("Shader path must have a .shader extension or no extension.", param_hint="path")
+    return name, os.path.dirname(path) or "Assets/"
 
 
 @click.group()
@@ -29,9 +39,7 @@ def read_shader(path: str):
     config = get_config()
 
     # Extract name from path
-    import os
-    name = os.path.splitext(os.path.basename(path))[0]
-    directory = os.path.dirname(path)
+    name, directory = _shader_file_parts(path)
 
     result = run_command("manage_shader", {
         "action": "read",
@@ -40,7 +48,7 @@ def read_shader(path: str):
     }, config)
 
     # If successful, display the contents nicely
-    if result.get("success") and result.get("data", {}).get("contents"):
+    if config.format != "json" and result.get("success") and result.get("data", {}).get("contents"):
         click.echo(result["data"]["contents"])
     else:
         click.echo(format_output(result, config.format))
@@ -81,7 +89,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
     if file_path:
         with open(file_path, 'r') as f:
             shader_contents = f.read()
-    elif contents:
+    elif contents is not None:
         shader_contents = contents
     else:
         # Read from stdin if available
@@ -133,7 +141,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
         "contents": shader_contents,
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created shader: {path}/{name}.shader")
 
 
@@ -162,15 +170,13 @@ def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
     """
     config = get_config()
 
-    import os
-    name = os.path.splitext(os.path.basename(path))[0]
-    directory = os.path.dirname(path)
+    name, directory = _shader_file_parts(path)
 
     # Get contents from file, option, or stdin
     if file_path:
         with open(file_path, 'r') as f:
             shader_contents = f.read()
-    elif contents:
+    elif contents is not None:
         shader_contents = contents
     else:
         import sys
@@ -188,7 +194,7 @@ def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
         "contents": shader_contents,
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Updated shader: {path}")
 
 
@@ -210,11 +216,9 @@ def delete_shader(path: str, force: bool):
     """
     config = get_config()
 
-    confirm_destructive_action("Delete", "shader", path, force)
+    name, directory = _shader_file_parts(path)
 
-    import os
-    name = os.path.splitext(os.path.basename(path))[0]
-    directory = os.path.dirname(path)
+    confirm_destructive_action("Delete", "shader", path, force)
 
     result = run_command("manage_shader", {
         "action": "delete",
@@ -222,5 +226,5 @@ def delete_shader(path: str, force: bool):
         "path": directory or "Assets/",
     }, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Deleted shader: {path}")

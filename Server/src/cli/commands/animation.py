@@ -95,7 +95,7 @@ def animator_play(target: str, state_name: str, layer: int, search_method: Optio
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Playing state '{state_name}' on {target}")
 
 
@@ -280,7 +280,7 @@ def clip_create(clip_path: str, name: Optional[str], length: float, loop: bool, 
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created clip at {clip_path}")
 
 
@@ -424,7 +424,7 @@ def clip_create_preset(clip_path: str, preset: str, duration: float, amplitude: 
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created '{preset}' preset at {clip_path}")
 
 
@@ -486,7 +486,7 @@ def clip_add_event(clip_path: str, function_name: str, time: float, string_param
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Added event '{function_name}' at time {time}")
 
 
@@ -519,7 +519,7 @@ def clip_remove_event(clip_path: str, event_index: Optional[int], function_name:
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Event(s) removed")
 
 
@@ -551,7 +551,7 @@ def controller_create(controller_path: str):
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created controller at {controller_path}")
 
 
@@ -701,7 +701,7 @@ def controller_assign(controller_path: str, target: str, search_method: Optional
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Assigned controller to {target}")
 
 
@@ -730,7 +730,7 @@ def controller_add_layer(controller_path: str, layer_name: str, weight: float, b
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Added layer '{layer_name}'")
 
 
@@ -759,7 +759,7 @@ def controller_remove_layer(controller_path: str, layer_index: Optional[int], la
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Layer removed")
 
 
@@ -790,7 +790,7 @@ def controller_set_layer_weight(controller_path: str, weight: float, layer_index
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Set layer weight to {weight}")
 
 
@@ -818,7 +818,7 @@ def controller_create_blend_tree_1d(controller_path: str, state_name: str, blend
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created 1D blend tree state '{state_name}'")
 
 
@@ -851,7 +851,7 @@ def controller_create_blend_tree_2d(controller_path: str, state_name: str, blend
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Created 2D blend tree state '{state_name}'")
 
 
@@ -888,7 +888,7 @@ def controller_add_blend_tree_child(controller_path: str, state_name: str, clip_
 
     result = run_command("manage_animation", _normalize_params(params), config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success("Added blend tree child")
 
 
