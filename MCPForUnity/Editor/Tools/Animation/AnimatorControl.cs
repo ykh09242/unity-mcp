@@ -49,7 +49,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             int layer = @params["layer"]?.ToObject<int>() ?? -1;
 
             Undo.RecordObject(animator, "Crossfade Animation State");
-            animator.CrossFade(stateName, duration, layer);
+            animator.CrossFadeInFixedTime(stateName, duration, layer);
 
             return new { success = true, message = $"Crossfading to '{stateName}' over {duration}s on '{go.name}'" };
         }
@@ -68,121 +68,121 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(paramName))
                 return new { success = false, message = "'parameterName' is required" };
 
-            string paramType = @params["parameterType"]?.ToString()?.ToLowerInvariant();
-
-            // Auto-detect type if not specified
-            if (string.IsNullOrEmpty(paramType))
-            {
-                for (int i = 0; i < animator.parameterCount; i++)
-                {
-                    var p = animator.GetParameter(i);
-                    if (p.name == paramName)
-                    {
-                        paramType = p.type.ToString().ToLowerInvariant();
-                        break;
-                    }
-                }
-
-                if (string.IsNullOrEmpty(paramType))
-                    return new { success = false, message = $"Parameter '{paramName}' not found. Specify 'parameterType' explicitly or check the parameter name." };
-            }
-
-            JToken valueToken = @params["value"];
-
-            // In Edit mode, runtime Animator.SetFloat/SetInteger/SetBool are no-ops because
-            // the Animator graph isn't active. Instead, modify the controller asset's default
-            // parameter values so changes actually persist.
             bool isPlaying = Application.isPlaying;
+            AnimatorController controller = null;
+            AnimatorControllerParameter[] allParams = null;
+            AnimatorControllerParameter found = null;
+            int paramIndex = -1;
 
             if (isPlaying)
             {
-                Undo.RecordObject(animator, $"Set Animator Parameter {paramName}");
-
-                switch (paramType)
+                int parameterCount = animator.parameterCount;
+                for (int i = 0; i < parameterCount; i++)
                 {
-                    case "float":
-                        float fVal = valueToken?.ToObject<float>() ?? 0f;
-                        animator.SetFloat(paramName, fVal);
-                        return new { success = true, message = $"Set float '{paramName}' = {fVal}" };
-
-                    case "int":
-                    case "integer":
-                        int iVal = valueToken?.ToObject<int>() ?? 0;
-                        animator.SetInteger(paramName, iVal);
-                        return new { success = true, message = $"Set int '{paramName}' = {iVal}" };
-
-                    case "bool":
-                    case "boolean":
-                        bool bVal = valueToken?.ToObject<bool>() ?? false;
-                        animator.SetBool(paramName, bVal);
-                        return new { success = true, message = $"Set bool '{paramName}' = {bVal}" };
-
-                    case "trigger":
-                        animator.SetTrigger(paramName);
-                        return new { success = true, message = $"Set trigger '{paramName}'" };
-
-                    default:
-                        return new { success = false, message = $"Unknown parameter type: {paramType}. Valid: float, int, bool, trigger" };
+                    var parameter = animator.GetParameter(i);
+                    if (parameter.name == paramName)
+                    {
+                        found = parameter;
+                        break;
+                    }
                 }
             }
             else
             {
-                // Edit mode: modify the AnimatorController asset's default parameter values
-                var controller = animator.runtimeAnimatorController as AnimatorController;
+                // The controller owns Edit-mode definitions/defaults even without an active Animator graph.
+                controller = animator.runtimeAnimatorController as AnimatorController;
                 if (controller == null)
                     return new { success = false, message = $"No AnimatorController assigned to Animator on '{go.name}'. Cannot set parameter defaults in Edit mode." };
 
-                var allParams = controller.parameters;
-                int paramIndex = -1;
+                allParams = controller.parameters;
                 for (int i = 0; i < allParams.Length; i++)
                 {
                     if (allParams[i].name == paramName)
                     {
+                        found = allParams[i];
                         paramIndex = i;
                         break;
                     }
                 }
+            }
 
-                if (paramIndex < 0)
-                    return new { success = false, message = $"Parameter '{paramName}' not found on controller '{controller.name}'." };
+            if (found == null)
+                return new { success = false, message = $"Parameter '{paramName}' not found on {(isPlaying ? "Animator" : $"controller '{controller.name}'")}." };
 
-                Undo.RecordObject(controller, $"Set Parameter Default {paramName}");
+            string paramType = @params["parameterType"]?.ToString()?.ToLowerInvariant();
+            if (string.IsNullOrEmpty(paramType))
+                paramType = found.type.ToString().ToLowerInvariant();
+            if (paramType == "integer") paramType = "int";
+            if (paramType == "boolean") paramType = "bool";
 
+            AnimatorControllerParameterType requestedType;
+            switch (paramType)
+            {
+                case "float": requestedType = AnimatorControllerParameterType.Float; break;
+                case "int": requestedType = AnimatorControllerParameterType.Int; break;
+                case "bool": requestedType = AnimatorControllerParameterType.Bool; break;
+                case "trigger": requestedType = AnimatorControllerParameterType.Trigger; break;
+                default:
+                    return new { success = false, message = $"Unknown parameter type: {paramType}. Valid: float, int, bool, trigger" };
+            }
+            if (requestedType != found.type)
+                return new { success = false, message = $"Parameter '{paramName}' has type '{found.type}', not '{paramType}'." };
+
+            JToken valueToken = @params["value"];
+            float fVal = 0f;
+            int iVal = 0;
+            bool bVal = false;
+            switch (paramType)
+            {
+                case "float": fVal = valueToken?.ToObject<float>() ?? 0f; break;
+                case "int": iVal = valueToken?.ToObject<int>() ?? 0; break;
+                case "bool": bVal = valueToken?.ToObject<bool>() ?? false; break;
+            }
+
+            if (isPlaying)
+            {
+                Undo.RecordObject(animator, $"Set Animator Parameter {paramName}");
                 switch (paramType)
                 {
                     case "float":
-                        float fVal = valueToken?.ToObject<float>() ?? 0f;
-                        allParams[paramIndex].defaultFloat = fVal;
-                        controller.parameters = allParams;
-                        EditorUtility.SetDirty(controller);
-                        AssetDatabase.SaveAssets();
-                        return new { success = true, message = $"Set float '{paramName}' = {fVal} (default value, Edit mode)" };
-
+                        animator.SetFloat(paramName, fVal);
+                        return new { success = true, message = $"Set float '{paramName}' = {fVal}" };
                     case "int":
-                    case "integer":
-                        int iVal = valueToken?.ToObject<int>() ?? 0;
-                        allParams[paramIndex].defaultInt = iVal;
-                        controller.parameters = allParams;
-                        EditorUtility.SetDirty(controller);
-                        AssetDatabase.SaveAssets();
-                        return new { success = true, message = $"Set int '{paramName}' = {iVal} (default value, Edit mode)" };
-
+                        animator.SetInteger(paramName, iVal);
+                        return new { success = true, message = $"Set int '{paramName}' = {iVal}" };
                     case "bool":
-                    case "boolean":
-                        bool bVal = valueToken?.ToObject<bool>() ?? false;
-                        allParams[paramIndex].defaultBool = bVal;
-                        controller.parameters = allParams;
-                        EditorUtility.SetDirty(controller);
-                        AssetDatabase.SaveAssets();
-                        return new { success = true, message = $"Set bool '{paramName}' = {bVal} (default value, Edit mode)" };
-
-                    case "trigger":
-                        return new { success = true, message = $"Trigger '{paramName}' noted (triggers are runtime-only, no default to set)" };
-
+                        animator.SetBool(paramName, bVal);
+                        return new { success = true, message = $"Set bool '{paramName}' = {bVal}" };
                     default:
-                        return new { success = false, message = $"Unknown parameter type: {paramType}. Valid: float, int, bool, trigger" };
+                        animator.SetTrigger(paramName);
+                        return new { success = true, message = $"Set trigger '{paramName}'" };
                 }
             }
+
+            if (paramType == "trigger")
+                return new { success = true, message = $"Trigger '{paramName}' noted (triggers are runtime-only, no default to set)" };
+
+            Undo.RecordObject(controller, $"Set Parameter Default {paramName}");
+            string valueDescription;
+            switch (paramType)
+            {
+                case "float":
+                    allParams[paramIndex].defaultFloat = fVal;
+                    valueDescription = $"{fVal}";
+                    break;
+                case "int":
+                    allParams[paramIndex].defaultInt = iVal;
+                    valueDescription = $"{iVal}";
+                    break;
+                default:
+                    allParams[paramIndex].defaultBool = bVal;
+                    valueDescription = $"{bVal}";
+                    break;
+            }
+            controller.parameters = allParams;
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssets();
+            return new { success = true, message = $"Set {paramType} '{paramName}' = {valueDescription} (default value, Edit mode)" };
         }
 
         public static object SetSpeed(JObject @params)
