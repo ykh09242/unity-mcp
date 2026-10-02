@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Annotated, Any
 
 from fastmcp import Context
@@ -20,23 +21,35 @@ DEFAULT_MAX_COMMANDS_PER_BATCH = 25
 # Hard ceiling matching the C# AbsoluteMaxCommandsPerBatch.
 ABSOLUTE_MAX_COMMANDS_PER_BATCH = 100
 
-# Module-level cache for the Unity-configured limit (populated from editor state).
-_cached_max_commands: int | None = None
+# Settings are mutable and belong to a selected user's editor instance.
+_LIMIT_CACHE_TTL_SECONDS = 5.0
+_LIMIT_CACHE_MAX_ENTRIES = 128
+_cached_max_commands: dict[tuple[str | None, str], tuple[int, float]] = {}
 
 
-async def _get_max_commands_from_editor_state(ctx: Context) -> int:
+async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str | None) -> int:
     """
     Attempt to read the configured batch limit from the Unity editor state.
     Falls back to DEFAULT_MAX_COMMANDS_PER_BATCH if unavailable.
     """
-    global _cached_max_commands
-    if _cached_max_commands is not None:
-        return _cached_max_commands
+    cache_key = None
+    if unity_instance:
+        try:
+            user_id = await ctx.get_state("user_id")
+            if user_id is None or isinstance(user_id, str):
+                cache_key = (user_id, unity_instance)
+        except Exception:
+            pass
+    cached = _cached_max_commands.get(cache_key) if cache_key is not None else None
+    if cached is not None and time.monotonic() < cached[1]:
+        return cached[0]
 
     try:
-        from services.resources.editor_state import get_editor_state
-
-        state_resp = await get_editor_state(ctx)
+        # The enriched resource also scans external assets and reads project_info;
+        # batch validation only needs the editor's settings snapshot.
+        state_resp = await send_with_unity_instance(
+            async_send_command_with_retry, unity_instance, "get_editor_state", {},
+        )
         data = state_resp.data if hasattr(state_resp, "data") else (
             state_resp.get("data") if isinstance(state_resp, dict) else None
         )
@@ -44,8 +57,11 @@ async def _get_max_commands_from_editor_state(ctx: Context) -> int:
             settings = data.get("settings")
             if isinstance(settings, dict):
                 limit = settings.get("batch_execute_max_commands")
-                if isinstance(limit, int) and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-                    _cached_max_commands = limit
+                if type(limit) is int and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
+                    if cache_key is not None:
+                        if cache_key not in _cached_max_commands and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES:
+                            _cached_max_commands.pop(next(iter(_cached_max_commands)))
+                        _cached_max_commands[cache_key] = (limit, time.monotonic() + _LIMIT_CACHE_TTL_SECONDS)
                     return limit
     except Exception as exc:
         logger.debug("Could not read batch limit from editor state: %s", exc)
@@ -55,8 +71,7 @@ async def _get_max_commands_from_editor_state(ctx: Context) -> int:
 
 def invalidate_cached_max_commands() -> None:
     """Reset the cached limit so the next call re-reads from editor state."""
-    global _cached_max_commands
-    _cached_max_commands = None
+    _cached_max_commands.clear()
 
 
 @mcp_for_unity_tool(
@@ -85,16 +100,13 @@ async def batch_execute(
                                "Hint for the maximum number of parallel workers"] = None,
 ) -> dict[str, Any]:
     """Proxy the batch_execute tool to the Unity Editor transporter."""
-    unity_instance = await get_unity_instance_from_context(ctx)
-
     if not isinstance(commands, list) or not commands:
         raise ValueError(
             "'commands' must be a non-empty list of command specifications")
 
-    max_commands = await _get_max_commands_from_editor_state(ctx)
-    if len(commands) > max_commands:
+    if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
         raise ValueError(
-            f"batch_execute supports up to {max_commands} commands (configured in Unity); received {len(commands)}"
+            f"batch_execute supports at most {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands; received {len(commands)}"
         )
 
     normalized_commands: list[dict[str, Any]] = []
@@ -127,6 +139,13 @@ async def batch_execute(
             "tool": tool_name,
             "params": params,
         })
+
+    unity_instance = await get_unity_instance_from_context(ctx)
+    max_commands = await _get_max_commands_from_editor_state(ctx, unity_instance)
+    if len(commands) > max_commands:
+        raise ValueError(
+            f"batch_execute supports up to {max_commands} commands (configured in Unity); received {len(commands)}"
+        )
 
     payload: dict[str, Any] = {
         "commands": normalized_commands,
