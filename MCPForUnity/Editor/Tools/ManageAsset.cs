@@ -66,6 +66,13 @@ namespace MCPForUnity.Editor.Tools
 
             // Coerce string JSON to JObject for 'properties' if provided as a JSON string
             var propertiesToken = @params["properties"];
+            if (action == "create" && propertiesToken != null
+                && propertiesToken.Type != JTokenType.Null
+                && propertiesToken.Type != JTokenType.Object
+                && propertiesToken.Type != JTokenType.String)
+            {
+                return new ErrorResponse("'properties' must be a JSON object or null for create.");
+            }
             if (propertiesToken != null && propertiesToken.Type == JTokenType.String)
             {
                 try
@@ -75,6 +82,8 @@ namespace MCPForUnity.Editor.Tools
                 }
                 catch (Exception e)
                 {
+                    if (action == "create")
+                        return new ErrorResponse("'properties' must be a valid JSON object for create.");
                     McpLog.Warn($"[ManageAsset] Could not parse 'properties' JSON string: {e.Message}");
                 }
             }
@@ -175,36 +184,44 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'assetType' is required for create.");
 
             string fullPath = AssetPathUtility.SanitizeAssetPath(path);
-            string directory = Path.GetDirectoryName(fullPath);
-
-            // Ensure directory exists
-            if (!Directory.Exists(Path.Combine(Directory.GetCurrentDirectory(), directory)))
-            {
-                Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), directory));
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport); // Make sure Unity knows about the new folder
-            }
-
             if (AssetExists(fullPath))
                 return new ErrorResponse($"Asset already exists at path: {fullPath}");
 
+            string lowerAssetType = assetType.ToLowerInvariant();
+            if (lowerAssetType == "folder")
+                return CreateFolder(path);
+            if (lowerAssetType == "prefab")
+            {
+                return new ErrorResponse(
+                    "Creating prefabs programmatically usually requires a source GameObject. Use manage_gameobject to create/configure, then save as prefab via a separate mechanism or future enhancement."
+                );
+            }
+            if (lowerAssetType != "material" && lowerAssetType != "physicsmaterial")
+            {
+                return new ErrorResponse(
+                    $"Creation for asset type '{assetType}' is not explicitly supported yet. Supported: Folder, Material, PhysicsMaterial."
+                );
+            }
+
+            Shader shader = null;
+            if (lowerAssetType == "material")
+            {
+                var requested = properties?["shader"]?.ToString();
+                shader = RenderPipelineUtility.ResolveShader(requested);
+                if (shader == null)
+                    return new ErrorResponse($"Could not find a project-compatible shader (requested: '{requested ?? "none"}'). Consider installing URP/HDRP or provide an explicit shader path.");
+            }
+
+            UnityEngine.Object newAsset = null;
             try
             {
-                UnityEngine.Object newAsset = null;
-                string lowerAssetType = assetType.ToLowerInvariant();
+                EnsureDirectoryExists(Path.GetDirectoryName(fullPath));
 
                 // Handle common asset types
-                if (lowerAssetType == "folder")
+                if (lowerAssetType == "material")
                 {
-                    return CreateFolder(path); // Use dedicated method
-                }
-                else if (lowerAssetType == "material")
-                {
-                    var requested = properties?["shader"]?.ToString();
-                    Shader shader = RenderPipelineUtility.ResolveShader(requested);
-                    if (shader == null)
-                        return new ErrorResponse($"Could not find a project-compatible shader (requested: '{requested ?? "none"}'). Consider installing URP/HDRP or provide an explicit shader path.");
-
                     var mat = new Material(shader);
+                    newAsset = mat;
                     if (properties != null)
                     {
                         JObject propertiesForApply = properties;
@@ -220,44 +237,21 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
                     AssetDatabase.CreateAsset(mat, fullPath);
-                    newAsset = mat;
                 }
                 else if (lowerAssetType == "physicsmaterial")
                 {
                     PhysicsMaterialType pmat = new PhysicsMaterialType();
+                    newAsset = pmat;
                     if (properties != null)
                         ApplyPhysicsMaterialProperties(pmat, properties);
                     AssetDatabase.CreateAsset(pmat, fullPath);
-                    newAsset = pmat;
-                }
-                else if (lowerAssetType == "prefab")
-                {
-                    // Creating prefabs usually involves saving an existing GameObject hierarchy.
-                    // A common pattern is to create an empty GameObject, configure it, and then save it.
-                    return new ErrorResponse(
-                        "Creating prefabs programmatically usually requires a source GameObject. Use manage_gameobject to create/configure, then save as prefab via a separate mechanism or future enhancement."
-                    );
-                    // Example (conceptual):
-                    // GameObject source = GameObject.Find(properties["sourceGameObject"].ToString());
-                    // if(source != null) PrefabUtility.SaveAsPrefabAsset(source, fullPath);
-                }
-                // TODO: Add more asset types (Animation Controller, Scene, etc.)
-                else
-                {
-                    // Generic creation attempt (might fail or create empty files)
-                    // For some types, just creating the file might be enough if Unity imports it.
-                    // File.Create(Path.Combine(Directory.GetCurrentDirectory(), fullPath)).Close();
-                    // AssetDatabase.ImportAsset(fullPath); // Let Unity try to import it
-                    // newAsset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(fullPath);
-                    return new ErrorResponse(
-                        $"Creation for asset type '{assetType}' is not explicitly supported yet. Supported: Folder, Material, PhysicsMaterial."
-                    );
                 }
 
-                if (
-                    newAsset == null
-                    && !Directory.Exists(Path.Combine(Directory.GetCurrentDirectory(), fullPath))
-                ) // Check if it wasn't a folder and asset wasn't created
+                if (newAsset == null || !EditorUtility.IsPersistent(newAsset)
+                    || !string.Equals(
+                        AssetPathUtility.NormalizeSeparators(AssetDatabase.GetAssetPath(newAsset)),
+                        AssetPathUtility.NormalizeSeparators(fullPath),
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     return new ErrorResponse(
                         $"Failed to create asset '{assetType}' at '{fullPath}'. See logs for details."
@@ -274,6 +268,11 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception e)
             {
                 return new ErrorResponse($"Failed to create asset at '{fullPath}': {e.Message}");
+            }
+            finally
+            {
+                if (newAsset != null && !EditorUtility.IsPersistent(newAsset))
+                    UnityEngine.Object.DestroyImmediate(newAsset);
             }
         }
 
@@ -838,7 +837,7 @@ namespace MCPForUnity.Editor.Tools
         {
             // AssetDatabase APIs are generally preferred over raw File/Directory checks for assets.
             // Check if it's a known asset GUID.
-            if (!string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(sanitizedPath)))
+            if (!string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(sanitizedPath, AssetPathToGUIDOptions.OnlyExistingAssets)))
             {
                 return true;
             }
