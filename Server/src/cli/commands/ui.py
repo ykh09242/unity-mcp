@@ -94,7 +94,8 @@ def create_canvas(name: str, render_mode: str):
     }, config)
 
     click.echo(format_output(result, config.format))
-    print_success(f"Created Canvas: {name}")
+    if config.format != "json":
+        print_success(f"Created Canvas: {name}")
 
 
 @ui.command("create-text")
@@ -159,7 +160,8 @@ def create_text(name: str, parent: str, text: str, position: tuple):
     }, config)
 
     click.echo(format_output(result, config.format))
-    print_success(f"Created Text: {name}")
+    if config.format != "json":
+        print_success(f"Created Text: {name}")
 
 
 @ui.command("create-button")
@@ -233,7 +235,8 @@ def create_button(name: str, parent: str, text: str):  # text current placeholde
     }, config)
 
     click.echo(format_output(result, config.format))
-    print_success(f"Created Button: {name} (with label '{text}')")
+    if config.format != "json":
+        print_success(f"Created Button: {name} (with label '{text}')")
 
 
 @ui.command("create-image")
@@ -292,4 +295,5 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
         }, config)
 
     click.echo(format_output(result, config.format))
-    print_success(f"Created Image: {name}")
+    if config.format != "json":
+        print_success(f"Created Image: {name}")
