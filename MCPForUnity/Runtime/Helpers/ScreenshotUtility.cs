@@ -192,18 +192,27 @@ namespace MCPForUnity.Runtime.Helpers
             bool wasPaused = UnityEditor.EditorApplication.isPaused;
             try
             {
-                for (int i = 0; i < timeoutSteps && !done; i++)
+                try
                 {
-                    UnityEditor.EditorApplication.Step();
+                    for (int i = 0; i < timeoutSteps && !done; i++)
+                    {
+                        UnityEditor.EditorApplication.Step();
+                    }
                 }
+                finally
+                {
+                    if (!wasPaused)
+                        UnityEditor.EditorApplication.isPaused = false;
+                }
+                var captured = result;
+                result = null; // transfer only after stepping and pause restoration succeed
+                return captured;
             }
             finally
             {
-                if (!wasPaused)
-                    UnityEditor.EditorApplication.isPaused = false;
+                callerReturned = true;
+                DestroyTexture(result);
             }
-            callerReturned = true;
-            return result;
         }
 #endif
 
@@ -591,20 +600,24 @@ namespace MCPForUnity.Runtime.Helpers
 
             RenderTexture prevActive = RenderTexture.active;
             var rt = RenderTexture.GetTemporary(dstW, dstH, 0, RenderTextureFormat.ARGB32, readWrite);
-            rt.filterMode = FilterMode.Bilinear;
+            Texture2D dst = null;
             try
             {
+                rt.filterMode = FilterMode.Bilinear;
                 Graphics.Blit(source, rt);
                 RenderTexture.active = rt;
-                var dst = new Texture2D(dstW, dstH, TextureFormat.RGBA32, false, linear: !srcIsSrgb);
+                dst = new Texture2D(dstW, dstH, TextureFormat.RGBA32, false, linear: !srcIsSrgb);
                 dst.ReadPixels(new Rect(0, 0, dstW, dstH), 0, 0);
                 dst.Apply();
-                return dst;
+                var result = dst;
+                dst = null; // transfer ownership to caller
+                return result;
             }
             finally
             {
                 RenderTexture.active = prevActive;
                 RenderTexture.ReleaseTemporary(rt);
+                DestroyTexture(dst);
             }
         }
 

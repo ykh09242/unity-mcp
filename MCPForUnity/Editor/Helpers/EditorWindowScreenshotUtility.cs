@@ -200,25 +200,25 @@ namespace MCPForUnity.Editor.Helpers
             int height = Mathf.RoundToInt(viewportRectPixels.height);
 
             RenderTexture rt = null;
+            Texture2D texture = null;
             RenderTexture previousActive = RenderTexture.active;
             try
             {
-                rt = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32)
-                {
-                    antiAliasing = 1,
-                    filterMode = FilterMode.Bilinear,
-                    hideFlags = HideFlags.HideAndDontSave,
-                };
+                rt = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
+                rt.antiAliasing = 1;
+                rt.filterMode = FilterMode.Bilinear;
+                rt.hideFlags = HideFlags.HideAndDontSave;
                 rt.Create();
 
                 grabPixels.Invoke(hostView, new object[] { rt, viewportRectPixels });
 
                 RenderTexture.active = rt;
-                var texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
                 texture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                texture.Apply();
                 FlipTextureVertically(texture);
-                return texture;
+                var result = texture;
+                texture = null; // transfer ownership only after readback and flip succeed
+                return result;
             }
             catch (TargetInvocationException ex)
             {
@@ -228,6 +228,7 @@ namespace MCPForUnity.Editor.Helpers
             finally
             {
                 RenderTexture.active = previousActive;
+                DestroyTexture(texture);
                 if (rt != null)
                 {
                     rt.Release();
