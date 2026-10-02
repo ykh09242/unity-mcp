@@ -80,6 +80,43 @@ namespace MCPForUnityTests.Editor.Services
             public Task ReregisterToolsAsync() => Task.CompletedTask;
         }
 
+        private sealed class ExternallyControlledHttpClient : IMcpTransportClient
+        {
+            public TransportState State { get; set; } = TransportState.Connected("websocket", sessionId: "pending");
+            public bool IsConnected => State.IsConnected;
+            public string TransportName => "websocket";
+            public Task<bool> StartAsync() => Task.FromResult(true);
+            public Task StopAsync() => Task.CompletedTask;
+            public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
+            public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        [Test]
+        public void GetState_Http_ReflectsClientDisconnectWithoutVerify()
+        {
+            var client = new ExternallyControlledHttpClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            client.State = TransportState.Disconnected("websocket", "Server closed connection");
+
+            Assert.IsFalse(manager.IsRunning(TransportMode.Http));
+            Assert.AreEqual("Server closed connection", manager.GetState(TransportMode.Http).Error);
+        }
+
+        [Test]
+        public void GetState_Http_ReflectsRegisteredAndReconnectedSession()
+        {
+            var client = new ExternallyControlledHttpClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            client.State = TransportState.Connected("websocket", sessionId: "registered-session");
+            Assert.AreEqual("registered-session", manager.GetState(TransportMode.Http).SessionId);
+            client.State = TransportState.Connected("websocket", sessionId: "reconnected-session");
+            Assert.AreEqual("reconnected-session", manager.GetState(TransportMode.Http).SessionId);
+        }
+
         /// <summary>
         /// The bridge binding via its editor-idle retry (no StartAsync) must surface as
         /// connected through GetState/IsRunning, port included.

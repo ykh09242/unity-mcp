@@ -133,41 +133,44 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public async Task StopAsync()
         {
-            if (_lifecycleCts == null)
+            var lifecycleCts = _lifecycleCts;
+            var socket = _socket;
+            if (lifecycleCts == null)
             {
                 return;
             }
 
             try
             {
-                _lifecycleCts.Cancel();
+                lifecycleCts.Cancel();
             }
             catch { }
 
             await StopConnectionLoopsAsync().ConfigureAwait(false);
 
-            if (_socket != null)
+            if (socket != null)
             {
                 try
                 {
-                    if (_socket.State == WebSocketState.Open || _socket.State == WebSocketState.CloseReceived)
+                    if (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived)
                     {
-                        await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Shutdown", CancellationToken.None).ConfigureAwait(false);
+                        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Shutdown", CancellationToken.None).ConfigureAwait(false);
                     }
                 }
                 catch { }
                 finally
                 {
-                    _socket.Dispose();
-                    _socket = null;
+                    socket.Dispose();
+                    Interlocked.CompareExchange(ref _socket, null, socket);
                 }
             }
 
-            _isConnected = false;
-            _state = TransportState.Disconnected(TransportDisplayName);
-
-            _lifecycleCts.Dispose();
-            _lifecycleCts = null;
+            lifecycleCts.Dispose();
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _lifecycleCts, null, lifecycleCts), lifecycleCts))
+            {
+                _isConnected = false;
+                _state = TransportState.Disconnected(TransportDisplayName);
+            }
         }
 
         /// <summary>
@@ -251,6 +254,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private async Task<bool> EstablishConnectionAsync(CancellationToken token)
         {
             await StopConnectionLoopsAsync().ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
 
             _connectionCts?.Dispose();
             _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -338,41 +342,46 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         /// <param name="awaitTasks">Whether to await the receive and keep alive tasks before disposing.</param>
         private async Task StopConnectionLoopsAsync(bool awaitTasks = true)
         {
-            if (_connectionCts != null && !_connectionCts.IsCancellationRequested)
+            // Keep ownership of the loops being stopped across awaits. ForceStop or a
+            // replacement connection can change these fields before an old loop finishes.
+            var connectionCts = _connectionCts;
+            var receiveTask = _receiveTask;
+            var keepAliveTask = _keepAliveTask;
+            if (connectionCts != null && !connectionCts.IsCancellationRequested)
             {
-                try { _connectionCts.Cancel(); } catch { }
+                try { connectionCts.Cancel(); } catch { }
             }
 
-            if (_receiveTask != null)
+            if (receiveTask != null)
             {
                 if (awaitTasks)
                 {
-                    try { await _receiveTask.ConfigureAwait(false); } catch { }
-                    _receiveTask = null;
+                    try { await receiveTask.ConfigureAwait(false); } catch { }
+                    _ = Interlocked.CompareExchange(ref _receiveTask, null, receiveTask);
                 }
-                else if (_receiveTask.IsCompleted)
+                else if (receiveTask.IsCompleted)
                 {
-                    _receiveTask = null;
+                    _ = Interlocked.CompareExchange(ref _receiveTask, null, receiveTask);
                 }
             }
 
-            if (_keepAliveTask != null)
+            if (keepAliveTask != null)
             {
                 if (awaitTasks)
                 {
-                    try { await _keepAliveTask.ConfigureAwait(false); } catch { }
-                    _keepAliveTask = null;
+                    try { await keepAliveTask.ConfigureAwait(false); } catch { }
+                    _ = Interlocked.CompareExchange(ref _keepAliveTask, null, keepAliveTask);
                 }
-                else if (_keepAliveTask.IsCompleted)
+                else if (keepAliveTask.IsCompleted)
                 {
-                    _keepAliveTask = null;
+                    _ = Interlocked.CompareExchange(ref _keepAliveTask, null, keepAliveTask);
                 }
             }
 
-            if (_connectionCts != null)
+            if (connectionCts != null)
             {
-                _connectionCts.Dispose();
-                _connectionCts = null;
+                connectionCts.Dispose();
+                Interlocked.CompareExchange(ref _connectionCts, null, connectionCts);
             }
         }
 
@@ -759,10 +768,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             var stackTrace = new System.Diagnostics.StackTrace(true);
             McpLog.Debug($"[WebSocket] HandleSocketClosureAsync called. Reason: {reason}\nStack trace:\n{stackTrace}");
 
-            if (_lifecycleCts == null || _lifecycleCts.IsCancellationRequested)
+            var lifecycleCts = _lifecycleCts;
+            if (lifecycleCts == null || lifecycleCts.IsCancellationRequested)
             {
                 return;
             }
+
+            CancellationToken lifecycleToken;
+            try { lifecycleToken = lifecycleCts.Token; }
+            catch (ObjectDisposedException) { return; }
 
             if (Interlocked.CompareExchange(ref _isReconnectingFlag, 1, 0) != 0)
             {
@@ -770,18 +784,26 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
 
             _isConnected = false;
-            _state = _state.WithError(reason ?? "Connection closed");
+            _state = TransportState.Disconnected(TransportDisplayName, reason ?? "Connection closed");
             McpLog.Warn($"[WebSocket] Connection closed: {reason}");
 
             await StopConnectionLoopsAsync(awaitTasks: false).ConfigureAwait(false);
 
-            _ = Task.Run(() => AttemptReconnectAsync(_lifecycleCts.Token), CancellationToken.None);
+            if (lifecycleToken.IsCancellationRequested || !ReferenceEquals(_lifecycleCts, lifecycleCts))
+            {
+                if (ReferenceEquals(_lifecycleCts, lifecycleCts))
+                    Interlocked.Exchange(ref _isReconnectingFlag, 0);
+                return;
+            }
+
+            _ = Task.Run(() => AttemptReconnectAsync(lifecycleToken, lifecycleCts), CancellationToken.None);
         }
 
-        private async Task AttemptReconnectAsync(CancellationToken token)
+        private async Task AttemptReconnectAsync(CancellationToken token, CancellationTokenSource lifecycleCts)
         {
             try
             {
+                if (token.IsCancellationRequested) return;
                 await StopConnectionLoopsAsync().ConfigureAwait(false);
 
                 foreach (TimeSpan delay in ReconnectSchedule)
@@ -826,7 +848,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             finally
             {
-                Interlocked.Exchange(ref _isReconnectingFlag, 0);
+                if (ReferenceEquals(_lifecycleCts, lifecycleCts))
+                    Interlocked.Exchange(ref _isReconnectingFlag, 0);
             }
         }
 

@@ -135,7 +135,7 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             return mode switch
             {
-                TransportMode.Http => _httpState,
+                TransportMode.Http => _httpClient?.State ?? _httpState,
                 TransportMode.Stdio => ReconciledStdioState(),
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode"),
             };
