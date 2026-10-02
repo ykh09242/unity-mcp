@@ -6,8 +6,8 @@ import click
 from typing import Optional, Tuple, Any
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_error, print_success, print_warning
-from cli.utils.connection import run_command, handle_unity_errors, UnityConnectionError
+from cli.utils.output import format_output, print_error, print_success
+from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.constants import SEARCH_METHOD_CHOICE_FULL, SEARCH_METHOD_CHOICE_TAGGED
 from cli.utils.confirmation import confirm_destructive_action
 
@@ -174,27 +174,12 @@ def create(
         params["saveAsPrefab"] = True
     if prefab_path:
         params["prefabPath"] = prefab_path
+    if components:
+        params["componentsToAdd"] = [c.strip() for c in components.split(",")]
 
     result = run_command("manage_gameobject", params, config)
-
-    # Add components separately since componentsToAdd doesn't work
-    if components and (result.get("success") or result.get("data") or result.get("result")):
-        component_list = [c.strip() for c in components.split(",")]
-        failed_components = []
-        for component in component_list:
-            try:
-                run_command("manage_components", {
-                    "action": "add",
-                    "target": name,
-                    "componentType": component,
-                }, config)
-            except UnityConnectionError:
-                failed_components.append(component)
-        if failed_components:
-            print_warning(f"Failed to add components: {', '.join(failed_components)}")
-
     click.echo(format_output(result, config.format))
-    if result.get("success") or result.get("result"):
+    if (result.get("success") or result.get("result")) and config.format != "json":
         print_success(f"Created GameObject '{name}'")
 
 
@@ -369,7 +354,7 @@ def delete(target: str, search_method: Optional[str], force: bool):
 
     result = run_command("manage_gameobject", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Deleted GameObject '{target}'")
 
 
@@ -424,7 +409,7 @@ def duplicate(
 
     result = run_command("manage_gameobject", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Duplicated GameObject '{target}'")
 
 
@@ -492,5 +477,5 @@ def move(
 
     result = run_command("manage_gameobject", params, config)
     click.echo(format_output(result, config.format))
-    if result.get("success"):
+    if result.get("success") and config.format != "json":
         print_success(f"Moved '{target}' {direction} of '{reference}' by {distance} units")
