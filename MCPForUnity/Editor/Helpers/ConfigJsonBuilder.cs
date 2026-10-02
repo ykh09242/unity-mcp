@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Models;
 using Newtonsoft.Json;
@@ -30,11 +31,20 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (root == null) root = new JObject();
             bool isVSCode = client?.IsVsCodeLayout == true;
-            if (!string.IsNullOrEmpty(client?.SchemaUrl) && root["$schema"] == null) root["$schema"] = client.SchemaUrl;
-            JObject container = EnsureObject(root, GetContainerKey(client, isVSCode));
-            JObject unity = container["unityMCP"] as JObject ?? new JObject();
+            string containerKey = GetContainerKey(client, isVSCode);
+            JToken existingContainer = root[containerKey];
+            if (existingContainer != null && !(existingContainer is JObject))
+                throw new FormatException($"Configuration '{containerKey}' must be an object.");
+            JToken existingUnity = (existingContainer as JObject)?["unityMCP"];
+            if (existingUnity != null && !(existingUnity is JObject))
+                throw new FormatException($"Configuration '{containerKey}.unityMCP' must be an object.");
+
+            // Generate on a detached entry so validation or endpoint failures cannot alter the caller's document.
+            JObject unity = existingUnity?.DeepClone() as JObject ?? new JObject();
             PopulateUnityNode(unity, uvPath, client, isVSCode);
 
+            if (!string.IsNullOrEmpty(client?.SchemaUrl) && root["$schema"] == null) root["$schema"] = client.SchemaUrl;
+            JObject container = EnsureObject(root, containerKey);
             container["unityMCP"] = unity;
             return root;
         }
@@ -58,6 +68,10 @@ namespace MCPForUnity.Editor.Helpers
 
             if (useHttpTransport)
             {
+                JToken existingHeaders = unity["headers"];
+                if (existingHeaders != null && !(existingHeaders is JObject))
+                    throw new FormatException("Configuration 'unityMCP.headers' must be an object.");
+
                 // HTTP mode: Use URL, no command
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 unity[httpProperty] = httpUrl;
@@ -71,10 +85,16 @@ namespace MCPForUnity.Editor.Helpers
                 if (unity["command"] != null) unity.Remove("command");
                 if (unity["args"] != null) unity.Remove("args");
 
-                var headers = HttpEndpointUtility.GetAuthHeaders();
-                if (headers.Count > 0)
+                var headers = existingHeaders as JObject ?? new JObject();
+                foreach (var property in headers.Properties().Where(property =>
+                    string.Equals(property.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)).ToArray())
+                    property.Remove();
+                foreach (var header in HttpEndpointUtility.GetAuthHeaders())
+                    headers[header.Key] = header.Value;
+                if (headers.HasValues)
                 {
-                    unity["headers"] = JObject.FromObject(headers);
+                    unity["headers"] = headers;
                 }
                 else
                 {
@@ -143,6 +163,8 @@ namespace MCPForUnity.Editor.Helpers
         private static JObject EnsureObject(JObject parent, string name)
         {
             if (parent[name] is JObject o) return o;
+            if (parent[name] != null)
+                throw new FormatException($"Configuration '{name}' must be an object.");
             var created = new JObject();
             parent[name] = created;
             return created;

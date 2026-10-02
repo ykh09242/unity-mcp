@@ -137,7 +137,37 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 EditorPrefs.DeleteKey(EditorPrefKeys.DevModeForceServerRefresh);
             }
+            EditorConfigurationCache.Instance.Refresh();
+        }
 
+        [Test]
+        public void UpsertCodexServerBlock_StdioPreservesCustomSettings()
+        {
+            string result = CodexConfigHelper.UpsertCodexServerBlock(
+                "model = \"synthetic-model\"\n[mcp_servers.other]\ncommand = \"other\"\n"
+                + "[mcp_servers.unityMCP]\ncommand = \"old\"\nargs = []\n"
+                + "enabled = false\nstartup_timeout_sec = 0\n"
+                + "env = { CUSTOM = \"retained\" }\n", null);
+            using var reader = new StringReader(result);
+            var root = TOML.Parse(reader);
+            var servers = (TomlTable)root["mcp_servers"];
+            var unity = (TomlTable)servers["unityMCP"];
+            Assert.AreEqual("synthetic-model", ((TomlString)root["model"]).Value);
+            Assert.AreEqual("other", ((TomlString)((TomlTable)servers["other"])["command"]).Value);
+            Assert.IsFalse(((TomlBoolean)unity["enabled"]).Value);
+            Assert.AreEqual(0, ((TomlInteger)unity["startup_timeout_sec"]).Value);
+            Assert.AreEqual("retained", ((TomlString)((TomlTable)unity["env"])["CUSTOM"]).Value);
+        }
+
+        [Test]
+        public void UpsertCodexServerBlock_StdioRefusesCustomHttpHeaders()
+        {
+            var error = Assert.Throws<System.FormatException>(() => CodexConfigHelper.UpsertCodexServerBlock(
+                "[mcp_servers.unityMCP]\nurl = \"https://synthetic.invalid/mcp\"\n"
+                + "http_headers = { Custom = \"synthetic-private-value\" }", null));
+            StringAssert.Contains("http_headers", error.Message);
+            StringAssert.Contains("stdio", error.Message);
+            StringAssert.DoesNotContain("synthetic-private-value", error.Message);
         }
 
         [Test]
@@ -467,6 +497,7 @@ namespace MCPForUnityTests.Editor.Helpers
 
             // Force HTTP mode
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
 
             string uvPath = "C:\\Program Files\\uv\\uv.exe";
 
@@ -539,6 +570,7 @@ namespace MCPForUnityTests.Editor.Helpers
 
             // Force HTTP mode
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
 
             string existingToml = string.Join("\n", new[]
             {

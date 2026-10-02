@@ -50,61 +50,34 @@ namespace MCPForUnity.Editor.Helpers
                 catch (Exception e)
                 {
                     McpLog.Warn($"Error reading existing config: {e.Message}.");
+                    throw new IOException("Existing configuration could not be read and was not changed.", e);
                 }
             }
 
             // Parse the existing JSON while preserving all properties
-            dynamic existingConfig;
+            JObject existingRoot;
             try
             {
                 if (string.IsNullOrWhiteSpace(existingJson))
                 {
-                    existingConfig = new JObject();
+                    existingRoot = new JObject();
                 }
                 else
                 {
-                    existingConfig = JsonConvert.DeserializeObject(existingJson) ?? new JObject();
+                    existingRoot = JObject.Parse(existingJson, new JsonLoadSettings
+                    {
+                        DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error
+                    });
                 }
             }
-            catch
+            catch (JsonException e)
             {
-                // If user has partial/invalid JSON (e.g., mid-edit), start from a fresh object
-                if (!string.IsNullOrWhiteSpace(existingJson))
-                {
-                    McpLog.Warn("UnityMCP: Configuration file could not be parsed; rewriting server block.");
-                }
-                existingConfig = new JObject();
+                throw new FormatException("Existing configuration must be a JSON object without duplicate properties and was not changed.", e);
             }
 
-            // Determine existing entry references (command/args)
-            string existingCommand = null;
-            string[] existingArgs = null;
-            bool isVSCode = (mcpClient?.IsVsCodeLayout == true);
-            try
-            {
-                if (isVSCode)
-                {
-                    existingCommand = existingConfig?.servers?.unityMCP?.command?.ToString();
-                    existingArgs = existingConfig?.servers?.unityMCP?.args?.ToObject<string[]>();
-                }
-                else
-                {
-                    existingCommand = existingConfig?.mcpServers?.unityMCP?.command?.ToString();
-                    existingArgs = existingConfig?.mcpServers?.unityMCP?.args?.ToObject<string[]>();
-                }
-            }
-            catch { }
-
-            // 1) Start from existing, only fill gaps (prefer trusted resolver)
-            string uvxPath = MCPServiceLocator.Paths.GetUvxPath();
-            if (uvxPath == null) return "uv package manager not found. Please install uv first.";
-
-            // Ensure containers exist and write back configuration
-            JObject existingRoot;
-            if (existingConfig is JObject eo)
-                existingRoot = eo;
-            else
-                existingRoot = JObject.FromObject(existingConfig);
+            bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport && mcpClient?.SupportsHttpTransport != false;
+            string uvxPath = useHttp ? null : MCPServiceLocator.Paths.GetUvxPath();
+            if (!useHttp && string.IsNullOrEmpty(uvxPath)) return "uv package manager not found. Please install uv first.";
 
             existingRoot = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(existingRoot, uvxPath, mcpClient);
 
@@ -138,19 +111,13 @@ namespace MCPForUnity.Editor.Helpers
                 catch (Exception e)
                 {
                     McpLog.Warn($"UnityMCP: Failed to read Codex config '{configPath}': {e.Message}");
-                    existingToml = string.Empty;
+                    throw new IOException("Existing Codex configuration could not be read and was not changed.", e);
                 }
             }
 
-            string existingCommand = null;
-            string[] existingArgs = null;
-            if (!string.IsNullOrWhiteSpace(existingToml))
-            {
-                CodexConfigHelper.TryParseCodexServer(existingToml, out existingCommand, out existingArgs);
-            }
-
-            string uvxPath = MCPServiceLocator.Paths.GetUvxPath();
-            if (uvxPath == null)
+            bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
+            string uvxPath = useHttp ? null : MCPServiceLocator.Paths.GetUvxPath();
+            if (!useHttp && string.IsNullOrEmpty(uvxPath))
             {
                 return "uv package manager not found. Please install uv first.";
             }
@@ -230,9 +197,11 @@ namespace MCPForUnity.Editor.Helpers
 
         public static void WriteAtomicFile(string path, string contents)
         {
-            string tmp = path + ".tmp";
-            string backup = path + ".backup";
+            string attempt = Guid.NewGuid().ToString("N");
+            string tmp = path + "." + attempt + ".tmp";
+            string backup = path + "." + attempt + ".backup";
             bool writeDone = false;
+            bool backupCreated = false;
             try
             {
                 File.WriteAllText(tmp, contents, new UTF8Encoding(false));
@@ -250,12 +219,8 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     if (File.Exists(path))
                     {
-                        try
-                        {
-                            if (File.Exists(backup)) File.Delete(backup);
-                        }
-                        catch { }
                         File.Move(path, backup);
+                        backupCreated = true;
                     }
                     File.Move(tmp, path);
                     writeDone = true;
@@ -265,7 +230,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 try
                 {
-                    if (!writeDone && File.Exists(backup))
+                    if (!writeDone && backupCreated && File.Exists(backup))
                     {
                         try { File.Copy(backup, path, true); } catch { }
                     }
