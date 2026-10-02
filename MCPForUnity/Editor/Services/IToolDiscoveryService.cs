@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Services
         public string Namespace { get; set; }
         public string AssemblyName { get; set; }
         public bool AutoRegister { get; set; } = true;
+        public bool RequiresExplicitConsent { get; set; }
         public bool RequiresPolling { get; set; } = false;
         public string PollAction { get; set; } = "status";
         public int MaxPollSeconds { get; set; } = 0;

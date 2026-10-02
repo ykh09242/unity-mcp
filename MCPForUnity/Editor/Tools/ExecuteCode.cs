@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools
 {
-    [McpForUnityTool("execute_code", AutoRegister = false, Group = "scripting_ext")]
+    [McpForUnityTool("execute_code", AutoRegister = false, RequiresExplicitConsent = true, Group = "scripting_ext")]
     public static class ExecuteCode
     {
         private const int MaxCodeLength = 50000;

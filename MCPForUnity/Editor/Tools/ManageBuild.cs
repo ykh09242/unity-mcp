@@ -10,7 +10,7 @@ using MCPForUnity.Editor.Tools.Build;
 
 namespace MCPForUnity.Editor.Tools
 {
-    [McpForUnityTool("manage_build", AutoRegister = false, Group = "core",
+    [McpForUnityTool("manage_build", AutoRegister = false, RequiresExplicitConsent = true, Group = "core",
         RequiresPolling = true, PollAction = "status", MaxPollSeconds = 1800)]
     public static class ManageBuild
     {

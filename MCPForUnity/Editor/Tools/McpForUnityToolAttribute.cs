@@ -30,6 +30,9 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         public bool AutoRegister { get; set; } = true;
 
+        /// <summary>Requires an explicit Editor toggle before this capability can execute.</summary>
+        public bool RequiresExplicitConsent { get; set; }
+
         /// <summary>
         /// Tool group for dynamic visibility on the Python server.
         /// Core tools are enabled by default; other groups start hidden and

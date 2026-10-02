@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Tools
     /// Executes multiple MCP commands within a single Unity-side handler. Commands are executed sequentially
     /// on the main thread to preserve determinism and Unity API safety.
     /// </summary>
-    [McpForUnityTool("batch_execute", AutoRegister = false)]
+    [McpForUnityTool("batch_execute", AutoRegister = false, RequiresExplicitConsent = true)]
     public static class BatchExecute
     {
         /// <summary>Default limit when no EditorPrefs override is set.</summary>

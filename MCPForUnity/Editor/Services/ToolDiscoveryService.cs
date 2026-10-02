@@ -106,13 +106,17 @@ namespace MCPForUnity.Editor.Services
                 return false;
             }
 
+            var metadata = GetToolMetadata(toolName);
+            if (metadata?.RequiresExplicitConsent == true &&
+                !EditorPrefs.GetBool(GetConsentPreferenceKey(toolName), false))
+                return false;
+
             string key = GetToolPreferenceKey(toolName);
             if (EditorPrefs.HasKey(key))
             {
                 return EditorPrefs.GetBool(key, true);
             }
 
-            var metadata = GetToolMetadata(toolName);
             return metadata?.AutoRegister ?? false;
         }
 
@@ -124,6 +128,8 @@ namespace MCPForUnity.Editor.Services
             }
 
             string key = GetToolPreferenceKey(toolName);
+            if (GetToolMetadata(toolName)?.RequiresExplicitConsent == true)
+                EditorPrefs.SetBool(GetConsentPreferenceKey(toolName), enabled);
             EditorPrefs.SetBool(key, enabled);
         }
 
@@ -155,6 +161,7 @@ namespace MCPForUnity.Editor.Services
                     Namespace = type.Namespace ?? "",
                     AssemblyName = type.Assembly.GetName().Name,
                     AutoRegister = toolAttr.AutoRegister,
+                    RequiresExplicitConsent = toolAttr.RequiresExplicitConsent,
                     RequiresPolling = toolAttr.RequiresPolling,
                     PollAction = string.IsNullOrEmpty(toolAttr.PollAction) ? "status" : toolAttr.PollAction,
                     MaxPollSeconds = toolAttr.MaxPollSeconds,
@@ -248,6 +255,13 @@ namespace MCPForUnity.Editor.Services
             }
 
             string key = GetToolPreferenceKey(metadata.Name);
+            if (metadata.RequiresExplicitConsent &&
+                !EditorPrefs.GetBool(GetConsentPreferenceKey(metadata.Name), false))
+            {
+                // Old versions initialized built-in tools to true without recording consent.
+                EditorPrefs.SetBool(key, false);
+                return;
+            }
             if (!EditorPrefs.HasKey(key))
             {
                 bool defaultValue = metadata.AutoRegister || metadata.IsBuiltIn;
@@ -259,6 +273,9 @@ namespace MCPForUnity.Editor.Services
         {
             return EditorPrefKeys.ToolEnabledPrefix + toolName;
         }
+
+        internal static string GetConsentPreferenceKey(string toolName)
+            => EditorPrefKeys.ToolEnabledPrefix + "ExplicitConsent." + toolName;
 
     }
 }
