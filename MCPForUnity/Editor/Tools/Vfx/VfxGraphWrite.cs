@@ -93,6 +93,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = $"Invalid value type for {param}: {ex.Message}" };
             }
 
+            bool hasParameter = typeof(T) == typeof(float) ? vfx.HasFloat(param)
+                : typeof(T) == typeof(int) ? vfx.HasInt(param)
+                : typeof(T) == typeof(bool) && vfx.HasBool(param);
+            if (!hasParameter)
+                return new { success = false, message = $"Parameter '{param}' not found or is not of type {typeof(T).Name}" };
+
             Undo.RecordObject(vfx, $"Set VFX {param}");
             setter(vfx, param, value);
             EditorUtility.SetDirty(vfx);
@@ -119,7 +125,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = $"Unsupported vector dimension: {dims}. Expected 2, 3, or 4." };
             }
 
-            Vector4 vec = ManageVfxCommon.ParseVector4(@params["value"]);
+            bool hasParameter = dims == 2 ? vfx.HasVector2(param)
+                : dims == 3 ? vfx.HasVector3(param) : vfx.HasVector4(param);
+            if (!hasParameter)
+                return new { success = false, message = $"Parameter '{param}' not found or is not a Vector{dims}" };
+
+            JToken token = @params["value"];
+            Vector4 vec;
+            if (dims == 2)
+            {
+                Vector2 value = VectorParsing.ParseVector2(token) ?? default;
+                vec = new Vector4(value.x, value.y, 0, 0);
+            }
+            else if (dims == 3)
+            {
+                Vector3 value = ManageVfxCommon.ParseVector3(token);
+                vec = new Vector4(value.x, value.y, value.z, 0);
+            }
+            else vec = ManageVfxCommon.ParseVector4(token);
             Undo.RecordObject(vfx, $"Set VFX {param}");
 
             switch (dims)
@@ -147,6 +170,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "Parameter name required" };
             }
 
+            if (!vfx.HasVector4(param))
+                return new { success = false, message = $"Parameter '{param}' not found or is not a Vector4 color" };
+
             Color color = ManageVfxCommon.ParseColor(@params["value"]);
             Undo.RecordObject(vfx, $"Set VFX Color {param}");
             vfx.SetVector4(param, new Vector4(color.r, color.g, color.b, color.a));
@@ -168,6 +194,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
             {
                 return new { success = false, message = "Parameter name required" };
             }
+
+            if (!vfx.HasGradient(param))
+                return new { success = false, message = $"Parameter '{param}' not found or is not a Gradient" };
 
             Gradient gradient = ManageVfxCommon.ParseGradient(@params["gradient"]);
             Undo.RecordObject(vfx, $"Set VFX Gradient {param}");
@@ -191,6 +220,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
             {
                 return new { success = false, message = "Parameter and texturePath required" };
             }
+
+            if (!vfx.HasTexture(param))
+                return new { success = false, message = $"Parameter '{param}' not found or is not a Texture" };
 
             var findInst = new JObject { ["find"] = path };
             Texture tex = ObjectResolver.Resolve(findInst, typeof(Texture)) as Texture;
@@ -221,6 +253,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "Parameter and meshPath required" };
             }
 
+            if (!vfx.HasMesh(param))
+                return new { success = false, message = $"Parameter '{param}' not found or is not a Mesh" };
+
             var findInst = new JObject { ["find"] = path };
             Mesh mesh = ObjectResolver.Resolve(findInst, typeof(Mesh)) as Mesh;
             if (mesh == null)
@@ -249,6 +284,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "Parameter name required" };
             }
 
+            if (!vfx.HasAnimationCurve(param))
+                return new { success = false, message = $"Parameter '{param}' not found or is not an AnimationCurve" };
+
             AnimationCurve curve = ManageVfxCommon.ParseAnimationCurve(@params["curve"], 1f);
             Undo.RecordObject(vfx, $"Set VFX Curve {param}");
             vfx.SetAnimationCurve(param, curve);
@@ -271,7 +309,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "Event name required" };
             }
 
-            VFXEventAttribute attr = vfx.CreateVFXEventAttribute();
+            using VFXEventAttribute attr = vfx.CreateVFXEventAttribute();
             if (@params["position"] != null)
             {
                 attr.SetVector3("position", ManageVfxCommon.ParseVector3(@params["position"]));

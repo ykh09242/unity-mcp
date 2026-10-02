@@ -59,6 +59,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             float rate = @params["playRate"]?.ToObject<float>() ?? 1f;
+            if (float.IsNaN(rate) || float.IsInfinity(rate))
+                return new { success = false, message = "playRate must be finite" };
             Undo.RecordObject(vfx, "Set VFX Play Rate");
             vfx.playRate = rate;
             EditorUtility.SetDirty(vfx);
