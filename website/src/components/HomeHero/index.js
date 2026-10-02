@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import CopyButton from '@site/src/components/CopyButton';
 import styles from './styles.module.css';
 
@@ -10,6 +11,7 @@ const UPM_BETA = 'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#b
 export default function HomeHero() {
   const { siteConfig } = useDocusaurusContext();
   const version = siteConfig.customFields?.latestVersion ?? 'v10.0.0';
+  const imageBaseUrl = useBaseUrl('/img/');
 
   return (
     <header className={styles.hero}>
@@ -78,16 +80,16 @@ export default function HomeHero() {
               muted
               playsInline
               preload="metadata"
-              poster="/unity-mcp/img/logo.png"
+              poster={`${imageBaseUrl}logo.png`}
               aria-label="An LLM building a Unity scene through MCP for Unity"
               width="640"
               height="416"
             >
-              <source src="/unity-mcp/img/building_scene.webm" type="video/webm" />
-              <source src="/unity-mcp/img/building_scene.mp4" type="video/mp4" />
+              <source src={`${imageBaseUrl}building_scene.webm`} type="video/webm" />
+              <source src={`${imageBaseUrl}building_scene.mp4`} type="video/mp4" />
               {/* GIF fallback retained for ancient browsers */}
               <img
-                src="/unity-mcp/img/building_scene.gif"
+                src={`${imageBaseUrl}building_scene.gif`}
                 alt="An LLM building a Unity scene through MCP for Unity"
                 width="640"
                 height="416"
