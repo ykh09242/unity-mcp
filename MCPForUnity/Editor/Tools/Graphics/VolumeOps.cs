@@ -35,106 +35,143 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
             }
 
-            var go = new GameObject(name);
-            Undo.RegisterCreatedObjectUndo(go, $"Create Volume '{name}'");
-
-            // Add Volume component via reflection
-            var volumeComp = go.AddComponent(GraphicsHelpers.VolumeType);
-
-            // Set properties via reflection
-            SetProperty(volumeComp, "isGlobal", isGlobal);
-            SetProperty(volumeComp, "weight", weight);
-            SetProperty(volumeComp, "priority", priority);
-
-            // Create or load VolumeProfile
-            object profile;
+            object profile = null;
             if (!string.IsNullOrEmpty(profilePath))
             {
-                // Load existing or create new profile asset
-                profile = AssetDatabase.LoadAssetAtPath(profilePath, GraphicsHelpers.VolumeProfileType);
-                if (profile == null)
+                var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(profilePath);
+                if (existing != null)
                 {
-                    profile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
-                    // Ensure directory exists
-                    var dir = System.IO.Path.GetDirectoryName(AssetPathUtility.GetFullAssetPath(profilePath));
-                    if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
-                        System.IO.Directory.CreateDirectory(dir);
-                    AssetDatabase.CreateAsset((UnityEngine.Object)profile, profilePath);
+                    if (!GraphicsHelpers.VolumeProfileType.IsInstanceOfType(existing))
+                        return new ErrorResponse($"Asset at '{profilePath}' is not a VolumeProfile.");
+                    profile = existing;
                 }
-            }
-            else
-            {
-                // Create embedded profile (not saved as asset)
-                profile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
+                else if (System.IO.File.Exists(AssetPathUtility.GetFullAssetPath(profilePath)))
+                    return new ErrorResponse($"A file already exists at '{profilePath}' and could not be loaded as a VolumeProfile.");
             }
 
-            // Assign profile (sharedProfile is a public field, handled by SetProperty's field fallback)
-            SetProperty(volumeComp, "sharedProfile", profile);
-
-            // Add initial effects if provided
-            var effectsToken = p.GetRaw("effects") as JArray;
-            var addedEffects = new List<string>();
-            if (effectsToken != null)
+            var go = new GameObject(name);
+            UnityEngine.Object allocatedProfile = null;
+            bool completed = false;
+            try
             {
-                foreach (var effectDef in effectsToken)
+                Undo.RegisterCreatedObjectUndo(go, $"Create Volume '{name}'");
+
+                // Add Volume component via reflection
+                var volumeComp = go.AddComponent(GraphicsHelpers.VolumeType);
+                if (volumeComp == null)
+                    return new ErrorResponse("Could not add Volume component.");
+
+                // Set properties via reflection
+                SetProperty(volumeComp, "isGlobal", isGlobal);
+                SetProperty(volumeComp, "weight", weight);
+                SetProperty(volumeComp, "priority", priority);
+
+                // Create or load VolumeProfile
+                if (!string.IsNullOrEmpty(profilePath))
                 {
-                    if (effectDef is JObject effectObj)
+                    // Load existing or create new profile asset
+                    if (profile == null)
                     {
-                        string effectType = ParamCoercion.CoerceString(effectObj["type"], null);
-                        if (string.IsNullOrEmpty(effectType)) continue;
+                        allocatedProfile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
+                        profile = allocatedProfile;
+                        if (profile == null)
+                            return new ErrorResponse("Could not create VolumeProfile.");
+                        // Ensure directory exists
+                        var dir = System.IO.Path.GetDirectoryName(AssetPathUtility.GetFullAssetPath(profilePath));
+                        if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+                            System.IO.Directory.CreateDirectory(dir);
+                        AssetDatabase.CreateAsset(allocatedProfile, profilePath);
+                        if (!AssetDatabase.Contains(allocatedProfile) || AssetDatabase.GetAssetPath(allocatedProfile) != profilePath)
+                            return new ErrorResponse($"Failed to create VolumeProfile asset at '{profilePath}'.");
+                    }
+                }
+                else
+                {
+                    // Create embedded profile (not saved as asset)
+                    allocatedProfile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
+                    profile = allocatedProfile;
+                    if (profile == null)
+                        return new ErrorResponse("Could not create VolumeProfile.");
+                }
 
-                        var type = GraphicsHelpers.ResolveVolumeComponentType(effectType);
-                        if (type == null) continue;
+                // Assign profile (sharedProfile is a public field, handled by SetProperty's field fallback)
+                SetProperty(volumeComp, "sharedProfile", profile);
 
-                        // profile.Add(type, true)
-                        var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add",
-                            new[] { typeof(Type), typeof(bool) });
-                        if (addMethod != null)
+                // Add initial effects if provided
+                var effectsToken = p.GetRaw("effects") as JArray;
+                var addedEffects = new List<string>();
+                if (effectsToken != null)
+                {
+                    foreach (var effectDef in effectsToken)
+                    {
+                        if (effectDef is JObject effectObj)
                         {
-                            var component = addMethod.Invoke(profile, new object[] { type, true });
-                            if (component != null)
+                            string effectType = ParamCoercion.CoerceString(effectObj["type"], null);
+                            if (string.IsNullOrEmpty(effectType)) continue;
+
+                            var type = GraphicsHelpers.ResolveVolumeComponentType(effectType);
+                            if (type == null) continue;
+
+                            // profile.Add(type, true)
+                            var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add",
+                                new[] { typeof(Type), typeof(bool) });
+                            if (addMethod != null)
                             {
-                                // Set parameters — support both nested {"parameters": {...}} and flat fields
-                                var paramObj = effectObj["parameters"] as JObject;
-                                if (paramObj != null)
+                                var component = addMethod.Invoke(profile, new object[] { type, true });
+                                if (component != null)
                                 {
-                                    foreach (var pp in paramObj.Properties())
-                                        SetVolumeParameter(component, pp.Name, pp.Value);
-                                }
-                                else
-                                {
-                                    foreach (var prop in effectObj.Properties())
+                                    // Set parameters — support both nested {"parameters": {...}} and flat fields
+                                    var paramObj = effectObj["parameters"] as JObject;
+                                    if (paramObj != null)
                                     {
-                                        if (prop.Name == "type") continue;
-                                        SetVolumeParameter(component, prop.Name, prop.Value);
+                                        foreach (var pp in paramObj.Properties())
+                                            SetVolumeParameter(component, pp.Name, pp.Value);
                                     }
+                                    else
+                                    {
+                                        foreach (var prop in effectObj.Properties())
+                                        {
+                                            if (prop.Name == "type") continue;
+                                            SetVolumeParameter(component, prop.Name, prop.Value);
+                                        }
+                                    }
+                                    PersistAddedEffect(profile, component);
+                                    addedEffects.Add(effectType);
                                 }
-                                addedEffects.Add(effectType);
                             }
                         }
                     }
+                    if (profile is UnityEngine.Object profileObj)
+                        EditorUtility.SetDirty(profileObj);
                 }
-                if (profile is UnityEngine.Object profileObj)
-                    EditorUtility.SetDirty(profileObj);
-            }
 
-            GraphicsHelpers.MarkDirty(volumeComp);
+                GraphicsHelpers.MarkDirty(volumeComp);
+                completed = true;
 
-            return new
-            {
-                success = true,
-                message = $"Created {(isGlobal ? "global" : "local")} Volume '{name}'" +
-                         (addedEffects.Count > 0 ? $" with effects: {string.Join(", ", addedEffects)}" : ""),
-                data = new
+                return new
                 {
-                    instanceID = go.GetInstanceIDCompat(),
-                    isGlobal,
-                    weight,
-                    priority,
-                    profilePath = profilePath ?? "(embedded)",
-                    effects = addedEffects
+                    success = true,
+                    message = $"Created {(isGlobal ? "global" : "local")} Volume '{name}'" +
+                             (addedEffects.Count > 0 ? $" with effects: {string.Join(", ", addedEffects)}" : ""),
+                    data = new
+                    {
+                        instanceID = go.GetInstanceIDCompat(),
+                        isGlobal,
+                        weight,
+                        priority,
+                        profilePath = profilePath ?? "(embedded)",
+                        effects = addedEffects
+                    }
+                };
+            }
+            finally
+            {
+                if (!completed)
+                {
+                    if (go != null) UnityEngine.Object.DestroyImmediate(go);
+                    DestroyTransientProfile(allocatedProfile);
                 }
-            };
+            }
         }
 
         // === volume_add_effect ===
@@ -183,6 +220,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var component = addMethod.Invoke(profile, new object[] { effectType, true });
             if (component == null)
                 return new ErrorResponse($"Failed to add effect '{effectName}'.");
+
+            PersistAddedEffect(profile, component);
 
             if (profile is UnityEngine.Object profileObj)
                 EditorUtility.SetDirty(profileObj);
@@ -423,6 +462,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse($"Invalid path: {ex.Message}");
             }
 
+            if (System.IO.File.Exists(AssetPathUtility.GetFullAssetPath(path)) ||
+                AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
+                return new ErrorResponse($"An asset or file already exists at '{path}'.");
+
             // Ensure directory exists
             var dir = System.IO.Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
@@ -439,16 +482,71 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
             }
 
-            var profile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
-            AssetDatabase.CreateAsset(profile, path);
-            AssetDatabase.SaveAssets();
-
-            return new
+            UnityEngine.Object profile = null;
+            try
             {
-                success = true,
-                message = $"Created VolumeProfile at '{path}'.",
-                data = new { path }
-            };
+                profile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
+                if (profile == null)
+                    return new ErrorResponse("Could not create VolumeProfile.");
+                AssetDatabase.CreateAsset(profile, path);
+                if (!AssetDatabase.Contains(profile) || AssetDatabase.GetAssetPath(profile) != path)
+                    return new ErrorResponse($"Failed to create VolumeProfile asset at '{path}'.");
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    message = $"Created VolumeProfile at '{path}'.",
+                    data = new { path }
+                };
+            }
+            finally
+            {
+                DestroyTransientProfile(profile);
+            }
+        }
+
+        // VolumeProfile.Add allocates a new component but does not add it to an asset file.
+        private static void PersistAddedEffect(object profile, object component)
+        {
+            if (!(profile is UnityEngine.Object profileObj) || !AssetDatabase.Contains(profileObj) ||
+                !(component is UnityEngine.Object componentObj)) return;
+
+            try
+            {
+                AssetDatabase.AddObjectToAsset(componentObj, profileObj);
+                if (!AssetDatabase.Contains(componentObj) ||
+                    AssetDatabase.GetAssetPath(componentObj) != AssetDatabase.GetAssetPath(profileObj))
+                    throw new InvalidOperationException("Failed to persist the added Volume effect in its profile asset.");
+                EditorUtility.SetDirty(componentObj);
+            }
+            finally
+            {
+                // A failed addition may leave the new transient in the profile's managed list.
+                // Remove only that exact reference, retaining actually persisted components.
+                if (!AssetDatabase.Contains(componentObj))
+                {
+                    if (GetProperty(profile, "components") is System.Collections.IList components)
+                    {
+                        for (int i = components.Count - 1; i >= 0; i--)
+                            if (ReferenceEquals(components[i], component)) components.RemoveAt(i);
+                    }
+                    UnityEngine.Object.DestroyImmediate(componentObj);
+                }
+            }
+        }
+
+        // Only a newly allocated profile is passed here. Borrowed and persisted assets are retained.
+        private static void DestroyTransientProfile(UnityEngine.Object profile)
+        {
+            if (profile == null || AssetDatabase.Contains(profile)) return;
+            if (GetProperty(profile, "components") is System.Collections.IList components)
+            {
+                foreach (var component in components)
+                    if (component is UnityEngine.Object obj && !AssetDatabase.Contains(obj))
+                        UnityEngine.Object.DestroyImmediate(obj);
+            }
+            UnityEngine.Object.DestroyImmediate(profile);
         }
 
         // === ListVolumes (used by VolumesResource) ===
