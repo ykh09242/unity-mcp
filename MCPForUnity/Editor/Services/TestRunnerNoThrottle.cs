@@ -101,7 +101,7 @@ namespace MCPForUnity.Editor.Services
             McpLog.Info("[TestRunnerNoThrottle] Applied No Throttling for test run.");
         }
 
-        private static void RestoreThrottling()
+        internal static void RestoreThrottling()
         {
             if (!AreSettingsCaptured()) return;
 

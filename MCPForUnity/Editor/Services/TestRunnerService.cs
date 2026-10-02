@@ -151,6 +151,13 @@ namespace MCPForUnity.Editor.Services
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private readonly List<ITestResultAdaptor> _leafResults = new List<ITestResultAdaptor>();
         private TaskCompletionSource<TestRunResult> _runCompletionSource;
+        private string _runJobId;
+        private bool _hasRunOwnership;
+
+        // A cleared/timed-out run can still deliver callbacks while a replacement
+        // job waits for the operation lock. A recreated service has no local owner
+        // and falls back to the persisted current job for domain-reload recovery.
+        private bool OwnsCurrentJob => !_hasRunOwnership || _runJobId == TestJobManager.CurrentJobId;
 
         public TestRunnerService()
         {
@@ -189,7 +196,9 @@ namespace MCPForUnity.Editor.Services
         {
             await _operationLock.WaitAsync().ConfigureAwait(true);
             Task<TestRunResult> runTask;
+            TaskCompletionSource<TestRunResult> completionSource = null;
             bool adjustedPlayModeOptions = false;
+            bool appliedNoThrottling = false;
             bool originalEnterPlayModeOptionsEnabled = false;
             EnterPlayModeOptions originalEnterPlayModeOptions = EnterPlayModeOptions.None;
             try
@@ -219,7 +228,11 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 _leafResults.Clear();
-                _runCompletionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _runJobId = TestJobManager.CurrentJobId;
+                _hasRunOwnership = true;
+                _runCompletionSource = completionSource;
+                runTask = completionSource.Task;
                 // Mark running immediately so readiness snapshots reflect the busy state even before callbacks fire.
                 TestRunStatus.MarkStarted(mode);
 
@@ -243,15 +256,24 @@ namespace MCPForUnity.Editor.Services
                 // where throttling would normally be disabled.
                 if (mode == TestMode.PlayMode)
                 {
+                    appliedNoThrottling = true;
                     TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
                 }
 
                 _testRunnerApi.Execute(settings);
-
-                runTask = _runCompletionSource.Task;
             }
             catch
             {
+                // Execute can throw before RunFinished is delivered. Release this run's
+                // completion source so a later request can retry instead of staying busy.
+                if (completionSource != null && _runCompletionSource == completionSource)
+                {
+                    _runCompletionSource = null;
+                }
+                if (appliedNoThrottling)
+                {
+                    TestRunnerNoThrottle.RestoreThrottling();
+                }
                 // Ensure the status is cleared if we failed to start the run.
                 TestRunStatus.MarkFinished();
                 if (adjustedPlayModeOptions)
@@ -302,6 +324,7 @@ namespace MCPForUnity.Editor.Services
         public void RunStarted(ITestAdaptor testsToRun)
         {
             _leafResults.Clear();
+            if (!OwnsCurrentJob) return;
             try
             {
                 // Best-effort progress info for async polling (avoid heavy payloads).
@@ -329,8 +352,11 @@ namespace MCPForUnity.Editor.Services
             // Clean up state regardless of _runCompletionSource - these methods safely handle
             // the case where no MCP job exists (e.g., manual test runs via Unity UI).
             TestRunStatus.MarkFinished();
-            TestJobManager.OnRunFinished();
-            TestJobManager.FinalizeCurrentJobFromRunFinished(payload);
+            if (OwnsCurrentJob)
+            {
+                TestJobManager.OnRunFinished();
+                TestJobManager.FinalizeCurrentJobFromRunFinished(payload);
+            }
 
             // If a domain reload destroyed the original RunTestsAsync caller, the finally block
             // that would normally restore EditorSettings never ran. Restore from SessionState.
@@ -350,6 +376,7 @@ namespace MCPForUnity.Editor.Services
 
         public void TestStarted(ITestAdaptor test)
         {
+            if (!OwnsCurrentJob) return;
             try
             {
                 // Prefer FullName for uniqueness; fall back to Name.
@@ -376,6 +403,7 @@ namespace MCPForUnity.Editor.Services
             if (!result.HasChildren)
             {
                 _leafResults.Add(result);
+                if (!OwnsCurrentJob) return;
                 try
                 {
                     string fullName = result.Test?.FullName;
