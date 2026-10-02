@@ -94,14 +94,20 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'blendParameterX' and 'blendParameterY' are required" };
 
             int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
-            string blendTypeStr = @params["blendType"]?.ToString()?.ToLowerInvariant() ?? "simpledirectional2d";
+            var blendTypeToken = @params["blendType"];
+            string blendTypeStr = blendTypeToken == null || blendTypeToken.Type == JTokenType.Null
+                ? "simpledirectional2d" : blendTypeToken.ToString().ToLowerInvariant();
 
-            BlendTreeType blendType = blendTypeStr switch
+            BlendTreeType? requestedBlendType = blendTypeStr switch
             {
+                "simpledirectional2d" => BlendTreeType.SimpleDirectional2D,
                 "freeformdirectional2d" => BlendTreeType.FreeformDirectional2D,
                 "freeformcartesian2d" => BlendTreeType.FreeformCartesian2D,
-                _ => BlendTreeType.SimpleDirectional2D
+                _ => null
             };
+            if (!requestedBlendType.HasValue)
+                return new { success = false, message = "'blendType' must be SimpleDirectional2D, FreeformDirectional2D, or FreeformCartesian2D" };
+            BlendTreeType blendType = requestedBlendType.Value;
 
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length)
@@ -192,15 +198,16 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (!(state.motion is BlendTree blendTree))
                 return new { success = false, message = $"State '{stateName}' does not have a BlendTree motion" };
 
-            Undo.RecordObject(blendTree, "Add Blend Tree Child");
-
             if (blendTree.blendType == BlendTreeType.Simple1D)
             {
-                float? threshold = @params["threshold"]?.ToObject<float?>();
-                if (!threshold.HasValue)
+                var thresholdToken = @params["threshold"];
+                if (thresholdToken == null || thresholdToken.Type == JTokenType.Null)
                     return new { success = false, message = "'threshold' is required for 1D blend trees" };
+                if (!TryGetFiniteFloat(thresholdToken, out float threshold))
+                    return new { success = false, message = "'threshold' must be a finite number for 1D blend trees" };
 
-                blendTree.AddChild(clip, threshold.Value);
+                Undo.RecordObject(blendTree, "Add Blend Tree Child");
+                blendTree.AddChild(clip, threshold);
 
                 EditorUtility.SetDirty(blendTree);
                 EditorUtility.SetDirty(controller);
@@ -209,27 +216,34 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new
                 {
                     success = true,
-                    message = $"Added clip '{clip.name}' to blend tree '{stateName}' at threshold {threshold.Value}",
+                    message = $"Added clip '{clip.name}' to blend tree '{stateName}' at threshold {threshold}",
                     data = new
                     {
                         controllerPath,
                         stateName,
                         clipPath,
-                        threshold = threshold.Value,
+                        threshold,
                         childCount = blendTree.children.Length
                     }
                 };
             }
             else
             {
+                if (blendTree.blendType != BlendTreeType.SimpleDirectional2D &&
+                    blendTree.blendType != BlendTreeType.FreeformDirectional2D &&
+                    blendTree.blendType != BlendTreeType.FreeformCartesian2D)
+                    return new { success = false, message = $"Adding children is not supported for blend tree type '{blendTree.blendType}'" };
+
                 JToken positionToken = @params["position"];
                 if (positionToken == null || !(positionToken is JArray posArray) || posArray.Count < 2)
                     return new { success = false, message = "'position' is required for 2D blend trees as [x, y]" };
 
-                float posX = posArray[0].ToObject<float>();
-                float posY = posArray[1].ToObject<float>();
+                if (!TryGetFiniteFloat(posArray[0], out float posX) ||
+                    !TryGetFiniteFloat(posArray[1], out float posY))
+                    return new { success = false, message = "'position' must contain finite numbers for 2D blend trees" };
                 Vector2 position = new Vector2(posX, posY);
 
+                Undo.RecordObject(blendTree, "Add Blend Tree Child");
                 blendTree.AddChild(clip, position);
 
                 EditorUtility.SetDirty(blendTree);
@@ -249,6 +263,24 @@ namespace MCPForUnity.Editor.Tools.Animation
                         childCount = blendTree.children.Length
                     }
                 };
+            }
+        }
+
+        private static bool TryGetFiniteFloat(JToken token, out float value)
+        {
+            value = 0;
+            if (token == null || (token.Type != JTokenType.Integer &&
+                token.Type != JTokenType.Float && token.Type != JTokenType.String))
+                return false;
+            try
+            {
+                value = token.ToObject<float>();
+                return !float.IsNaN(value) && !float.IsInfinity(value);
+            }
+            catch (Exception ex) when (ex is FormatException || ex is OverflowException ||
+                ex is ArgumentException || ex is Newtonsoft.Json.JsonException)
+            {
+                return false;
             }
         }
     }
