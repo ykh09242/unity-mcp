@@ -602,8 +602,8 @@ namespace MCPForUnity.Editor.Tools
                     );
                 }
 
-                string guid = AssetDatabase.MoveAsset(sourcePath, destPath);
-                if (!string.IsNullOrEmpty(guid)) // MoveAsset returns the new GUID on success
+                string moveError = AssetDatabase.MoveAsset(sourcePath, destPath);
+                if (string.IsNullOrEmpty(moveError))
                 {
                     // AssetDatabase.Refresh(); // MoveAsset usually handles refresh
                     return new SuccessResponse(
@@ -613,9 +613,8 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
-                    // This case might not be reachable if ValidateMoveAsset passes, but good to have
                     return new ErrorResponse(
-                        $"MoveAsset call failed unexpectedly for '{sourcePath}' to '{destPath}'."
+                        $"Failed to move/rename asset from '{sourcePath}' to '{destPath}': {moveError}"
                     );
                 }
             }
