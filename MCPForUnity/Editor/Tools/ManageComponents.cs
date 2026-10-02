@@ -103,15 +103,30 @@ namespace MCPForUnity.Editor.Tools
 
             // Set properties if provided
             JObject properties = @params["properties"] as JObject ?? @params["componentProperties"] as JObject;
+            var propertyErrors = new List<string>();
             if (properties != null && properties.HasValues)
             {
                 // Record for undo before modifying properties
                 Undo.RecordObject(newComponent, "Modify Component Properties");
-                SetPropertiesOnComponent(newComponent, properties);
+                propertyErrors = SetPropertiesOnComponent(newComponent, properties);
             }
 
             EditorUtility.SetDirty(targetGo);
             MarkOwningSceneDirty(targetGo);
+
+            if (propertyErrors.Count > 0)
+            {
+                return new ErrorResponse(
+                    $"Component '{componentTypeName}' added to '{targetGo.name}', but some properties failed to set.",
+                    new
+                    {
+                        instanceID = targetGo.GetInstanceIDCompat(),
+                        componentType = type.FullName,
+                        componentInstanceID = newComponent.GetInstanceIDCompat(),
+                        componentAdded = true,
+                        errors = propertyErrors
+                    });
+            }
 
             return new
             {
@@ -238,6 +253,11 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Either 'property'+'value' or 'properties' object is required for 'set_property' action.");
             }
 
+            if (!string.IsNullOrEmpty(propertyName) && valueToken == null)
+            {
+                return new ErrorResponse("'value' parameter is required when 'property' is supplied. Use JSON null to clear an object reference.");
+            }
+
             var errors = new List<string>();
 
             try
@@ -272,16 +292,11 @@ namespace MCPForUnity.Editor.Tools
 
                 if (errors.Count > 0)
                 {
-                    return new
+                    return new ErrorResponse($"Some properties failed to set on '{componentType}'.", new
                     {
-                        success = false,
-                        message = $"Some properties failed to set on '{componentType}'.",
-                        data = new
-                        {
-                            instanceID = targetGo.GetInstanceIDCompat(),
-                            errors = errors
-                        }
-                    };
+                        instanceID = targetGo.GetInstanceIDCompat(),
+                        errors = errors
+                    });
                 }
 
                 return new
@@ -360,6 +375,9 @@ namespace MCPForUnity.Editor.Tools
             if (targetToken == null)
                 return null;
 
+            if (!string.IsNullOrEmpty(searchMethod))
+                return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
+
             // Try instance ID first
             if (targetToken.Type == JTokenType.Integer)
             {
@@ -381,12 +399,12 @@ namespace MCPForUnity.Editor.Tools
             return GameObjectLookup.FindByTarget(targetToken, searchMethod ?? "by_name", true);
         }
 
-        private static void SetPropertiesOnComponent(Component component, JObject properties)
+        private static List<string> SetPropertiesOnComponent(Component component, JObject properties)
         {
-            if (component == null || properties == null)
-                return;
-
             var errors = new List<string>();
+            if (component == null || properties == null)
+                return errors;
+
             foreach (var prop in properties.Properties())
             {
                 var error = TrySetProperty(component, prop.Name, prop.Value);
@@ -398,6 +416,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 McpLog.Warn($"[ManageComponents] Some properties failed to set on {component.GetType().Name}: {string.Join(", ", errors)}");
             }
+            return errors;
         }
 
         /// <summary>

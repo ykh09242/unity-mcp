@@ -125,7 +125,10 @@ namespace MCPForUnity.Editor.Helpers
                     break;
 
                 case SearchMethod.ByPath:
-                    results.AddRange(SearchByPath(searchTerm, includeInactive));
+                    var paths = SearchByPath(searchTerm, includeInactive);
+                    if (maxResults > 0)
+                        paths = paths.Take(maxResults);
+                    results.AddRange(paths);
                     break;
 
                 case SearchMethod.ByTag:
@@ -348,6 +351,8 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
 
             var goPath = GetGameObjectPath(go);
+            if (path.StartsWith("/", StringComparison.Ordinal))
+                return goPath == path.Substring(1);
             return goPath == path || goPath.EndsWith("/" + path);
         }
 
