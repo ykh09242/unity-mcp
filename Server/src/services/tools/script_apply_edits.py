@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import re
+from bisect import bisect_right
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Union
 
@@ -12,7 +13,7 @@ from core.config import config
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
-from services.tools.manage_script import _lsp_position_to_line_col, _split_uri
+from services.tools.manage_script import _lsp_position_to_line_col, _script_lines_and_starts, _split_uri
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import parse_json_payload
 from transport.unity_transport import send_with_unity_instance
@@ -467,9 +468,14 @@ class _TextEditError(ValueError):
 
 async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed: bool = False) -> list[dict[str, Any]]:
     """Build literal edits against the original buffer for write and preview."""
+    lines, offsets = _script_lines_and_starts(contents)
+
     def line_col(index: int) -> tuple[int, int]:
-        line = contents.count("\n", 0, index) + 1
-        return line, index - (contents.rfind("\n", 0, index) + 1) + 1
+        line = bisect_right(offsets, index) - 1
+        col = index - offsets[line]
+        if col > len(lines[line]):
+            raise _TextEditError("invalid_range", "Text edit boundary is inside a CRLF newline")
+        return line + 1, col + 1
 
     spans = []
     for edit in edits:
@@ -510,15 +516,10 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
 
 def _preview_text_spans(contents: str, spans: list[dict[str, Any]]) -> str:
     """Replay atomic codepoint spans without rewriting any requested payload."""
-    lines = contents.split("\n")
-    offsets = []
-    offset = 0
-    for line in lines:
-        offsets.append(offset)
-        offset += len(line) + 1
+    lines, offsets = _script_lines_and_starts(contents)
 
     def index(line: int, col: int) -> int:
-        if line < 1 or line > len(lines) or col < 1 or col > len(lines[line - 1].removesuffix("\r")) + 1:
+        if line < 1 or line > len(lines) or col < 1 or col > len(lines[line - 1]) + 1:
             raise ValueError("replace_range out of bounds")
         return offsets[line - 1] + col - 1
 
@@ -1131,7 +1132,7 @@ async def script_apply_edits(
 
     lsp_edits = [e for e in edits if isinstance(e.get("range"), dict)]
     if lsp_edits:
-        source_lines = contents.split("\n")
+        source_lines, _ = _script_lines_and_starts(contents)
         try:
             for edit in lsp_edits:
                 rng = edit.pop("range")
@@ -1186,6 +1187,22 @@ async def script_apply_edits(
             return _with_norm(response if isinstance(response, dict) else {"success": False, "message": str(response)}, normalized_for_echo, routing=routing)
         if not mixed:
             return _with_norm(response, normalized_for_echo, routing=routing)
+        # The structural phase must not verify against changes from the text phase.
+        text_data = response.get("data")
+        sha = text_data.get("sha256") if isinstance(text_data, dict) else None
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
+            sha = None
+            try:
+                sha_response = await send_with_unity_instance(async_send_command_with_retry, unity_instance,
+                    "manage_script", {"action": "get_sha", "name": name, "path": path})
+                sha_data = sha_response.get("data") if isinstance(sha_response, dict) and sha_response.get("success") else None
+                candidate_sha = sha_data.get("sha256") if isinstance(sha_data, dict) else None
+                if isinstance(candidate_sha, str) and re.fullmatch(r"[0-9a-fA-F]{64}", candidate_sha):
+                    sha = candidate_sha
+            except Exception:
+                pass
+        if sha is not None:
+            sha = sha.lower()
 
     if struct_edits:
         opts2 = dict(options or {})
