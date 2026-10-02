@@ -88,6 +88,16 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Component type '{componentTypeName}' not found. Use a fully-qualified name if needed.");
             }
 
+            JObject properties = @params["properties"] as JObject ?? @params["componentProperties"] as JObject;
+            if (properties == null)
+            {
+                JToken propertiesToken = @params["properties"];
+                if (propertiesToken == null || propertiesToken.Type == JTokenType.Null)
+                    propertiesToken = @params["componentProperties"];
+                if (propertiesToken != null && propertiesToken.Type != JTokenType.Null)
+                    return new ErrorResponse("'properties' or 'componentProperties' must be an object when supplied.");
+            }
+
             // Use ComponentOps for the actual operation
             Component newComponent = ComponentOps.AddComponent(targetGo, type, out string error);
             if (newComponent == null)
@@ -102,7 +112,6 @@ namespace MCPForUnity.Editor.Tools
             EnsureVfxRendererMaterial(targetGo, newComponent);
 
             // Set properties if provided
-            JObject properties = @params["properties"] as JObject ?? @params["componentProperties"] as JObject;
             var propertyErrors = new List<string>();
             if (properties != null && properties.HasValues)
             {
@@ -162,7 +171,12 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Component type '{componentTypeName}' not found.");
             }
 
-            int? componentIndex = ParamCoercion.CoerceIntNullable(@params["componentIndex"] ?? @params["component_index"]);
+            JToken componentIndexToken = @params["componentIndex"] ?? @params["component_index"];
+            int? componentIndex = ParamCoercion.CoerceIntNullable(componentIndexToken);
+            if (!componentIndex.HasValue && componentIndexToken != null
+                && componentIndexToken.Type != JTokenType.Null
+                && !string.IsNullOrWhiteSpace(componentIndexToken.ToString()))
+                return new ErrorResponse("'component_index' must be a valid integer when supplied.");
             if (componentIndex.HasValue)
             {
                 var components = targetGo.GetComponents(type);
@@ -223,7 +237,12 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Component type '{componentType}' not found.");
             }
 
-            int? componentIndex = ParamCoercion.CoerceIntNullable(@params["componentIndex"] ?? @params["component_index"]);
+            JToken componentIndexToken = @params["componentIndex"] ?? @params["component_index"];
+            int? componentIndex = ParamCoercion.CoerceIntNullable(componentIndexToken);
+            if (!componentIndex.HasValue && componentIndexToken != null
+                && componentIndexToken.Type != JTokenType.Null
+                && !string.IsNullOrWhiteSpace(componentIndexToken.ToString()))
+                return new ErrorResponse("'component_index' must be a valid integer when supplied.");
             Component component;
             if (componentIndex.HasValue)
             {
