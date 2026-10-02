@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -129,6 +130,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     $"Unknown 3D physics setting(s): {string.Join(", ", unknown)}.");
 
             var changed = new List<string>();
+            var changes = new List<Action>();
 
             foreach (var prop in settings.Properties())
             {
@@ -140,42 +142,78 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var arr = prop.Value as JArray;
                         if (arr == null || arr.Count < 3)
                             return new ErrorResponse("3D gravity requires [x, y, z] array.");
-                        UnityEngine.Physics.gravity = new Vector3(
+                        var newGravity = new Vector3(
                             arr[0].Value<float>(), arr[1].Value<float>(), arr[2].Value<float>());
-                        changed.Add("gravity");
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.gravity = newGravity;
+                            changed.Add("gravity");
+                        });
                         break;
                     }
                     case "defaultcontactoffset":
-                        UnityEngine.Physics.defaultContactOffset = prop.Value.Value<float>();
-                        changed.Add("defaultContactOffset");
+                        var newDefaultContactOffset = prop.Value.Value<float>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.defaultContactOffset = newDefaultContactOffset;
+                            changed.Add("defaultContactOffset");
+                        });
                         break;
                     case "sleepthreshold":
-                        UnityEngine.Physics.sleepThreshold = prop.Value.Value<float>();
-                        changed.Add("sleepThreshold");
+                        var newSleepThreshold = prop.Value.Value<float>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.sleepThreshold = newSleepThreshold;
+                            changed.Add("sleepThreshold");
+                        });
                         break;
                     case "defaultsolveriterations":
-                        UnityEngine.Physics.defaultSolverIterations = prop.Value.Value<int>();
-                        changed.Add("defaultSolverIterations");
+                        var newDefaultSolverIterations = prop.Value.Value<int>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.defaultSolverIterations = newDefaultSolverIterations;
+                            changed.Add("defaultSolverIterations");
+                        });
                         break;
                     case "defaultsolvervelocityiterations":
-                        UnityEngine.Physics.defaultSolverVelocityIterations = prop.Value.Value<int>();
-                        changed.Add("defaultSolverVelocityIterations");
+                        var newDefaultSolverVelocityIterations = prop.Value.Value<int>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.defaultSolverVelocityIterations = newDefaultSolverVelocityIterations;
+                            changed.Add("defaultSolverVelocityIterations");
+                        });
                         break;
                     case "bouncethreshold":
-                        UnityEngine.Physics.bounceThreshold = prop.Value.Value<float>();
-                        changed.Add("bounceThreshold");
+                        var newBounceThreshold = prop.Value.Value<float>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.bounceThreshold = newBounceThreshold;
+                            changed.Add("bounceThreshold");
+                        });
                         break;
                     case "defaultmaxangularspeed":
-                        UnityEngine.Physics.defaultMaxAngularSpeed = prop.Value.Value<float>();
-                        changed.Add("defaultMaxAngularSpeed");
+                        var newDefaultMaxAngularSpeed = prop.Value.Value<float>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.defaultMaxAngularSpeed = newDefaultMaxAngularSpeed;
+                            changed.Add("defaultMaxAngularSpeed");
+                        });
                         break;
                     case "querieshittriggers":
-                        UnityEngine.Physics.queriesHitTriggers = prop.Value.Value<bool>();
-                        changed.Add("queriesHitTriggers");
+                        var newQueriesHitTriggers = prop.Value.Value<bool>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.queriesHitTriggers = newQueriesHitTriggers;
+                            changed.Add("queriesHitTriggers");
+                        });
                         break;
                     case "querieshitbackfaces":
-                        UnityEngine.Physics.queriesHitBackfaces = prop.Value.Value<bool>();
-                        changed.Add("queriesHitBackfaces");
+                        var newQueriesHitBackfaces = prop.Value.Value<bool>();
+                        changes.Add(() =>
+                        {
+                            UnityEngine.Physics.queriesHitBackfaces = newQueriesHitBackfaces;
+                            changed.Add("queriesHitBackfaces");
+                        });
                         break;
                     case "simulationmode":
                     {
@@ -186,23 +224,31 @@ namespace MCPForUnity.Editor.Tools.Physics
                             return new ErrorResponse(
                                 $"Invalid simulationMode: '{modeStr}'. Valid: FixedUpdate, Update, Script.");
                         }
-                        if (!UnityPhysicsCompat.TrySetPhysicsSimulationMode(mode))
-                        {
+                        if (!UnityPhysicsCompat.CanSetPhysicsSimulationMode(mode))
                             return new ErrorResponse(
                                 $"simulationMode '{modeStr}' is not supported on this Unity version.");
-                        }
-                        changed.Add("simulationMode");
+                        changes.Add(() =>
+                        {
+                            if (!UnityPhysicsCompat.TrySetPhysicsSimulationMode(mode))
+                                throw new InvalidOperationException($"Could not apply simulationMode '{modeStr}'.");
+                            changed.Add("simulationMode");
+                        });
                         break;
                     }
                     case "autosynctransforms":
-                        if (UnityPhysicsCompat.TrySetPhysicsAutoSyncTransforms(prop.Value.Value<bool>()))
+                    {
+                        bool autoSync = prop.Value.Value<bool>();
+                        changes.Add(() =>
                         {
-                            changed.Add("autoSyncTransforms");
-                        }
+                            if (UnityPhysicsCompat.TrySetPhysicsAutoSyncTransforms(autoSync))
+                                changed.Add("autoSyncTransforms");
+                        });
                         break;
+                    }
                 }
             }
 
+            foreach (var change in changes) change();
             MarkDynamicsManagerDirty();
 
             return new
@@ -234,6 +280,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     $"Unknown 2D physics setting(s): {string.Join(", ", unknown)}.");
 
             var changed = new List<string>();
+            var changes = new List<Action>();
 
             foreach (var prop in settings.Properties())
             {
@@ -245,40 +292,69 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var arr = prop.Value as JArray;
                         if (arr == null || arr.Count < 2)
                             return new ErrorResponse("2D gravity requires [x, y] array.");
-                        Physics2D.gravity = new Vector2(
+                        var newGravity = new Vector2(
                             arr[0].Value<float>(), arr[1].Value<float>());
-                        changed.Add("gravity");
+                        changes.Add(() =>
+                        {
+                            Physics2D.gravity = newGravity;
+                            changed.Add("gravity");
+                        });
                         break;
                     }
                     case "velocityiterations":
-                        Physics2D.velocityIterations = prop.Value.Value<int>();
-                        changed.Add("velocityIterations");
+                        var newVelocityIterations = prop.Value.Value<int>();
+                        changes.Add(() =>
+                        {
+                            Physics2D.velocityIterations = newVelocityIterations;
+                            changed.Add("velocityIterations");
+                        });
                         break;
                     case "positioniterations":
-                        Physics2D.positionIterations = prop.Value.Value<int>();
-                        changed.Add("positionIterations");
+                        var newPositionIterations = prop.Value.Value<int>();
+                        changes.Add(() =>
+                        {
+                            Physics2D.positionIterations = newPositionIterations;
+                            changed.Add("positionIterations");
+                        });
                         break;
                     case "querieshittriggers":
-                        Physics2D.queriesHitTriggers = prop.Value.Value<bool>();
-                        changed.Add("queriesHitTriggers");
+                        var newQueriesHitTriggers = prop.Value.Value<bool>();
+                        changes.Add(() =>
+                        {
+                            Physics2D.queriesHitTriggers = newQueriesHitTriggers;
+                            changed.Add("queriesHitTriggers");
+                        });
                         break;
                     case "queriesstartincolliders":
-                        Physics2D.queriesStartInColliders = prop.Value.Value<bool>();
-                        changed.Add("queriesStartInColliders");
+                        var newQueriesStartInColliders = prop.Value.Value<bool>();
+                        changes.Add(() =>
+                        {
+                            Physics2D.queriesStartInColliders = newQueriesStartInColliders;
+                            changed.Add("queriesStartInColliders");
+                        });
                         break;
                     case "callbacksondisable":
-                        Physics2D.callbacksOnDisable = prop.Value.Value<bool>();
-                        changed.Add("callbacksOnDisable");
+                        var newCallbacksOnDisable = prop.Value.Value<bool>();
+                        changes.Add(() =>
+                        {
+                            Physics2D.callbacksOnDisable = newCallbacksOnDisable;
+                            changed.Add("callbacksOnDisable");
+                        });
                         break;
                     case "autosynctransforms":
-                        if (UnityPhysicsCompat.TrySetPhysics2DAutoSyncTransforms(prop.Value.Value<bool>()))
+                    {
+                        bool autoSync = prop.Value.Value<bool>();
+                        changes.Add(() =>
                         {
-                            changed.Add("autoSyncTransforms");
-                        }
+                            if (UnityPhysicsCompat.TrySetPhysics2DAutoSyncTransforms(autoSync))
+                                changed.Add("autoSyncTransforms");
+                        });
                         break;
+                    }
                 }
             }
 
+            foreach (var change in changes) change();
             MarkPhysics2DSettingsDirty();
 
             return new

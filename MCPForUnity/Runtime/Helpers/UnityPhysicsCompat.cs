@@ -205,6 +205,26 @@ namespace MCPForUnity.Runtime.Helpers
         }
 
         /// <summary>
+        /// Checks whether the current API can express a defined simulation mode without writing it.
+        /// This checks metadata only; a subsequent native setter can still fail.
+        /// </summary>
+        public static bool CanSetPhysicsSimulationMode(SimulationMode mode)
+        {
+            if (mode != SimulationMode.FixedUpdate && mode != SimulationMode.Update
+                && mode != SimulationMode.Script)
+                return false;
+
+            var modeProp = PhysicsSimulationModeProp;
+            if (modeProp != null && modeProp.CanWrite && modeProp.PropertyType.IsEnum
+                && Enum.IsDefined(modeProp.PropertyType, mode.ToString()))
+                return true;
+
+            var autoProp = PhysicsAutoSimulationProp;
+            return autoProp != null && autoProp.CanWrite
+                && (mode == SimulationMode.FixedUpdate || mode == SimulationMode.Script);
+        }
+
+        /// <summary>
         /// Sets the 3D physics simulation mode in a Unity-version-agnostic way.
         /// Returns false if the requested mode isn't expressible on this Unity version
         /// (e.g. Update mode on pre-2022.2).
