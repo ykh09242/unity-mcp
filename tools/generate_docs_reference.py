@@ -42,7 +42,7 @@ import textwrap
 import typing
 from dataclasses import dataclass
 from pathlib import Path
-from types import GenericAlias
+from types import GenericAlias, UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -127,7 +127,7 @@ def _render_type(annotation: Any) -> str:
     if origin is Annotated:
         return _render_type(get_args(annotation)[0])
 
-    if origin in (Union, getattr(typing, "UnionType", Union)):
+    if origin in (Union, UnionType):
         parts = [_render_type(a) for a in get_args(annotation) if a is not type(None)]
         has_none = type(None) in get_args(annotation) or any(
             part.endswith(" | None") or part == "None" for part in parts
@@ -176,7 +176,7 @@ def _annotation_description(annotation: Any) -> str | None:
                     return meta
             # Recurse into the underlying type — e.g. Annotated[str, "..."] | None
             return _walk(get_args(a)[0])
-        if origin in (Union, getattr(typing, "UnionType", Union)):
+        if origin in (Union, UnionType):
             for arg in get_args(a):
                 desc = _walk(arg)
                 if desc:
