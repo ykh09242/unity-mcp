@@ -165,7 +165,7 @@ server.add_middleware(FixtureState())
 register_all_tools(server)
 service = CustomToolService(server)
 definition = ToolDefinitionModel(name='manage_build', requires_polling=True,
-                                 poll_action='status', max_poll_seconds=1800)
+                                 poll_action='status', max_poll_seconds=600)
 service.register_global_tools([definition])
 assert 'manage_build' not in service._global_tools
 service._register_project_tools('fixture', [definition], project_hash='fixture')

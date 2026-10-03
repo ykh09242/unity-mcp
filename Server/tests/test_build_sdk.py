@@ -35,7 +35,7 @@ def test_build_settings_and_status_at_actual_sdk_boundary():
         server.tool(name="manage_build")(telemetry_tool("manage_build")(log_execution("manage_build","Tool")(module.manage_build)))
         service=CustomToolService(server)
         # Same metadata emitted from ManageBuild's production attribute; the managed proof exports it.
-        definition=ToolDefinitionModel(name="manage_build",requires_polling=True,poll_action="status",max_poll_seconds=1800)
+        definition=ToolDefinitionModel(name="manage_build",requires_polling=True,poll_action="status",max_poll_seconds=600)
         service.register_global_tools([definition])
         assert "manage_build" not in service._global_tools  # Existing built-in remains untouched.
         service._register_project_tools("fixture-project",[definition])

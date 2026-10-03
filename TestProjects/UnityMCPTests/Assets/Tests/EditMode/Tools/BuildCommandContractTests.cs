@@ -12,6 +12,16 @@ namespace MCPForUnityTests.EditMode.Tools
 {
     public class BuildCommandContractTests
     {
+        [Test]
+        public void PollingMetadataFitsServerRegistrationBudget()
+        {
+            var metadata = typeof(ManageBuild).GetCustomAttribute<McpForUnityToolAttribute>();
+            Assert.IsNotNull(metadata);
+            Assert.IsTrue(metadata.RequiresPolling);
+            Assert.AreEqual("status", metadata.PollAction);
+            Assert.That(metadata.MaxPollSeconds, Is.InRange(1, 600));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void OmittedOrNullSettingsValue_ReadsWithoutClearing(bool explicitNull)
