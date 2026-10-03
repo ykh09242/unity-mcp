@@ -1,5 +1,6 @@
 """Causal work and behavior checks for script regex selection."""
 import importlib
+from collections.abc import Iterator
 import re
 import asyncio
 import threading
@@ -58,13 +59,25 @@ def test_plain_dollar_runs_have_linear_lexer_work():
     assert text.reads < len(text) * 6
 
 
-def test_wide_matches_charge_scanning_and_tokenize_once():
+def test_wide_matches_charge_scanning_and_tokenize_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Count work independently of CI/coverage speed; deadline behavior has separate tests.
+    monkeypatch.setattr(bounded_regex, "monotonic", lambda: 100.0)
+    original = selection._iter_csharp_tokens
+    lexer_calls = 0
+
+    def counted(source: str) -> Iterator[tuple[int, str, bool, int]]:
+        nonlocal lexer_calls
+        lexer_calls += 1
+        return original(source)
+
+    monkeypatch.setattr(selection, "_iter_csharp_tokens", counted)
     text = "class C {\n" + "a" * 200_000 + "}\n" + "b" * 200_000 + "}\n"
     budget = bounded_regex.WorkBudget()
     budget.remaining = len(text) * 4
     match = selection._find_best_anchor_match(r"[^}]*}\s*$", text, re.MULTILINE, budget=budget)
     assert match is not None
     assert budget.remaining < len(text) * 2
+    assert lexer_calls == 1
 
 
 def test_near_limit_ten_thousand_braces_complete_or_fail_closed():
