@@ -15,7 +15,9 @@ name: Compile Check (no license)
 
 on:
   push:
-    branches-ignore: [beta, main]
+    # Beta's release gates need a Unity license; this independent check also
+    # compiles fork beta pushes where licensed tests are skipped.
+    branches-ignore: [main]
     paths: &paths
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**

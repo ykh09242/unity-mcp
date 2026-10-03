@@ -1,0 +1,24 @@
+name: Fork Beta Tool Tests
+
+# beta-release.yml validates Server/MCPForUnity changes. Tool-only fork beta
+# pushes need their own trigger without expanding upstream release triggers.
+on:
+  push:
+    branches: [beta]
+    paths:
+      - tools/**
+      - .github/workflows/python-tests.yml
+      - .github/workflows/fork-beta-tools.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-beta-tools-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python_tests:
+    name: Python and hermetic tool tests
+    if: github.repository != 'CoplayDev/unity-mcp'
+    uses: ./.github/workflows/python-tests.yml
