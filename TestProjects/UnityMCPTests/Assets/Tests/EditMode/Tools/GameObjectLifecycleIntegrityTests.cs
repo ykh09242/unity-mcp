@@ -162,6 +162,37 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsEmpty(Objects());
         }
 
+        [TestCase("rooted")]
+        [TestCase("traversal")]
+        [TestCase("invalid_leaf")]
+        [TestCase("invalid_ancestor")]
+        public void HostilePrefabPath_IsRejectedBeforeObjectsTagsSelectionOrDirectoriesChange(string kind)
+        {
+            CreateAssetRoot();
+            string relative = kind == "traversal" ? assetRoot + "/First/../Rejected/New.prefab"
+                : kind == "invalid_leaf" ? assetRoot + "/Rejected/Bad?Name.prefab"
+                : kind == "invalid_ancestor" ? assetRoot + "/Bad?Directory/New.prefab"
+                : assetRoot + "/Rejected/New.prefab";
+            string projectRoot = System.IO.Path.GetDirectoryName(Application.dataPath);
+            string path = kind == "rooted" ? System.IO.Path.Combine(projectRoot, relative) : relative;
+            var existing = Owned("Existing");
+            Selection.activeGameObject = existing;
+            var before = Objects().Select(go => go.GetInstanceID()).OrderBy(id => id).ToArray();
+            string[] tags = UnityEditorInternal.InternalEditorUtility.tags;
+            var request = Create();
+            request["saveAsPrefab"] = true;
+            request["prefabPath"] = path;
+            request["tag"] = prefix + "UncreatedTag";
+            var response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.StartsWith("Invalid prefab path:", response.Value<string>("error"));
+            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceID()).OrderBy(id => id).ToArray());
+            CollectionAssert.AreEqual(tags, UnityEditorInternal.InternalEditorUtility.tags);
+            Assert.AreSame(existing, Selection.activeGameObject);
+            Assert.IsFalse(System.IO.Directory.Exists(System.IO.Path.Combine(projectRoot, assetRoot, "Rejected")));
+            Assert.IsFalse(System.IO.Directory.Exists(System.IO.Path.Combine(projectRoot, assetRoot, "First")));
+        }
+
         [TestCase("null")]
         [TestCase("short")]
         [TestCase("malformed")]

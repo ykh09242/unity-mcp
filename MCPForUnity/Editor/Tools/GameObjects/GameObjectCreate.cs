@@ -32,6 +32,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse("'prefabPath' is required when 'saveAsPrefab' is true and creating a new object.");
             }
 
+            if (saveAsPrefab)
+            {
+                try
+                {
+                    if (!prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                        prefabPath += ".prefab";
+                    prefabPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
+                    AssetPathUtility.GetFullAssetPath(prefabPath);
+                }
+                catch (Exception e)
+                {
+                    return new ErrorResponse($"Invalid prefab path: {e.Message}");
+                }
+            }
+
             JToken parentToken = @params["parent"];
             GameObject parentGo = null;
             if (parentToken != null)
@@ -301,7 +316,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                 try
                 {
-                    string directoryPath = System.IO.Path.GetDirectoryName(finalPrefabPath);
+                    string directoryPath = System.IO.Path.GetDirectoryName(AssetPathUtility.GetFullAssetPath(finalPrefabPath));
                     if (!string.IsNullOrEmpty(directoryPath) && !System.IO.Directory.Exists(directoryPath))
                     {
                         System.IO.Directory.CreateDirectory(directoryPath);
@@ -309,6 +324,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         McpLog.Info($"[ManageGameObject.Create] Created directory for prefab: {directoryPath}");
                     }
 
+                    AssetPathUtility.GetFullAssetPath(finalPrefabPath);
                     GameObject prefabAsset = PrefabUtility.SaveAsPrefabAssetAndConnect(newGo, finalPrefabPath, InteractionMode.UserAction);
 
                     if (prefabAsset == null)
