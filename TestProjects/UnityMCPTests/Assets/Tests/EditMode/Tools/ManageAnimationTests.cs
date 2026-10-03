@@ -7,6 +7,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using MCPForUnity.Editor.Tools.Animation;
+using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -25,7 +26,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown()
         {
             // Clean up scene objects
-            foreach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>())
+            foreach (var go in UnityFindObjectsCompat.FindAll<GameObject>().OrderBy(go => go.GetInstanceID()))
             {
                 if (go.name.StartsWith("AnimTest_"))
                 {

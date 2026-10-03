@@ -933,7 +933,11 @@ namespace MCPForUnityTests.Editor.Tools
                 GameObject reloaded = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
                 var childRb = reloaded.transform.Find("Child1").GetComponent<Rigidbody>();
                 Assert.AreEqual(99f, childRb.mass, 0.01f);
+#if UNITY_6000_0_OR_NEWER
+                Assert.AreEqual(2.5f, childRb.linearDamping, 0.01f);
+#else
                 Assert.AreEqual(2.5f, childRb.drag, 0.01f);
+#endif
             }
             finally
             {
