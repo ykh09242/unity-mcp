@@ -15,7 +15,7 @@ import glob
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import socket
 import struct
@@ -49,11 +49,16 @@ class PortDiscovery:
         Includes hashed per-project files and the legacy file (if present).
         """
         base = PortDiscovery.get_registry_dir()
-        hashed = sorted(
-            (Path(p) for p in glob.glob(str(base / "unity-mcp-port-*.json"))),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        candidates: list[tuple[Path, float]] = []
+        for name in glob.glob(str(base / "unity-mcp-port-*.json")):
+            path = Path(name)
+            try:
+                candidates.append((path, path.stat().st_mtime))
+            except FileNotFoundError:
+                # Unity can remove a registry file between enumeration and stat.
+                continue
+        hashed = [path for path, _ in sorted(
+            candidates, key=lambda entry: entry[1], reverse=True)]
         legacy = PortDiscovery.get_registry_path()
         if legacy.exists():
             # Put legacy at the end so hashed, per-project files win
@@ -241,7 +246,7 @@ class PortDiscovery:
             try:
                 status_path = Path(status_file_path)
                 file_mtime = datetime.fromtimestamp(
-                    status_path.stat().st_mtime)
+                    status_path.stat().st_mtime, timezone.utc)
 
                 with status_path.open('r') as f:
                     data = json.load(f)
@@ -264,7 +269,7 @@ class PortDiscovery:
                 if heartbeat_str:
                     try:
                         last_heartbeat = datetime.fromisoformat(
-                            heartbeat_str.replace('Z', '+00:00'))
+                            heartbeat_str.replace('Z', '+00:00')).astimezone(timezone.utc)
                     except Exception:
                         pass
 
@@ -275,10 +280,7 @@ class PortDiscovery:
                 if not is_alive:
                     # If Unity says it's reloading and the status is fresh, don't drop the instance.
                     freshness = last_heartbeat or file_mtime
-                    now = datetime.now()
-                    if freshness.tzinfo:
-                        from datetime import timezone
-                        now = datetime.now(timezone.utc)
+                    now = datetime.now(timezone.utc)
 
                     age_s = (now - freshness).total_seconds()
 
