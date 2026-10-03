@@ -76,7 +76,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (!source.isActiveAndEnabled)
                         return new ErrorResponse("AudioSource must be enabled on an active GameObject to play.");
-                    AudioClip clip = hasClip ? AssetDatabase.LoadAssetAtPath<AudioClip>(clipPath) : source.clip;
+                    AudioClip clip = hasClip ? AssetDatabase.LoadAssetAtPath<AudioClip>(AssetPathUtility.GetAssetReferencePath(clipPath, allowPackages: true)) : source.clip;
                     if (clip == null)
                         return new ErrorResponse(hasClip ? $"AudioClip was not found at '{clipPath}'." : "AudioSource has no assigned AudioClip.");
                     if (clip.loadState == AudioDataLoadState.Failed)

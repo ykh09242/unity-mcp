@@ -8,29 +8,41 @@ namespace MCPForUnity.Runtime.Helpers
     {
         public static string ResolveWithinRoot(string root, string path)
         {
-            string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string fullRoot = Path.GetFullPath(root);
+            string volumeRoot = Path.GetPathRoot(fullRoot);
+            if (fullRoot.Length > volumeRoot.Length)
+                fullRoot = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string fullPath = Path.GetFullPath(Path.Combine(fullRoot, path));
             var comparison = Path.DirectorySeparatorChar == '\\'
                 ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (!fullPath.Equals(fullRoot, comparison) &&
-                !fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison))
+                !fullPath.StartsWith(fullRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                    ? fullRoot : fullRoot + Path.DirectorySeparatorChar, comparison))
                 throw new InvalidOperationException("Path must stay inside the permitted directory.");
 
             // A lexically contained path can still escape through a symlink or junction.
-            string current = fullPath;
-            while (current != null)
+            // Inspect parents before children: even the dangling-entry fallback must not enumerate
+            // a directory behind a link while waiting to reject that ancestor.
+            string current = fullRoot;
+            InspectEntry(current, comparison);
+            foreach (string part in fullPath.Substring(fullRoot.Length).Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
             {
-                try
-                {
-                    if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                        throw new InvalidOperationException("Paths through symbolic links or junctions are not permitted.");
-                }
-                catch (FileNotFoundException) { RejectUnresolvedEntry(current, comparison); }
-                catch (DirectoryNotFoundException) { RejectUnresolvedEntry(current, comparison); }
-                if (current.Equals(fullRoot, comparison)) break;
-                current = Path.GetDirectoryName(current);
+                current = Path.Combine(current, part);
+                InspectEntry(current, comparison);
             }
             return fullPath;
+        }
+
+        private static void InspectEntry(string path, StringComparison comparison)
+        {
+            try
+            {
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidOperationException("Paths through symbolic links or junctions are not permitted.");
+            }
+            catch (FileNotFoundException) { RejectUnresolvedEntry(path, comparison); }
+            catch (DirectoryNotFoundException) { RejectUnresolvedEntry(path, comparison); }
         }
 
         private static void RejectUnresolvedEntry(string path, StringComparison comparison)

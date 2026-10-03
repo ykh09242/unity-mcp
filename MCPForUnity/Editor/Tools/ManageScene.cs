@@ -1709,14 +1709,7 @@ namespace MCPForUnity.Editor.Tools
                 return AssetPathUtility.GetContainedAssetPath(normalized);
             if (forWrite)
                 throw new ArgumentException("Package scenes are read-only; save scenes under Assets.");
-            foreach (string part in normalized.Split('/'))
-                if (part.Length == 0 || part == "." || part == ".."
-                    || part.IndexOfAny(new[] { '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0)
-                    throw new ArgumentException("Invalid scene path segment.");
-            normalized = "Packages" + normalized.Substring("Packages".Length);
-            SafePathUtility.ResolveWithinRoot(Path.Combine(GetProjectRoot(), "Packages"),
-                normalized.Length == 8 ? "." : normalized.Substring(9));
-            return normalized;
+            return AssetPathUtility.GetAssetReferencePath(normalized, allowPackages: true);
         }
 
         // ── Multi-scene editing ────────────────────────────────────────────

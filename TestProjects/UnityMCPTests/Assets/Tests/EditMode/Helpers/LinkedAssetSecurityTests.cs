@@ -9,8 +9,11 @@ using MCPForUnity.Editor.Tools.Animation;
 using MCPForUnity.Editor.Tools.Physics;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnity.Runtime.Serialization;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -30,6 +33,58 @@ namespace MCPForUnityTests.Editor.Helpers
                 ? CreateSymbolicLinkW(link, target, (directory ? 1 : 0) | 2)
                 : symlink(target, link) == 0;
             if (!created) Assert.Ignore("Symlink creation unavailable: " + Marshal.GetLastWin32Error());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PersistentLinkedTextureIdIsRejectedBeforeAnyMaterialPropertyChanges(bool encoded)
+        {
+            Shader shader = Shader.Find("Standard");
+            if (shader == null || shader.FindPropertyIndex("_Glossiness") < 0)
+                Assert.Ignore("Standard shader is unavailable for the material reference regression.");
+            string id = "LinkedReferenceId_" + Guid.NewGuid().ToString("N");
+            string root = Path.Combine(Application.dataPath, id);
+            string ownedTargetRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "../.omo/" + id));
+            string relativePath = "Assets/" + id + "/Probe.asset";
+            string fullPath = Path.Combine(root, "Probe.asset");
+            string savedPath = Path.Combine(ownedTargetRoot, "Probe.asset");
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(ownedTargetRoot);
+            var texture = new Texture2D(1, 1);
+            var material = new Material(shader);
+            try
+            {
+                AssetDatabase.CreateAsset(texture, relativePath);
+                var serializer = JsonSerializer.Create();
+                serializer.Converters.Add(new UnityEngineObjectConverter());
+                var reference = new JObject { ["instanceID"] = texture.GetInstanceID() };
+                Assert.AreSame(texture, reference.ToObject<Texture>(serializer), "Ordinary persistent Assets IDs must remain usable.");
+                File.Move(fullPath, savedPath);
+                Link(fullPath, savedPath, false);
+                Assert.AreEqual(relativePath, AssetDatabase.GetAssetPath(texture));
+                float original = material.GetFloat("_Glossiness");
+                JToken referenceToken = encoded ? new JValue(reference.ToString(Formatting.None)) : reference;
+                var properties = new JObject
+                {
+                    ["float"] = new JObject { ["name"] = "_Glossiness", ["value"] = original == 1f ? 0f : 1f },
+                    ["_MainTex"] = referenceToken
+                };
+                Assert.Catch<Exception>(() => MaterialOps.ApplyProperties(material, properties, serializer));
+                Assert.AreEqual(original, material.GetFloat("_Glossiness"), "Rejected reference partially changed the material.");
+                Assert.Catch<Exception>(() => reference.ToObject<Texture>(serializer));
+            }
+            finally
+            {
+                // Restore the owned ordinary entry before asking Unity to delete it; remove only the link itself.
+                File.Delete(fullPath);
+                if (File.Exists(savedPath)) File.Move(savedPath, fullPath);
+                AssetDatabase.DeleteAsset(relativePath);
+                if (texture != null) UnityEngine.Object.DestroyImmediate(texture);
+                UnityEngine.Object.DestroyImmediate(material);
+                if (Directory.Exists(root)) Directory.Delete(root);
+                File.Delete(root + ".meta");
+                Directory.Delete(ownedTargetRoot);
+            }
         }
 
         [TestCase(false, false)]
@@ -59,6 +114,9 @@ namespace MCPForUnityTests.Editor.Helpers
 
                 Exception denied = Assert.Catch<Exception>(() => AssetPathUtility.GetFullAssetPath(relative + "/Probe.cs"));
                 Assert.That(denied, Is.InstanceOf<InvalidOperationException>().Or.InstanceOf<IOException>());
+                Assert.Catch<Exception>(() => AssetPathUtility.SanitizeAssetPath(relative + "/Probe.cs"));
+                Assert.Catch<Exception>(() => AssetPathUtility.GetAssetReferencePath(relative + "/Probe.prefab", allowPackages: true));
+                Assert.Catch<Exception>(() => UnityAssetPath.Resolve(relative + "/Probe.png", allowPackages: true, allowBuiltIn: true));
                 Assert.IsFalse(AssetGenPaths.TryGetAssetsRelativePath(relative + "/Probe.png", out _));
                 Assert.IsFalse(LocalImage.ResolveExisting(relative + "/Probe.png", out _, out _));
                 Assert.Throws<UnauthorizedAccessException>(() => LocalImage.ToDataUri(relative + "/Probe.png"));

@@ -172,7 +172,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetAssetReferencePath(clipPath, allowPackages: true);
             var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
             if (clip == null)
                 return new { success = false, message = $"AnimationClip not found at '{clipPath}'" };

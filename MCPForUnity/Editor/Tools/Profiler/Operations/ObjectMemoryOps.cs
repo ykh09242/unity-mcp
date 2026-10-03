@@ -35,7 +35,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
 
             // Try asset path
-            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(objectPath);
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(AssetPathUtility.GetAssetReferencePath(objectPath, allowPackages: true, allowBuiltIn: true));
             if (asset != null)
             {
                 long bytes = UProfiler.GetRuntimeMemorySizeLong(asset);

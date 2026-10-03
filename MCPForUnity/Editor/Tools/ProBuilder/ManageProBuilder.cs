@@ -2191,7 +2191,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (string.IsNullOrEmpty(materialPath))
                 return new ErrorResponse("materialPath parameter is required.");
 
-            var material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+            var material = AssetDatabase.LoadAssetAtPath<Material>(AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true));
             if (material == null)
                 return new ErrorResponse($"Material not found at path: {materialPath}");
 

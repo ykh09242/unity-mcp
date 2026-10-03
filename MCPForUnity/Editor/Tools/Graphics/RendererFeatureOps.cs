@@ -111,6 +111,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return new ErrorResponse("m_RendererFeatures array not found.");
             }
 
+            string materialPath = p.Get("material");
+            if (!string.IsNullOrEmpty(materialPath))
+                materialPath = AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true);
             ScriptableObject feature = null;
             try
             {
@@ -157,7 +160,6 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     ApplyFeatureProperties(feature, propertiesToken);
 
                 // Set material if provided (common for FullScreenPass)
-                string materialPath = p.Get("material");
                 if (!string.IsNullOrEmpty(materialPath))
                     TrySetMaterial(feature, materialPath);
 
@@ -578,7 +580,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
         private static void TrySetMaterial(ScriptableObject feature, string materialPath)
         {
-            var mat = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true));
             if (mat == null) return;
 
             using (var so = new SerializedObject(feature))

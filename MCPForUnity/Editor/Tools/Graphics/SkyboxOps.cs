@@ -109,7 +109,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (string.IsNullOrEmpty(materialPath))
                 return new ErrorResponse("'material' (asset path) is required.");
 
-            var mat = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true));
             if (mat == null)
                 return new ErrorResponse($"Material not found at '{materialPath}'.");
 
@@ -310,7 +310,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             Texture cubemap = null;
             if (!string.IsNullOrEmpty(cubemapPath))
             {
-                cubemap = AssetDatabase.LoadAssetAtPath<Texture>(cubemapPath);
+                cubemap = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(cubemapPath, allowPackages: true, allowBuiltIn: true));
                 if (cubemap == null)
                     return new ErrorResponse($"Cubemap not found at '{cubemapPath}'.");
                 if (cubemap.dimension != TextureDimension.Cube)
@@ -480,7 +480,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     case ShaderPropertyType.Texture:
                         if (value.Type == JTokenType.String)
                         {
-                            var tex = AssetDatabase.LoadAssetAtPath<Texture>(value.ToString());
+                            var tex = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(value.ToString(), allowPackages: true, allowBuiltIn: true));
                             if (tex != null) { mat.SetTexture(propName, tex); return true; }
                         }
                         else if (value.Type == JTokenType.Null)

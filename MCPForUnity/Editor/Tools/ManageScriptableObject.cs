@@ -1781,8 +1781,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string resolvedPath = !string.IsNullOrWhiteSpace(guid)
-                ? AssetDatabase.GUIDToAssetPath(guid)
-                : AssetPathUtility.SanitizeAssetPath(path);
+                ? AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: !writable)
+                : AssetPathUtility.GetAssetReferencePath(path, allowPackages: !writable);
 
             if (string.IsNullOrWhiteSpace(resolvedPath))
             {

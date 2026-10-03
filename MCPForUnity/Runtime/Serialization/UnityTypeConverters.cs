@@ -345,7 +345,7 @@ namespace MCPForUnity.Runtime.Serialization
                     string path = UnityEditor.AssetDatabase.GUIDToAssetPath(strValue.Replace("-", "").ToLowerInvariant());
                     if (!string.IsNullOrEmpty(path))
                     {
-                        var asset = UnityEditor.AssetDatabase.LoadAssetAtPath(path, objectType);
+                        var asset = UnityEditor.AssetDatabase.LoadAssetAtPath(MCPForUnity.Runtime.Helpers.UnityAssetPath.Resolve(path, allowPackages: true, allowBuiltIn: true), objectType);
                         if (asset != null) return asset;
                     }
                     UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset with GUID '{strValue}' as type '{objectType.Name}'.");
@@ -353,7 +353,7 @@ namespace MCPForUnity.Runtime.Serialization
                 }
 
                 // Assume it's an asset path
-                var loadedAsset = UnityEditor.AssetDatabase.LoadAssetAtPath(strValue, objectType);
+                var loadedAsset = UnityEditor.AssetDatabase.LoadAssetAtPath(MCPForUnity.Runtime.Helpers.UnityAssetPath.Resolve(strValue, allowPackages: true, allowBuiltIn: true), objectType);
                 if (loadedAsset == null)
                 {
                     UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset at path '{strValue}' as type '{objectType.Name}'.");
@@ -372,7 +372,7 @@ namespace MCPForUnity.Runtime.Serialization
                     string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guid);
                     if (!string.IsNullOrEmpty(path))
                     {
-                        var asset = UnityEditor.AssetDatabase.LoadAssetAtPath(path, objectType);
+                        var asset = UnityEditor.AssetDatabase.LoadAssetAtPath(MCPForUnity.Runtime.Helpers.UnityAssetPath.Resolve(path, allowPackages: true, allowBuiltIn: true), objectType);
                         if (asset != null) return asset;
                     }
                     UnityEngine.Debug.LogWarning($"[UnityEngineObjectConverter] Could not load asset with GUID '{guidToken}' as type '{objectType.Name}'.");
@@ -390,6 +390,9 @@ namespace MCPForUnity.Runtime.Serialization
                         UnityEngine.Object entityObj = UnityEditor.EditorUtility.EntityIdToObject(eid);
                         if (entityObj != null)
                         {
+                            string assetPath = UnityEditor.AssetDatabase.GetAssetPath(entityObj);
+                            if (!string.IsNullOrEmpty(assetPath))
+                                MCPForUnity.Runtime.Helpers.UnityAssetPath.Resolve(assetPath, allowPackages: true, allowBuiltIn: true);
                             if (objectType.IsAssignableFrom(entityObj.GetType()))
                             {
                                 return entityObj;
@@ -422,6 +425,9 @@ namespace MCPForUnity.Runtime.Serialization
                     UnityEngine.Object obj = UnityObjectIdCompat.InstanceIDToObjectCompat(instanceId);
                     if (obj != null)
                     {
+                        string assetPath = UnityEditor.AssetDatabase.GetAssetPath(obj);
+                        if (!string.IsNullOrEmpty(assetPath))
+                            MCPForUnity.Runtime.Helpers.UnityAssetPath.Resolve(assetPath, allowPackages: true, allowBuiltIn: true);
                         // Direct type match
                         if (objectType.IsAssignableFrom(obj.GetType()))
                         {
@@ -460,7 +466,7 @@ namespace MCPForUnity.Runtime.Serialization
                 if (jo.TryGetValue("path", out JToken pathToken) && pathToken.Type == JTokenType.String)
                 {
                     string path = pathToken.ToString();
-                    var asset = UnityEditor.AssetDatabase.LoadAssetAtPath(path, objectType);
+                    var asset = UnityEditor.AssetDatabase.LoadAssetAtPath(MCPForUnity.Runtime.Helpers.UnityAssetPath.Resolve(path, allowPackages: true, allowBuiltIn: true), objectType);
                     if (asset != null)
                     {
                         return asset;

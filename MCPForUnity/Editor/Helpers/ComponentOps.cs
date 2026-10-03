@@ -636,7 +636,7 @@ namespace MCPForUnity.Editor.Helpers
                 var guidToken = jObj["guid"];
                 if (guidToken != null)
                 {
-                    string path = AssetDatabase.GUIDToAssetPath(guidToken.ToString());
+                    string path = AssetPathUtility.GetAssetPathFromGuid(guidToken.ToString(), allowPackages: true, allowBuiltIn: true);
                     if (string.IsNullOrEmpty(path))
                     {
                         error = $"No asset found for GUID '{guidToken}'.";
@@ -704,7 +704,7 @@ namespace MCPForUnity.Editor.Helpers
                 var pathToken = jObj["path"];
                 if (pathToken != null)
                 {
-                    string sanitized = AssetPathUtility.SanitizeAssetPath(pathToken.ToString());
+                    string sanitized = AssetPathUtility.GetAssetReferencePath(pathToken.ToString(), allowPackages: true, allowBuiltIn: true);
                     var resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(sanitized);
                     if (resolved == null)
                     {
@@ -739,7 +739,7 @@ namespace MCPForUnity.Editor.Helpers
 
                 if (strVal.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) || strVal.Contains("/"))
                 {
-                    string sanitized = AssetPathUtility.SanitizeAssetPath(strVal);
+                    string sanitized = AssetPathUtility.GetAssetReferencePath(strVal, allowPackages: true, allowBuiltIn: true);
                     var resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(sanitized);
                     if (resolved == null)
                     {
@@ -752,7 +752,7 @@ namespace MCPForUnity.Editor.Helpers
                 // Try as asset GUID (32-char hex string)
                 if (strVal.Length == 32 && IsHexString(strVal))
                 {
-                    string assetPath = AssetDatabase.GUIDToAssetPath(strVal);
+                    string assetPath = AssetPathUtility.GetAssetPathFromGuid(strVal, allowPackages: true, allowBuiltIn: true);
                     if (!string.IsNullOrEmpty(assetPath))
                     {
                         var resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
@@ -784,6 +784,10 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
+            string resolvedAssetPath = AssetDatabase.GetAssetPath(resolved);
+            if (!string.IsNullOrEmpty(resolvedAssetPath))
+                AssetPathUtility.GetAssetReferencePath(resolvedAssetPath, allowPackages: true, allowBuiltIn: true);
+
             // If a component filter is specified and the resolved object is a GameObject,
             // find the specific component by type name.
             if (!string.IsNullOrEmpty(componentFilter) && resolved is GameObject filterGo)
@@ -813,6 +817,7 @@ namespace MCPForUnity.Editor.Helpers
             string subAssetPath = AssetDatabase.GetAssetPath(resolved);
             if (!string.IsNullOrEmpty(subAssetPath))
             {
+                subAssetPath = AssetPathUtility.GetAssetReferencePath(subAssetPath, allowPackages: true, allowBuiltIn: true);
                 var subAssets = AssetDatabase.LoadAllAssetsAtPath(subAssetPath);
                 UnityEngine.Object match = null;
                 int matchCount = 0;

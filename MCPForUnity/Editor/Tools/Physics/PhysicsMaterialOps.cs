@@ -75,7 +75,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             var matPathErr = matPathResult.GetOrError(out string materialPath);
             if (matPathErr != null) return matPathErr;
 
-            materialPath = AssetPathUtility.SanitizeAssetPath(materialPath);
+            materialPath = AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true);
             if (string.IsNullOrEmpty(materialPath))
                 return new ErrorResponse("Invalid material path.");
 

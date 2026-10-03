@@ -124,7 +124,7 @@ namespace MCPForUnity.Editor.Helpers
             if (token == null || token.Type != JTokenType.String)
                 return null;
 
-            string assetPath = AssetPathUtility.SanitizeAssetPath(token.ToString());
+            string assetPath = AssetPathUtility.GetAssetReferencePath(token.ToString(), allowPackages: true, allowBuiltIn: true);
             UnityEngine.Object loadedAsset = AssetDatabase.LoadAssetAtPath(assetPath, targetType);
             
             if (loadedAsset == null)

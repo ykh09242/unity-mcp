@@ -75,12 +75,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     }
                     else if (guids.Length > 1)
                     {
-                        string foundPaths = string.Join(", ", guids.Select(g => AssetDatabase.GUIDToAssetPath(g)));
+                        string foundPaths = string.Join(", ", guids.Select(g => AssetPathUtility.GetAssetPathFromGuid(g, allowPackages: true)));
                         return new ErrorResponse($"Multiple prefabs found matching name '{prefabNameOnly}': {foundPaths}. Please provide a more specific path.");
                     }
                     else
                     {
-                        prefabPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                        prefabPath = AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true);
                         McpLog.Info($"[ManageGameObject.Create] Found unique prefab at path: '{prefabPath}'");
                     }
                 }
@@ -97,7 +97,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                     string[] guids = AssetDatabase.FindAssets(fileNameWithoutExtension);
                     var matches = guids
-                        .Select(g => AssetDatabase.GUIDToAssetPath(g))
+                        .Select(g => AssetPathUtility.GetAssetPathFromGuid(g, allowPackages: true))
                         .Where(p => p.EndsWith("/" + fileName, StringComparison.OrdinalIgnoreCase) || p.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                         .ToArray();
 
@@ -117,6 +117,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     }
                 }
 
+                prefabPath = AssetPathUtility.GetAssetReferencePath(prefabPath, allowPackages: true);
                 GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
                 if (prefabAsset != null)
                 {

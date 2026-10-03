@@ -123,6 +123,7 @@ namespace MCPForUnity.Editor.Tools
         private static object HandleProfileBuild(string profilePath, string outputPath,
             bool development, string[] optionNames, ScriptingImplementation? scriptingImplementation)
         {
+            profilePath = AssetPathUtility.GetContainedAssetPath(profilePath);
             var profile = UnityEditor.AssetDatabase.LoadAssetAtPath<
                 UnityEditor.Build.Profile.BuildProfile>(profilePath);
             if (profile == null)
@@ -420,7 +421,7 @@ namespace MCPForUnity.Editor.Tools
                 var guids = AssetDatabase.FindAssets("t:BuildProfile");
                 var profiles = guids.Select(guid =>
                 {
-                    string path = AssetDatabase.GUIDToAssetPath(guid);
+                    string path = AssetPathUtility.GetAssetPathFromGuid(guid);
                     return new { path, name = System.IO.Path.GetFileNameWithoutExtension(path) };
                 }).ToArray();
 
@@ -432,6 +433,7 @@ namespace MCPForUnity.Editor.Tools
                 });
             }
 
+            profilePath = AssetPathUtility.GetContainedAssetPath(profilePath);
             var loadedProfile = AssetDatabase.LoadAssetAtPath<
                 UnityEditor.Build.Profile.BuildProfile>(profilePath);
             if (loadedProfile == null)
@@ -547,6 +549,7 @@ namespace MCPForUnity.Editor.Tools
                 var profileTargets = new List<BuildTarget>();
                 foreach (var profilePath in profiles)
                 {
+                    AssetPathUtility.GetContainedAssetPath(profilePath);
                     var profile = AssetDatabase.LoadAssetAtPath<
                         UnityEditor.Build.Profile.BuildProfile>(profilePath);
                     if (profile == null)

@@ -200,7 +200,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         if (value.Type == JTokenType.String)
                         {
                             string path = value.ToString();
-                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
                             if (asset != null) { prop.objectReferenceValue = asset; return true; }
                         }
                         else if (value.Type == JTokenType.Object)
@@ -208,7 +208,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                             string path = value["path"]?.ToString();
                             if (!string.IsNullOrEmpty(path))
                             {
-                                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+                                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
                                 if (asset != null) { prop.objectReferenceValue = asset; return true; }
                             }
                         }

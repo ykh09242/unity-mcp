@@ -96,7 +96,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             string clipPath = @params["clipPath"]?.ToString();
             if (!string.IsNullOrEmpty(clipPath))
             {
-                clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+                clipPath = AssetPathUtility.GetAssetReferencePath(clipPath, allowPackages: true);
                 if (clipPath == null)
                     return new { success = false, message = "Invalid clip asset path" };
                 clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
@@ -465,7 +465,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             controllerPath = writable
                 ? AssetPathUtility.GetContainedAssetPath(controllerPath)
-                : AssetPathUtility.SanitizeAssetPath(controllerPath);
+                : AssetPathUtility.GetAssetReferencePath(controllerPath, allowPackages: true);
             if (controllerPath == null)
                 return null;
 

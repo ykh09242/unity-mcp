@@ -198,7 +198,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string[] guids = AssetDatabase.FindAssets("t:VisualEffectAsset " + templateName);
             if (guids.Length > 0)
             {
-                string assetPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                string assetPath = AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true);
                 // Convert asset path (e.g., "Assets/...") to absolute filesystem path
                 if (!string.IsNullOrEmpty(assetPath) && assetPath.StartsWith("Assets/"))
                 {
@@ -267,6 +267,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "Invalid assetPath: would escape project directory" };
             }
 
+            assetPath = AssetPathUtility.GetAssetReferencePath(assetPath, allowPackages: true);
             var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
             if (asset == null)
             {
@@ -275,7 +276,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 string[] guids = AssetDatabase.FindAssets($"t:VisualEffectAsset {searchName}");
                 if (guids.Length > 0)
                 {
-                    assetPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                    assetPath = AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true);
                     asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
                 }
             }
@@ -387,7 +388,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string[] guids = AssetDatabase.FindAssets("t:VisualEffectAsset");
             foreach (string guid in guids)
             {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
+                string path = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true);
                 string normalizedPath = path.Replace("\\", "/");
                 if (seenPaths.Add(normalizedPath))
                 {
@@ -458,7 +459,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var assets = new List<object>();
             foreach (string guid in guids)
             {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
+                string path = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true);
                 var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(path);
                 if (asset != null)
                 {
@@ -509,7 +510,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             if (normalized.StartsWith(assetsRoot + "/"))
             {
-                return "Assets/" + normalized.Substring(assetsRoot.Length + 1);
+                return AssetPathUtility.GetAssetReferencePath("Assets/" + normalized.Substring(assetsRoot.Length + 1));
             }
 
             var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath("Packages/com.unity.visualeffectgraph");
@@ -518,7 +519,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 string packageRoot = packageInfo.resolvedPath.Replace("\\", "/");
                 if (normalized.StartsWith(packageRoot + "/"))
                 {
-                    return "Packages/" + packageInfo.name + "/" + normalized.Substring(packageRoot.Length + 1);
+                    return AssetPathUtility.GetAssetReferencePath("Packages/" + packageInfo.name + "/" + normalized.Substring(packageRoot.Length + 1), allowPackages: true);
                 }
             }
 

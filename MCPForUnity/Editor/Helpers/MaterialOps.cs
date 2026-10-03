@@ -27,6 +27,27 @@ namespace MCPForUnity.Editor.Helpers
                     .FirstOrDefault(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase))?.Value;
             }
 
+            // Reject unsafe texture references before applying any material properties.
+            foreach (var property in properties.Properties())
+            {
+                if (string.Equals(property.Name, "shader", StringComparison.OrdinalIgnoreCase)) continue;
+                JToken referenceToken = property.Value;
+                if (referenceToken.Type == JTokenType.String && referenceToken.ToString().TrimStart().StartsWith("{"))
+                    referenceToken = JToken.Parse(referenceToken.ToString());
+                if (referenceToken.Type == JTokenType.String && referenceToken.ToString().Contains("/"))
+                    AssetPathUtility.GetAssetReferencePath(referenceToken.ToString(), allowPackages: true, allowBuiltIn: true);
+                else if (referenceToken is JObject reference)
+                {
+                    string path = (reference["path"] ?? reference["Path"])?.ToString();
+                    if (!string.IsNullOrEmpty(path))
+                        AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true);
+                    string guid = reference["guid"]?.ToString();
+                    if (!string.IsNullOrEmpty(guid)) AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true, allowBuiltIn: true);
+                    if (reference["instanceID"] != null || reference["entityID"] != null)
+                        reference.ToObject<UnityEngine.Object>(serializer);
+                }
+            }
+
             // --- Structured / Legacy Format Handling ---
             // Example: Set shader
             var shaderToken = GetValue("shader");
@@ -112,7 +133,7 @@ namespace MCPForUnity.Editor.Helpers
                     string texPath = (texProps["path"] ?? texProps["Path"])?.ToString();
                     if (!string.IsNullOrEmpty(texPath))
                     {
-                        var sanitizedPath = AssetPathUtility.SanitizeAssetPath(texPath);
+                        var sanitizedPath = AssetPathUtility.GetAssetReferencePath(texPath, allowPackages: true, allowBuiltIn: true);
                         var newTex = AssetDatabase.LoadAssetAtPath<Texture>(sanitizedPath);
                         if (newTex == null)
                             throw new ArgumentException($"Texture not found at path: {sanitizedPath}");
@@ -311,7 +332,7 @@ namespace MCPForUnity.Editor.Helpers
                         {
                             string path = value.ToString();
                             if (!string.IsNullOrEmpty(path) && path.Contains("/"))
-                                texture = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.SanitizeAssetPath(path));
+                                texture = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
                         }
                         else if (value is JObject)
                             texture = value.ToObject<Texture>(serializer);

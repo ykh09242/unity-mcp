@@ -19,24 +19,16 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Returns a canonical Assets path after checking the physical filesystem boundary.</summary>
         public static string GetContainedAssetPath(string path)
         {
-            if (string.IsNullOrWhiteSpace(path))
-                throw new ArgumentException("An Assets path is required.");
-            string normalized = NormalizeSeparators(path);
-            if (normalized.StartsWith("/", StringComparison.Ordinal) || normalized.IndexOf(':') >= 0)
-                throw new ArgumentException("Rooted asset paths are not permitted.");
-            foreach (string part in normalized.Split('/'))
-                if (part.Length == 0 || part == "." || part == ".." ||
-                    part.IndexOfAny(new[] { '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0)
-                    throw new ArgumentException("Invalid asset path segment.");
-            if (normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase))
-                normalized = "Assets";
-            else if (normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
-                normalized = "Assets/" + normalized.Substring(7);
-            else
-                normalized = "Assets/" + normalized;
-            SafePathUtility.ResolveWithinRoot(Application.dataPath,
-                normalized.Length == 6 ? "." : normalized.Substring(7));
-            return normalized;
+            return UnityAssetPath.Resolve(path);
+        }
+
+        public static string GetAssetReferencePath(string path, bool allowPackages = false, bool allowBuiltIn = false)
+            => UnityAssetPath.Resolve(path, allowPackages, allowBuiltIn);
+
+        public static string GetAssetPathFromGuid(string guid, bool allowPackages = false, bool allowBuiltIn = false)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid?.Replace("-", "").ToLowerInvariant());
+            return string.IsNullOrEmpty(path) ? path : GetAssetReferencePath(path, allowPackages, allowBuiltIn);
         }
 
         public static string GetFullAssetPath(string path)
@@ -58,8 +50,8 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Normalizes a Unity asset path by ensuring forward slashes are used and that it is rooted under "Assets/".
-        /// Also protects against path traversal attacks using "../" sequences.
+        /// Canonicalizes an Assets path and rejects traversal, links and junctions before use.
+        /// Empty values retain the legacy sentinel; unsafe nonempty values throw before an asset load.
         /// </summary>
         public static string SanitizeAssetPath(string path)
         {
@@ -68,26 +60,7 @@ namespace MCPForUnity.Editor.Helpers
                 return path;
             }
 
-            path = NormalizeSeparators(path);
-
-            // Check for path traversal sequences
-            if (path.Contains(".."))
-            {
-                McpLog.Warn($"[AssetPathUtility] Path contains potential traversal sequence: '{path}'");
-                return null;
-            }
-
-            // Ensure path starts with Assets/
-            if (string.Equals(path, "Assets", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Assets";
-            }
-            if (!path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Assets/" + path.TrimStart('/');
-            }
-
-            return path;
+            return GetContainedAssetPath(path);
         }
 
         /// <summary>
@@ -154,7 +127,7 @@ namespace MCPForUnity.Editor.Helpers
                     return null;
                 }
 
-                string scriptPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                string scriptPath = GetAssetPathFromGuid(guids[0], allowPackages: true);
 
                 // Script is at: {packageRoot}/Editor/Helpers/AssetPathUtility.cs
                 // Extract {packageRoot}

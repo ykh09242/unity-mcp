@@ -771,7 +771,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (targetType == typeof(Texture2D) || targetType == typeof(Texture))
             {
                 string path = value.ToString();
-                return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+                return AssetDatabase.LoadAssetAtPath<Texture2D>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
             }
 
             // Fallback: try Convert

@@ -63,6 +63,8 @@ namespace MCPForUnity.Editor.Helpers
                 return null;
             }
 
+            ValidateResolvedAsset(foundGo);
+
             // Get the target object/component from the found GameObject
             if (targetType == typeof(GameObject))
             {
@@ -116,7 +118,9 @@ namespace MCPForUnity.Editor.Helpers
                     searchMethod = int.TryParse(findTerm, out _) ? "by_id" :
                         findTerm.Contains("/") ? "by_path" : "by_name";
                 }
-                return GameObjectLookup.FindByTarget(target, searchMethod);
+                GameObject resolved = GameObjectLookup.FindByTarget(target, searchMethod);
+                ValidateResolvedAsset(resolved);
+                return resolved;
             }
 
             // If target is an instruction object
@@ -155,6 +159,14 @@ namespace MCPForUnity.Editor.Helpers
 
         // --- Private Helpers ---
 
+        private static void ValidateResolvedAsset(UnityEngine.Object resolved)
+        {
+            if (resolved == null) return;
+            string path = AssetDatabase.GetAssetPath(resolved);
+            if (!string.IsNullOrEmpty(path))
+                AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true);
+        }
+
         private static bool IsAssetType(Type type)
         {
             return typeof(Material).IsAssignableFrom(type) ||
@@ -171,12 +183,13 @@ namespace MCPForUnity.Editor.Helpers
         private static UnityEngine.Object TryLoadAsset(string findTerm, Type targetType)
         {
             // Try loading directly by path first
-            UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath(findTerm, targetType);
+            string assetPath = AssetPathUtility.GetAssetReferencePath(findTerm, allowPackages: true, allowBuiltIn: true);
+            UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath(assetPath, targetType);
             if (asset != null) 
                 return asset;
             
             // Try generic load if type-specific failed
-            asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(findTerm);
+            asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
             if (asset != null && targetType.IsAssignableFrom(asset.GetType())) 
                 return asset;
 
@@ -190,7 +203,7 @@ namespace MCPForUnity.Editor.Helpers
 
             if (guids.Length == 1)
             {
-                asset = AssetDatabase.LoadAssetAtPath(AssetDatabase.GUIDToAssetPath(guids[0]), targetType);
+                asset = AssetDatabase.LoadAssetAtPath(AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true, allowBuiltIn: true), targetType);
                 if (asset != null) 
                     return asset;
             }
