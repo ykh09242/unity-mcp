@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from urllib.request import url2pathname
 
 
 def _now_unix_ms() -> int:
@@ -50,8 +51,9 @@ class ExternalChangesScanner:
 
     def set_project_root(self, instance_id: str, project_root: str | None) -> None:
         st = self._get_state(instance_id)
-        if project_root:
-            st.project_root = project_root
+        if project_root and (st.project_root is None or Path(st.project_root) != Path(project_root)):
+            # Cached package paths, timestamps and dirty state belong to this project.
+            self._states[instance_id] = ExternalChangesState(project_root=project_root)
 
     def clear_dirty(self, instance_id: str) -> None:
         st = self._get_state(instance_id)
@@ -157,9 +159,12 @@ class ExternalChangesScanner:
             if not v.startswith("file:"):
                 continue
             suffix = v[len("file:"):].strip()
-            # Handle file:///abs/path or file:/abs/path
+            if not suffix:
+                continue
+            # Decode explicit file:/// URIs, including Windows drives.
+            # Keep absolute native and relative file: paths literal (they may contain '%').
             if suffix.startswith("///"):
-                candidate = Path("/" + suffix.lstrip("/"))
+                candidate = Path(url2pathname(suffix))
             elif suffix.startswith("/"):
                 candidate = Path(suffix)
             else:
