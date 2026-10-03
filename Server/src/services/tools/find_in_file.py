@@ -62,14 +62,16 @@ def _split_uri(uri: str) -> tuple[str, str]:
     if effective_path.startswith("/"):
         effective_path = effective_path[1:]
 
-    name = os.path.splitext(os.path.basename(effective_path))[0]
+    name, extension = os.path.splitext(os.path.basename(effective_path))
+    if extension and extension.lower() != ".cs":
+        raise ValueError("find_in_file supports C# scripts (.cs) or extensionless script paths only.")
     directory = os.path.dirname(effective_path)
     return name, directory
 
 
 @mcp_for_unity_tool(
     unity_target="manage_script",
-    description="Searches a file with a regex pattern and returns line numbers and excerpts.",
+    description="Searches a C# script with a regex pattern and returns line numbers and excerpts.",
     annotations=ToolAnnotations(
         title="Find in File",
         readOnlyHint=True,
@@ -80,7 +82,7 @@ def _split_uri(uri: str) -> tuple[str, str]:
 )
 async def find_in_file(
     ctx: Context,
-    uri: Annotated[str, "The resource URI to search under Assets/ or file path form supported by read_resource"],
+    uri: Annotated[str, "The C# script URI or path under Assets/ (.cs or extensionless)"],
     pattern: Annotated[str, "The regex pattern to search for"],
     project_root: Annotated[str | None, "Optional project root path"] = None,
     max_results: Annotated[int, "Cap results to avoid huge payloads"] = 200,
@@ -92,7 +94,10 @@ async def find_in_file(
     await ctx.info(
         f"Processing find_in_file: {uri} (unity_instance={unity_instance or 'default'})")
 
-    name, directory = _split_uri(uri)
+    try:
+        name, directory = _split_uri(uri)
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
 
     # 1. Read file content via Unity
     read_resp = await send_with_unity_instance(
