@@ -70,14 +70,64 @@ PLATFORMS=${PLATFORMS:-"win osx linux"}
 OUT=${OUT:-/tmp/mcp-compile-check}
 mkdir -p "$OUT" && OUT=$(winpath "$OUT")
 LIBCACHE="$UNITY_DATA/Resources/PackageManager/ProjectTemplates/libcache"
-CSC="$UNITY_DATA/DotNetSdkRoslyn/csc.dll"
-[ -f "$CSC" ] || die "Roslyn compiler not found: $CSC"
-
-DOTNET="$UNITY_DATA/NetCoreRuntime/dotnet"
-[ -x "$DOTNET" ] || DOTNET="$(command -v dotnet)" || die "no dotnet runtime available"
-
 UNITY_VERSION=${UNITY_VERSION:-}
 [ -n "$UNITY_VERSION" ] || die "UNITY_VERSION must be set (e.g. 2021.3.45f2)"
+ver_major=$(echo "$UNITY_VERSION" | cut -d. -f1)
+ver_minor=$(echo "$UNITY_VERSION" | cut -d. -f2)
+ver_patch=$(echo "$UNITY_VERSION" | cut -d. -f3 | sed 's/[a-z].*//')
+
+compiler_failure() {
+  echo "Compiler distribution candidates (diagnostic only):" >&2
+  find "$UNITY_DATA" -maxdepth 10 -type f \
+    \( -name 'csc.dll' -o -name 'csc.exe' -o -name 'dotnet' -o -name 'dotnet.exe' \) \
+    -print 2>/dev/null | sort >&2
+  die "$*"
+}
+
+# Unity 6.6+ locates Roslyn inside its scripting DotNetSdk. Require one coherent
+# SDK rather than choosing the first version or mixing it with a system runtime.
+if [ "$ver_major" -gt 6000 ] || { [ "$ver_major" -eq 6000 ] && [ "$ver_minor" -ge 6 ]; }; then
+  sdk_roots=()
+  sdk_inventory=$(find "$UNITY_DATA" -maxdepth 10 -name DotNetSdk -print) \
+    || compiler_failure "SDK directory inventory failed"
+  while IFS= read -r root; do [ -z "$root" ] || sdk_roots+=("$root"); done <<< "$sdk_inventory"
+  [ "${#sdk_roots[@]}" -eq 1 ] || compiler_failure "SDK root must be unique: found ${#sdk_roots[@]}"
+  sdk_root=${sdk_roots[0]}
+  canonical_data=$(readlink -f "$UNITY_DATA") || compiler_failure "SDK data path cannot be resolved"
+  sdk_links=$(find "$sdk_root" -maxdepth 10 -type l -print) || compiler_failure "SDK symlink inventory failed"
+  while IFS= read -r link; do
+    [ -n "$link" ] || continue
+    target=$(readlink -f "$link") || compiler_failure "SDK symlink cannot be resolved: $link"
+    case "$target" in "$canonical_data"/*) ;; *) compiler_failure "SDK external symlink: $link" ;; esac
+  done <<< "$sdk_links"
+  if [ -L "$sdk_root" ]; then
+    compiler_failure "SDK root cannot be a symlink: $sdk_root"
+  fi
+  [ -d "$sdk_root/sdk" ] || compiler_failure "SDK version directory not found: $sdk_root/sdk"
+  sdk_compilers=()
+  for sdk_version in "$sdk_root"/sdk/*; do
+    [[ "${sdk_version##*/}" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]] || continue
+    [ -f "$sdk_version/Roslyn/bincore/csc.dll" ] || compiler_failure "SDK Roslyn compiler not found: $sdk_version"
+    sdk_compilers+=("$sdk_version/Roslyn/bincore/csc.dll")
+  done
+  [ "${#sdk_compilers[@]}" -eq 1 ] || compiler_failure "SDK compiler must be unique: found ${#sdk_compilers[@]}"
+  CSC=${sdk_compilers[0]}
+  # Enumerate real directory entries: Git Bash's -f/-x checks transparently add
+  # .exe and would count one Windows executable twice when probing both names.
+  sdk_runtimes=()
+  runtime_inventory=$(find "$sdk_root" -maxdepth 1 \( -type f -o -type l \) \
+    \( -name dotnet -o -name dotnet.exe \) -print) || compiler_failure "SDK runtime inventory failed"
+  while IFS= read -r runtime; do [ -z "$runtime" ] || sdk_runtimes+=("$runtime"); done <<< "$runtime_inventory"
+  [ "${#sdk_runtimes[@]}" -eq 1 ] || compiler_failure "SDK executable runtime must be unique: found ${#sdk_runtimes[@]}"
+  DOTNET=${sdk_runtimes[0]}
+  [ -f "$DOTNET" ] && [ -x "$DOTNET" ] || compiler_failure "SDK runtime is not executable: $DOTNET"
+  export DOTNET_ROOT="$sdk_root" DOTNET_MULTILEVEL_LOOKUP=0
+else
+  CSC="$UNITY_DATA/DotNetSdkRoslyn/csc.dll"
+  [ -f "$CSC" ] || compiler_failure "Roslyn compiler not found: $CSC"
+  DOTNET="$UNITY_DATA/NetCoreRuntime/dotnet"
+  [ -x "$DOTNET" ] || DOTNET="$(command -v dotnet)" || die "no dotnet runtime available"
+fi
 
 echo "Unity version : $UNITY_VERSION"
 echo "Unity data    : $UNITY_DATA"
@@ -95,9 +145,6 @@ UNITY_RELEASES="5.3 5.4 5.5 5.6 2017.1 2017.2 2017.3 2017.4 2018.1 2018.2 2018.3
 2019.1 2019.2 2019.3 2019.4 2020.1 2020.2 2020.3 2021.1 2021.2 2021.3 2022.1 2022.2 2022.3 2023.1 2023.2 \
 6000.0 6000.1 6000.2 6000.3 6000.4 6000.5 6000.6 6000.7"
 
-ver_major=$(echo "$UNITY_VERSION" | cut -d. -f1)
-ver_minor=$(echo "$UNITY_VERSION" | cut -d. -f2)
-ver_patch=$(echo "$UNITY_VERSION" | cut -d. -f3 | sed 's/[a-z].*//')
 REFS_ROOT="$REPO/tools/compile-refs"
 case "$ver_major.$ver_minor" in
   2021.3|2022.3|6000.3) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;

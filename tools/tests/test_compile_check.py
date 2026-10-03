@@ -85,7 +85,9 @@ done < "$rsp"
 ''', encoding="utf-8")
     compiler.chmod(0o755)
     (tmp_path / "output" / "linux").mkdir(parents=True)
-    return CompileHarness(repo, data, extra, tmp_path / "output", tmp_path / "calls.txt", bash)
+    result = CompileHarness(repo, data, extra, tmp_path / "output", tmp_path / "calls.txt", bash)
+    modern_sdk(result)
+    return result
 
 
 @pytest.mark.parametrize("version,profile", [
@@ -140,6 +142,83 @@ def test_windows_compiler_layout_uses_bundled_runtime(harness: CompileHarness) -
     result = harness.run("2021.3.45f2")
     assert result.returncode == 0, result.stdout + result.stderr
     assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_missing_compiler_reports_distribution_candidates_without_selecting_them(harness: CompileHarness) -> None:
+    (harness.data / "DotNetSdkRoslyn" / "csc.dll").unlink()
+    candidate = harness.data / "Tools" / "Scripting" / "DotNetSdk" / "sdk" / "9.0.100" / "Roslyn" / "bincore" / "csc.dll"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.touch()
+    result = harness.run("6000.0.84f1")
+    assert result.returncode == 2
+    assert "Compiler distribution candidates (diagnostic only):" in result.stderr
+    assert "Tools/Scripting/DotNetSdk/sdk/9.0.100/Roslyn/bincore/csc.dll" in result.stderr
+    assert "NetCoreRuntime/dotnet" in result.stderr
+    assert not harness.calls.exists()
+
+
+def modern_sdk(harness: CompileHarness, root: str = "Tools/Scripting/DotNetSdk", version: str = "9.0.100") -> Path:
+    sdk = harness.data / root
+    compiler = sdk / "sdk" / version / "Roslyn" / "bincore" / "csc.dll"
+    compiler.parent.mkdir(parents=True, exist_ok=True)
+    compiler.touch()
+    sdk.mkdir(exist_ok=True)
+    shutil.copy2(harness.data / "NetCoreRuntime" / "dotnet", sdk / "dotnet")
+    return sdk
+
+
+@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+def test_modern_sdk_uses_one_coherent_bundled_toolchain(harness: CompileHarness, version: str) -> None:
+    modern_sdk(harness)
+    (harness.data / "DotNetSdkRoslyn" / "csc.dll").unlink()
+    result = harness.run(version)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
+
+
+@pytest.mark.parametrize("failure", ["absent", "compiler", "runtime", "two_roots", "two_versions", "partial_version", "two_runtimes"])
+def test_modern_sdk_rejects_missing_or_ambiguous_components(harness: CompileHarness, failure: str) -> None:
+    shutil.rmtree(harness.data / "Tools/Scripting/DotNetSdk")
+    if failure != "absent":
+        sdk = modern_sdk(harness)
+        if failure == "compiler":
+            (sdk / "sdk/9.0.100/Roslyn/bincore/csc.dll").unlink()
+        elif failure == "runtime":
+            (sdk / "dotnet").unlink()
+        elif failure == "two_roots":
+            modern_sdk(harness, "DotNetSdk")
+        elif failure == "two_versions":
+            modern_sdk(harness, version="9.0.101")
+        elif failure == "partial_version":
+            (sdk / "sdk/9.0.101").mkdir()
+        elif failure == "two_runtimes":
+            shutil.copy2(sdk / "dotnet", sdk / "dotnet.exe")
+    result = harness.run("6000.6.4f1")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "SDK" in result.stderr
+    assert not harness.calls.exists()
+
+
+def test_modern_sdk_supports_explicit_executable_suffix(harness: CompileHarness) -> None:
+    sdk = harness.data / "Tools/Scripting/DotNetSdk"
+    (sdk / "dotnet").rename(sdk / "dotnet.exe")
+    result = harness.run("6000.6.4f1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_modern_sdk_rejects_external_symlinks(harness: CompileHarness) -> None:
+    sdk = modern_sdk(harness)
+    target = sdk / "sdk/9.0.100/Roslyn/bincore/csc.dll"
+    target.unlink()
+    try:
+        target.symlink_to(harness.data.parent / "outside.dll")
+    except OSError:
+        pytest.skip("host does not permit creation of symlinks")
+    result = harness.run("6000.6.4f1")
+    assert result.returncode == 2
+    assert "symlink" in result.stderr
+    assert not harness.calls.exists()
 
 
 def test_shared_bcl_references_are_required(harness: CompileHarness) -> None:
@@ -214,6 +293,32 @@ def test_unity63_profile_removes_only_confirmed_absent_test_protocol_module(name
     assert not selected - default
 
 
+@pytest.mark.parametrize("family,module", [
+    ("2021.3", "UnityEngine.TextRenderingModule.dll"),
+    ("2022.3", "UnityEngine.TextRenderingModule.dll"),
+    ("2021.3", "UnityEngine.UnityAnalyticsCommonModule.dll"),
+])
+def test_legacy_profiles_include_compiler_proven_vendor_api_modules(family: str, module: str) -> None:
+    for name in ("Runtime", "Editor"):
+        entries = (ROOT / "tools/compile-refs" / family / f"{name}.txt").read_text(encoding="utf-8").splitlines()
+        assert f"DATA/Managed/UnityEngine/{module}" in entries
+
+
+@pytest.mark.parametrize("family,module", [
+    ("2021.3", "UnityEngine.TextRenderingModule.dll"),
+    ("2022.3", "UnityEngine.TextRenderingModule.dll"),
+    ("2021.3", "UnityEngine.UnityAnalyticsCommonModule.dll"),
+])
+def test_legacy_vendor_api_module_metadata_is_required(harness: CompileHarness, family: str, module: str) -> None:
+    manifest = harness.repo / "tools/compile-refs" / family / "Runtime.txt"
+    entry = f"DATA/Managed/UnityEngine/{module}"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + entry + "\n", encoding="utf-8")
+    result = harness.run(f"{family}.0f1")
+    assert result.returncode != 0
+    assert entry in result.stderr
+    assert not harness.calls.exists()
+
+
 @pytest.fixture
 def staged_tests(harness: CompileHarness) -> tuple[Path, Path]:
     project, framework = harness.repo / "staged project", harness.repo / "framework"
@@ -279,7 +384,7 @@ def test_missing_owned_assembly_does_not_report_editmode_success(
     harness: CompileHarness, staged_tests: tuple[Path, Path],
 ) -> None:
     project, framework = staged_tests
-    compiler = harness.data / "NetCoreRuntime/dotnet"
+    compiler = harness.data / "Tools/Scripting/DotNetSdk/dotnet"
     compiler.write_text(compiler.read_text(encoding="utf-8").replace('touch "$output"',
                         'case "$output" in *TestAsmdef.dll) ;; *) touch "$output" ;; esac'), encoding="utf-8")
     result = harness.run("6000.7.0b2", test_project=project, framework=framework)

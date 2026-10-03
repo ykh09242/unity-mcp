@@ -25,9 +25,11 @@ DATA/Managed/UnityEngine/UnityEngine.TerrainModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TerrainPhysicsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TextCoreFontEngineModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TextCoreTextEngineModule.dll
+DATA/Managed/UnityEngine/UnityEngine.TextRenderingModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TilemapModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UIElementsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UIModule.dll
+DATA/Managed/UnityEngine/UnityEngine.UnityAnalyticsCommonModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityAnalyticsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityWebRequestAssetBundleModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityWebRequestAudioModule.dll
