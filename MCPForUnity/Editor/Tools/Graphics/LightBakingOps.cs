@@ -63,6 +63,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static object GetStatus(JObject @params)
         {
             bool running = Lightmapping.isRunning;
+#if UNITY_6000_7_OR_NEWER
+            if (!Lightmapping.TryGetLightingSettings(out var settings))
+                settings = Lightmapping.lightingSettingsDefaults;
+            if (!TryReadRealtimeGI(settings, out bool realtimeGI))
+                return new ErrorResponse(RealtimeGIUnavailable);
+#endif
             return new
             {
                 success = true,
@@ -71,7 +77,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     isRunning = running,
                     bakedGI = Lightmapping.bakedGI,
+#if UNITY_6000_7_OR_NEWER
+                    realtimeGI,
+#else
                     realtimeGI = Lightmapping.realtimeGI,
+#endif
                     lightmapCount = LightmapSettings.lightmaps.Length
                 }
             };
@@ -140,13 +150,21 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (settings == null)
                 return new ErrorResponse(
                     "LightingSettings are unavailable. Open Window > Rendering > Lighting manually.");
+#if UNITY_6000_7_OR_NEWER
+            if (!TryReadRealtimeGI(settings, out bool realtimeGI))
+                return new ErrorResponse(RealtimeGIUnavailable);
+#endif
 
             var data = new Dictionary<string, object>
             {
                 ["name"] = settings.name,
                 ["path"] = AssetDatabase.GetAssetPath(settings),
                 ["bakedGI"] = settings.bakedGI,
+#if UNITY_6000_7_OR_NEWER
+                ["realtimeGI"] = realtimeGI,
+#else
                 ["realtimeGI"] = settings.realtimeGI,
+#endif
                 ["lightmapper"] = settings.lightmapper.ToString(),
                 ["lightmapResolution"] = settings.lightmapResolution,
                 ["lightmapMaxSize"] = settings.lightmapMaxSize,
@@ -188,6 +206,17 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (prepared.All(entry => entry.apply == null))
                 return new ErrorResponse($"Failed to set any settings. Invalid properties: {string.Join(", ", prepared.Select(entry => entry.name))}");
 
+#if UNITY_6000_7_OR_NEWER
+            if (settingsToken.Properties().Any(prop =>
+                string.Equals(prop.Name, "realtimeGI", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(prop.Name, "realtime_gi", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!Lightmapping.TryGetLightingSettings(out var current))
+                    current = Lightmapping.lightingSettingsDefaults;
+                if (!TryReadRealtimeGI(current, out _))
+                    return new ErrorResponse(RealtimeGIUnavailable);
+            }
+#endif
             var lightingSettings = EnsureLightingSettings();
             if (lightingSettings == null)
                 return new ErrorResponse(
@@ -418,6 +447,32 @@ namespace MCPForUnity.Editor.Tools.Graphics
             };
         }
 
+#if UNITY_6000_7_OR_NEWER
+        private const string RealtimeGIUnavailable = "realtimeGI is unavailable: LightingSettings does not expose the Boolean m_EnableRealtimeLightmaps property.";
+
+        // Unity's Lighting Inspector edits this serialized field after the 6.7 API deprecation.
+        private static bool TryReadRealtimeGI(LightingSettings settings, out bool value)
+        {
+            value = false;
+            if (settings == null) return false;
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
+            if (property == null || property.propertyType != SerializedPropertyType.Boolean) return false;
+            value = property.boolValue;
+            return true;
+        }
+
+        private static bool TrySetRealtimeGI(LightingSettings settings, JToken value)
+        {
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
+            if (property == null || property.propertyType != SerializedPropertyType.Boolean) return false;
+            property.boolValue = ParamCoercion.CoerceBool(value, property.boolValue);
+            serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+            return true;
+        }
+#endif
+
         // --- Helper: Ensure a LightingSettings asset exists ---
         private static LightingSettings EnsureLightingSettings()
         {
@@ -491,7 +546,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                 case "realtimegi":
                 case "realtime_gi":
+#if UNITY_6000_7_OR_NEWER
+                    apply = settings => TrySetRealtimeGI(settings, value);
+#else
                     apply = settings => { settings.realtimeGI = ParamCoercion.CoerceBool(value, settings.realtimeGI); return true; };
+#endif
                     return true;
 
                 case "lightmapper":

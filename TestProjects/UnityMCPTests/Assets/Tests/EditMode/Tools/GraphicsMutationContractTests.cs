@@ -44,6 +44,11 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Lightmapping.TryGetLightingSettings(out _));
             Assert.AreEqual(defaults.lightmapResolution, result["data"].Value<float>("lightmapResolution"));
             Assert.AreEqual(defaults.bakedGI, result["data"].Value<bool>("bakedGI"));
+            Assert.AreEqual(ReadRealtimeGI(defaults), result["data"].Value<bool>("realtimeGI"));
+            var status = JObject.FromObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "bake_status" }));
+            Assert.IsTrue(status.Value<bool>("success"), status.ToString());
+            Assert.AreEqual(ReadRealtimeGI(defaults), status["data"].Value<bool>("realtimeGI"));
+            Assert.IsFalse(Lightmapping.TryGetLightingSettings(out _));
         }
 
         [Test]
@@ -57,6 +62,100 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
             Assert.IsFalse(result["data"].Value<bool>("bakedGI"));
         }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RealtimeGIRead_PreservesAssignedValueIdentityAndDirtyState(bool value)
+        {
+            AssignOwnedSettings(value);
+            int dirtyCount = EditorUtility.GetDirtyCount(_ownedSettings);
+            foreach (string action in new[] { "bake_get_settings", "bake_status" })
+            {
+                var response = JObject.FromObject(ManageGraphics.HandleCommand(new JObject { ["action"] = action }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(value, response["data"].Value<bool>("realtimeGI"));
+            }
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(_ownedSettings));
+        }
+
+        [TestCase("realtimeGI", "false", false)]
+        [TestCase("realtime_gi", "0", false)]
+        [TestCase("REALTIME_GI", "\"off\"", false)]
+        [TestCase("realtimeGI", "null", true)]
+        [TestCase("realtime_gi", "\"invalid\"", true)]
+        public void RealtimeGIWrite_PreservesAliasesCoercionAndIdentity(string alias, string json, bool expected)
+        {
+            AssignOwnedSettings(true);
+            var response = SetLightingSettings(new JObject { [alias] = JToken.Parse(json) });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { alias }, response["data"]["changed"].ToObject<string[]>());
+            Assert.IsEmpty(response["data"]["failed"]);
+            Assert.AreEqual(expected, ReadRealtimeGI(_ownedSettings));
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+            Assert.IsEmpty(AssetDatabase.GetAssetPath(_ownedSettings));
+        }
+
+        [Test]
+        public void RealtimeGIAliases_ReadFallbackAfterEarlierWriteAndPreserveUndo()
+        {
+            AssignOwnedSettings(false);
+            Undo.IncrementCurrentGroup();
+            var response = SetLightingSettings(new JObject { ["realtimeGI"] = true, ["realtime_gi"] = JValue.CreateNull() });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(ReadRealtimeGI(_ownedSettings));
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.IsFalse(ReadRealtimeGI(_ownedSettings));
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+            Undo.IncrementCurrentGroup();
+        }
+
+        [Test]
+        public void MixedInvalidLightingSetting_RetainsFailedKeyContract()
+        {
+            AssignOwnedSettings(true);
+            var originalMapper = _ownedSettings.lightmapper;
+            var response = SetLightingSettings(new JObject { ["realtimeGI"] = false, ["lightmapper"] = "invalid" });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "realtimeGI" }, response["data"]["changed"].ToObject<string[]>());
+            CollectionAssert.AreEqual(new[] { "lightmapper" }, response["data"]["failed"].ToObject<string[]>());
+            Assert.IsFalse(ReadRealtimeGI(_ownedSettings));
+            Assert.AreEqual(originalMapper, _ownedSettings.lightmapper);
+            Assert.AreSame(_ownedSettings, Lightmapping.lightingSettings);
+        }
+
+        private void AssignOwnedSettings(bool realtimeGI)
+        {
+            _ownedSettings = new LightingSettings { name = "RealtimeGIContractSettings" };
+#if UNITY_6000_7_OR_NEWER
+            using var serializedSettings = new SerializedObject(_ownedSettings);
+            var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
+            Assert.IsNotNull(property);
+            Assert.AreEqual(SerializedPropertyType.Boolean, property.propertyType);
+            property.boolValue = realtimeGI;
+            serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+#else
+            _ownedSettings.realtimeGI = realtimeGI;
+#endif
+            Lightmapping.lightingSettings = _ownedSettings;
+        }
+
+        private static bool ReadRealtimeGI(LightingSettings settings)
+        {
+#if UNITY_6000_7_OR_NEWER
+            using var serializedSettings = new SerializedObject(settings);
+            var property = serializedSettings.FindProperty("m_EnableRealtimeLightmaps");
+            Assert.IsNotNull(property);
+            Assert.AreEqual(SerializedPropertyType.Boolean, property.propertyType);
+            return property.boolValue;
+#else
+            return settings.realtimeGI;
+#endif
+        }
+
+        private static JObject SetLightingSettings(JObject settings) => JObject.FromObject(ManageGraphics.HandleCommand(
+            new JObject { ["action"] = "bake_set_settings", ["settings"] = settings }));
 
         [TestCase("Invalid")]
         [TestCase("999")]
