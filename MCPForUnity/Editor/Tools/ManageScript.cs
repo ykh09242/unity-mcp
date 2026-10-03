@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEngine;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using System.Threading;
 using System.Security.Cryptography;
 
@@ -50,9 +51,18 @@ namespace MCPForUnity.Editor.Tools
     /// Note: Without Roslyn, the system falls back to basic structural validation.
     /// Roslyn provides full C# compiler diagnostics with line numbers and detailed error messages.
     /// </remarks>
-    [McpForUnityTool("manage_script", AutoRegister = false)]
+    [McpForUnityTool("manage_script", AutoRegister = false, RequiresExplicitConsent = true)]
     public static class ManageScript
     {
+        internal static ErrorResponse RequireExplicitConsent()
+        {
+            if (!EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("manage_script"), false)
+                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_script"))
+                return new ErrorResponse("script_consent_required",
+                    "Enable manage_script explicitly in the Unity Editor before using script or compilation-affecting asset operations.");
+            return null;
+        }
+
         private static readonly System.Text.UTF8Encoding StrictFileUtf8 = new System.Text.UTF8Encoding(false, true);
 
         /// <summary>
@@ -85,6 +95,9 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse("invalid_params", "Parameters cannot be null.");
             }
+
+            var consentError = RequireExplicitConsent();
+            if (consentError != null) return consentError;
 
             var p = new ToolParams(@params);
 

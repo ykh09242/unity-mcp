@@ -6,6 +6,7 @@ using UnityEngine;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
 using System.Reflection;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -15,6 +16,28 @@ namespace MCPForUnityTests.Editor.Tools
     /// </summary>
     public class ManageScriptValidationTests
     {
+        private bool? _savedEnabled, _savedConsent;
+        private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
+        private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
+
+        [SetUp]
+        public void SetUp()
+        {
+            _savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
+            _savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
+            EditorPrefs.SetBool(EnabledKey, true);
+            EditorPrefs.SetBool(ConsentKey, true);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (_savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
+            else EditorPrefs.DeleteKey(EnabledKey);
+            if (_savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
+            else EditorPrefs.DeleteKey(ConsentKey);
+        }
+
         [Test]
         public void HandleCommand_NullParams_ReturnsError()
         {

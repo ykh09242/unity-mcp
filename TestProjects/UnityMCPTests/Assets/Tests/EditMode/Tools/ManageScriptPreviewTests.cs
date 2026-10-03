@@ -11,6 +11,9 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ManageScriptPreviewTests
     {
+        private bool? _savedEnabled, _savedConsent;
+        private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
+        private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
         private string _folder;
         private string _path;
         private const string Original = "namespace Demo\r\n{\r\n  public class PreviewProbe\r\n  {\r\n    public void Anchor() { }\r\n  }\r\n}\r\n";
@@ -18,6 +21,10 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
+            _savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
+            _savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
+            EditorPrefs.SetBool(EnabledKey, true);
+            EditorPrefs.SetBool(ConsentKey, true);
             _folder = "Assets/ScriptPreviewTests_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
             _path = _folder + "/PreviewProbe.cs";
@@ -25,7 +32,17 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TearDown]
-        public void TearDown() { AssetDatabase.DeleteAsset(_folder); }
+        public void TearDown()
+        {
+            try { AssetDatabase.DeleteAsset(_folder); }
+            finally
+            {
+                if (_savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
+                else EditorPrefs.DeleteKey(EnabledKey);
+                if (_savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
+                else EditorPrefs.DeleteKey(ConsentKey);
+            }
+        }
 
         [TestCase("replace_method")]
         [TestCase("insert_method")]

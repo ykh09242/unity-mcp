@@ -11,19 +11,36 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ManageScriptFormattingTests
     {
+        private bool? _savedEnabled, _savedConsent;
+        private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
+        private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
         private string _folder;
         private string _path;
 
         [SetUp]
         public void SetUp()
         {
+            _savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
+            _savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
+            EditorPrefs.SetBool(EnabledKey, true);
+            EditorPrefs.SetBool(ConsentKey, true);
             _folder = "Assets/ScriptFormattingTests_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
             _path = _folder + "/FormattingProbe.cs";
         }
 
         [TearDown]
-        public void TearDown() { AssetDatabase.DeleteAsset(_folder); }
+        public void TearDown()
+        {
+            try { AssetDatabase.DeleteAsset(_folder); }
+            finally
+            {
+                if (_savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
+                else EditorPrefs.DeleteKey(EnabledKey);
+                if (_savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
+                else EditorPrefs.DeleteKey(ConsentKey);
+            }
+        }
 
         [TestCase("\n", "  ")]
         [TestCase("\r\n", "  ")]

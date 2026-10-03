@@ -90,6 +90,12 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (action == "create" || action == "import" || action == "modify" || action == "delete"
+                    || action == "duplicate" || action == "move" || action == "rename")
+                {
+                    var consentError = RequireScriptConsent(path, @params["destination"]?.ToString());
+                    if (consentError != null) return consentError;
+                }
                 switch (action)
                 {
                     case "import":
@@ -138,6 +144,60 @@ namespace MCPForUnity.Editor.Tools
 
         // --- Action Implementations ---
 
+        private static ErrorResponse RequireScriptConsent(params string[] paths)
+        {
+            var consentError = ManageScript.RequireExplicitConsent();
+            if (consentError == null) return null;
+            int remaining = 65536;
+            var inspection = System.Diagnostics.Stopwatch.StartNew();
+            foreach (string path in paths)
+            {
+                if (!string.IsNullOrEmpty(path) && AffectsCompilation(path, ref remaining, 0, inspection))
+                    return consentError;
+            }
+            return null;
+        }
+
+        // Unity's supported plug-in file/bundle types, plus C# assembly/compiler inputs.
+        private static readonly HashSet<string> CompilationAssetExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".cs", ".dll", ".asmdef", ".asmref", ".rsp",
+            ".a", ".aar", ".bc", ".c", ".cc", ".cpp", ".def", ".dylib", ".h", ".jar",
+            ".jslib", ".jspre", ".m", ".mm", ".prx", ".rpl", ".so", ".sprx", ".suprx",
+            ".swift", ".winmd", ".xcframework", ".xex", ".xib",
+            ".androidlib", ".bundle", ".framework", ".plugin"
+        };
+
+        private static bool AffectsCompilation(string path, ref int remaining, int depth,
+            System.Diagnostics.Stopwatch inspection)
+        {
+            // An incomplete inspection cannot establish that a folder is inert.
+            if (--remaining < 0 || depth > 128 || inspection.ElapsedMilliseconds >= 1000)
+                return true;
+            string extension = Path.GetExtension(path);
+            if (extension.Equals(".meta", StringComparison.OrdinalIgnoreCase))
+                extension = Path.GetExtension(path.Substring(0, path.Length - extension.Length));
+            if (CompilationAssetExtensions.Contains(extension))
+                return true;
+
+            string contained = AssetPathUtility.GetContainedAssetPath(path);
+            string full = AssetPathUtility.GetFullAssetPath(contained);
+            if (!Directory.Exists(full)) return false;
+            try
+            {
+                foreach (string entry in Directory.EnumerateFileSystemEntries(full))
+                {
+                    string child = contained + "/" + Path.GetFileName(entry);
+                    // Validate each descendant before traversing a possible directory link.
+                    AssetPathUtility.GetFullAssetPath(child);
+                    if (AffectsCompilation(child, ref remaining, depth + 1, inspection)) return true;
+                }
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            { return true; }
+            return false;
+        }
+
         private static object ReimportAsset(string path, JObject properties)
         {
             if (string.IsNullOrEmpty(path))
@@ -161,6 +221,8 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 AssetPathUtility.GetFullAssetPath(fullPath);
+                var consentError = RequireScriptConsent(fullPath);
+                if (consentError != null) return consentError;
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 // AssetDatabase.Refresh(); // Usually ImportAsset handles refresh
                 return new SuccessResponse($"Asset '{fullPath}' reimported.", GetAssetData(fullPath));
@@ -561,6 +623,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
+                var consentError = RequireScriptConsent(sourcePath, destPath);
+                if (consentError != null) return consentError;
                 bool success = AssetDatabase.CopyAsset(sourcePath, destPath);
                 if (success)
                 {
@@ -618,6 +682,8 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
+                var consentError = RequireScriptConsent(sourcePath, destPath);
+                if (consentError != null) return consentError;
                 string moveError = AssetDatabase.MoveAsset(sourcePath, destPath);
                 if (string.IsNullOrEmpty(moveError))
                 {
