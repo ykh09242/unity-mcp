@@ -50,7 +50,7 @@ class UnityConnection:
         except OSError as exc:
             logger.debug(f"Unable to set TCP_NODELAY: {exc}")
 
-    def connect(self, connect_timeout: float | None = None) -> bool:
+    def connect(self, connect_timeout: float | None = None, deadline: float | None = None) -> bool:
         """Establish a connection to the Unity Editor."""
         if config.http_remote_hosted:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
@@ -64,10 +64,13 @@ class UnityConnection:
                 if connect_timeout is None:
                     connect_timeout = float(
                         getattr(config, "connection_timeout", 1.0))
+                self._check_deadline(deadline)
+                connect_timeout = self._cap_to_deadline(connect_timeout, deadline)
                 # We trust config.unity_host (default 127.0.0.1) but future improvements
                 # could dynamically prefer 'localhost' depending on OS resolver behavior.
                 self.sock = socket.create_connection(
                     (self.host, self.port), connect_timeout)
+                self._check_deadline(deadline)
                 self._prepare_socket(self.sock)
                 self._needs_tool_resync = True
                 logger.debug(f"Connected to Unity at {self.host}:{self.port}")
@@ -79,10 +82,15 @@ class UnityConnection:
                         getattr(config, "handshake_timeout", 1.0))
                     self.sock.settimeout(handshake_timeout)
                     buf = bytearray()
-                    deadline = time.monotonic() + handshake_timeout
-                    while time.monotonic() < deadline and len(buf) < 512:
+                    handshake_deadline = time.monotonic() + handshake_timeout
+                    if deadline is not None:
+                        handshake_deadline = min(handshake_deadline, deadline)
+                    while time.monotonic() < handshake_deadline and len(buf) < 512:
                         try:
+                            if deadline is not None:
+                                self._set_socket_deadline(self.sock, handshake_deadline)
                             chunk = self.sock.recv(256)
+                            self._check_deadline(deadline)
                             if not chunk:
                                 break
                             buf.extend(chunk)
@@ -100,8 +108,10 @@ class UnityConnection:
                         if require_framing:
                             # Best-effort plain-text advisory for legacy peers
                             with contextlib.suppress(Exception):
+                                self._set_socket_deadline(self.sock, deadline)
                                 self.sock.sendall(
                                     b'MCP for Unity requires FRAMING=1\n')
+                                self._check_deadline(deadline)
                             raise ConnectionError(
                                 f'MCP for Unity requires FRAMING=1, got: {text!r}')
                         else:
@@ -110,6 +120,7 @@ class UnityConnection:
                                 'MCP for Unity handshake missing FRAMING=1; proceeding in legacy mode by configuration')
                 finally:
                     self.sock.settimeout(config.connection_timeout)
+                self._check_deadline(deadline)
                 return True
             except Exception as e:
                 logger.error(f"Failed to connect to Unity: {str(e)}")
@@ -162,17 +173,19 @@ class UnityConnection:
             if self.sock and orig_blocking is not None:
                 self.sock.setblocking(orig_blocking)
 
-    def _read_exact(self, sock: socket.socket, count: int) -> bytes:
+    def _read_exact(self, sock: socket.socket, count: int, deadline: float | None = None) -> bytes:
         data = bytearray()
         while len(data) < count:
+            self._set_socket_deadline(sock, deadline)
             chunk = sock.recv(count - len(data))
+            self._check_deadline(deadline)
             if not chunk:
                 raise ConnectionError(
                     "Connection closed before reading expected bytes")
             data.extend(chunk)
         return bytes(data)
 
-    def receive_full_response(self, sock, buffer_size=config.buffer_size) -> bytes:
+    def receive_full_response(self, sock, buffer_size=config.buffer_size, deadline: float | None = None) -> bytes:
         """Receive a complete response from Unity, handling chunked data."""
         if self.use_framing:
             # Heartbeat semantics: the Unity editor emits zero-length frames while
@@ -185,7 +198,7 @@ class UnityConnection:
             heartbeat_count = 0
             try:
                 while True:
-                    header = self._read_exact(sock, 8)
+                    header = self._read_exact(sock, 8, deadline)
                     payload_len = struct.unpack('>Q', header)[0]
                     if payload_len == 0:
                         heartbeat_count += 1
@@ -199,7 +212,7 @@ class UnityConnection:
                     if payload_len > FRAMED_MAX:
                         raise ValueError(
                             f"Invalid framed length: {payload_len}")
-                    payload = self._read_exact(sock, payload_len)
+                    payload = self._read_exact(sock, payload_len, deadline)
                     logger.debug(
                         f"Received framed response ({len(payload)} bytes)")
                     return payload
@@ -216,7 +229,9 @@ class UnityConnection:
         # Respect the socket's currently configured timeout
         try:
             while True:
+                self._set_socket_deadline(sock, deadline)
                 chunk = sock.recv(buffer_size)
+                self._check_deadline(deadline)
                 if not chunk:
                     if not chunks:
                         raise Exception(
@@ -264,12 +279,27 @@ class UnityConnection:
                     continue
         except socket.timeout:
             logger.warning("Socket timeout during receive")
+            if deadline is not None:
+                raise TimeoutError("Timeout receiving Unity response")
             raise Exception("Timeout receiving Unity response")
         except Exception as e:
             logger.error(f"Error during receive: {str(e)}")
             raise
 
-    def _cap_to_deadline(self, timeout: float, deadline: float | None, floor: float = 0.05) -> float:
+    def _check_deadline(self, deadline: float | None) -> None:
+        """Reject blocking I/O or completed responses after the command budget."""
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("Unity command exceeded total deadline")
+
+    def _set_socket_deadline(self, sock: socket.socket, deadline: float | None) -> None:
+        """Cap the next socket operation to the remaining absolute budget."""
+        if deadline is not None:
+            self._check_deadline(deadline)
+            remaining = deadline - time.monotonic()
+            timeout = sock.gettimeout()
+            sock.settimeout(remaining if timeout is None else min(timeout, remaining))
+
+    def _cap_to_deadline(self, timeout: float, deadline: float | None, floor: float = 0.0) -> float:
         """Shrink a blocking timeout to whatever budget remains before the deadline."""
         if deadline is None:
             return timeout
@@ -370,7 +400,7 @@ class UnityConnection:
                 self._ensure_live_connection()
                 # Ensure connected (handshake occurs within connect())
                 t_conn_start = time.time()
-                if not self.sock and not self.connect(self._cap_to_deadline(config.connection_timeout, deadline)):
+                if not self.sock and not self.connect(self._cap_to_deadline(config.connection_timeout, deadline), deadline=deadline):
                     raise ConnectionError("Could not connect to Unity")
                 logger.info("[TIMING-STDIO] connect took %.3fs command=%s", time.time() - t_conn_start, command_type)
 
@@ -389,36 +419,33 @@ class UnityConnection:
                     with contextlib.suppress(Exception):
                         logger.debug(
                             f"send {len(payload)} bytes; mode={mode}; head={payload[:32].decode('utf-8', 'ignore')}")
-                    t_send_start = time.time()
-                    if self.use_framing:
-                        header = struct.pack('>Q', len(payload))
-                        self.sock.sendall(header)
-                        self.sock.sendall(payload)
-                    else:
-                        self.sock.sendall(payload)
-                    logger.info("[TIMING-STDIO] sendall took %.3fs command=%s", time.time() - t_send_start, command_type)
-
-                    # Cap the receive timeout to the remaining command budget (and use a
-                    # short timeout during retry bursts) so a wedged socket can't block
-                    # past the deadline.
-                    restore_timeout = None
-                    recv_timeout = 1.0 if attempt > 0 else self.sock.gettimeout()
-                    if deadline is not None:
-                        recv_timeout = self._cap_to_deadline(
-                            recv_timeout or config.connection_timeout, deadline)
-                    if recv_timeout is not None and recv_timeout != self.sock.gettimeout():
-                        restore_timeout = self.sock.gettimeout()
-                        self.sock.settimeout(recv_timeout)
+                    restore_timeout = self.sock.gettimeout()
                     try:
+                        t_send_start = time.time()
+                        if self.use_framing:
+                            header = struct.pack('>Q', len(payload))
+                            self._set_socket_deadline(self.sock, deadline)
+                            self.sock.sendall(header)
+                            self._check_deadline(deadline)
+                        self._set_socket_deadline(self.sock, deadline)
+                        self.sock.sendall(payload)
+                        self._check_deadline(deadline)
+                        logger.info("[TIMING-STDIO] sendall took %.3fs command=%s", time.time() - t_send_start, command_type)
+
+                        recv_timeout = 1.0 if attempt > 0 else restore_timeout
+                        if deadline is not None:
+                            recv_timeout = self._cap_to_deadline(
+                                recv_timeout or config.connection_timeout, deadline)
+                        self.sock.settimeout(recv_timeout)
                         t_recv_start = time.time()
-                        response_data = self.receive_full_response(self.sock)
+                        response_data = self.receive_full_response(self.sock, deadline=deadline)
+                        self._check_deadline(deadline)
                         logger.info("[TIMING-STDIO] receive took %.3fs command=%s len=%d", time.time() - t_recv_start, command_type, len(response_data))
                         with contextlib.suppress(Exception):
                             logger.debug(
                                 f"recv {len(response_data)} bytes; mode={mode}")
                     finally:
-                        if restore_timeout is not None:
-                            self.sock.settimeout(restore_timeout)
+                        self.sock.settimeout(restore_timeout)
 
                 # Parse
                 if command_type == 'ping':
@@ -456,10 +483,10 @@ class UnityConnection:
                                 f"Rediscovered instance {self.instance_id} on port {new_port}")
                         else:
                             logger.warning(
-                                f"Instance {self.instance_id} not found during reconnection; falling back to port scan",
+                                f"Instance {self.instance_id} not found during reconnection; resolving through shared registry",
                             )
 
-                    # Fallback to registry default if instance-specific discovery failed
+                    # Resolve through the shared registry with the same explicit target.
                     if new_port is None:
                         new_port = stdio_port_registry.get_port(
                             self.instance_id)
@@ -920,7 +947,15 @@ def send_command_with_retry(
             delay_ms,
             sleep_ms,
         )
-        time.sleep(max(0.0, sleep_ms / 1000.0))
+        sleep_s = min(sleep_ms / 1000.0, max_wait_s - elapsed)
+        if deadline is not None:
+            sleep_s = min(sleep_s, max(0.0, deadline - time.monotonic()))
+        if sleep_s <= 0:
+            break
+        time.sleep(sleep_s)
+        now = time.monotonic()
+        if (deadline is not None and now >= deadline) or now - wait_started >= max_wait_s:
+            break
         retries += 1
         response = conn.send_command(command_type, params, deadline=deadline)
         reason = _extract_response_reason(response)
