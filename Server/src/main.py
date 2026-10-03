@@ -26,12 +26,9 @@ from starlette.routing import WebSocketRoute
 from starlette.responses import JSONResponse
 import argparse
 import asyncio
-
-# Fix to IPV4 Connection Issue #853
-# Will disable features in ProactorEventLoop including subprocess pipes and named pipes
+import anyio
+from functools import partial
 import sys
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import logging
 from contextlib import asynccontextmanager
@@ -429,6 +426,15 @@ def _select_local_session(
 
 class UnityMCP(FastMCP):
     """Protect the control plane for both run() and ASGI embedding."""
+
+    def run(self, transport=None, show_banner=None, **transport_kwargs) -> None:
+        if sys.platform != "win32":
+            return super().run(transport, show_banner=show_banner, **transport_kwargs)
+        # Preserve the IPv4 workaround (#853) without changing global loop policy.
+        anyio.run(
+            partial(self.run_async, transport, show_banner=show_banner, **transport_kwargs),
+            backend_options={"loop_factory": asyncio.SelectorEventLoop},
+        )
 
     def http_app(
         self,
