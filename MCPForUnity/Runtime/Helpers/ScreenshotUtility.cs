@@ -79,6 +79,7 @@ namespace MCPForUnity.Runtime.Helpers
         {
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: true);
             // ScreenCapture.CaptureScreenshot accepts paths relative to the project root.
+            SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), result.FullPath);
             ScreenCapture.CaptureScreenshot(result.ProjectRelativePath, result.SuperSize);
             return result;
         }
@@ -128,7 +129,7 @@ namespace MCPForUnity.Runtime.Helpers
                 tex.Apply();
 
                 byte[] png = tex.EncodeToPNG();
-                File.WriteAllBytes(result.FullPath, png);
+                WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
 
                 if (includeImage)
                 {
@@ -259,7 +260,7 @@ namespace MCPForUnity.Runtime.Helpers
                 int height = tex.height;
 
                 byte[] png = tex.EncodeToPNG();
-                File.WriteAllBytes(result.FullPath, png);
+                WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
 
                 if (includeImage)
                 {
@@ -630,6 +631,18 @@ namespace MCPForUnity.Runtime.Helpers
                 UnityEngine.Object.DestroyImmediate(tex);
         }
 
+        /// <summary>Validates the complete output immediately before opening it for a capture write.</summary>
+        public static void WriteCaptureBytes(string fullPath, byte[] bytes, bool ensureUniqueFileName = true)
+        {
+            if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+            string containedPath = SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), fullPath);
+            using (var output = new FileStream(containedPath,
+                ensureUniqueFileName ? FileMode.CreateNew : FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                output.Write(bytes, 0, bytes.Length);
+            }
+        }
+
         public static ScreenshotCaptureResult PrepareCaptureResult(string fileName, int superSize, bool ensureUniqueFileName, string folderOverride, bool isAsync)
         {
             int size = Mathf.Max(1, superSize);
@@ -747,12 +760,13 @@ namespace MCPForUnity.Runtime.Helpers
 
         private static string EnsureUnique(string path)
         {
+            string directory = Path.GetDirectoryName(path) ?? string.Empty;
+            path = SafePathUtility.ResolveWithinRoot(directory, path);
             if (!File.Exists(path))
             {
                 return path;
             }
 
-            string directory = Path.GetDirectoryName(path) ?? string.Empty;
             string baseName = Path.GetFileNameWithoutExtension(path);
             string extension = Path.GetExtension(path);
             int counter = 1;
@@ -761,6 +775,7 @@ namespace MCPForUnity.Runtime.Helpers
             do
             {
                 candidate = Path.Combine(directory, $"{baseName}-{counter}{extension}");
+                candidate = SafePathUtility.ResolveWithinRoot(directory, candidate);
                 counter++;
             } while (File.Exists(candidate));
 

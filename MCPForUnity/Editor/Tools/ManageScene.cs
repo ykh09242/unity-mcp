@@ -1263,7 +1263,7 @@ namespace MCPForUnity.Editor.Tools
 
                     string fullPath = output.FullPath;
                     byte[] pngBytes = System.Convert.FromBase64String(b64);
-                    File.WriteAllBytes(fullPath, pngBytes);
+                    ScreenshotUtility.WriteCaptureBytes(fullPath, pngBytes);
 
                     string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace('\\', '/');
                     string normalizedFull = fullPath.Replace('\\', '/');

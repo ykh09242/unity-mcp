@@ -72,7 +72,7 @@ namespace MCPForUnity.Editor.Helpers
 
                 var result = PrepareCaptureResult(fileName, effectiveSuperSize, ensureUniqueFileName, folderOverride);
                 byte[] png = captured.EncodeToPNG();
-                File.WriteAllBytes(result.FullPath, png);
+                ScreenshotUtility.WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
 
                 if (includeImage)
                 {
@@ -325,12 +325,13 @@ namespace MCPForUnity.Editor.Helpers
             string folder = ScreenshotUtility.ResolveFolderAbsolute(folderOverride);
             Directory.CreateDirectory(folder);
 
-            string fullPath = Path.Combine(folder, resolvedName);
+            string fullPath = SafePathUtility.ResolveWithinRoot(folder, resolvedName);
             if (ensureUniqueFileName)
             {
                 fullPath = EnsureUnique(fullPath);
             }
 
+            fullPath = SafePathUtility.ResolveWithinRoot(folder, fullPath);
             string normalizedFullPath = fullPath.Replace('\\', '/');
             string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace('\\', '/');
             string normalizedRoot = projectRoot.EndsWith("/") ? projectRoot : projectRoot + "/";
@@ -400,16 +401,18 @@ namespace MCPForUnity.Editor.Helpers
 
         private static string EnsureUnique(string fullPath)
         {
+            string directory = Path.GetDirectoryName(fullPath) ?? string.Empty;
+            fullPath = SafePathUtility.ResolveWithinRoot(directory, fullPath);
             if (!File.Exists(fullPath))
                 return fullPath;
 
-            string directory = Path.GetDirectoryName(fullPath) ?? string.Empty;
             string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(fullPath);
             string extension = Path.GetExtension(fullPath);
 
             for (int i = 1; i < 10000; i++)
             {
                 string candidate = Path.Combine(directory, $"{fileNameWithoutExtension}-{i}{extension}");
+                candidate = SafePathUtility.ResolveWithinRoot(directory, candidate);
                 if (!File.Exists(candidate))
                     return candidate;
             }
