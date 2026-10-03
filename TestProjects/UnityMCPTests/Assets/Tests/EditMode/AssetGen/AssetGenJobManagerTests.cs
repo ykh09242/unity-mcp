@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
@@ -283,6 +285,137 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
             AssetGenJobManager.TryAdvanceForTests(job.JobId);
             Assert.AreEqual(AssetGenJobState.Canceled, job.State);
+        }
+
+        // These requests use the real Tripo submit/poll parsing; only transport completion is controlled.
+        private sealed class PendingTransport : IHttpTransport
+        {
+            public int PendingAt;
+            public int Requests;
+            public int CancellationCalls;
+            public bool ThrowOnCancel;
+            public bool IgnoreCancel;
+            public CancellationToken PendingToken;
+            public TaskCompletionSource<HttpResult> Pending;
+
+            public Task<HttpResult> SendAsync(HttpRequestSpec spec, CancellationToken ct)
+            {
+                Requests++;
+                if (Requests == PendingAt)
+                {
+                    PendingToken = ct;
+                    Pending = new TaskCompletionSource<HttpResult>();
+                    ct.Register(() =>
+                    {
+                        CancellationCalls++;
+                        if (ThrowOnCancel) throw new InvalidOperationException("fixture cancellation callback");
+                        if (!IgnoreCancel) Pending.TrySetCanceled();
+                    });
+                    return Pending.Task;
+                }
+                // Retain completed-request callbacks to detect any unwanted cancellation on Done.
+                ct.Register(() => CancellationCalls++);
+                return Task.FromResult(ResultFor(Requests));
+            }
+
+            public static HttpResult ResultFor(int request)
+            {
+                if (request == 1) return Json("{\"code\":0,\"data\":{\"task_id\":\"task_pending\"}}");
+                if (request == 2) return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"output\":{\"model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}");
+                return new HttpResult { Status = 200, IsSuccess = true, Body = new byte[] { 1, 2, 3 } };
+            }
+        }
+
+        private static void PumpUntilPending(AssetGenJob job, PendingTransport transport)
+        {
+            for (int i = 0; i < 10 && transport.Pending == null; i++)
+                AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            Assert.IsNotNull(transport.Pending);
+            Assert.IsFalse(transport.Pending.Task.IsCompleted);
+        }
+
+        [TestCase(1)]
+        [TestCase(2)]
+        [TestCase(3)]
+        public void Timeout_CancelsPendingSubmitPollOrDownload(int pendingAt)
+        {
+            var transport = new PendingTransport { PendingAt = pendingAt };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            AssetGenJobManager.TimeoutSeconds = -1; // Deterministic expiry through the existing clock comparison.
+            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(job.JobId));
+            Assert.AreEqual(AssetGenJobState.Failed, job.State);
+            StringAssert.Contains("Timed out", job.Error);
+            Assert.IsTrue(transport.PendingToken.IsCancellationRequested);
+            Assert.IsTrue(transport.Pending.Task.IsCanceled);
+            Assert.AreEqual(pendingAt, transport.CancellationCalls);
+        }
+
+        [Test]
+        public void Timeout_CallbackException_DoesNotEscapeOrLeaveRunner()
+        {
+            var transport = new PendingTransport { PendingAt = 1, ThrowOnCancel = true };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            AssetGenJobManager.TimeoutSeconds = -1;
+            Assert.DoesNotThrow(() => AssetGenJobManager.TryAdvanceForTests(job.JobId));
+            Assert.AreEqual(AssetGenJobState.Failed, job.State);
+            Assert.AreEqual(1, transport.CancellationCalls);
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId), "Terminal runner must be removed even when a callback throws.");
+        }
+
+        [TestCase(1)]
+        [TestCase(2)]
+        [TestCase(3)]
+        public void Timeout_LateResponseCannotReviveJobOrImport(int pendingAt)
+        {
+            int imports = 0;
+            var transport = new PendingTransport { PendingAt = pendingAt, IgnoreCancel = true };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJobManager.ImportOverrideForTests = (job, path) => { imports++; return job; };
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            AssetGenJobManager.TimeoutSeconds = -1;
+            AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            transport.Pending.SetResult(PendingTransport.ResultFor(pendingAt));
+            for (int i = 0; i < 10; i++) AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            Assert.AreEqual(AssetGenJobState.Failed, job.State);
+            Assert.IsTrue(transport.PendingToken.IsCancellationRequested);
+            Assert.AreEqual(pendingAt, transport.Requests);
+            Assert.AreEqual(0, imports);
+            Assert.IsNull(job.AssetPath);
+            Assert.IsFalse(Directory.Exists(Path.Combine(ProjectRoot(), TestFolder)), "Late data must not be written.");
+        }
+
+        [TestCase(1)]
+        [TestCase(2)]
+        [TestCase(3)]
+        public void Cancel_PendingRequest_PreservesCanceledState(int pendingAt)
+        {
+            var transport = new PendingTransport { PendingAt = pendingAt };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(job.JobId));
+            Assert.AreEqual(AssetGenJobState.Canceled, job.State);
+            Assert.IsTrue(transport.Pending.Task.IsCanceled);
+            Assert.AreEqual(pendingAt, transport.CancellationCalls);
+        }
+
+        [Test]
+        public void CompletedJob_DoesNotRequestCancellation()
+        {
+            var transport = new PendingTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            Pump(job.JobId);
+            Assert.AreEqual(AssetGenJobState.Done, job.State);
+            Assert.AreEqual(1f, job.Progress);
+            Assert.IsNotNull(job.AssetPath);
+            Assert.AreEqual(0, transport.CancellationCalls);
         }
 
         [Test]

@@ -524,6 +524,12 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private static void Finalize(Runner r)
         {
             Runners.Remove(r.Job.JobId);
+            // Disposing the token source does not abort an outstanding provider request.
+            // Failed jobs (including timeouts) must stop it before releasing the source.
+            if (r.Job.State == AssetGenJobState.Failed)
+            {
+                try { r.Cts?.Cancel(); } catch { }
+            }
             try { r.Cts?.Dispose(); } catch { }
         }
 
