@@ -8,12 +8,13 @@ name: Compile Check (no license)
 # meant no PR was ever compile-verified.
 #
 # This job never launches the Unity Editor, so it needs no license and no secrets. It
-# pulls the PUBLIC unityci/editor image purely to read reference assemblies out of it,
-# and drives Roslyn (Unity's own bundled csc) directly. See tools/compile-check.sh.
+# reads reference assemblies from pinned public GameCI images or official preview
+# archives, and drives Roslyn (Unity's own bundled csc) directly. See tools/compile-check.sh.
 #
 # It does NOT replace unity-tests.yml: this compiles, it does not run tests.
 
 on:
+  workflow_dispatch: {}
   push:
     # Beta's release gates need a Unity license; this independent check also
     # compiles fork beta pushes where licensed tests are skipped.
@@ -22,10 +23,15 @@ on:
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**
       - MCPForUnity/package.json
+      - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
       - tools/compile-defines.txt
       - tools/compile-refs/**
       - tools/unity-versions.json
+      - tools/unity_ci.py
+      - tools/unity-ci/**
+      - tools/unity_ci_packages.py
+      - tools/unity-ci-packages.json
       - .github/workflows/compile-check.yml
   pull_request:
     branches: [main, beta]
@@ -39,64 +45,90 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  matrix:
+    name: Compute Unity compile matrix
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.set.outputs.versions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            tools/unity-versions.json
+            tools/unity_ci.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Select all supported Unity channels
+        id: set
+        run: |
+          set -euo pipefail
+          versions=$(python3 tools/unity_ci.py matrix)
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+
   compile:
-    name: Compile MCPForUnity (win/osx/linux)
+    name: Compile ${{ matrix.unity.channel }} Unity ${{ matrix.unity.version }} (win/osx/linux)
+    needs: [matrix]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        unity: ${{ fromJson(needs.matrix.outputs.versions) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Resolve pinned Unity version
-        id: unity
+      - name: Prepare Unity Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
         run: |
           set -euo pipefail
-          version=$(jq -r '.defaultVersion' tools/unity-versions.json)
-          [ -n "$version" ] && [ "$version" != "null" ] || { echo "::error::defaultVersion missing"; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image=unityci/editor:ubuntu-$version-base-3" >> "$GITHUB_OUTPUT"
-          echo "Unity $version"
+          # Validate the test image even when the licensed workflow is skipped.
+          python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
 
-      - name: Fetch package reference DLLs
+      - name: Prepare version-specific test packages
+        id: packages
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
         run: |
           set -euo pipefail
-          mkdir -p .compile-refs
-          newtonsoft_version=$(jq -er '.dependencies["com.unity.nuget.newtonsoft-json"]' MCPForUnity/package.json)
-          test_framework_version=$(jq -er '.dependencies["com.unity.test-framework"]' MCPForUnity/package.json)
-          # Check the direct NUnit pin against the Test Framework's transitive minimum.
-          curl -fsSL "https://packages.unity.com/com.unity.test-framework/-/com.unity.test-framework-$test_framework_version.tgz" -o /tmp/test-framework.tgz
-          nunit_min_version=$(tar -xOzf /tmp/test-framework.tgz package/package.json | jq -er '.dependencies["com.unity.ext.nunit"]')
-          nunit_version=$(jq -r '.dependencies["com.unity.ext.nunit"] // empty' MCPForUnity/package.json)
-          nunit_version=${nunit_version:-$nunit_min_version}
-          [ "$(printf '%s\n' "$nunit_min_version" "$nunit_version" | sort -V | head -n1)" = "$nunit_min_version" ] || { echo "::error::NUnit pin is below Test Framework minimum $nunit_min_version"; exit 1; }
-          echo "NUnit $nunit_version (Test Framework minimum $nunit_min_version)"
-          mkdir -p .compile-refs/test-framework
-          tar -xzf /tmp/test-framework.tgz -C .compile-refs/test-framework --strip-components=1
-          # packages.unity.com is a public registry -- no credentials, no Unity account.
-          fetch() {
-            local pkg="$1" ver="$2" inner="$3"
-            echo "fetching $pkg@$ver"
-            curl -fsSL "https://packages.unity.com/$pkg/-/$pkg-$ver.tgz" -o /tmp/$pkg.tgz
-            tar -xzf /tmp/$pkg.tgz -C /tmp "package/$inner"
-            cp "/tmp/package/$inner" .compile-refs/
-          }
-          fetch com.unity.nuget.newtonsoft-json "$newtonsoft_version" Runtime/Newtonsoft.Json.dll
-          fetch com.unity.ext.nunit            "$nunit_version"       net40/unity-custom/nunit.framework.dll
-          ls -la .compile-refs/
+          python3 tools/unity_ci_packages.py prepare \
+            --unity-version "$UNITY_VERSION" --image "$UNITY_IMAGE" \
+            --output ".unity-ci/$UNITY_VERSION"
 
       - name: Compile
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
+          EXTRA_REFS: ${{ steps.packages.outputs.refs }}
+          TEST_FRAMEWORK_SOURCE: ${{ steps.packages.outputs.test_framework_source }}
+          TEST_PROJECT: ${{ steps.packages.outputs.project_path }}
         run: |
           set -euo pipefail
           docker run --rm \
             -v "$PWD:/repo" -w /repo \
-            -e UNITY_VERSION="${{ steps.unity.outputs.version }}" \
+            -e UNITY_VERSION="$UNITY_VERSION" \
             -e UNITY_DATA=/opt/unity/Editor/Data \
             -e REPO=/repo \
-            -e EXTRA_REFS=/repo/.compile-refs \
-            -e TEST_FRAMEWORK_SOURCE=/repo/.compile-refs/test-framework \
-            "${{ steps.unity.outputs.image }}" \
+            -e EXTRA_REFS="/repo/$EXTRA_REFS" \
+            -e TEST_FRAMEWORK_SOURCE="/repo/$TEST_FRAMEWORK_SOURCE" \
+            -e TEST_PROJECT="/repo/$TEST_PROJECT" \
+            "$UNITY_IMAGE" \
             bash /repo/tools/compile-check.sh
+
+      - name: Upload package resolution
+        if: always() && steps.packages.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Unity package profile ${{ matrix.unity.version }}
+          path: ${{ steps.packages.outputs.resolution_report }}
+          if-no-files-found: error
+          # Only the resolution JSON is selected, not the hidden package/cache tree.
+          include-hidden-files: true
 
       - name: Summary
         if: always()
@@ -105,8 +137,8 @@ jobs:
             {
               echo "## Compile check passed"
               echo
-              echo "\`MCPForUnity.Runtime\` and \`MCPForUnity.Editor\` compiled against Unity"
-              echo "\`${{ steps.unity.outputs.version }}\` reference assemblies for **win, osx and linux**."
+              echo "MCP runtime, Editor and EditMode test assemblies compiled against Unity"
+              echo "\`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) reference assemblies for **win, osx and linux**."
               echo
               echo "No Unity license was used, so this runs on fork PRs too."
               echo "Note: this compiles the code, it does not run the test suite."
@@ -115,7 +147,7 @@ jobs:
             {
               echo "## Compile check FAILED"
               echo
-              echo "The C# does not compile against Unity \`${{ steps.unity.outputs.version }}\`."
+              echo "Unity \`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) compilation or preparation failed."
               echo "See the Compile step log for the exact errors and the platform each belongs to."
             } >> "$GITHUB_STEP_SUMMARY"
           fi

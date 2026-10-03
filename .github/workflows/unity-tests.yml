@@ -32,6 +32,11 @@ on:
       - MCPForUnity/Runtime/**
       - .github/workflows/unity-tests.yml
       - tools/check_unity_test_results.py
+      - tools/unity-versions.json
+      - tools/unity_ci.py
+      - tools/unity-ci/**
+      - tools/unity_ci_packages.py
+      - tools/unity-ci-packages.json
   # Same-repo PRs get a unity-tests status check on every open / push via this trigger
   # (mirrors python-tests.yml). Fork PRs ALSO fire this trigger but run in the fork's
   # context without secrets — the `license` gate job writes unity_ok=false and the test
@@ -51,6 +56,11 @@ on:
       - MCPForUnity/Runtime/**
       - .github/workflows/unity-tests.yml
       - tools/check_unity_test_results.py
+      - tools/unity-versions.json
+      - tools/unity_ci.py
+      - tools/unity-ci/**
+      - tools/unity_ci_packages.py
+      - tools/unity-ci-packages.json
 
 # Dedup runs for the same branch across push / pull_request / workflow_call.
 # Same-repo PRs would otherwise fire both push (on the branch SHA) AND pull_request (on the PR);
@@ -75,31 +85,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
-          sparse-checkout: tools/unity-versions.json
+          sparse-checkout: |
+            tools/unity-versions.json
+            tools/unity_ci.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      - name: Select versions for this trigger
+      - name: Select all supported Unity channels
         id: set
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          GH_REF: ${{ github.ref }}
-          FULL_MATRIX_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-matrix') }}
         run: |
           set -euo pipefail
-          # Full matrix on: beta push, workflow_call (release pipelines), workflow_dispatch,
-          # or a PR carrying the 'full-matrix' label. Note the label is only read when the
-          # workflow fires, so applying it to an open PR takes effect on the next push.
-          # Default (single defaultVersion from tools/unity-versions.json) otherwise — fast PR feedback.
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]] || \
-             [[ "$EVENT_NAME" == "workflow_call" ]] || \
-             { [[ "$EVENT_NAME" == "push" ]] && [[ "$GH_REF" == "refs/heads/beta" ]]; } || \
-             { [[ "$EVENT_NAME" == "pull_request" ]] && [[ "$FULL_MATRIX_LABEL" == "true" ]]; }; then
-            versions=$(jq -c '[.versions[].id]' tools/unity-versions.json)
-            echo "Trigger '$EVENT_NAME' on ref '$GH_REF' (full_matrix_label=$FULL_MATRIX_LABEL) → full matrix: $versions"
-          else
-            versions=$(jq -c '[.defaultVersion]' tools/unity-versions.json)
-            echo "Trigger '$EVENT_NAME' on ref '$GH_REF' → default only: $versions"
-          fi
+          versions=$(python3 tools/unity_ci.py matrix)
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
 
   license:
@@ -144,24 +139,24 @@ jobs:
             echo "To get real signal, a maintainer must run the suite against this code from a trusted context -"
             echo "push the reviewed fork branch into this repo and the \`push\` trigger runs the full suite."
             echo
-            echo "\`Compile MCPForUnity (win/osx/linux)\` and \`Run Python Tests\` DO run on fork PRs and are real signal."
+            echo "The separate license-free compile matrix and \`Run Python Tests\` DO run on fork PRs."
           } >> "$GITHUB_STEP_SUMMARY"
 
   testAllModes:
-    name: Test in ${{ matrix.testMode }} on Unity ${{ matrix.unityVersion }}
+    name: Test ${{ matrix.unity.channel }} Unity ${{ matrix.unity.version }} (${{ matrix.testMode }})
     needs: [matrix, license]
     if: needs.license.outputs.unity_ok == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
-        projectPath:
-          - TestProjects/UnityMCPTests
         testMode:
           - editmode
-        unityVersion: ${{ fromJson(needs.matrix.outputs.versions) }}
+        unity: ${{ fromJson(needs.matrix.outputs.versions) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -170,13 +165,29 @@ jobs:
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
           persist-credentials: false
 
+      - name: Prepare Unity Editor image
+        id: editor
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+        run: |
+          set -euo pipefail
+          python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests
+
+      - name: Prepare version-specific test packages
+        id: packages
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+          UNITY_IMAGE: ${{ steps.editor.outputs.image }}
+        run: |
+          set -euo pipefail
+          python3 tools/unity_ci_packages.py prepare \
+            --unity-version "$UNITY_VERSION" --image "$UNITY_IMAGE" \
+            --output ".unity-ci/$UNITY_VERSION"
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ matrix.projectPath }}/Library
-          key: Library-${{ matrix.projectPath }}-${{ matrix.unityVersion }}
-          restore-keys: |
-            Library-${{ matrix.projectPath }}-
-            Library-
+          path: ${{ steps.packages.outputs.project_path }}/Library
+          key: Library-${{ matrix.unity.version }}-${{ hashFiles('tools/unity-versions.json', 'tools/unity-ci-packages.json', 'tools/unity_ci_packages.py') }}
 
       # Run domain reload tests first (they're [Explicit] so need explicit category)
       # Both runner steps pin the action and its CLI. The floating v4 tag and the CLI's "latest"
@@ -192,8 +203,9 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
         with:
-          projectPath: ${{ matrix.projectPath }}
-          unityVersion: ${{ matrix.unityVersion }}
+          projectPath: ${{ steps.packages.outputs.project_path }}
+          unityVersion: ${{ matrix.unity.version }}
+          customImage: ${{ steps.editor.outputs.image }}
           testMode: ${{ matrix.testMode }}
           customParameters: -testCategory domain_reload
           cliVersion: v0.1.69
@@ -218,8 +230,9 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
         with:
-          projectPath: ${{ matrix.projectPath }}
-          unityVersion: ${{ matrix.unityVersion }}
+          projectPath: ${{ steps.packages.outputs.project_path }}
+          unityVersion: ${{ matrix.unity.version }}
+          customImage: ${{ steps.editor.outputs.image }}
           testMode: ${{ matrix.testMode }}
           cliVersion: v0.1.69
           githubToken: ""
@@ -244,5 +257,5 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && steps.domain-tests.outcome != 'skipped'
         with:
-          name: Test results for ${{ matrix.testMode }} on Unity ${{ matrix.unityVersion }}
+          name: Test results for ${{ matrix.testMode }} on Unity ${{ matrix.unity.version }} (${{ matrix.unity.channel }})
           path: artifacts/

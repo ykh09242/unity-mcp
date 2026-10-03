@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "requiredModules": [
+    "com.unity.modules.ai",
+    "com.unity.modules.animation",
+    "com.unity.modules.assetbundle",
+    "com.unity.modules.audio",
+    "com.unity.modules.director",
+    "com.unity.modules.imageconversion",
+    "com.unity.modules.imgui",
+    "com.unity.modules.jsonserialize",
+    "com.unity.modules.particlesystem",
+    "com.unity.modules.physics",
+    "com.unity.modules.physics2d",
+    "com.unity.modules.screencapture",
+    "com.unity.modules.terrain",
+    "com.unity.modules.terrainphysics",
+    "com.unity.modules.tilemap",
+    "com.unity.modules.ui",
+    "com.unity.modules.uielements",
+    "com.unity.modules.unitywebrequest",
+    "com.unity.modules.unitywebrequestassetbundle",
+    "com.unity.modules.unitywebrequestaudio",
+    "com.unity.modules.unitywebrequesttexture",
+    "com.unity.modules.video",
+    "com.unity.modules.xr"
+  ],
+  "profiles": {
+    "legacy-lts": {
+      "unityFamilies": ["2021.3", "2022.3"],
+      "packages": {
+        "com.unity.test-framework": {"source": "registry", "version": "1.4.6"},
+        "com.unity.ext.nunit": {"source": "registry", "version": "2.0.5"},
+        "com.unity.nuget.newtonsoft-json": {"source": "registry", "version": "3.2.2"},
+        "com.unity.ugui": {"source": "editor"}
+      }
+    },
+    "unity-six": {
+      "unityMajors": [6000],
+      "packages": {
+        "com.unity.test-framework": {"source": "editor"},
+        "com.unity.ext.nunit": {"source": "editor"},
+        "com.unity.nuget.newtonsoft-json": {"source": "registry", "version": "3.2.2"},
+        "com.unity.ugui": {"source": "editor"}
+      }
+    }
+  }
+}

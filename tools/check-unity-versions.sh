@@ -10,7 +10,8 @@
 #
 # Modes:
 #   - Default (local): looks for Unity editors under Unity Hub. Versions not installed are skipped.
-#   - --docker: runs each version inside unityci/editor:ubuntu-<id>-base-<tag>. Requires UNITY_LICENSE env
+#   - --docker: uses manifest-pinned images or builds official previews (Python 3.10+ required).
+#     A nondefault --docker-image-tag overrides this with a public GameCI tag. Requires UNITY_LICENSE env
 #     (contents of a .ulf file). On macOS arm64, expect ~5-10× slowdown from amd64 emulation.
 #
 # Exits non-zero if any *checked* version fails. Versions skipped (not installed locally / image not pulled
@@ -25,9 +26,9 @@ VERSIONS_JSON="${REPO_ROOT}/tools/unity-versions.json"
 PROJECT_PATH="${REPO_ROOT}/TestProjects/UnityMCPTests"
 LOG_DIR="${REPO_ROOT}/tools/.unity-check-logs"
 
-# Default GameCI image tag suffix. GameCI publishes both sliding (base-3) and pinned (base-3.1.0) tags;
-# we default to the major-major (base-3) sliding tag and let users pin via --docker-image-tag.
+# Default mode resolves manifest images; nondefault suffixes retain the public-tag override.
 DOCKER_IMAGE_TAG="base-3"
+PYTHON_BIN=""
 
 FULL=0
 ONLY=""
@@ -103,6 +104,20 @@ One-time setup (free Personal license):
 versions in practice — Unity Personal activations are tied to the machine, not the editor version.)
 EOF
     exit 2
+  fi
+
+  if [[ "$DOCKER_IMAGE_TAG" == "base-3" ]]; then
+    for candidate in python3 python; do
+      if command -v "$candidate" >/dev/null 2>&1 && \
+         "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+        PYTHON_BIN="$candidate"
+        break
+      fi
+    done
+    if [[ -z "$PYTHON_BIN" ]]; then
+      echo "error: default --docker images require Python 3.10+ (python3 or python on PATH)" >&2
+      exit 2
+    fi
   fi
 
   if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
@@ -188,12 +203,22 @@ run_docker() {
   local version="$1" log_file="$2"
   local image="unityci/editor:ubuntu-${version}-${DOCKER_IMAGE_TAG}"
 
-  printf "  [ .. ] %s — pulling %s ...\r" "$version" "$image"
-  if ! docker pull "$image" >>"$log_file" 2>&1; then
-    echo "  ${C_FAIL}[FAIL]${C_RST} ${version} — image pull failed (${C_DIM}${image}${C_RST}); see ${log_file}"
-    echo "    Pull errors:"
-    tail -5 "$log_file" | sed 's/^/      /'
-    return 1
+  if [[ "$DOCKER_IMAGE_TAG" == "base-3" ]]; then
+    printf "  [ .. ] %s — preparing manifest image...\r" "$version"
+    if ! image="$("$PYTHON_BIN" "${REPO_ROOT}/tools/unity_ci.py" prepare "$version" 2>>"$log_file")"; then
+      echo "  ${C_FAIL}[FAIL]${C_RST} ${version} — image preparation failed; see ${log_file}"
+      return 1
+    fi
+  fi
+
+  if [[ "$image" != unity-mcp-editor:* ]]; then
+    printf "  [ .. ] %s — pulling %s ...\r" "$version" "$image"
+    if ! docker pull "$image" >>"$log_file" 2>&1; then
+      echo "  ${C_FAIL}[FAIL]${C_RST} ${version} — image pull failed (${C_DIM}${image}${C_RST}); see ${log_file}"
+      echo "    Pull errors:"
+      tail -5 "$log_file" | sed 's/^/      /'
+      return 1
+    fi
   fi
 
   printf "  [ .. ] %s — running in container...\r" "$version"

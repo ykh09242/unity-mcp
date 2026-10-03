@@ -7,7 +7,7 @@
   Reads tools\unity-versions.json (the shared source of truth used by .github\workflows\unity-tests.yml)
   and runs a compile-only batchmode pass on each Unity version installed via Unity Hub.
 
-  -Docker switches to running inside GameCI containers (unityci/editor:ubuntu-<id>-base-<tag>) instead
+  -Docker uses manifest-pinned GameCI images or builds official previews (requires Python 3.10+) instead
   of looking for local Unity Hub installs. Requires Docker Desktop running and $env:UNITY_LICENSE set
   to the contents of a Unity_lic.ulf file.
 
@@ -24,7 +24,7 @@
   Run each version inside a GameCI Docker container instead of a local Unity Hub install.
 
 .PARAMETER DockerImageTag
-  Override the GameCI image tag suffix (default: 'base-3'). Pin to e.g. 'base-3.2.2' for reproducibility.
+  Default 'base-3' resolves the manifest images. Other suffixes select public GameCI tags directly.
 
 .PARAMETER PrePush
   Hint mode used by the pre-push hook; changes the failure message to mention --no-verify.
@@ -51,6 +51,7 @@ $RepoRoot     = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VersionsJson = Join-Path $RepoRoot "tools\unity-versions.json"
 $ProjectPath  = Join-Path $RepoRoot "TestProjects\UnityMCPTests"
 $LogDir       = Join-Path $RepoRoot "tools\.unity-check-logs"
+$PythonBin    = $null
 
 if (-not (Test-Path $VersionsJson)) { throw "Missing: $VersionsJson" }
 if (-not (Test-Path $ProjectPath))  { throw "Missing project: $ProjectPath" }
@@ -85,6 +86,19 @@ if ($Docker) {
     Write-Host "(The same UNITY_LICENSE secret is what the GitHub Actions workflow uses; one .ulf works across all"
     Write-Host "matrix versions in practice -- Unity Personal activations are tied to the machine, not the editor version.)"
     exit 2
+  }
+  if ($DockerImageTag -eq "base-3") {
+    foreach ($name in @("python3", "python")) {
+      $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+      if ($candidate) {
+        & $candidate.Source -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' *> $null
+        if ($LASTEXITCODE -eq 0) { $PythonBin = $candidate.Source; break }
+      }
+    }
+    if (-not $PythonBin) {
+      Write-Error "Default -Docker images require Python 3.10+ (python3 or python on PATH)."
+      exit 2
+    }
   }
 } else {
   # Unity Hub installs editors under one of these roots on Windows.
@@ -150,13 +164,32 @@ function Invoke-LocalUnity([string]$Version, [string]$LogFile) {
 function Invoke-DockerUnity([string]$Version, [string]$LogFile) {
   $image = "unityci/editor:ubuntu-$Version-$DockerImageTag"
 
-  Write-Host -NoNewline "  [ .. ] $Version -- pulling $image ...`r"
-  & docker pull $image *>> $LogFile
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "  [FAIL] $Version -- image pull failed ($image); see $LogFile" -ForegroundColor Red
-    Write-Host "    Pull errors:"
-    Get-Content $LogFile -Tail 5 | ForEach-Object { Write-Host "      $_" }
-    return 1
+  if ($DockerImageTag -eq "base-3") {
+    Write-Host -NoNewline "  [ .. ] $Version -- preparing manifest image...`r"
+    $previousPreference = $ErrorActionPreference
+    try {
+      # Windows PowerShell 5 treats native stderr diagnostics as ErrorRecords.
+      $ErrorActionPreference = "Continue"
+      $preparedImage = & $PythonBin (Join-Path $RepoRoot "tools\unity_ci.py") prepare $Version 2>> $LogFile
+    } finally {
+      $ErrorActionPreference = $previousPreference
+    }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "  [FAIL] $Version -- image preparation failed; see $LogFile" -ForegroundColor Red
+      return 1
+    }
+    $image = ($preparedImage -join "`n").Trim()
+  }
+
+  if ($image -notlike "unity-mcp-editor:*") {
+    Write-Host -NoNewline "  [ .. ] $Version -- pulling $image ...`r"
+    & docker pull $image *>> $LogFile
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "  [FAIL] $Version -- image pull failed ($image); see $LogFile" -ForegroundColor Red
+      Write-Host "    Pull errors:"
+      Get-Content $LogFile -Tail 5 | ForEach-Object { Write-Host "      $_" }
+      return 1
+    }
   }
 
   Write-Host -NoNewline "  [ .. ] $Version -- running in container...`r"

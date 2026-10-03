@@ -76,3 +76,6 @@ docs/superpowers/
 
 # Reference DLLs fetched by tools/compile-check.sh (not redistributable)
 .compile-refs/
+
+# Isolated Unity CI projects, package copies and generated reference assemblies
+.unity-ci/
