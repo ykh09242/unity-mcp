@@ -93,6 +93,9 @@ jobs:
       - name: Restore Unity compiler cache
         id: sdk_cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        env:
+          # The integrity receipt includes modes; runner umask must not change them.
+          TAR_OPTIONS: --same-permissions
         with:
           path: ${{ steps.sdk_identity.outputs.cache_path }}
           key: ${{ steps.sdk_identity.outputs.cache_key }}

@@ -61,6 +61,7 @@ def test_compilation_restores_exact_sdk_cache_and_validates_it_on_every_run():
     assert 'python3 tools/unity_compile_cache.py identity "$UNITY_VERSION"' in identity["run"]
     restore = next(step for step in steps if step.get("id") == "sdk_cache")
     assert restore["uses"] == "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+    assert restore["env"] == {"TAR_OPTIONS": "--same-permissions"}
     assert restore["with"] == {
         "path": "${{ steps.sdk_identity.outputs.cache_path }}",
         "key": "${{ steps.sdk_identity.outputs.cache_key }}",
