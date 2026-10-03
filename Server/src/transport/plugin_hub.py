@@ -832,6 +832,7 @@ class PluginHub(WebSocketEndpoint):
         ping_task: asyncio.Task | None = None
         pending_futures: list[asyncio.Future] = []
         async with lock:
+            registry = cls._registry
             websocket = cls._connections.pop(session_id, None)
             ping_task = cls._ping_tasks.pop(session_id, None)
             cls._last_pong.pop(session_id, None)
@@ -856,21 +857,19 @@ class PluginHub(WebSocketEndpoint):
                     )
                 )
 
-        if websocket is not None:
+        # Remove routing state before close I/O can block or be cancelled.
+        if registry is not None:
             try:
-                await websocket.close(code=1001)
-            except Exception as close_ex:
-                logger.debug("Error closing evicted WebSocket for session %s: %s", session_id, close_ex)
-
-        if cls._registry is not None:
-            try:
-                await cls._registry.unregister(session_id)
+                await registry.unregister(session_id)
             except Exception:
                 logger.debug(
                     "Failed to unregister evicted plugin session %s",
                     session_id,
                     exc_info=True,
                 )
+
+        if websocket is not None:
+            await cls._close_websocket(websocket)
 
         logger.debug("Evicted plugin session %s (%s)", session_id, reason)
 
@@ -958,7 +957,9 @@ class PluginHub(WebSocketEndpoint):
         if unity_instance:
             if "@" in unity_instance:
                 _, _, suffix = unity_instance.rpartition("@")
-                target_hash = suffix or None
+                if not suffix.strip():
+                    raise NoUnitySessionError("Unity instance selector is missing its project hash")
+                target_hash = suffix
             else:
                 target_hash = unity_instance
 
