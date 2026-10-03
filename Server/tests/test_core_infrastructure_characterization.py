@@ -1066,20 +1066,20 @@ class TestTelemetryRecordTypes:
             assert data["duration_ms"] == 100.5
 
     def test_record_tool_usage_with_error(self):
-        """Verify record_tool_usage includes error message when provided."""
+        """Verify record_tool_usage emits a stable class instead of the message."""
         with patch("core.telemetry.get_telemetry") as mock_get:
             mock_collector = MagicMock()
             mock_get.return_value = mock_collector
 
-            record_tool_usage("error_tool", False, 50.0, error="Test error")
+            record_tool_usage("error_tool", False, 50.0, error=ValueError("Test error"))
 
             call_args = mock_collector.record.call_args
             data = call_args[0][1]
 
-            assert data["error"] == "Test error"
+            assert data["error"] == "ValueError"
 
-    def test_record_tool_usage_error_truncation(self):
-        """Verify record_tool_usage truncates long error messages."""
+    def test_record_tool_usage_error_message_omitted(self):
+        """Verify raw messages become a generic class regardless of length."""
         long_error = "x" * 500
 
         with patch("core.telemetry.get_telemetry") as mock_get:
@@ -1091,8 +1091,7 @@ class TestTelemetryRecordTypes:
             call_args = mock_collector.record.call_args
             data = call_args[0][1]
 
-            # Should be truncated to 200 chars
-            assert len(data["error"]) == 200
+            assert data["error"] == "Exception"
 
     def test_record_tool_usage_with_sub_action(self):
         """Verify record_tool_usage includes sub_action when provided."""
@@ -1134,7 +1133,7 @@ class TestTelemetryRecordTypes:
             call_args = mock_collector.record.call_args
             data = call_args[0][1]
 
-            assert data["error"] == "Resource error"
+            assert data["error"] == "Exception"
 
 
 class TestTelemetryMilestones:

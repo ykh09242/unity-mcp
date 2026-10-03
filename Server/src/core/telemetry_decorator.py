@@ -50,7 +50,7 @@ def telemetry_tool(tool_name: str):
                     _log.debug("milestone emit failed", exc_info=True)
                 return result
             except Exception as e:
-                error = str(e)
+                error = e
                 raise
             finally:
                 duration_ms = (time.time() - start_time) * 1000
@@ -93,7 +93,7 @@ def telemetry_tool(tool_name: str):
                     _log.debug("milestone emit failed", exc_info=True)
                 return result
             except Exception as e:
-                error = str(e)
+                error = e
                 raise
             finally:
                 duration_ms = (time.time() - start_time) * 1000
@@ -125,7 +125,7 @@ def telemetry_resource(resource_name: str):
                 success = True
                 return result
             except Exception as e:
-                error = str(e)
+                error = e
                 raise
             finally:
                 duration_ms = (time.time() - start_time) * 1000
@@ -150,7 +150,7 @@ def telemetry_resource(resource_name: str):
                 success = True
                 return result
             except Exception as e:
-                error = str(e)
+                error = e
                 raise
             finally:
                 duration_ms = (time.time() - start_time) * 1000

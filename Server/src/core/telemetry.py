@@ -107,6 +107,38 @@ class MilestoneType(str, Enum):
     WEEKLY_ACTIVE_USER = "weekly_active_user"
 
 
+def _error_class(error: object) -> str:
+    """Return fixed diagnostic labels without formatting caller-controlled errors."""
+    classes = (
+        ("FileNotFoundError", FileNotFoundError),
+        ("PermissionError", PermissionError),
+        ("ConnectionError", ConnectionError),
+        ("TimeoutError", TimeoutError),
+        ("ValueError", ValueError),
+        ("TypeError", TypeError),
+        ("OSError", OSError),
+        ("RuntimeError", RuntimeError),
+        ("Exception", Exception),
+    )
+    if isinstance(error, Exception):
+        for label, exception_type in classes:
+            if isinstance(error, exception_type):
+                return label
+    elif isinstance(error, str):
+        for label, _ in classes:
+            if error == label:
+                return label
+    return "Exception"
+
+
+def _metadata_only_error(data: dict[str, Any]) -> dict[str, Any]:
+    """Detach event metadata and constrain the shared error channel."""
+    sanitized = dict(data)
+    if "error" in sanitized and sanitized["error"] is not None:
+        sanitized["error"] = _error_class(sanitized["error"])
+    return sanitized
+
+
 @dataclass
 class TelemetryRecord:
     """Structure for telemetry data"""
@@ -343,7 +375,7 @@ class TelemetryCollector:
             timestamp=time.time(),
             customer_uuid=self._customer_uuid or "unknown",
             session_id=self.config.session_id,
-            data=data,
+            data=_metadata_only_error(data),
             milestone=milestone
         )
         # Enqueue for background worker (non-blocking). Drop on backpressure.
@@ -385,7 +417,7 @@ class TelemetryCollector:
             _python_version = platform.python_version()
 
             # Enrich data JSON so BigQuery stores detailed fields without schema change
-            enriched_data = dict(record.data or {})
+            enriched_data = _metadata_only_error(record.data or {})
             enriched_data.setdefault("platform_detail", _platform_detail)
             enriched_data.setdefault("python_version", _python_version)
 
@@ -475,14 +507,14 @@ def record_milestone(milestone: MilestoneType, data: dict[str, Any] | None = Non
     return get_telemetry().record_milestone(milestone, data)
 
 
-def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: str | None = None, sub_action: str | None = None):
+def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: Exception | str | None = None, sub_action: str | None = None):
     """Record tool usage telemetry
 
     Args:
         tool_name: Name of the tool invoked (e.g., 'manage_scene').
         success: Whether the tool completed successfully.
         duration_ms: Execution duration in milliseconds.
-        error: Optional error message (truncated if present).
+        error: Optional exception or stable class label; messages are never sent.
         sub_action: Optional sub-action/operation within the tool (e.g., 'get_hierarchy').
     """
     data = {
@@ -499,19 +531,19 @@ def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: 
             data["sub_action"] = "unknown"
 
     if error:
-        data["error"] = str(error)[:200]  # Limit error message length
+        data["error"] = _error_class(error)
 
     record_telemetry(RecordType.TOOL_EXECUTION, data)
 
 
-def record_resource_usage(resource_name: str, success: bool, duration_ms: float, error: str | None = None):
+def record_resource_usage(resource_name: str, success: bool, duration_ms: float, error: Exception | str | None = None):
     """Record resource usage telemetry
 
     Args:
         resource_name: Name of the resource invoked (e.g., 'get_tests').
         success: Whether the resource completed successfully.
         duration_ms: Execution duration in milliseconds.
-        error: Optional error message (truncated if present).
+        error: Optional exception or stable class label; messages are never sent.
     """
     data = {
         "resource_name": resource_name,
@@ -520,7 +552,7 @@ def record_resource_usage(resource_name: str, success: bool, duration_ms: float,
     }
 
     if error:
-        data["error"] = str(error)[:200]  # Limit error message length
+        data["error"] = _error_class(error)
 
     record_telemetry(RecordType.RESOURCE_RETRIEVAL, data)
 
@@ -538,11 +570,11 @@ def record_latency(operation: str, duration_ms: float, metadata: dict[str, Any] 
     record_telemetry(RecordType.LATENCY, data)
 
 
-def record_failure(component: str, error: str, metadata: dict[str, Any] | None = None):
+def record_failure(component: str, error: Exception | str, metadata: dict[str, Any] | None = None):
     """Record failure telemetry"""
     data = {
         "component": component,
-        "error": str(error)[:500]  # Limit error message length
+        "error": _error_class(error)
     }
 
     if metadata:
