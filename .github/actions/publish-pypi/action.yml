@@ -4,9 +4,9 @@ runs:
   using: composite
   steps:
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
-        version: "latest"
+        version: "0.12.22"
         enable-cache: true
         cache-dependency-glob: "Server/uv.lock"
 
@@ -16,7 +16,6 @@ runs:
       working-directory: ./Server
 
     - name: Publish distribution to PyPI
-      # Pin to v1.12.4 to avoid Docker container name issue with uppercase repo names in v1.13.0+
-      uses: pypa/gh-action-pypi-publish@v1.12.4
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
       with:
         packages-dir: Server/dist/
