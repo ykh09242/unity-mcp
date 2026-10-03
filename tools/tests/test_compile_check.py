@@ -67,7 +67,7 @@ def harness(tmp_path: Path) -> CompileHarness:
     bcl.mkdir()
     for name in ("Runtime", "Editor"):
         (bcl / f"{name}.txt").write_text("", encoding="utf-8")
-    for version in ("2021.3", "2022.3", "6000.3"):
+    for version in ("2021.3", "2022.3", "6000.3", "6000.6", "6000.7"):
         profile = repo / "tools" / "compile-refs" / version
         profile.mkdir()
         for name in ("Runtime", "Editor"):
@@ -98,9 +98,9 @@ done < "$rsp"
     ("6000.0.84f1", ""),
     ("6000.4.8f1", ""),
     ("6000.3.25f1", "6000.3"),
-    ("6000.6.4f1", ""),
-    ("6000.7.0b2", ""),
-    ("6000.7.0a6", ""),
+    ("6000.6.4f1", "6000.6"),
+    ("6000.7.0b2", "6000.7"),
+    ("6000.7.0a6", "6000.7"),
 ])
 def test_matrix_compiles_all_platforms_with_selected_explicit_profile(
     harness: CompileHarness, version: str, profile: str,
@@ -173,6 +173,10 @@ def test_modern_sdk_uses_one_coherent_bundled_toolchain(harness: CompileHarness,
     (harness.data / "DotNetSdkRoslyn" / "csc.dll").unlink()
     result = harness.run(version)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "Compiler      : " in result.stdout
+    assert "Tools/Scripting/DotNetSdk/sdk/9.0.100/Roslyn/bincore/csc.dll" in result.stdout
+    assert "Runtime       : " in result.stdout
+    assert "Tools/Scripting/DotNetSdk/dotnet" in result.stdout
     assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
 
 
@@ -230,7 +234,7 @@ def test_shared_bcl_references_are_required(harness: CompileHarness) -> None:
     assert not harness.calls.exists()
 
 
-@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.62f1", "6000.3.25f1"])
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.62f1", "6000.3.25f1", "6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
 def test_missing_selected_legacy_manifest_does_not_fall_back(harness: CompileHarness, version: str) -> None:
     major, minor, _ = version.split(".")
     (harness.repo / "tools" / "compile-refs" / f"{major}.{minor}" / "Runtime.txt").unlink()
@@ -293,6 +297,28 @@ def test_unity63_profile_removes_only_confirmed_absent_test_protocol_module(name
     assert not selected - default
 
 
+@pytest.mark.parametrize("name", ["Runtime", "Editor"])
+def test_unity66_profile_removes_only_compiler_proven_absent_modules(name: str) -> None:
+    default = set((ROOT / "tools/compile-refs" / f"{name}.txt").read_text(encoding="utf-8").splitlines())
+    selected = set((ROOT / "tools/compile-refs/6000.6" / f"{name}.txt").read_text(encoding="utf-8").splitlines())
+    assert default - selected == {
+        f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
+        for module in ("SharedInternals", "UnityTestProtocol", "VR")
+    }
+    assert not selected - default
+
+
+@pytest.mark.parametrize("name", ["Runtime", "Editor"])
+def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: str) -> None:
+    default = set((ROOT / "tools/compile-refs" / f"{name}.txt").read_text(encoding="utf-8").splitlines())
+    selected = set((ROOT / "tools/compile-refs/6000.7" / f"{name}.txt").read_text(encoding="utf-8").splitlines())
+    assert default - selected == {
+        f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
+        for module in ("AR", "SharedInternals", "Substance", "UnityTestProtocol", "VR")
+    }
+    assert not selected - default
+
+
 @pytest.mark.parametrize("family,module", [
     ("2021.3", "UnityEngine.TextRenderingModule.dll"),
     ("2022.3", "UnityEngine.TextRenderingModule.dll"),
@@ -332,8 +358,10 @@ def staged_tests(harness: CompileHarness) -> tuple[Path, Path]:
         directory = framework / assembly
         directory.mkdir(parents=True)
         (directory / "Fixture.cs").write_text("class Fixture {}", encoding="utf-8")
-    editor = harness.repo / "tools/compile-refs/Editor.txt"
-    editor.write_text(editor.read_text(encoding="utf-8") + "LIBCACHE/UnityEngine.TestRunner.dll\nLIBCACHE/UnityEditor.TestRunner.dll\n", encoding="utf-8")
+    refs = harness.repo / "tools/compile-refs"
+    for editor in refs.rglob("Editor.txt"):
+        if editor.parent.name != "BCL":
+            editor.write_text(editor.read_text(encoding="utf-8") + "LIBCACHE/UnityEngine.TestRunner.dll\nLIBCACHE/UnityEditor.TestRunner.dll\n", encoding="utf-8")
     cecil = harness.data / "Tools/Compilation/ApiUpdater"
     cecil.mkdir(parents=True)
     for name in ("Mono.Cecil.dll", "Mono.Cecil.Pdb.dll", "Mono.Cecil.Mdb.dll", "Mono.Cecil.Rocks.dll"):

@@ -131,6 +131,8 @@ fi
 
 echo "Unity version : $UNITY_VERSION"
 echo "Unity data    : $UNITY_DATA"
+echo "Compiler      : $CSC"
+echo "Runtime       : $DOTNET"
 if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
   echo "Test Framework: $TEST_FRAMEWORK_SOURCE"
   for assembly in UnityEngine.TestRunner UnityEditor.TestRunner; do
@@ -147,7 +149,7 @@ UNITY_RELEASES="5.3 5.4 5.5 5.6 2017.1 2017.2 2017.3 2017.4 2018.1 2018.2 2018.3
 
 REFS_ROOT="$REPO/tools/compile-refs"
 case "$ver_major.$ver_minor" in
-  2021.3|2022.3|6000.3) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
+  2021.3|2022.3|6000.3|6000.6|6000.7) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
   *) REFS_PROFILE="$REFS_ROOT" ;;
 esac
 
