@@ -378,6 +378,8 @@ def staged_tests(harness: CompileHarness) -> tuple[Path, Path]:
     cecil.mkdir(parents=True)
     for name in ("Mono.Cecil.dll", "Mono.Cecil.Pdb.dll", "Mono.Cecil.Mdb.dll", "Mono.Cecil.Rocks.dll"):
         (cecil / name).touch()
+    for suffix in ("", ".Pdb", ".Mdb", ".Rocks"):
+        (harness.data / f"Managed/Unity.Cecil{suffix}.dll").touch()
     return project, framework
 
 
@@ -450,13 +452,11 @@ def test_missing_cecil_reports_bounded_candidates_without_selecting_them(
     assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 1
 
 
-@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1"])
-def test_legacy_cecil_uses_complete_editor_managed_fork_group(
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1", "6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+def test_managed_cecil_uses_complete_editor_managed_fork_group(
     harness: CompileHarness, staged_tests: tuple[Path, Path], version: str,
 ) -> None:
     project, framework = staged_tests
-    for suffix in ("", ".Pdb", ".Mdb", ".Rocks"):
-        (harness.data / f"Managed/Unity.Cecil{suffix}.dll").touch()
     result = harness.run(version, test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
     rsp = (harness.output / "linux/UnityEditor.TestRunner.rsp").read_text(encoding="utf-8")
@@ -466,14 +466,12 @@ def test_legacy_cecil_uses_complete_editor_managed_fork_group(
 
 
 @pytest.mark.parametrize("suffix", ["", ".Pdb", ".Mdb", ".Rocks"])
-@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1"])
-def test_legacy_missing_cecil_component_cannot_fall_back_to_modern_group(
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1", "6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+def test_managed_missing_cecil_component_cannot_fall_back_to_tools_group(
     harness: CompileHarness, staged_tests: tuple[Path, Path], suffix: str, version: str,
 ) -> None:
     project, framework = staged_tests
-    for component in ("", ".Pdb", ".Mdb", ".Rocks"):
-        if component != suffix:
-            (harness.data / f"Managed/Unity.Cecil{component}.dll").touch()
+    (harness.data / f"Managed/Unity.Cecil{suffix}.dll").unlink()
     result = harness.run(version, test_project=project, framework=framework)
     assert result.returncode != 0
     assert f"Managed/Unity.Cecil{suffix}.dll" in result.stderr

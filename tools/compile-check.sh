@@ -273,7 +273,7 @@ for platform in $PLATFORMS; do
     # These editor versions ship Unity's fork with the Mono.Cecil namespace. Select
     # its complete editor-managed group by version, never by DLL search order.
     case "$ver_major.$ver_minor" in
-      2021.3|2022.3|6000.3) cecil_dir="$UNITY_DATA/Managed"; cecil_name=Unity.Cecil ;;
+      2021.3|2022.3|6000.3|6000.6|6000.7) cecil_dir="$UNITY_DATA/Managed"; cecil_name=Unity.Cecil ;;
       *) cecil_dir="$UNITY_DATA/Tools/Compilation/ApiUpdater"; cecil_name=Mono.Cecil ;;
     esac
     for suffix in '' .Pdb .Mdb .Rocks; do
