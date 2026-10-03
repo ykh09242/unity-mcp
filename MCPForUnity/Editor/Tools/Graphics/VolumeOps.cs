@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -557,10 +558,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             var allVolumes = UnityFindObjectsCompat.FindAll(GraphicsHelpers.VolumeType);
             var volumeList = new List<object>();
+            var profileEffects = new Dictionary<object, List<object>>(ProfileReferenceComparer.Instance);
 
             foreach (Component vol in allVolumes)
             {
-                volumeList.Add(BuildVolumeInfo(vol));
+                volumeList.Add(BuildVolumeInfo(vol, profileEffects));
             }
 
             return new
@@ -572,7 +574,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
         }
 
         // --- Helper: Build info object for a single Volume ---
-        private static object BuildVolumeInfo(object volumeComponent)
+        private static object BuildVolumeInfo(object volumeComponent, Dictionary<object, List<object>> profileEffects = null)
         {
             var comp = volumeComponent as Component;
             if (comp == null) return null;
@@ -585,6 +587,25 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var profile = GetProperty(volumeComponent, "sharedProfile");
             string profileName = profile is UnityEngine.Object profileObj2 ? profileObj2.name : null;
             string profilePath = profile is UnityEngine.Object po ? AssetDatabase.GetAssetPath(po) : null;
+
+            return new
+            {
+                name = comp.gameObject.name,
+                instance_id = comp.gameObject.GetInstanceIDCompat(),
+                is_global = isGlobal,
+                weight,
+                priority,
+                blend_distance = blendDistance,
+                profile = profileName,
+                profile_path = profilePath ?? "",
+                effects = BuildProfileEffects(profile, profileEffects)
+            };
+        }
+
+        private static List<object> BuildProfileEffects(object profile, Dictionary<object, List<object>> profileEffects = null)
+        {
+            if (profile != null && profileEffects != null && profileEffects.TryGetValue(profile, out var cached))
+                return cached;
 
             var effectsList = new List<object>();
             if (profile != null)
@@ -623,18 +644,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
             }
 
-            return new
-            {
-                name = comp.gameObject.name,
-                instance_id = comp.gameObject.GetInstanceIDCompat(),
-                is_global = isGlobal,
-                weight,
-                priority,
-                blend_distance = blendDistance,
-                profile = profileName,
-                profile_path = profilePath ?? "",
-                effects = effectsList
-            };
+            if (profile != null && profileEffects != null)
+                profileEffects.Add(profile, effectsList);
+            return effectsList;
+        }
+
+        private sealed class ProfileReferenceComparer : IEqualityComparer<object>
+        {
+            internal static readonly ProfileReferenceComparer Instance = new ProfileReferenceComparer();
+            public new bool Equals(object x, object y) => ReferenceEquals(x, y);
+            public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
         }
 
         // --- Helper: Set a VolumeParameter field value via reflection ---
