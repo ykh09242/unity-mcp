@@ -28,6 +28,8 @@ DIRECTORIES = (
 )
 PACKAGES = ("com.unity.test-framework", "com.unity.ext.nunit", "com.unity.ugui")
 BUILTINS = "Resources/PackageManager/BuiltInPackages"
+LIBCACHE = "Resources/PackageManager/ProjectTemplates/libcache"
+UI_REFERENCES = ("UnityEngine.UI.dll", "UnityEditor.UI.dll")
 # Only inspect the public Editor data tree; no host mounts, network or Editor entrypoint.
 INVENTORY = """set -eu
 d=/opt/unity/Editor/Data
@@ -39,6 +41,10 @@ find "$d" -mindepth 1 -maxdepth 10 -type d -name DotNetSdk -print
 for p in "$d"/Resources/PackageManager/BuiltInPackages/com.unity.modules.* "$d"/Resources/PackageManager/BuiltInPackages/com.unity.test-framework "$d"/Resources/PackageManager/BuiltInPackages/com.unity.ext.nunit "$d"/Resources/PackageManager/BuiltInPackages/com.unity.ugui; do
   if [ -d "$p" ]; then printf '%s\\n' "$p"; fi
 done
+if [ -d "$d/Resources/PackageManager/ProjectTemplates/libcache" ]; then
+  find "$d/Resources/PackageManager/ProjectTemplates/libcache" -mindepth 1 -maxdepth 10 -type f \
+    \\( -name UnityEngine.UI.dll -o -name UnityEditor.UI.dll \\) -path '*/ScriptAssemblies/*' -print
+fi
 """
 
 
@@ -72,7 +78,15 @@ def _destination(output: Path, version: str) -> Path:
     return expected
 
 
-def _allowed_directory(value: str) -> bool:
+def _ui_reference(value: str) -> bool:
+    path = PurePosixPath(value)
+    prefix = PurePosixPath(LIBCACHE).parts
+    tail = path.parts[len(prefix):]
+    return (path.parts[:len(prefix)] == prefix and 1 <= len(tail) <= 10
+            and "ScriptAssemblies" in tail[:-1] and path.name in UI_REFERENCES)
+
+
+def _allowed_input(value: str) -> bool:
     if not isinstance(value, str):
         return False
     path = PurePosixPath(value)
@@ -84,7 +98,7 @@ def _allowed_directory(value: str) -> bool:
         return True
     if path.parent.as_posix() == BUILTINS:
         return path.name in PACKAGES or path.name.startswith("com.unity.modules.")
-    return False
+    return _ui_reference(value)
 
 
 def _inventory(image: str) -> list[str]:
@@ -99,7 +113,7 @@ def _inventory(image: str) -> list[str]:
         if not line.startswith(IMAGE_DATA + "/"):
             raise ValueError("Unexpected compiler input inventory path")
         relative = line[len(IMAGE_DATA) + 1:]
-        if not _allowed_directory(relative):
+        if not _allowed_input(relative):
             raise ValueError(f"Unexpected compiler input directory: {relative}")
         directories.add(relative)
     # A complete SDK can contain another named SDK; copy only the outer directory.
@@ -127,7 +141,7 @@ def _records(directory: Path) -> dict:
 
 
 def _check_inputs(data: Path, directories: list[str]) -> None:
-    if not isinstance(directories, list) or not directories or any(not _allowed_directory(value) for value in directories) or len(set(directories)) != len(directories):
+    if not isinstance(directories, list) or not directories or any(not _allowed_input(value) for value in directories) or len(set(directories)) != len(directories):
         raise ValueError("Invalid compiler input directories")
     for required in ("Managed", "NetStandard", "UnityReferenceAssemblies"):
         if required not in directories or not any((data / required).rglob("*.dll")):
@@ -140,9 +154,13 @@ def _check_inputs(data: Path, directories: list[str]) -> None:
         raise ValueError("Complete bundled compiler and .NET runtime missing")
     if not any(value.startswith(BUILTINS + "/com.unity.modules.") for value in directories):
         raise ValueError("Bundled Unity module metadata missing")
+    for name in UI_REFERENCES:
+        if not any(_ui_reference(value) and PurePosixPath(value).name == name for value in directories):
+            raise ValueError(f"Required template UI reference missing: {name}")
     for value in directories:
-        if not (data / value).is_dir():
-            raise ValueError(f"Compiler input directory missing: {value}")
+        present = (data / value).is_file() if _ui_reference(value) else (data / value).is_dir()
+        if not present:
+            raise ValueError(f"Compiler input missing or has wrong type: {value}")
     for path in data.rglob("*"):
         relative = path.relative_to(data).as_posix()
         if not any(relative == value or relative.startswith(value + "/") or value.startswith(relative + "/")

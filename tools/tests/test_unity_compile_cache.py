@@ -61,6 +61,11 @@ def environment(tmp_path, monkeypatch):
     forbidden = image_data / "Resources/PackageManager/ProjectTemplates/libcache/Editor.dll"
     forbidden.parent.mkdir(parents=True)
     forbidden.write_bytes(b"template not cached")
+    for template in ("com.unity.template.2d-cross-platform-5.1.0", "com.unity.template.3d-cross-platform-17.0.12"):
+        assemblies = image_data / "Resources/PackageManager/ProjectTemplates/libcache" / template / "ScriptAssemblies"
+        assemblies.mkdir(parents=True)
+        for name in ("UnityEngine.UI.dll", "UnityEditor.UI.dll", "UnityEngine.TestRunner.dll", "UnityEditor.TestRunner.dll", "Assembly-CSharp.dll"):
+            (assemblies / name).write_bytes(f"{template}/{name}".encode())
     (image_data.parent / "Unity").write_bytes(b"editor executable not cached")
     return repo, manifest, image_data
 
@@ -78,6 +83,8 @@ def install_docker(monkeypatch, image_data, failure=None):
             directories += [path.relative_to(image_data).as_posix() for path in image_data.rglob("DotNetSdk") if path.is_dir()]
             directories += [path.relative_to(image_data).as_posix() for path in (image_data / cache.BUILTINS).iterdir()
                             if path.name in cache.PACKAGES or path.name.startswith("com.unity.modules.")]
+            directories += [path.relative_to(image_data).as_posix() for path in (image_data / cache.LIBCACHE).rglob("*.dll")
+                            if path.name in cache.UI_REFERENCES and "ScriptAssemblies" in path.parts]
             return subprocess.CompletedProcess(args, 0, "\n".join(cache.IMAGE_DATA + "/" + value for value in directories))
         if args[1] == "create":
             return subprocess.CompletedProcess(args, 0, "c" * 64 + "\n")
@@ -85,7 +92,11 @@ def install_docker(monkeypatch, image_data, failure=None):
             if failure:
                 raise failure
             relative = args[2].split(cache.IMAGE_DATA + "/", 1)[1]
-            shutil.copytree(image_data / relative, Path(args[3]), symlinks=True)
+            source = image_data / relative
+            if source.is_dir():
+                shutil.copytree(source, Path(args[3]), symlinks=True)
+            else:
+                shutil.copy2(source, Path(args[3]), follow_symlinks=False)
             return subprocess.CompletedProcess(args, 0)
         if args[1] == "rm":
             assert args == ["docker", "rm", "-f", "c" * 64]
@@ -118,7 +129,14 @@ def test_population_is_narrow_preserves_structure_and_modes(environment, monkeyp
     assert stat.S_IMODE((directory / "Data/NetCoreRuntime/dotnet").stat().st_mode) == stat.S_IMODE((source / "NetCoreRuntime/dotnet").stat().st_mode)
     builtin = directory / "Data" / cache.BUILTINS
     assert {path.name for path in builtin.iterdir()} == {"com.unity.modules.ui", "com.unity.modules.imgui", *cache.PACKAGES}
-    assert not (directory / "Data/Resources/PackageManager/ProjectTemplates").exists()
+    templates = directory / "Data" / cache.LIBCACHE
+    copied = {path.relative_to(templates).as_posix() for path in templates.rglob("*.dll")}
+    assert copied == {f"{template}/ScriptAssemblies/{name}"
+                      for template in ("com.unity.template.2d-cross-platform-5.1.0", "com.unity.template.3d-cross-platform-17.0.12")
+                      for name in cache.UI_REFERENCES}
+    assert not (templates / "Editor.dll").exists()
+    for relative in copied:
+        assert (templates / relative).read_bytes() == (source / cache.LIBCACHE / relative).read_bytes()
     assert not (directory / "Unity").exists()
     assert not (directory / "Data/PlaybackEngines").exists()
     assert calls[-1][1] == "rm"
@@ -353,3 +371,49 @@ def test_cleanup_guard_preserves_unrelated_directory(environment, tmp_path):
     with pytest.raises(ValueError, match="Refusing cleanup"):
         cache._remove_staging(unrelated, environment[0] / ".unity-ci-sdk" / VERSION)
     assert (unrelated / "keep").read_text(encoding="utf-8") == "keep"
+
+
+def test_declared_compile_reference_inputs_are_in_cache_scope():
+    source_compiled = {"UnityEngine.TestRunner.dll", "UnityEditor.TestRunner.dll"}
+    ui = {"UnityEngine.UI.dll", "UnityEditor.UI.dll"}
+    profiles = sorted((TOOLS / "compile-refs").rglob("*.txt"))
+    assert profiles
+    seen_libcache = set()
+    for manifest in profiles:
+        for entry in manifest.read_text(encoding="utf-8").splitlines():
+            if entry.startswith("DATA/"):
+                relative = entry[5:]
+                assert any(relative.startswith(root + "/") and cache._allowed_input(root)
+                           for root in cache.DIRECTORIES), (manifest, entry)
+            elif entry.startswith("LIBCACHE/"):
+                name = entry[9:]
+                seen_libcache.add(name)
+                if name in source_compiled:
+                    assert not cache._allowed_input("Resources/PackageManager/ProjectTemplates/libcache/template/ScriptAssemblies/" + name)
+                else:
+                    assert name in ui
+                    assert cache._allowed_input("Resources/PackageManager/ProjectTemplates/libcache/template/ScriptAssemblies/" + name)
+    assert seen_libcache == source_compiled | ui
+
+
+@pytest.mark.parametrize("name", ["UnityEngine.UI.dll", "UnityEditor.UI.dll"])
+def test_missing_declared_ui_reference_never_publishes_cache(environment, monkeypatch, name):
+    repo, manifest, image_data = environment
+    for path in (image_data / cache.LIBCACHE).rglob(name):
+        path.unlink()
+    calls = install_docker(monkeypatch, image_data)
+    with pytest.raises(ValueError, match=f"Required template UI reference missing: {name}"):
+        cache.prepare(manifest, VERSION, Path(f".unity-ci-sdk/{VERSION}"))
+    assert calls[-1][1] == "rm"
+    assert list((repo / ".unity-ci-sdk").iterdir()) == []
+
+
+@pytest.mark.parametrize("entry", [
+    "Resources/PackageManager/ProjectTemplates/libcache/Template/Other/UnityEngine.UI.dll",
+    "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies/Assembly-CSharp.dll",
+    "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies/UnityEditor.TestRunner.dll",
+    "Resources/PackageManager/ProjectTemplates/libcache/Template/ScriptAssemblies",
+    "Resources/PackageManager/ProjectTemplates/libcache/" + "/".join(["nested"] * 9) + "/ScriptAssemblies/UnityEngine.UI.dll",
+])
+def test_template_scope_accepts_only_bounded_exact_ui_files(entry):
+    assert not cache._allowed_input(entry)
