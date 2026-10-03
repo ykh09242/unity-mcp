@@ -344,7 +344,41 @@ unity-mcp status
 
 # List connected Unity instances
 unity-mcp instances
+
+# Retrieve diagnostics as JSON or list instances as a table
+unity-mcp -f json status
+unity-mcp -f table instance list
 ```
+
+`status` JSON includes `success`, `host`, `port`, and `instances`. An unreachable
+server produces `success: false`, an `error`, and exit code 1. If the server is
+healthy but instance discovery fails, it returns exit code 0 with a `warning`
+and an empty `instances` list.
+
+### Selecting a Unity Instance
+
+Use the global `--instance` option before the command, or set
+`UNITY_MCP_INSTANCE` in your shell:
+
+```bash
+# Read the full instance catalog, including identifiers
+unity-mcp -f json instance list
+
+# Target a specific instance for this request
+unity-mcp --instance "MyProject@09abcc51" scene hierarchy
+
+# Inspect the configured selector without contacting the server
+unity-mcp --instance "MyProject@09abcc51" -f json instance current
+```
+
+`instance current` reports the CLI option or environment value; JSON contains
+`{"success": true, "data": {"instance": "MyProject@09abcc51"}}`. With no explicit
+selector, `instance` is `null` and requests use the default instance selection.
+An explicit `--instance` option takes precedence over `UNITY_MCP_INSTANCE`.
+
+`instance set` cannot persist a selection across stateless CLI requests. It
+returns an error and exit code 1 without sending a server request. Use the option
+or environment variable above to select a target.
 
 ### Scene Commands
 
