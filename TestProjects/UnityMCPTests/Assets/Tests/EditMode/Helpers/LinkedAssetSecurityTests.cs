@@ -5,6 +5,8 @@ using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.Animation;
+using MCPForUnity.Editor.Tools.Physics;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -165,6 +167,96 @@ namespace MCPForUnityTests.Editor.Helpers
             }
         }
 
+        [TestCase("material", true, false, false)]
+        [TestCase("material", false, false, false)]
+        [TestCase("material", false, true, true)]
+        [TestCase("clip", true, false, false)]
+        [TestCase("clip", false, false, false)]
+        [TestCase("clip", false, true, true)]
+        [TestCase("controller", true, false, false)]
+        [TestCase("preset", true, false, false)]
+        [TestCase("physics", true, false, false)]
+        [TestCase("physics", false, true, false)]
+        [TestCase("scriptable", true, false, false)]
+        [TestCase("scriptable_modify", true, false, false)]
+        [TestCase("import", true, false, false)]
+        [TestCase("modify", true, false, false)]
+        [TestCase("delete", true, false, false)]
+        public void RemainingAssetMutationConsumersRejectLinkedPaths(
+            string consumer, bool directory, bool broken, bool omitExtension)
+        {
+            string id = "LinkedMutation_" + Guid.NewGuid().ToString("N");
+            string root = Path.Combine(Application.dataPath, id);
+            string outside = Path.Combine(root, "Outside");
+            string extension = consumer == "material" ? ".mat"
+                : consumer == "controller" ? ".controller"
+                : consumer == "physics" ? ".physicMaterial"
+                : consumer == "clip" || consumer == "preset" ? ".anim" : ".asset";
+            string link = Path.Combine(root, directory ? "Linked" : "Probe" + extension);
+            Directory.CreateDirectory(root);
+            if (!broken)
+            {
+                Directory.CreateDirectory(outside);
+                File.WriteAllText(Path.Combine(outside, "Probe" + extension), "outside sentinel");
+            }
+            try
+            {
+                Link(link, directory ? outside : Path.Combine(outside, "Probe" + extension), directory);
+                string relative = "Assets/" + id;
+                bool existingTarget = consumer == "import" || consumer == "modify" || consumer == "delete" || consumer == "scriptable_modify";
+                string assetPath = relative + (directory ? existingTarget ? "/Linked/Probe" : "/Linked/New/Probe" : "/Probe")
+                    + (omitExtension ? "" : extension);
+                string folderPath = relative + "/Linked/New";
+                JObject request;
+                object result;
+                if (consumer == "material")
+                {
+                    request = new JObject { ["action"] = "create", ["materialPath"] = assetPath };
+                    result = ManageMaterial.HandleCommand(request);
+                }
+                else if (consumer == "clip" || consumer == "controller" || consumer == "preset")
+                {
+                    string action = consumer == "controller" ? "controller_create" : consumer == "preset" ? "clip_create_preset" : "clip_create";
+                    LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAnimation\] Action '" + action + @"' failed"));
+                    request = new JObject { ["action"] = action, [consumer == "controller" ? "controllerPath" : "clipPath"] = assetPath, ["preset"] = "bounce" };
+                    result = ManageAnimation.HandleCommand(request);
+                }
+                else if (consumer == "physics")
+                {
+                    LogAssert.Expect(LogType.Error, new Regex(@"\[ManagePhysics\] Action 'create_physics_material' failed"));
+                    request = new JObject { ["action"] = "create_physics_material", ["path"] = directory ? folderPath : relative, ["name"] = "Probe" };
+                    result = ManagePhysics.HandleCommand(request);
+                }
+                else if (consumer == "scriptable" || consumer == "scriptable_modify")
+                {
+                    request = consumer == "scriptable"
+                        ? new JObject { ["action"] = "create", ["folderPath"] = folderPath, ["assetName"] = "Probe", ["typeName"] = typeof(LinkedPathScriptableFixture).FullName }
+                        : new JObject { ["action"] = "modify", ["target"] = new JObject { ["path"] = assetPath }, ["patches"] = new JArray() };
+                    result = ManageScriptableObject.HandleCommand(request);
+                }
+                else
+                {
+                    LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAsset\] Action '" + consumer + @"' failed"));
+                    request = new JObject { ["action"] = consumer, ["path"] = assetPath, ["properties"] = new JObject { ["name"] = "Changed" } };
+                    result = ManageAsset.HandleCommand(request);
+                }
+                Assert.IsFalse(JObject.FromObject(result).Value<bool>("success"));
+                Assert.IsFalse(Directory.Exists(Path.Combine(outside, "New")));
+                if (!broken)
+                    Assert.AreEqual("outside sentinel", File.ReadAllText(Path.Combine(outside, "Probe" + extension)));
+            }
+            finally
+            {
+                if (directory)
+                {
+                    try { Directory.Delete(link); } catch (DirectoryNotFoundException) { }
+                }
+                else File.Delete(link);
+                Directory.Delete(root, true);
+                File.Delete(root + ".meta");
+            }
+        }
+
         [Test]
         public void AbsentFilesAreAllowedOnlyInsideTheRoot()
         {
@@ -173,4 +265,6 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.Throws<InvalidOperationException>(() => SafePathUtility.ResolveWithinRoot(Application.dataPath, "../Outside.cs"));
         }
     }
+
+    public class LinkedPathScriptableFixture : ScriptableObject { public int value; }
 }

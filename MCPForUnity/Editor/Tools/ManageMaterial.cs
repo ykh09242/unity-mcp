@@ -82,6 +82,8 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("materialPath, property, and value are required");
             }
 
+            materialPath = AssetPathUtility.GetContainedAssetPath(materialPath);
+
             // Find material
             var findInstruction = new JObject { ["find"] = materialPath };
             Material mat = ObjectResolver.Resolve(findInstruction, typeof(Material)) as Material;
@@ -105,6 +107,7 @@ namespace MCPForUnity.Editor.Tools
                     if (tex != null && propertyIndex >= 0 &&
                         mat.shader.GetPropertyType(propertyIndex) == UnityEngine.Rendering.ShaderPropertyType.Texture)
                     {
+                        AssetPathUtility.GetFullAssetPath(materialPath);
                         Undo.RecordObject(mat, "Set Material Property");
                         mat.SetTexture(property, tex);
                         EditorUtility.SetDirty(mat);
@@ -118,6 +121,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (success)
             {
+                AssetPathUtility.GetFullAssetPath(materialPath);
                 Undo.RecordObject(mat, "Set Material Property");
                 apply();
                 EditorUtility.SetDirty(mat);
@@ -139,6 +143,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse("materialPath and color are required");
             }
+
+            materialPath = AssetPathUtility.GetContainedAssetPath(materialPath);
 
             var findInstruction = new JObject { ["find"] = materialPath };
             Material mat = ObjectResolver.Resolve(findInstruction, typeof(Material)) as Material;
@@ -176,6 +182,7 @@ namespace MCPForUnity.Editor.Tools
                 if (!MaterialOps.TryPrepareShaderProperty(mat, property,
                     new JArray(color.r, color.g, color.b, color.a), UnityJsonSerializer.Instance, out var apply))
                     return new ErrorResponse($"Property '{property}' does not support a color value.");
+                AssetPathUtility.GetFullAssetPath(materialPath);
                 Undo.RecordObject(mat, "Set Material Color");
                 apply();
                 EditorUtility.SetDirty(mat);
@@ -337,6 +344,8 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return new ErrorResponse($"No material in slot {slot}");
                     }
+                    if (AssetDatabase.Contains(mat))
+                        AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(mat));
                     Undo.RecordObject(mat, "Set Material Color");
                     SetColorProperties(mat, color);
                     EditorUtility.SetDirty(mat);
@@ -372,6 +381,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static void EnsureAssetFolderExists(string assetFolderPath)
         {
+            assetFolderPath = AssetPathUtility.GetContainedAssetPath(assetFolderPath);
             if (AssetDatabase.IsValidFolder(assetFolderPath))
                 return;
 
@@ -381,13 +391,18 @@ namespace MCPForUnity.Editor.Tools
             {
                 string next = current + "/" + parts[i];
                 if (!AssetDatabase.IsValidFolder(next))
+                {
+                    AssetPathUtility.GetFullAssetPath(next);
                     AssetDatabase.CreateFolder(current, parts[i]);
+                }
                 current = next;
             }
         }
 
         private static void SetColorProperties(Material mat, Color color)
         {
+            if (AssetDatabase.Contains(mat))
+                AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(mat));
             bool wrote = false;
             if (mat.HasProperty("_BaseColor"))
             {
@@ -426,7 +441,7 @@ namespace MCPForUnity.Editor.Tools
 
             string slotSuffix = slot == 0 ? string.Empty : $"_slot{slot}";
             string matPath = $"{materialFolder}/{safeName}_{go.GetInstanceIDCompat()}{slotSuffix}_mat.mat";
-            matPath = AssetPathUtility.SanitizeAssetPath(matPath);
+            matPath = AssetPathUtility.GetContainedAssetPath(matPath);
             if (matPath == null)
             {
                 return new ErrorResponse($"Invalid GameObject name '{go.name}' — cannot build a safe material path.");
@@ -475,9 +490,11 @@ namespace MCPForUnity.Editor.Tools
             Material created = null;
             try
             {
+                matPath = AssetPathUtility.GetContainedAssetPath(matPath);
                 if (existing != null)
                 {
                     // Material already exists (e.g. retry) — update its color and re-assign
+                    AssetPathUtility.GetFullAssetPath(matPath);
                     Undo.RecordObject(existing, "Update unique material color");
                     SetColorProperties(existing, color);
                     EditorUtility.SetDirty(existing);
@@ -492,6 +509,7 @@ namespace MCPForUnity.Editor.Tools
                     EnsureAssetFolderExists(materialFolder);
                     existing = created = new Material(shader);
                     SetColorProperties(existing, color);
+                    AssetPathUtility.GetFullAssetPath(matPath);
                     AssetDatabase.CreateAsset(existing, matPath);
                     if (!AssetDatabase.Contains(existing) || AssetDatabase.GetAssetPath(existing) != matPath)
                         return new ErrorResponse($"Failed to create material asset at {matPath}");
@@ -667,12 +685,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("materialPath is required");
             }
 
-            // Safety check: SanitizeAssetPath should guarantee Assets/ prefix
-            // This check catches edge cases where normalization might fail
-            if (!materialPath.StartsWith("Assets/"))
-            {
-                return new ErrorResponse($"Invalid path '{materialPath}'. Path must be within Assets/ folder.");
-            }
+            materialPath = AssetPathUtility.GetContainedAssetPath(materialPath);
 
             Shader shader = RenderPipelineUtility.ResolveShader(shaderName);
             if (shader == null)
@@ -752,6 +765,7 @@ namespace MCPForUnity.Editor.Tools
                     MaterialOps.ApplyProperties(material, properties, UnityJsonSerializer.Instance);
                 }
 
+                AssetPathUtility.GetFullAssetPath(materialPath);
                 AssetDatabase.CreateAsset(material, materialPath);
                 if (!AssetDatabase.Contains(material) || AssetDatabase.GetAssetPath(material) != materialPath)
                     return new ErrorResponse($"Failed to create material asset at {materialPath}");

@@ -18,12 +18,14 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required (e.g. 'Assets/Animations/Walk.anim')" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
             if (clipPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
             if (!clipPath.EndsWith(".anim", StringComparison.OrdinalIgnoreCase))
                 clipPath += ".anim";
+
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
 
             float length = @params["length"]?.ToObject<float>() ?? 1f;
             float frameRate = @params["frameRate"]?.ToObject<float>() ?? 60f;
@@ -55,6 +57,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 settings.stopTime = length;
                 AnimationUtility.SetAnimationClipSettings(clip, settings);
 
+                AssetPathUtility.GetFullAssetPath(clipPath);
                 AssetDatabase.CreateAsset(clip, clipPath);
                 if (!EditorUtility.IsPersistent(clip))
                     return new { success = false, message = $"Failed to create AnimationClip at '{clipPath}'." };
@@ -170,7 +173,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
             if (clipPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -215,6 +218,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             // Use AnimationUtility.SetEditorCurve instead of clip.SetCurve to avoid
             // marking the clip as legacy — legacy clips cannot be used in Mecanim BlendTrees.
+            AssetPathUtility.GetFullAssetPath(clipPath);
             Undo.RecordObject(clip, append ? "Add Animation Curve" : "Set Animation Curve");
             AnimationUtility.SetEditorCurve(clip, binding, curve);
             EditorUtility.SetDirty(clip);
@@ -241,7 +245,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
             if (clipPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -311,6 +315,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             // Use AnimationUtility.SetEditorCurve instead of clip.SetCurve to avoid
             // marking the clip as legacy — legacy clips cannot be used in Mecanim BlendTrees.
+            AssetPathUtility.GetFullAssetPath(clipPath);
             Undo.RecordObject(clip, "Set Vector Curve");
             var bindingX = EditorCurveBinding.FloatCurve(relativePath, componentType, property + suffixes[0]);
             var bindingY = EditorCurveBinding.FloatCurve(relativePath, componentType, property + suffixes[1]);
@@ -359,6 +364,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (legacyAnim != null)
             {
                 var wasLegacy = clip.legacy;
+                AssetPathUtility.GetFullAssetPath(clipPath);
                 SetupLegacyClip(clip);
                 Undo.RecordObject(legacyAnim, "Assign Animation Clip");
                 legacyAnim.clip = clip;
@@ -390,6 +396,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
             {
                 var wasLegacy = clip.legacy;
+                AssetPathUtility.GetFullAssetPath(clipPath);
                 SetupLegacyClip(clip);
                 Undo.RecordObject(go, "Add Animation Component");
                 legacyAnim = Undo.AddComponent<UnityEngine.Animation>(go);
@@ -525,7 +532,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
             if (clipPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -549,6 +556,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             var events = AnimationUtility.GetAnimationEvents(clip).ToList();
             events.Add(animEvent);
+            AssetPathUtility.GetFullAssetPath(clipPath);
             AnimationUtility.SetAnimationEvents(clip, events.ToArray());
 
             EditorUtility.SetDirty(clip);
@@ -576,7 +584,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
             if (clipPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -614,6 +622,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (removedCount == 0)
                 return new { success = false, message = "No matching events found to remove" };
 
+            AssetPathUtility.GetFullAssetPath(clipPath);
             AnimationUtility.SetAnimationEvents(clip, events.ToArray());
             EditorUtility.SetDirty(clip);
             AssetDatabase.SaveAssets();
@@ -633,6 +642,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         private static void CreateFoldersRecursive(string folderPath)
         {
+            folderPath = AssetPathUtility.GetContainedAssetPath(folderPath);
             if (AssetDatabase.IsValidFolder(folderPath))
                 return;
 
@@ -645,6 +655,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             string folderName = Path.GetFileName(folderPath);
             if (!string.IsNullOrEmpty(parent) && !string.IsNullOrEmpty(folderName))
             {
+                AssetPathUtility.GetFullAssetPath(folderPath);
                 AssetDatabase.CreateFolder(parent, folderName);
             }
         }

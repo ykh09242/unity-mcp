@@ -17,12 +17,14 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(clipPath))
                 return new { success = false, message = "'clipPath' is required (e.g. 'Assets/Animations/Bounce.anim')" };
 
-            clipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
             if (clipPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
             if (!clipPath.EndsWith(".anim", StringComparison.OrdinalIgnoreCase))
                 clipPath += ".anim";
+
+            clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
 
             string preset = @params["preset"]?.ToString()?.ToLowerInvariant();
             if (string.IsNullOrEmpty(preset))
@@ -126,6 +128,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                         return new { success = false, message = $"Unknown preset '{preset}'. Valid: {string.Join(", ", ValidPresets)}" };
                 }
 
+                AssetPathUtility.GetFullAssetPath(clipPath);
                 AssetDatabase.CreateAsset(clip, clipPath);
                 if (!EditorUtility.IsPersistent(clip))
                     return new { success = false, message = $"Failed to create AnimationClip at '{clipPath}'." };
@@ -399,6 +402,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         private static void CreateFoldersRecursive(string folderPath)
         {
+            folderPath = AssetPathUtility.GetContainedAssetPath(folderPath);
             if (AssetDatabase.IsValidFolder(folderPath))
                 return;
 
@@ -408,7 +412,10 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             string folderName = Path.GetFileName(folderPath);
             if (!string.IsNullOrEmpty(parent) && !string.IsNullOrEmpty(folderName))
+            {
+                AssetPathUtility.GetFullAssetPath(folderPath);
                 AssetDatabase.CreateFolder(parent, folderName);
+            }
         }
     }
 }

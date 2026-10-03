@@ -142,7 +142,7 @@ namespace MCPForUnity.Editor.Tools
         {
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for reimport.");
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Asset not found at path: {fullPath}");
 
@@ -160,6 +160,7 @@ namespace MCPForUnity.Editor.Tools
                     // if (importer != null) { /* Apply properties */ AssetDatabase.WriteImportSettingsIfDirty(fullPath); }
                 }
 
+                AssetPathUtility.GetFullAssetPath(fullPath);
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 // AssetDatabase.Refresh(); // Usually ImportAsset handles refresh
                 return new SuccessResponse($"Asset '{fullPath}' reimported.", GetAssetData(fullPath));
@@ -342,7 +343,7 @@ namespace MCPForUnity.Editor.Tools
             if (properties == null || !properties.HasValues)
                 return new ErrorResponse("'properties' are required for modify.");
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Asset not found at path: {fullPath}");
 
@@ -354,6 +355,7 @@ namespace MCPForUnity.Editor.Tools
                 if (asset == null)
                     return new ErrorResponse($"Failed to load asset at path: {fullPath}");
 
+                AssetPathUtility.GetFullAssetPath(fullPath);
                 bool modified = false; // Flag to track if any changes were made
 
                 // --- NEW: Handle GameObject / Prefab Component Modification ---
@@ -441,7 +443,9 @@ namespace MCPForUnity.Editor.Tools
                         if (importerModified)
                         {
                             // Importer settings need saving and reimporting
+                            AssetPathUtility.GetFullAssetPath(fullPath);
                             AssetDatabase.WriteImportSettingsIfDirty(fullPath);
+                            AssetPathUtility.GetFullAssetPath(fullPath);
                             AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate); // Reimport to apply changes
                             modified = true; // Mark overall operation as modified
                         }
@@ -466,6 +470,7 @@ namespace MCPForUnity.Editor.Tools
                 // Check if any modification happened (either component or direct asset modification)
                 if (modified)
                 {
+                    AssetPathUtility.GetFullAssetPath(fullPath);
                     // Mark the asset as dirty (important for prefabs/SOs) so Unity knows to save it.
                     EditorUtility.SetDirty(asset);
                     // Save all modified assets to disk.
@@ -500,12 +505,13 @@ namespace MCPForUnity.Editor.Tools
         {
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for delete.");
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Asset not found at path: {fullPath}");
 
             try
             {
+                AssetPathUtility.GetFullAssetPath(fullPath);
                 bool success = AssetDatabase.DeleteAsset(fullPath);
                 if (success)
                 {

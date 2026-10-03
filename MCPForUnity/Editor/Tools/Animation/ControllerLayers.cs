@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -33,6 +33,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 ? AnimatorLayerBlendingMode.Additive
                 : AnimatorLayerBlendingMode.Override;
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Add Layer");
             controller.AddLayer(layerName);
 
@@ -67,7 +68,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -111,6 +112,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return new { success = false, message = $"Cannot remove base layer '{layerName}'" };
             }
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Remove Layer");
             controller.RemoveLayer(layerIndex.Value);
 
@@ -136,7 +138,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -176,6 +178,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return new { success = false, message = $"Layer '{layerName}' not found" };
             }
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Set Layer Weight");
             var layer = layers[layerIndex.Value];
             layer.defaultWeight = weight;

@@ -19,13 +19,15 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (nameErr != null) return nameErr;
 
             string folder = p.Get("path") ?? "Assets/Physics Materials";
-            folder = AssetPathUtility.SanitizeAssetPath(folder);
+            folder = AssetPathUtility.GetContainedAssetPath(folder);
             if (string.IsNullOrEmpty(folder))
                 return new ErrorResponse("Invalid folder path.");
 
             if (dimension != "3d" && dimension != "2d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
 
+            AssetPathUtility.GetFullAssetPath($"{folder}/{name}" +
+                (dimension == "2d" ? ".physicsMaterial2D" : ".physicMaterial"));
             if (!EnsureFolderExists(folder, out string folderError))
                 return new ErrorResponse(folderError);
 
@@ -44,7 +46,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             var pathErr = pathResult.GetOrError(out string path);
             if (pathErr != null) return pathErr;
 
-            path = AssetPathUtility.SanitizeAssetPath(path);
+            path = AssetPathUtility.GetContainedAssetPath(path);
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("Invalid asset path.");
 
@@ -183,7 +185,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             string frictionCombine = p.Get("friction_combine");
             string bounceCombine = p.Get("bounce_combine");
 
-            string assetPath = $"{folder}/{name}.physicMaterial";
+            string assetPath = AssetPathUtility.GetContainedAssetPath($"{folder}/{name}.physicMaterial");
 
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) != null)
                 return new ErrorResponse($"A physics material already exists at '{assetPath}'. Use configure_physics_material to modify it.");
@@ -222,6 +224,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             try
             {
+                AssetPathUtility.GetFullAssetPath(assetPath);
                 AssetDatabase.CreateAsset(mat, assetPath);
                 if (!EditorUtility.IsPersistent(mat))
                     return new ErrorResponse($"Failed to create physics material at '{assetPath}'.");
@@ -255,7 +258,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             float friction = p.GetFloat("friction") ?? 0.4f;
             float bounciness = p.GetFloat("bounciness") ?? 0f;
 
-            string assetPath = $"{folder}/{name}.physicsMaterial2D";
+            string assetPath = AssetPathUtility.GetContainedAssetPath($"{folder}/{name}.physicsMaterial2D");
 
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) != null)
                 return new ErrorResponse($"A 2D physics material already exists at '{assetPath}'. Use configure_physics_material to modify it.");
@@ -268,6 +271,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             try
             {
+                AssetPathUtility.GetFullAssetPath(assetPath);
                 AssetDatabase.CreateAsset(mat, assetPath);
                 if (!EditorUtility.IsPersistent(mat))
                     return new ErrorResponse($"Failed to create 2D physics material at '{assetPath}'.");
@@ -379,6 +383,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
+            AssetPathUtility.GetFullAssetPath(path);
             Undo.RecordObject(mat, "Configure Physics Material");
             foreach (var setter in setters) setter();
             EditorUtility.SetDirty(mat);
@@ -435,6 +440,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
             }
 
+            AssetPathUtility.GetFullAssetPath(path);
             Undo.RecordObject(mat, "Configure Physics Material 2D");
             foreach (var setter in setters) setter();
             EditorUtility.SetDirty(mat);
@@ -559,6 +565,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 string next = current + "/" + parts[i];
                 if (!AssetDatabase.IsValidFolder(next))
                 {
+                    AssetPathUtility.GetFullAssetPath(next);
                     string guid = AssetDatabase.CreateFolder(current, parts[i]);
                     if (string.IsNullOrEmpty(guid))
                     {

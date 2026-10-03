@@ -130,6 +130,20 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(CodeInvalidFolderPath, new { message = folderNormalizeError, folderPath });
             }
 
+            string fileName = assetName.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)
+                ? assetName
+                : assetName + ".asset";
+            string desiredPath;
+            try
+            {
+                normalizedFolder = AssetPathUtility.GetContainedAssetPath(normalizedFolder);
+                desiredPath = AssetPathUtility.GetContainedAssetPath($"{normalizedFolder}/{fileName}");
+            }
+            catch (Exception ex)
+            {
+                return new ErrorResponse(CodeInvalidFolderPath, new { message = ex.Message, folderPath });
+            }
+
             var resolvedType = ResolveType(typeName);
             if (resolvedType == null || !typeof(ScriptableObject).IsAssignableFrom(resolvedType)
                 || resolvedType.IsAbstract || resolvedType.ContainsGenericParameters)
@@ -142,11 +156,13 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(CodeInvalidFolderPath, new { message = folderError, folderPath = normalizedFolder });
             }
 
-            string fileName = assetName.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)
-                ? assetName
-                : assetName + ".asset";
-            string desiredPath = $"{normalizedFolder.TrimEnd('/')}/{fileName}";
             string finalPath = overwrite ? desiredPath : AssetDatabase.GenerateUniqueAssetPath(desiredPath);
+
+            try { finalPath = AssetPathUtility.GetContainedAssetPath(finalPath); }
+            catch (Exception ex)
+            {
+                return new ErrorResponse(CodeAssetCreateFailed, new { message = ex.Message, path = finalPath });
+            }
 
             ScriptableObject instance;
             try
@@ -172,6 +188,7 @@ namespace MCPForUnity.Editor.Tools
                     if (existingAsset != null && existingAsset.GetType() == resolvedType)
                     {
                         // Preserve GUID by overwriting existing asset data in-place
+                        AssetPathUtility.GetFullAssetPath(finalPath);
                         EditorUtility.CopySerialized(instance, existingAsset);
                         
                         // Fix for "Main Object Name does not match filename" warning:
@@ -190,6 +207,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         // Type mismatch or not a ScriptableObject - must delete and recreate to change type, losing GUID
                         // (Or we could warn, but overwrite usually implies replacing)
+                        AssetPathUtility.GetFullAssetPath(finalPath);
                         AssetDatabase.DeleteAsset(finalPath);
                     }
                 }
@@ -198,6 +216,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // Ensure the new instance has the correct name before creating asset to avoid warnings
                     instance.name = Path.GetFileNameWithoutExtension(finalPath);
+                    AssetPathUtility.GetFullAssetPath(finalPath);
                     AssetDatabase.CreateAsset(instance, finalPath);
                 }
             }
@@ -212,11 +231,13 @@ namespace MCPForUnity.Editor.Tools
 
             if (patchesToken is JArray patches && patches.Count > 0)
             {
+                AssetPathUtility.GetFullAssetPath(finalPath);
                 var patchApply = ApplyPatches(instance, patches);
                 patchResults = patchApply.results;
                 warnings.AddRange(patchApply.warnings);
             }
 
+            AssetPathUtility.GetFullAssetPath(finalPath);
             EditorUtility.SetDirty(instance);
             AssetDatabase.SaveAssets();
 
@@ -235,7 +256,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleModify(JObject @params)
         {
-            if (!TryResolveTarget(@params["target"], out var target, out var targetPath, out var targetGuid, out var err))
+            bool dryRun = @params["dryRun"]?.ToObject<bool?>() ?? @params["dry_run"]?.ToObject<bool?>() ?? false;
+            if (!TryResolveTarget(@params["target"], !dryRun, out var target, out var targetPath, out var targetGuid, out var err))
             {
                 return err;
             }
@@ -252,7 +274,6 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Phase 5: Dry-run mode - validate patches without applying
-            bool dryRun = @params["dryRun"]?.ToObject<bool?>() ?? @params["dry_run"]?.ToObject<bool?>() ?? false;
             
             if (dryRun)
             {
@@ -271,6 +292,11 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
+            try { AssetPathUtility.GetFullAssetPath(targetPath); }
+            catch (Exception ex)
+            {
+                return new ErrorResponse(CodeInvalidParams, new { message = ex.Message, targetPath, targetGuid });
+            }
             var (results, warnings) = ApplyPatches(target, patches);
 
             return new SuccessResponse(
@@ -515,6 +541,7 @@ namespace MCPForUnity.Editor.Tools
                 // Array resize should be applied immediately so later paths resolve.
                 if (string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase) && changed)
                 {
+                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
                     so.ApplyModifiedProperties();
                     so.Update();
                 }
@@ -522,6 +549,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (anyChanged)
             {
+                AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
                 so.ApplyModifiedProperties();
                 EditorUtility.SetDirty(target);
                 AssetDatabase.SaveAssets();
@@ -630,6 +658,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 // Need to grow the array
                 arrayProp.arraySize = targetIndex + 1;
+                AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
                 so.ApplyModifiedProperties();
                 so.Update();
                 resized = true;
@@ -848,6 +877,7 @@ namespace MCPForUnity.Editor.Tools
                     
                     // Get the SerializedObject and apply so we can access elements
                     var so = prop.serializedObject;
+                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
                     so.ApplyModifiedProperties();
                     so.Update();
 
@@ -873,6 +903,7 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
 
+                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
                     so.ApplyModifiedProperties();
 
                     if (errors.Count > 0)
@@ -913,6 +944,7 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
 
+                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
                     so.ApplyModifiedProperties();
 
                     if (errors.Count > 0)
@@ -1352,7 +1384,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static bool TryResolveTarget(JToken targetToken, out UnityEngine.Object target, out string targetPath, out string targetGuid, out object error)
+        private static bool TryResolveTarget(JToken targetToken, bool writable, out UnityEngine.Object target, out string targetPath, out string targetGuid, out object error)
         {
             target = null;
             targetPath = null;
@@ -1382,6 +1414,16 @@ namespace MCPForUnity.Editor.Tools
             {
                 error = new ErrorResponse(CodeTargetNotFound, new { message = "Could not resolve target path.", guid, path });
                 return false;
+            }
+
+            if (writable)
+            {
+                try { resolvedPath = AssetPathUtility.GetContainedAssetPath(resolvedPath); }
+                catch (Exception ex)
+                {
+                    error = new ErrorResponse(CodeInvalidParams, new { message = ex.Message, guid, path });
+                    return false;
+                }
             }
 
             var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(resolvedPath);
@@ -1461,6 +1503,7 @@ namespace MCPForUnity.Editor.Tools
                 string next = current + "/" + parts[i];
                 if (!AssetDatabase.IsValidFolder(next))
                 {
+                    AssetPathUtility.GetFullAssetPath(next);
                     string guid = AssetDatabase.CreateFolder(current, parts[i]);
                     if (string.IsNullOrEmpty(guid))
                     {

@@ -15,7 +15,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -39,6 +39,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             var stateMachine = layers[layerIndex].stateMachine;
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Create Blend Tree 1D");
             var state = stateMachine.AddState(stateName);
             var blendTree = new BlendTree
@@ -76,7 +77,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -115,6 +116,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             var stateMachine = layers[layerIndex].stateMachine;
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Create Blend Tree 2D");
             var state = stateMachine.AddState(stateName);
             var blendTree = new BlendTree
@@ -154,7 +156,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
@@ -206,6 +208,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 if (!TryGetFiniteFloat(thresholdToken, out float threshold))
                     return new { success = false, message = "'threshold' must be a finite number for 1D blend trees" };
 
+                AssetPathUtility.GetFullAssetPath(controllerPath);
                 Undo.RecordObject(blendTree, "Add Blend Tree Child");
                 blendTree.AddChild(clip, threshold);
 
@@ -243,6 +246,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return new { success = false, message = "'position' must contain finite numbers for 2D blend trees" };
                 Vector2 position = new Vector2(posX, posY);
 
+                AssetPathUtility.GetFullAssetPath(controllerPath);
                 Undo.RecordObject(blendTree, "Add Blend Tree Child");
                 blendTree.AddChild(clip, position);
 

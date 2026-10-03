@@ -18,12 +18,14 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(controllerPath))
                 return new { success = false, message = "'controllerPath' is required (e.g. 'Assets/Animations/Player.controller')" };
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
             if (controllerPath == null)
                 return new { success = false, message = "Invalid asset path" };
 
             if (!controllerPath.EndsWith(".controller", StringComparison.OrdinalIgnoreCase))
                 controllerPath += ".controller";
+
+            controllerPath = AssetPathUtility.GetContainedAssetPath(controllerPath);
 
             if (AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
                 || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets)))
@@ -33,6 +35,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
                 CreateFoldersRecursive(dir);
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
             if (controller == null)
                 return new { success = false, message = $"Failed to create AnimatorController at '{controllerPath}'." };
@@ -104,6 +107,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             float speed = @params["speed"]?.ToObject<float>() ?? 1f;
             bool isDefault = @params["isDefault"]?.ToObject<bool>() ?? false;
 
+            AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(controller));
             var state = rootStateMachine.AddState(stateName);
             if (clip != null)
                 state.motion = clip;
@@ -213,6 +217,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             AnimatorStateTransition transition;
+            AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(controller));
             if (isAnyState)
             {
                 transition = rootStateMachine.AddAnyStateTransition(toState);
@@ -299,6 +304,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                         break;
                 }
             }
+            AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(controller));
             controller.AddParameter(paramName, paramType);
             if (defaultValue != null)
             {
@@ -331,7 +337,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         public static object GetInfo(JObject @params)
         {
-            var controller = LoadController(@params);
+            var controller = LoadController(@params, writable: false);
             if (controller == null)
                 return ControllerNotFoundError(@params);
 
@@ -418,7 +424,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         public static object AssignToGameObject(JObject @params)
         {
-            var controller = LoadController(@params);
+            var controller = LoadController(@params, writable: false);
             if (controller == null)
                 return ControllerNotFoundError(@params);
 
@@ -451,13 +457,15 @@ namespace MCPForUnity.Editor.Tools.Animation
             };
         }
 
-        private static AnimatorController LoadController(JObject @params)
+        private static AnimatorController LoadController(JObject @params, bool writable = true)
         {
             string controllerPath = @params["controllerPath"]?.ToString();
             if (string.IsNullOrEmpty(controllerPath))
                 return null;
 
-            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            controllerPath = writable
+                ? AssetPathUtility.GetContainedAssetPath(controllerPath)
+                : AssetPathUtility.SanitizeAssetPath(controllerPath);
             if (controllerPath == null)
                 return null;
 
@@ -472,6 +480,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
         private static void CreateFoldersRecursive(string folderPath)
         {
+            folderPath = AssetPathUtility.GetContainedAssetPath(folderPath);
             if (AssetDatabase.IsValidFolder(folderPath))
                 return;
 
@@ -481,7 +490,10 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             string folderName = Path.GetFileName(folderPath);
             if (!string.IsNullOrEmpty(parent) && !string.IsNullOrEmpty(folderName))
+            {
+                AssetPathUtility.GetFullAssetPath(folderPath);
                 AssetDatabase.CreateFolder(parent, folderName);
+            }
         }
     }
 }
