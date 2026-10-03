@@ -19,6 +19,57 @@ namespace MCPForUnityTests.Editor.Tools
         private class ExpensivePayload { public object Data => throw new InvalidOperationException("Do not serialize status payload."); }
 
         [Test]
+        public void InvalidToolNameRejectsLargeParametersWithoutCloningThem()
+        {
+            JObject Request(int valueCount)
+            {
+                var values = new JArray();
+                for (int index = 0; index < valueCount; index++) values.Add(index);
+                return new JObject { ["commands"] = new JArray(new JObject {
+                    ["tool"] = "", ["params"] = new JObject { ["value"] = values } }) };
+            }
+            var small = Request(0);
+            var large = Request(50000);
+            BatchExecute.HandleCommand(small).GetAwaiter().GetResult();
+            BatchExecute.HandleCommand(large).GetAwaiter().GetResult();
+
+            long Allocations(JObject request)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < 3; index++)
+                    BatchExecute.HandleCommand(request).GetAwaiter().GetResult();
+                return (GC.GetAllocatedBytesForCurrentThread() - before) / 3;
+            }
+
+            long extraBytes = Allocations(large) - Allocations(small);
+            Assert.Less(extraBytes, 262144L, "Rejected params should not allocate a clone proportional to their size.");
+            var response = JObject.FromObject(BatchExecute.HandleCommand(large).GetAwaiter().GetResult());
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual(1, response.SelectToken("data.callFailureCount").Value<int>());
+            StringAssert.Contains("non-empty", response.SelectToken("data.results[0].error").ToString());
+            Assert.AreEqual(50000, ((JArray)large.SelectToken("commands[0].params.value")).Count);
+        }
+
+        [Test]
+        public void NormalizationPreservesNestedKeysAndIsolatesOriginalInput()
+        {
+            var source = new JObject {
+                ["search_method"] = "by_name",
+                ["value"] = new JObject { ["m_PersistentCalls"] = new JArray(1, 2) }
+            };
+            var before = source.DeepClone();
+            var normalized = (JObject)typeof(BatchExecute)
+                .GetMethod("NormalizeParameterKeys", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { source });
+            Assert.AreEqual("by_name", normalized.Value<string>("searchMethod"));
+            Assert.IsNull(normalized["search_method"]);
+            Assert.IsNotNull(normalized.SelectToken("value.m_PersistentCalls"));
+            Assert.IsTrue(JToken.DeepEquals(source["value"], normalized["value"]));
+            ((JArray)normalized.SelectToken("value.m_PersistentCalls")).Add(3);
+            Assert.IsTrue(JToken.DeepEquals(before, source), "Mutating forwarded params must not mutate the original batch input.");
+        }
+
+        [Test]
         public void ExplicitBooleanStatusAndRawPayloadsAreClassifiedWithoutSerialization()
         {
             Assert.IsFalse(Classify(new { success = false, message = "failed" }));

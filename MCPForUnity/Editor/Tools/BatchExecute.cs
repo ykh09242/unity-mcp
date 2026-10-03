@@ -92,8 +92,6 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 string toolName = commandObj["tool"]?.ToString();
-                var rawParams = commandObj["params"] as JObject ?? new JObject();
-                var commandParams = NormalizeParameterKeys(rawParams);
 
                 if (string.IsNullOrWhiteSpace(toolName))
                 {
@@ -146,6 +144,8 @@ namespace MCPForUnity.Editor.Tools
 
                 try
                 {
+                    var rawParams = commandObj["params"] as JObject ?? new JObject();
+                    var commandParams = NormalizeParameterKeys(rawParams);
                     var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams).ConfigureAwait(true);
                     bool callSucceeded = DetermineCallSucceeded(result);
                     if (callSucceeded)
