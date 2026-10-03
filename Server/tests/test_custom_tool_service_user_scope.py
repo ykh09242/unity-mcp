@@ -1,12 +1,16 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastmcp import FastMCP
 
 from core.config import config
 from models.models import MCPResponse, ToolDefinitionModel
 from services.custom_tool_service import CustomToolService
 from services.resources.custom_tools import get_custom_tools
 from services.tools.execute_custom_tool import execute_custom_tool
+from transport.plugin_hub import PluginHub
+from transport.plugin_registry import PluginRegistry
+import services.custom_tool_service as module
 
 
 class _DummyMcp:
@@ -60,6 +64,71 @@ async def test_get_tool_definition_threads_user_id_to_plugin_hub():
         await service.get_tool_definition("project-hash", "my_tool", user_id="user-1")
 
     mock_get.assert_awaited_once_with("project-hash", "my_tool", user_id="user-1")
+
+
+@pytest.mark.asyncio
+async def test_same_named_tools_use_selected_projects_polling_metadata(monkeypatch):
+    # Given: projects A and B advertise different runtime metadata for one name.
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    registry = PluginRegistry()
+    monkeypatch.setattr(PluginHub, "_registry", registry)
+    service = CustomToolService(FastMCP("project-runtime-metadata"))
+    first = ToolDefinitionModel(name="fixture_job", requires_polling=False)
+    selected = ToolDefinitionModel(name="fixture_job", requires_polling=True,
+                                   poll_action="check_b", max_poll_seconds=30)
+    for session, project, project_hash, definition in [
+        ("a-session", "A", "a-hash", first), ("b-session", "B", "b-hash", selected),
+    ]:
+        await registry.register(session, project, project_hash, "6000.0")
+        await registry.register_tools_for_session(session, [definition])
+        service.register_global_tools([definition])
+    monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
+    send = AsyncMock(side_effect=[
+        {"_mcp_status": "pending", "data": {"job_id": "b-job"}},
+        {"_mcp_status": "complete", "data": {"job_id": "b-job", "value": 42}},
+    ])
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+
+    # When: the second project's tool executes after the first global registration.
+    result = await service.execute_tool("b-hash", "fixture_job", "B@b-hash", {"action": "start"})
+
+    # Then: B's polling contract determines when and how the result is returned.
+    assert result.data == {"job_id": "b-job", "value": 42}
+    assert send.await_count == 2
+    assert send.call_args.args[3] == {"action": "check_b", "job_id": "b-job"}
+    assert service._active_polls == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_project_definition_keeps_precedence(monkeypatch):
+    # Given: a project explicitly registers an override for a global tool name.
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    service = CustomToolService(_DummyMcp())
+    definition = ToolDefinitionModel(name="fixture_job", requires_polling=True)
+    service._register_tool("project", definition)
+    lookup = AsyncMock()
+    monkeypatch.setattr(PluginHub, "get_tool_definition", lookup)
+    # When: runtime metadata is resolved for that project.
+    result = await service.get_tool_definition("project", "fixture_job")
+    # Then: the explicit project registration remains authoritative.
+    assert result is definition
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_global_definition_remains_fallback_for_missing_project_tool(monkeypatch):
+    # Given: a global-only tool exists without a selected project's definition.
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    service = CustomToolService(FastMCP("global-runtime-fallback"))
+    definition = ToolDefinitionModel(name="fixture_global")
+    service.register_global_tools([definition])
+    lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(PluginHub, "get_tool_definition", lookup)
+    # When: runtime metadata is resolved for an unregistered project.
+    result = await service.get_tool_definition("project", "fixture_global", user_id="user-a")
+    # Then: the global tool remains usable after checking the selected project.
+    assert result is definition
+    lookup.assert_awaited_once_with("project", "fixture_global", user_id="user-a")
 
 
 @pytest.mark.asyncio
