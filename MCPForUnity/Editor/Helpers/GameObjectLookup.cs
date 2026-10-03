@@ -125,7 +125,7 @@ namespace MCPForUnity.Editor.Helpers
                     break;
 
                 case SearchMethod.ByPath:
-                    var paths = SearchByPath(searchTerm, includeInactive);
+                    var paths = SearchByPath(searchTerm, includeInactive, maxResults);
                     if (maxResults > 0)
                         paths = paths.Take(maxResults);
                     results.AddRange(paths);
@@ -158,7 +158,7 @@ namespace MCPForUnity.Editor.Helpers
             return matching.Select(go => go.GetInstanceIDCompat());
         }
 
-        private static IEnumerable<int> SearchByPath(string path, bool includeInactive)
+        private static IEnumerable<int> SearchByPath(string path, bool includeInactive, int maxResults)
         {
             // Check Prefab Stage first - GameObject.Find() doesn't work in Prefab Stage
             var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
@@ -199,6 +199,19 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     yield return found.GetInstanceIDCompat();
                 }
+                if (maxResults == 1)
+                    yield break;
+
+                // Preserve Unity's first match for single-target callers. Multi-result
+                // searches also collect active matches in other loaded scenes.
+                var additionalIds = UnityFindObjectsCompat.FindAll<GameObject>()
+                    .Where(go => go != found && MatchesPath(go, path))
+                    .Select(go => go.GetInstanceIDCompat())
+                    .OrderBy(id => id);
+                foreach (int id in additionalIds)
+                {
+                    yield return id;
+                }
             }
         }
 
@@ -207,10 +220,10 @@ namespace MCPForUnity.Editor.Helpers
             GameObject[] taggedObjects;
             try
             {
-                if (includeInactive)
+                if (includeInactive || PrefabStageUtility.GetCurrentPrefabStage() != null)
                 {
-                    // FindGameObjectsWithTag doesn't find inactive, so we need to iterate all
-                    var allObjects = GetAllSceneObjects(true);
+                    // The global tag API doesn't honor the current prefab-stage context.
+                    var allObjects = GetAllSceneObjects(includeInactive);
                     taggedObjects = allObjects.Where(go => go.CompareTag(tag)).ToArray();
                 }
                 else
@@ -353,7 +366,7 @@ namespace MCPForUnity.Editor.Helpers
             var goPath = GetGameObjectPath(go);
             if (path.StartsWith("/", StringComparison.Ordinal))
                 return goPath == path.Substring(1);
-            return goPath == path || goPath.EndsWith("/" + path);
+            return goPath == path || goPath.EndsWith("/" + path, StringComparison.Ordinal);
         }
 
         /// <summary>
