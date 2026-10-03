@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Serialization;
 using MCPForUnity.Editor.Helpers;
 using UnityEditor;
 using UnityEngine;
@@ -34,13 +36,57 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 // Use the shared Unity serializer with custom converters
-                return token.ToObject(targetType, UnityJsonSerializer.Instance);
+                JToken input = token is JArray && HasNullableUnityArrayTarget(targetType, null)
+                    ? NormalizeNullableUnityArrays(token, targetType)
+                    : token;
+                return input.ToObject(targetType, UnityJsonSerializer.Instance);
             }
             catch (Exception ex)
             {
                 McpLog.Error($"Error converting token to {targetType.FullName}: {ex.Message}\nToken: {token.ToString(Formatting.None)}");
                 throw;
             }
+        }
+
+        private static bool IsNullableUnityArrayType(Type type)
+        {
+            Type underlying = Nullable.GetUnderlyingType(type);
+            return underlying == typeof(Vector2) || underlying == typeof(Vector3)
+                || underlying == typeof(Vector4) || underlying == typeof(Quaternion);
+        }
+
+        private static bool HasNullableUnityArrayTarget(Type type, HashSet<Type> visited)
+        {
+            if (IsNullableUnityArrayType(type)) return true;
+            // Multidimensional arrays retain their existing Json.NET handling.
+            if (type.IsArray && type.GetArrayRank() != 1) return false;
+            var contract = UnityJsonSerializer.Instance.ContractResolver.ResolveContract(type) as JsonArrayContract;
+            if (contract?.CollectionItemType == null) return false;
+            visited ??= new HashSet<Type>();
+            return visited.Add(type) && HasNullableUnityArrayTarget(contract.CollectionItemType, visited);
+        }
+
+        private static JToken NormalizeNullableUnityArrays(JToken token, Type targetType)
+        {
+            if (token is not JArray array) return token;
+            if (IsNullableUnityArrayType(targetType))
+            {
+                // Reuse the existing converter's length/numeric rules, then leave
+                // nullable object/null/reference metadata handling to Json.NET.
+                object value = token.ToObject(Nullable.GetUnderlyingType(targetType), UnityJsonSerializer.Instance);
+                return JToken.FromObject(value, UnityJsonSerializer.Instance);
+            }
+
+            var contract = (JsonArrayContract)UnityJsonSerializer.Instance.ContractResolver.ResolveContract(targetType);
+            JArray normalized = null;
+            for (int i = 0; i < array.Count; i++)
+            {
+                JToken item = NormalizeNullableUnityArrays(array[i], contract.CollectionItemType);
+                if (ReferenceEquals(item, array[i])) continue;
+                normalized ??= (JArray)array.DeepClone();
+                normalized[i] = item;
+            }
+            return normalized ?? token;
         }
 
         /// <summary>

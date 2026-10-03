@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
@@ -9,6 +10,15 @@ using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    public class NullableUnityValueProbe : MonoBehaviour
+    {
+        public Vector2? vector2;
+        public Vector3? vector3;
+        public Vector4? vector4;
+        public Quaternion? rotation { get; set; }
+        public List<Vector3?> vectors;
+    }
+
     /// <summary>
     /// Tests to reproduce issue #654: PropertyConversion crash causing dispatcher unavailability
     /// while telemetry continues reporting success.
@@ -31,6 +41,73 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UnityEngine.Object.DestroyImmediate(testGameObject);
             }
+        }
+
+        private JObject SetNullableValue(string property, JToken value)
+        {
+            return JObject.FromObject(ManageComponents.HandleCommand(new JObject
+            {
+                ["action"] = "set_property",
+                ["target"] = testGameObject.name,
+                ["componentType"] = typeof(NullableUnityValueProbe).FullName,
+                ["property"] = property,
+                ["value"] = value
+            }));
+        }
+
+        [TestCase("vector2", "[1,2]", "{\"x\":1.0,\"y\":2.0}")]
+        [TestCase("vector3", "[1,2,3]", "{\"x\":1.0,\"y\":2.0,\"z\":3.0}")]
+        [TestCase("vector4", "[1,2,3,4]", "{\"x\":1.0,\"y\":2.0,\"z\":3.0,\"w\":4.0}")]
+        [TestCase("rotation", "[1,2,3,4]", "{\"x\":1.0,\"y\":2.0,\"z\":3.0,\"w\":4.0}")]
+        public void ManageComponents_NullableUnityArray_AssignsActualValue(string member, string input, string expected)
+        {
+            var component = testGameObject.AddComponent<NullableUnityValueProbe>();
+            var response = SetNullableValue(member, JToken.Parse(input));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            object value = member == "rotation"
+                ? (object)component.rotation
+                : typeof(NullableUnityValueProbe).GetField(member).GetValue(component);
+            Assert.IsTrue(JToken.DeepEquals(JToken.Parse(expected), JToken.FromObject(value, UnityJsonSerializer.Instance)));
+        }
+
+        [Test]
+        public void ManageComponents_NullableCollection_PreservesNullAndPartialObjects()
+        {
+            var component = testGameObject.AddComponent<NullableUnityValueProbe>();
+            var input = JToken.Parse("[null,[1,2,3],{\"x\":4}]");
+            var before = input.DeepClone();
+            var response = SetNullableValue("vectors", input);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(3, component.vectors.Count);
+            Assert.IsNull(component.vectors[0]);
+            Assert.AreEqual(new Vector3(1, 2, 3), component.vectors[1].Value);
+            Assert.AreEqual(new Vector3(4, 0, 0), component.vectors[2].Value);
+            Assert.IsTrue(JToken.DeepEquals(before, input), "Conversion must preserve the caller's payload.");
+        }
+
+        [Test]
+        public void ManageComponents_NullableObjectAndNull_RetainExistingForms()
+        {
+            var component = testGameObject.AddComponent<NullableUnityValueProbe>();
+            Assert.IsTrue(SetNullableValue("vector3", JObject.Parse("{\"x\":7}")).Value<bool>("success"));
+            Assert.AreEqual(new Vector3(7, 0, 0), component.vector3.Value);
+            Assert.IsTrue(SetNullableValue("vector3", JValue.CreateNull()).Value<bool>("success"));
+            Assert.IsNull(component.vector3);
+            var references = JToken.Parse("[{\"$id\":\"1\",\"x\":1,\"y\":2,\"z\":3},{\"$ref\":\"1\"}]");
+            Assert.IsTrue(SetNullableValue("vectors", references).Value<bool>("success"));
+            Assert.AreEqual(new Vector3(1, 2, 3), component.vectors[0].Value);
+            Assert.AreEqual(component.vectors[0], component.vectors[1], "Existing Json.NET references must still resolve.");
+        }
+
+        [TestCase("[1,2]")]
+        [TestCase("12")]
+        public void ManageComponents_InvalidNullableValue_PreservesPreviousValue(string input)
+        {
+            var component = testGameObject.AddComponent<NullableUnityValueProbe>();
+            component.vector3 = new Vector3(7, 8, 9);
+            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Nullable"));
+            Assert.IsFalse(SetNullableValue("vector3", JToken.Parse(input)).Value<bool>("success"));
+            Assert.AreEqual(new Vector3(7, 8, 9), component.vector3.Value);
         }
 
         /// <summary>
