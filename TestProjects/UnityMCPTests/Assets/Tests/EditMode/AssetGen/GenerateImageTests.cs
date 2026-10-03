@@ -4,11 +4,13 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using MCPForUnity.Editor.Tools.AssetGen;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnityTests.Editor.AssetGen
@@ -232,6 +234,56 @@ namespace MCPForUnityTests.Editor.AssetGen
                 StringAssert.DoesNotContain("flux-2-pro", post.Url);
             }
             finally { AssetGenPrefs.SetSelectedModel("image", "fal", ""); }
+        }
+
+        [TestCase(true, true, true)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(false, false, true)]
+        public void ImageImport_ValidPng_AppliesSettingsAndProducesRequestedAsset(bool asSprite, bool transparent, bool isColor)
+        {
+            const string path = TestFolder + "/usable.png";
+            // Complete one-pixel RGBA PNG, including valid image data and checksums.
+            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP8A//8G/gL+712xfAAAAABJRU5ErkJggg==");
+            WriteProjectFile(path, png);
+            UnityEditor.AssetDatabase.Refresh();
+            var job = new AssetGenJob { State = AssetGenJobState.Importing };
+
+            Assert.AreSame(job, ImageImportPipeline.ImportInto(job, path, asSprite, transparent, isColor));
+            Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
+            Assert.AreEqual(path, job.AssetPath);
+            Assert.IsNotEmpty(job.AssetGuid);
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Texture2D>(path));
+            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            Assert.IsNotNull(importer);
+            Assert.AreEqual(asSprite ? TextureImporterType.Sprite : TextureImporterType.Default, importer.textureType);
+            Assert.AreEqual(transparent, importer.alphaIsTransparency);
+            Assert.AreEqual(isColor, importer.sRGBTexture);
+            if (asSprite)
+            {
+                Assert.AreEqual(SpriteImportMode.Single, importer.spriteImportMode);
+                Assert.IsFalse(importer.mipmapEnabled);
+                Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Sprite>(path));
+            }
+        }
+
+        [Test]
+        public void ImageImport_FolderWithImageExtension_DoesNotPublishUsableAsset()
+        {
+            const string path = TestFolder + "/folder.png";
+            Directory.CreateDirectory(AssetGenPaths.ToAbsolute(path));
+            AssetDatabase.Refresh();
+            Assert.IsTrue(AssetDatabase.IsValidFolder(path), "The control must be a registered folder.");
+            Assert.IsNotEmpty(AssetDatabase.AssetPathToGUID(path), "A GUID alone must not indicate a usable image.");
+            var job = new AssetGenJob { State = AssetGenJobState.Importing };
+
+            ImageImportPipeline.ImportInto(job, path, true, true, true);
+
+            Assert.AreEqual(AssetGenJobState.Failed, job.State);
+            StringAssert.Contains("TextureImporter", job.Error);
+            Assert.IsNull(job.AssetPath);
+            Assert.IsNull(job.AssetGuid);
+            Assert.IsTrue(Directory.Exists(AssetGenPaths.ToAbsolute(path)));
         }
 
         [Test]

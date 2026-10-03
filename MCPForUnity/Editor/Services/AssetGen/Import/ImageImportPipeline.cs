@@ -3,6 +3,7 @@ using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnity.Editor.Services.AssetGen.Import
 {
@@ -29,18 +30,24 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
                 AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate);
 
-                if (AssetImporter.GetAtPath(rel) is TextureImporter importer)
+                var importer = AssetImporter.GetAtPath(rel) as TextureImporter;
+                if (importer == null)
+                    return Fail(job, "Unity did not create a TextureImporter for the generated image.");
+
+                importer.textureType = asSprite ? TextureImporterType.Sprite : TextureImporterType.Default;
+                importer.alphaIsTransparency = transparent;
+                importer.sRGBTexture = isColor; // color maps sRGB; normal/roughness/metallic would be linear
+                if (asSprite)
                 {
-                    importer.textureType = asSprite ? TextureImporterType.Sprite : TextureImporterType.Default;
-                    importer.alphaIsTransparency = transparent;
-                    importer.sRGBTexture = isColor; // color maps sRGB; normal/roughness/metallic would be linear
-                    if (asSprite)
-                    {
-                        importer.spriteImportMode = SpriteImportMode.Single;
-                        importer.mipmapEnabled = false;
-                    }
-                    importer.SaveAndReimport();
+                    importer.spriteImportMode = SpriteImportMode.Single;
+                    importer.mipmapEnabled = false;
                 }
+                importer.SaveAndReimport();
+
+                if (AssetDatabase.LoadAssetAtPath<Texture2D>(rel) == null)
+                    return Fail(job, "Unity did not produce a usable Texture2D from the generated image after reimport.");
+                if (asSprite && AssetDatabase.LoadAssetAtPath<Sprite>(rel) == null)
+                    return Fail(job, "Unity did not produce the requested Sprite from the generated image after reimport.");
 
                 job.AssetPath = rel;
                 job.AssetGuid = AssetDatabase.AssetPathToGUID(rel);
