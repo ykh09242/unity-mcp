@@ -7,7 +7,6 @@ using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.GameObjects;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 using static MCPForUnityTests.Editor.TestUtilities;
@@ -74,7 +73,7 @@ namespace MCPForUnityTests.Editor.Tools
                 int instanceId = result["data"]?["instanceID"]?.Value<int>() ?? 0;
                 if (instanceId != 0)
                 {
-                    var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+                    var go = GameObjectLookup.FindById(instanceId);
                     if (go != null) _createdObjects.Add(go);
                 }
             }
@@ -103,7 +102,7 @@ namespace MCPForUnityTests.Editor.Tools
                 int instanceId = result["data"]?["instanceID"]?.Value<int>() ?? 0;
                 if (instanceId != 0)
                 {
-                    var go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+                    var go = GameObjectLookup.FindById(instanceId);
                     if (go != null) _createdObjects.Add(go);
                 }
             }

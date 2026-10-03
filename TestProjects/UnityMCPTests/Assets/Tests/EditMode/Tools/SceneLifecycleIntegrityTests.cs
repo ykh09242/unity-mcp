@@ -113,8 +113,8 @@ namespace MCPForUnityTests.Editor.Tools
         private static string SystemPath(string assetPath) => Path.Combine(Application.dataPath, assetPath.Substring("Assets/".Length));
         private static JObject Call(JObject request) => JObject.FromObject(ManageScene.HandleCommand(request));
         private static void Success(JObject response) => Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-        private static int[] Handles() => Enumerable.Range(0, SceneManager.sceneCount).Select(i => SceneManager.GetSceneAt(i).handle).ToArray();
-        private static int SceneIndex(Scene scene) => Array.IndexOf(Handles(), scene.handle);
+        private static Scene[] LoadedScenes() => Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray();
+        private static int SceneIndex(Scene scene) => Array.IndexOf(LoadedScenes(), scene);
         private JObject Select(string action) => new JObject { ["action"] = action, ["sceneName"] = sceneName, ["scenePath"] = secondPath };
 
         [TestCase("create", "rooted")]
@@ -136,7 +136,7 @@ namespace MCPForUnityTests.Editor.Tools
                 : kind == "invalid_ancestor" ? assetRoot + "/Bad?Directory"
                 : assetRoot + "/First";
             string name = kind == "invalid_leaf" ? sceneName + "?" : sceneName;
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             string[] files = Directory.GetFiles(SystemPath(assetRoot), "*", SearchOption.AllDirectories);
             bool wasDirty = first.isDirty;
 
@@ -144,7 +144,7 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.StartsWith("Invalid scene path:", response.Value<string>("error"));
-            CollectionAssert.AreEqual(before, Handles());
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());
             Assert.AreEqual(wasDirty, first.isDirty);
             CollectionAssert.AreEquivalent(files, Directory.GetFiles(SystemPath(assetRoot), "*", SearchOption.AllDirectories));
@@ -156,11 +156,11 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("load")]
         public void SceneNameWithDirectory_IsRejectedBeforeMutation(string action)
         {
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             var response = Call(new JObject { ["action"] = action, ["path"] = assetRoot + "/First", ["name"] = "../Rejected" });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.StartsWith("Invalid scene path:", response.Value<string>("error"));
-            CollectionAssert.AreEqual(before, Handles());
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());
             Assert.IsFalse(File.Exists(SystemPath(assetRoot + "/Rejected.unity")));
         }
@@ -202,12 +202,12 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var go = new GameObject("Owned_" + Guid.NewGuid().ToString("N"));
             Assert.AreEqual(first, go.scene);
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             JObject request = Select(action);
             request["scenePath"] = assetRoot + "/Missing.unity";
             request["target"] = go.GetInstanceID();
             Assert.IsFalse(Call(request).Value<bool>("success"));
-            CollectionAssert.AreEqual(before, Handles());
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());
             Assert.AreEqual(first, go.scene);
             Assert.IsTrue(first.isLoaded && second.isLoaded);
@@ -231,14 +231,14 @@ namespace MCPForUnityTests.Editor.Tools
         public void RejectedCreate_PerformsNoDirectoryOrScenePreparation(string kind)
         {
             string rejectedDir = assetRoot + "/Rejected";
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             JObject request = new JObject { ["action"] = "create", ["path"] = rejectedDir };
             if (kind == "unknown_template") { request["name"] = "New"; request["template"] = "unknown"; }
             if (kind == "collision") { request["name"] = sceneName; request["path"] = firstPath; }
             string guid = AssetDatabase.AssetPathToGUID(firstPath);
             Assert.IsFalse(Call(request).Value<bool>("success"));
             Assert.IsFalse(Directory.Exists(SystemPath(rejectedDir)));
-            CollectionAssert.AreEqual(before, Handles());
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(firstPath));
         }
@@ -309,12 +309,12 @@ namespace MCPForUnityTests.Editor.Tools
                     ? CreateSymbolicLinkW(original, target, 1 | 2)
                     : symlink(target, original) == 0;
                 if (!linked) Assert.Ignore("Owned symbolic-link creation unavailable: " + Marshal.GetLastWin32Error());
-                int[] before = Handles();
+                Scene[] before = LoadedScenes();
                 var response = Call(new JObject { ["action"] = "save" });
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("symbolic links or junctions", response.Value<string>("error"));
                 Assert.AreEqual("owned sentinel", File.ReadAllText(sentinel));
-                CollectionAssert.AreEqual(before, Handles());
+                CollectionAssert.AreEqual(before, LoadedScenes());
                 Assert.AreEqual(first, SceneManager.GetActiveScene());
             }
             finally
@@ -329,13 +329,13 @@ namespace MCPForUnityTests.Editor.Tools
         public void AdditivePathLoad_PreservesAllExistingScenes()
         {
             Assert.IsTrue(EditorSceneManager.CloseScene(second, true));
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             JObject response = Call(new JObject { ["action"] = "load", ["path"] = secondPath, ["additive"] = true });
             Scene loaded = SceneManager.GetSceneByPath(secondPath);
             if (loaded.IsValid() && loaded.isLoaded) ownedScenes.Add(loaded);
             Success(response);
             Assert.IsTrue(loaded.IsValid() && loaded.isLoaded);
-            CollectionAssert.IsSubsetOf(before, Handles());
+            CollectionAssert.IsSubsetOf(before, LoadedScenes());
             Assert.AreEqual(before.Length + 1, SceneManager.sceneCount);
             Assert.IsTrue(first.isLoaded);
         }
@@ -344,7 +344,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("close_dirty")]
         public void ExistingLoadAndDirtyCloseGuards_PreserveOwnedScenes(string kind)
         {
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             JObject request;
             if (kind == "load_additive") request = new JObject { ["action"] = "load", ["path"] = secondPath, ["additive"] = true };
             else
@@ -354,7 +354,7 @@ namespace MCPForUnityTests.Editor.Tools
                 request["removeScene"] = true;
             }
             Assert.IsFalse(Call(request).Value<bool>("success"));
-            CollectionAssert.AreEqual(before, Handles());
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.IsTrue(first.isLoaded && second.isLoaded);
         }
 
@@ -365,9 +365,9 @@ namespace MCPForUnityTests.Editor.Tools
         public void InvalidOrUnparsedBuildIndex_PerformsNoLoad(string kind)
         {
             JToken index = kind == "negative" ? new JValue(-1) : kind == "null" ? JValue.CreateNull() : new JValue(kind == "true");
-            int[] before = Handles();
+            Scene[] before = LoadedScenes();
             Assert.IsFalse(Call(new JObject { ["action"] = "load", ["buildIndex"] = index, ["additive"] = true }).Value<bool>("success"));
-            CollectionAssert.AreEqual(before, Handles());
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());
         }
     }
