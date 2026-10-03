@@ -230,7 +230,7 @@ Lists all URP renderer features on the active renderer with type, name, and acti
 
 **URI:** `mcpforunity://rendering/stats`
 
-Snapshot of rendering performance statistics (draw calls, batches, triangles, frame time, etc.).
+Snapshot of rendering counters (draw calls, batches, triangles, texture counts and bytes, etc.).
 
 
 ## `tool_groups`
