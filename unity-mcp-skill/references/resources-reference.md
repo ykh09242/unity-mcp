@@ -67,14 +67,24 @@ mcpforunity://{category}/{resource_path}[?query_params]
 
 **Purpose:** Currently selected objects.
 
-**Returns:**
+**Returns (`data`):**
 ```json
 {
   "activeObject": "Player",
   "activeGameObject": "Player",
+  "activeTransform": "Player",
   "activeInstanceID": 12345,
   "count": 3,
-  "gameObjects": ["Player", "Enemy", "Wall"],
+  "objects": [
+    {"name": "Player", "type": "UnityEngine.GameObject", "instanceID": 12345},
+    {"name": "Enemy", "type": "UnityEngine.GameObject", "instanceID": 12346},
+    {"name": "Wall", "type": "UnityEngine.GameObject", "instanceID": 12347}
+  ],
+  "gameObjects": [
+    {"name": "Player", "instanceID": 12345},
+    {"name": "Enemy", "instanceID": 12346},
+    {"name": "Wall", "instanceID": 12347}
+  ],
   "assetGUIDs": []
 }
 ```
@@ -97,18 +107,17 @@ mcpforunity://{category}/{resource_path}[?query_params]
 
 **Purpose:** All open editor windows.
 
-**Returns:**
+**Returns (`data`):**
 ```json
-{
-  "windows": [
-    {
-      "title": "Scene",
-      "typeName": "UnityEditor.SceneView",
-      "isFocused": true,
-      "position": {"x": 0, "y": 0, "width": 800, "height": 600}
-    }
-  ]
-}
+[
+  {
+    "title": "Scene",
+    "typeName": "UnityEditor.SceneView",
+    "isFocused": true,
+    "position": {"x": 0, "y": 0, "width": 800, "height": 600},
+    "instanceID": 12348
+  }
+]
 ```
 
 ### mcpforunity://editor/prefab-stage
@@ -454,16 +463,27 @@ Assets/Prefabs/Player.prefab → Assets%2FPrefabs%2FPlayer.prefab
 
 **Purpose:** Static project configuration.
 
-**Returns:**
+**Returns (`data`):**
 ```json
 {
   "projectRoot": "/Users/dev/MyProject",
   "projectName": "MyProject",
   "unityVersion": "2022.3.10f1",
   "platform": "StandaloneWindows64",
-  "assetsPath": "/Users/dev/MyProject/Assets"
+  "assetsPath": "/Users/dev/MyProject/Assets",
+  "renderPipeline": "BuiltIn",
+  "activeInputHandler": "Old",
+  "packages": {
+    "ugui": true,
+    "textmeshpro": false,
+    "inputsystem": false,
+    "uiToolkit": true,
+    "screenCapture": true
+  }
 }
 ```
+
+`packages` contains the package/API availability flags reported by Unity. `activeInputHandler` is `Old`, `New`, or `Both`.
 
 ### mcpforunity://project/tags
 
