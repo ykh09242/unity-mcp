@@ -74,7 +74,9 @@ async def _scenario(case):
         preflight.time = SimpleNamespace(monotonic=lambda: clock[0])
         preflight.asyncio = SimpleNamespace(sleep=sleep)
         dirty = case in ("known_tests_dirty", "refresh_error_best_effort")
-        editor_state.external_changes_scanner.update_and_get = lambda instance: {"external_changes_dirty": dirty}
+        async def external_changes(instance):
+            return {"external_changes_dirty": dirty}
+        editor_state.external_changes_scanner.update_and_get_async = external_changes
 
         async def send(instance, command, params, **kwargs):
             nonlocal index

@@ -109,14 +109,14 @@ def test_cached_manifest_discovers_package_created_later(tmp_path, monkeypatch):
 
     root, manifest, package = _project_with_local_package(tmp_path)
     reads = []
-    original_read = Path.read_text
+    original_read = Path.open
 
     def counted_read(path, *args, **kwargs):
         if path == manifest:
             reads.append(path)
         return original_read(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", counted_read)
+    monkeypatch.setattr(Path, "open", counted_read)
     scanner = ExternalChangesScanner(scan_interval_ms=0)
     scanner.set_project_root("Late@one", str(root))
     assert not scanner.update_and_get("Late@one")["external_changes_dirty"]

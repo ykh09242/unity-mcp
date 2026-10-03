@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from fastmcp import Context
@@ -141,7 +142,7 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
 
     transport = (config.transport_mode or "stdio").lower()
 
-    if transport == "http":
+    if transport == "http" or config.http_remote_hosted:
         # HTTP/WebSocket transport: derive from PluginHub sessions.
         try:
             # In remote-hosted mode, filter sessions by user_id
@@ -172,6 +173,27 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
             return str(inst_id) if inst_id else None
     except Exception:
         return None
+    return None
+
+
+async def _local_project_root(instance_id: str) -> str | None:
+    """Resolve a selected local instance from server session/discovery provenance."""
+    if config.http_remote_hosted:
+        return None
+    if (config.transport_mode or "stdio").lower() == "http":
+        registry = PluginHub._registry
+        if registry is None:
+            return None
+        session_id = await registry.get_session_id_by_hash(instance_id.rsplit("@", 1)[-1])
+        session = await registry.get_session(session_id) if session_id else None
+        return session.project_path if session else None
+    from transport.legacy.unity_connection import get_unity_connection_pool
+    pool = get_unity_connection_pool()
+    # Sending the command has already selected and verified this cached instance.
+    for instance in pool._known_instances.values():
+        if instance.id == instance_id or instance.hash == instance_id:
+            root = Path(instance.path)
+            return str(root.parent if root.name.lower() == "assets" else root)
     return None
 
 
@@ -261,23 +283,18 @@ async def get_editor_state(ctx: Context) -> MCPResponse:
             if inferred:
                 unity_section["instance_id"] = inferred
 
-    # External change detection (server-side): compute per instance based on project root path.
+    # Host-local change detection never consumes remote plugin metadata.
     try:
-        instance_id = unity_section.get("instance_id")
-        if isinstance(instance_id, str) and instance_id.strip():
-            from services.resources.project_info import get_project_info
-
-            proj_resp = await get_project_info(ctx)
-            proj = proj_resp.model_dump() if hasattr(
-                proj_resp, "model_dump") else proj_resp
-            proj_data = proj.get("data") if isinstance(proj, dict) else None
-            project_root = proj_data.get("projectRoot") if isinstance(
-                proj_data, dict) else None
+        instance_id = unity_instance
+        if not config.http_remote_hosted and not instance_id:
+            instance_id = await infer_single_instance_id(ctx)
+        if not config.http_remote_hosted and isinstance(instance_id, str) and instance_id.strip():
+            project_root = await _local_project_root(instance_id)
             if isinstance(project_root, str) and project_root.strip():
                 external_changes_scanner.set_project_root(
                     instance_id, project_root)
 
-            ext = external_changes_scanner.update_and_get(instance_id)
+            ext = await external_changes_scanner.update_and_get_async(instance_id)
 
             assets = state_v2.get("assets")
             if not isinstance(assets, dict):

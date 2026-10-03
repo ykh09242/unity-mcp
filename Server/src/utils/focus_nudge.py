@@ -17,6 +17,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+from core.config import config
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +52,7 @@ _DEFAULT_FOCUS_DURATION_S = _parse_env_float("UNITY_MCP_NUDGE_DURATION_S", 3.0)
 _last_nudge_time: float = 0.0
 _consecutive_nudges: int = 0
 _last_progress_time: float = 0.0
+_nudge_in_progress: bool = False
 
 
 @dataclass
@@ -547,6 +549,22 @@ async def nudge_unity_focus(
     Returns:
         True if nudge was performed, False if skipped or failed
     """
+    if config.http_remote_hosted:
+        return False
+    global _nudge_in_progress
+    if _nudge_in_progress:
+        return False
+    _nudge_in_progress = True
+    try:
+        return await _nudge_local_unity_focus(focus_duration_s, force, unity_project_path)
+    finally:
+        _nudge_in_progress = False
+
+
+async def _nudge_local_unity_focus(
+    focus_duration_s: float | None, force: bool, unity_project_path: str | None,
+) -> bool:
+    """Perform one local nudge with its reservation held across all awaits."""
     if focus_duration_s is None:
         # Use exponential backoff for focus duration
         focus_duration_s = _get_current_focus_duration()

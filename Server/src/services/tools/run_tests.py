@@ -10,6 +10,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
+from core.config import config
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -34,7 +35,7 @@ async def _get_unity_project_path(unity_instance: str | None) -> str | None:
     Returns:
         Project root path (e.g., "/Users/name/project"), or falls back to project_name if path unavailable
     """
-    if not unity_instance:
+    if config.http_remote_hosted or not unity_instance:
         return None
 
     try:
@@ -288,6 +289,8 @@ async def get_test_job(
 
         async def _nudge_project() -> bool:
             nonlocal project_path
+            if config.http_remote_hosted:
+                return False
             if project_path is None:
                 project_path = await _get_unity_project_path(unity_instance)
             return await nudge_unity_focus(unity_project_path=project_path)
@@ -333,7 +336,7 @@ async def get_test_job(
             editor_is_focused = progress.get("editor_is_focused", True)
             current_time_ms = int(time.time() * 1000)
 
-            if should_nudge(
+            if not config.http_remote_hosted and should_nudge(
                 status=status,
                 editor_is_focused=editor_is_focused,
                 last_update_unix_ms=last_update_unix_ms,
@@ -370,7 +373,7 @@ async def get_test_job(
     # detected regardless of polling style.
     data = response.get("data", {})
     status = data.get("status", "")
-    if status == "running":
+    if not config.http_remote_hosted and status == "running" and not _background_tasks:
         progress = data.get("progress") or {}
         editor_is_focused = progress.get("editor_is_focused", True)
         last_update_unix_ms = data.get("last_update_unix_ms")
@@ -383,6 +386,9 @@ async def get_test_job(
         ):
             logger.info(f"Test job {job_id} appears stalled (unfocused Unity), scheduling background nudge...")
             project_path = await _get_unity_project_path(unity_instance)
+            # Other callers may have scheduled a nudge while project lookup awaited.
+            if config.http_remote_hosted or _background_tasks:
+                return GetTestJobResponse(**response)
             task = asyncio.create_task(nudge_unity_focus(unity_project_path=project_path))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
