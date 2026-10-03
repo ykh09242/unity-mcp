@@ -7,7 +7,6 @@ These resources provide read-only access to:
 - Currently open prefab stage (mcpforunity://editor/prefab-stage - see prefab_stage.py)
 """
 from typing import Any
-from urllib.parse import unquote
 from pydantic import BaseModel
 from fastmcp import Context
 
@@ -26,14 +25,6 @@ def _normalize_response(response: dict | MCPResponse | Any) -> MCPResponse:
         return response
     # Fallback: wrap unexpected types in an error response
     return MCPResponse(success=False, error=f"Unexpected response type: {type(response).__name__}")
-
-
-def _decode_prefab_path(encoded_path: str) -> str:
-    """
-    Decode a URL-encoded prefab path.
-    Handles paths like 'Assets%2FPrefabs%2FMyPrefab.prefab' -> 'Assets/Prefabs/MyPrefab.prefab'
-    """
-    return unquote(encoded_path)
 
 
 # =============================================================================
@@ -121,11 +112,8 @@ class PrefabInfoResponse(MCPResponse):
     description="Get detailed information about a prefab asset by URL-encoded path. Returns prefab type, root object name, component types, child count, and variant info.\n\nURI: mcpforunity://prefab/{encoded_path}"
 )
 async def get_prefab_info(ctx: Context, encoded_path: str) -> MCPResponse:
-    """Get prefab asset info by path."""
+    """Get prefab asset info using the path already decoded by FastMCP."""
     unity_instance = await get_unity_instance_from_context(ctx)
-
-    # Decode the URL-encoded path
-    decoded_path = _decode_prefab_path(encoded_path)
 
     response = await send_with_unity_instance(
         async_send_command_with_retry,
@@ -133,7 +121,7 @@ async def get_prefab_info(ctx: Context, encoded_path: str) -> MCPResponse:
         "manage_prefabs",
         {
             "action": "get_info",
-            "prefabPath": decoded_path
+            "prefabPath": encoded_path
         }
     )
 
@@ -173,11 +161,8 @@ class PrefabHierarchyResponse(MCPResponse):
     description="Get the full hierarchy of a prefab with nested prefab information. Returns all GameObjects with their components and nesting depth.\n\nURI: mcpforunity://prefab/{encoded_path}/hierarchy"
 )
 async def get_prefab_hierarchy(ctx: Context, encoded_path: str) -> MCPResponse:
-    """Get prefab hierarchy by path."""
+    """Get prefab hierarchy using the path already decoded by FastMCP."""
     unity_instance = await get_unity_instance_from_context(ctx)
-
-    # Decode the URL-encoded path
-    decoded_path = _decode_prefab_path(encoded_path)
 
     response = await send_with_unity_instance(
         async_send_command_with_retry,
@@ -185,7 +170,7 @@ async def get_prefab_hierarchy(ctx: Context, encoded_path: str) -> MCPResponse:
         "manage_prefabs",
         {
             "action": "get_hierarchy",
-            "prefabPath": decoded_path
+            "prefabPath": encoded_path
         }
     )
 
