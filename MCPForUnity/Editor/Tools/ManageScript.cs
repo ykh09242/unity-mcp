@@ -53,6 +53,8 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_script", AutoRegister = false)]
     public static class ManageScript
     {
+        private static readonly System.Text.UTF8Encoding StrictFileUtf8 = new System.Text.UTF8Encoding(false, true);
+
         /// <summary>
         /// Resolves a directory under Assets/, preventing traversal and escaping.
         /// Returns fullPathDir on disk and canonical 'Assets/...' relative path.
@@ -196,7 +198,7 @@ namespace MCPForUnity.Editor.Tools
                             _ => ValidationLevel.Standard
                         };
                         string fileText;
-                        try { fileText = File.ReadAllText(fullPath); }
+                        try { fileText = ReadScriptContents(fullPath); }
                         catch (Exception ex) { return new ErrorResponse($"Failed to read script: {ex.Message}"); }
 
                         bool ok = ValidateScriptSyntax(fileText, chosen, out string[] diagsRaw);
@@ -231,7 +233,7 @@ namespace MCPForUnity.Editor.Tools
                             if (!File.Exists(fullPath))
                                 return new ErrorResponse($"Script not found at '{relativePath}'.");
 
-                            string text = File.ReadAllText(fullPath);
+                            string text = ReadScriptContents(fullPath);
                             string sha = ComputeSha256(text);
                             var fi = new FileInfo(fullPath);
                             long lengthBytes;
@@ -395,7 +397,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                string contents = File.ReadAllText(fullPath);
+                string contents = ReadScriptContents(fullPath);
 
                 // Return both normal and encoded contents for larger files
                 bool isLarge = contents.Length > 10000; // If content is large, include encoded version
@@ -419,6 +421,38 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Failed to read script '{relativePath}': {e.Message}");
             }
+        }
+
+        private static string ReadScriptContents(string fullPath)
+        {
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            System.Text.Encoding encoding = StrictFileUtf8;
+            int offset = 0;
+            // Keep ReadAllText's Unicode BOM detection while rejecting malformed bytes.
+            // UTF32 LE precedes UTF16 LE because their BOM prefixes overlap.
+            if (bytes.Length >= 4 && bytes[0] == 0xff && bytes[1] == 0xfe && bytes[2] == 0 && bytes[3] == 0)
+            {
+                encoding = new System.Text.UTF32Encoding(false, false, true);
+                offset = 4;
+            }
+            else if (bytes.Length >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xfe && bytes[3] == 0xff)
+            {
+                encoding = new System.Text.UTF32Encoding(true, false, true);
+                offset = 4;
+            }
+            else if (bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
+                offset = 3;
+            else if (bytes.Length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
+            {
+                encoding = new System.Text.UnicodeEncoding(false, false, true);
+                offset = 2;
+            }
+            else if (bytes.Length >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
+            {
+                encoding = new System.Text.UnicodeEncoding(true, false, true);
+                offset = 2;
+            }
+            return encoding.GetString(bytes, offset, bytes.Length - offset);
         }
 
         private static object UpdateScript(
@@ -498,7 +532,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No edits provided.");
 
             string original;
-            try { original = File.ReadAllText(fullPath); }
+            try { original = ReadScriptContents(fullPath); }
             catch (Exception ex) { return new ErrorResponse($"Failed to read script: {ex.Message}"); }
 
             // Require precondition to avoid drift on large files
@@ -1151,7 +1185,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No edits provided.");
 
             string original;
-            try { original = File.ReadAllText(fullPath); }
+            try { original = ReadScriptContents(fullPath); }
             catch (Exception ex) { return new ErrorResponse($"Failed to read script: {ex.Message}"); }
 
             string working = original;
