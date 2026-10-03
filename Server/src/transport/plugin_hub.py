@@ -642,9 +642,9 @@ class PluginHub(WebSocketEndpoint):
                 await cls._close_websocket(evicted_ws)
 
         if user_id:
-            logger.info(f"Plugin registered: {project_name} ({project_hash}) for user {user_id}")
+            logger.info("Plugin registered: %r (%r) for user %r", project_name, project_hash, user_id)
         else:
-            logger.info(f"Plugin registered: {project_name} ({project_hash})")
+            logger.info("Plugin registered: %r (%r)", project_name, project_hash)
 
     async def _handle_register_tools(self, websocket: WebSocket, payload: RegisterToolsMessage) -> None:
         cls = type(self)

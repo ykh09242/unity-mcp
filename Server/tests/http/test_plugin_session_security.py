@@ -1,6 +1,7 @@
 """Exercise plugin registration limits through the real WebSocket endpoint."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
@@ -62,6 +63,43 @@ def test_second_registration_closes_socket_and_removes_session(plugin_client):
 def test_registration_rejects_oversized_fields(field, value):
     with pytest.raises(ValidationError):
         RegisterMessage(**{"project_hash": "valid", field: value})
+
+
+@pytest.mark.parametrize("field", ["project_name", "project_hash"])
+@pytest.mark.parametrize("control", ["\x00", "\t", "\n", "\r", "\x1b", "\x7f", "\x85", "\u2028", "\u2029"])
+def test_registration_rejects_log_control_characters(field, control):
+    with pytest.raises(ValidationError):
+        RegisterMessage(**{"project_hash": "valid", field: "project" + control + "forged"})
+
+
+@pytest.mark.parametrize("field", ["project_name", "project_hash"])
+@pytest.mark.parametrize("control", ["\r\n", "\x1b[2J", "\x85", "\u2028", "\u2029"])
+def test_websocket_registration_rejects_log_injection(plugin_client, caplog, field, control):
+    caplog.set_level(logging.INFO, logger="transport.plugin_hub")
+    with plugin_client.websocket_connect("/hub/plugin") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "register", "project_hash": "invalid", field: "source" + control + "FORGED_ENTRY"})
+        # A valid message after the rejected one proves registration never mutated
+        # socket or registry state, without waiting for a response to invalid input.
+        ws.send_json({"type": "register", "project_name": "Valid Project", "project_hash": "valid"})
+        assert ws.receive_json()["type"] == "registered"
+        sessions = plugin_client.portal.call(PluginHub._registry.list_sessions)
+        assert len(sessions) == 1
+        assert next(iter(sessions.values())).project_hash == "valid"
+    assert all("FORGED_ENTRY" not in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.parametrize("name", ["테스트 프로젝트 🎮", "Project 'quoted' %s 👩\u200d💻 \u202e"])
+def test_registration_preserves_unicode_and_escapes_log_fields(plugin_client, caplog, name):
+    caplog.set_level(logging.INFO, logger="transport.plugin_hub")
+    with plugin_client.websocket_connect("/hub/plugin") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "register", "project_name": name, "project_hash": "hash with spaces"})
+        assert ws.receive_json()["type"] == "registered"
+        sessions = plugin_client.portal.call(PluginHub._registry.list_sessions)
+        assert next(iter(sessions.values())).project_name == name
+    registrations = [record.getMessage() for record in caplog.records if record.getMessage().startswith("Plugin registered:")]
+    assert registrations == [f"Plugin registered: {name!r} ({'hash with spaces'!r})"]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from models.models import ToolDefinitionModel
 
 # Outgoing (Server -> Plugin)
@@ -37,6 +37,13 @@ class RegisterMessage(BaseModel):
     project_hash: str = Field(max_length=256)
     unity_version: str = Field(default="Unknown", max_length=64)
     project_path: str | None = Field(default=None, max_length=4096)
+
+    @field_validator("project_name", "project_hash")
+    @classmethod
+    def reject_log_control_characters(cls, value: str) -> str:
+        if any(ord(char) < 32 or 0x7F <= ord(char) <= 0x9F or char in "\u2028\u2029" for char in value):
+            raise ValueError("Project identifiers must not contain control characters or line separators")
+        return value
 
 
 class RegisterToolsMessage(BaseModel):
