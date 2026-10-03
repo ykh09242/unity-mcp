@@ -133,7 +133,7 @@ class ApiKeyService:
                 if len(self._cache) >= self.MAX_CACHE_ENTRIES:
                     for stale in [k for k, v in self._cache.items() if v[3] <= now]:
                         del self._cache[stale]
-                if len(self._cache) >= self.MAX_CACHE_ENTRIES:
+                if api_key not in self._cache and len(self._cache) >= self.MAX_CACHE_ENTRIES:
                     if not result.valid:
                         # Full of live entries: a negative verdict is not worth evicting
                         # anything for. The caller still gets the answer.
