@@ -36,12 +36,12 @@ def _split_uri(uri: str) -> tuple[str, str]:
         # UNC: file://server/share/... -> //server/share/...
         if host and host.lower() != "localhost":
             p = f"//{host}{p}"
-        # Use percent-decoded path, preserving leading slashes
-        raw_path = unquote(p)
+        # Preserve leading slashes until the common decoding step.
+        raw_path = p
     else:
         raw_path = uri
 
-    # Percent-decode any residual encodings and normalize separators
+    # Decode once so escaped percent sequences remain literal path characters.
     raw_path = unquote(raw_path).replace("\\", "/")
     # Strip leading slash only for Windows drive-letter forms like "/C:/..."
     if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
@@ -136,41 +136,35 @@ async def find_in_file(
         return {"success": False, "message": f"Regex search rejected: {e}"}
     max_results = max(1, min(max_results, 1000))
 
+    selected = found[:max_results]
+    line_metadata = {}
+    line_num = 1
+    previous_start = 0
+    line_end = -1
+    excerpt = None
+    # Reverse regex searches return descending offsets. Count disjoint ranges
+    # in sorted order, then emit matches in the regex's original order.
+    for start_idx in sorted({m.start() for m in selected}):
+        line_num += contents.count('\n', previous_start, start_idx)
+        previous_start = start_idx
+        if excerpt is None or (line_end != -1 and line_end < start_idx):
+            line_start = contents.rfind('\n', 0, start_idx) + 1
+            line_end = contents.find('\n', start_idx)
+            end = line_end if line_end != -1 else len(contents)
+            excerpt = contents[line_start:end].strip()[:2000]
+        line_metadata[start_idx] = (line_num, excerpt)
+
     results = []
-    count = 0
-
-    for m in found:
-        if count >= max_results:
-            break
-
+    for m in selected:
         start_idx = m.start()
-        end_idx = m.end()
-
-        # Calculate line number
-        # Count newlines up to start_idx
-        line_num = contents.count('\n', 0, start_idx) + 1
-
-        # Get line content for excerpt
-        # Find start of line
-        line_start = contents.rfind('\n', 0, start_idx) + 1
-        # Find end of line
-        line_end = contents.find('\n', start_idx)
-        if line_end == -1:
-            line_end = len(contents)
-
-        line_content = contents[line_start:line_end]
-
-        # Create excerpt
-        # We can just return the line content as excerpt
-
+        line_num, excerpt = line_metadata[start_idx]
         results.append({
             "line": line_num,
-            "content": line_content.strip()[:2000],
+            "content": excerpt,
             "match": m.group(0)[:2000],
             "start": start_idx,
-            "end": end_idx
+            "end": m.end()
         })
-        count += 1
 
     return {
         "success": True,
