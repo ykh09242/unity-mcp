@@ -44,6 +44,7 @@ DATA/Managed/UnityEngine/UnityEngine.Physics2DModule.dll
 DATA/Managed/UnityEngine/UnityEngine.PhysicsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.RuntimeInitializeOnLoadManagerInitializerModule.dll
 DATA/Managed/UnityEngine/UnityEngine.ScreenCaptureModule.dll
+DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll
 DATA/Managed/UnityEngine/UnityEngine.SpriteMaskModule.dll
 DATA/Managed/UnityEngine/UnityEngine.SpriteShapeModule.dll
 DATA/Managed/UnityEngine/UnityEngine.StreamingModule.dll

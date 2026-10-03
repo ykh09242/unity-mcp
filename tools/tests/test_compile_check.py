@@ -305,7 +305,19 @@ def test_unity66_profile_removes_only_compiler_proven_absent_modules(name: str) 
         f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
         for module in ("SharedInternals", "UnityTestProtocol", "VR")
     }
-    assert not selected - default
+    assert selected - default == {"DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"}
+
+
+@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+def test_current_scripting_module_is_required_metadata(harness: CompileHarness, version: str) -> None:
+    entry = "DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"
+    family = ".".join(version.split(".")[:2])
+    manifest = harness.repo / "tools/compile-refs" / family / "Runtime.txt"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + entry + "\n", encoding="utf-8")
+    result = harness.run(version)
+    assert result.returncode != 0
+    assert entry in result.stderr
+    assert not harness.calls.exists()
 
 
 @pytest.mark.parametrize("name", ["Runtime", "Editor"])
@@ -316,7 +328,7 @@ def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: 
         f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
         for module in ("AR", "SharedInternals", "Substance", "UnityTestProtocol", "VR")
     }
-    assert not selected - default
+    assert selected - default == {"DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"}
 
 
 @pytest.mark.parametrize("family,module", [
