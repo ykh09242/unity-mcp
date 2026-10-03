@@ -141,8 +141,8 @@ namespace MCPForUnity.Editor.Services
                 string toolName = toolAttr.Name;
                 if (string.IsNullOrEmpty(toolName))
                 {
-                    // Derive from class name: CaptureScreenshotTool -> capture_screenshot
-                    toolName = ConvertToSnakeCase(type.Name.Replace("Tool", ""));
+                    // Match CommandRegistry's default command name exactly.
+                    toolName = ConvertToSnakeCase(type.Name);
                 }
 
                 // Get description
@@ -214,6 +214,25 @@ namespace MCPForUnity.Editor.Services
                 });
             }
 
+            // ToolParameter also supports fields. Keep an annotated property's metadata
+            // when a derived field hides a property with the same parameter name.
+            var parameterNames = new HashSet<string>(parameters.Select(parameter => parameter.Name));
+            foreach (var field in parametersType.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                var paramAttr = field.GetCustomAttribute<ToolParameterAttribute>();
+                if (paramAttr == null || !parameterNames.Add(field.Name))
+                    continue;
+
+                parameters.Add(new ParameterMetadata
+                {
+                    Name = field.Name,
+                    Description = paramAttr.Description,
+                    Type = GetParameterType(field.FieldType),
+                    Required = paramAttr.Required,
+                    DefaultValue = paramAttr.DefaultValue
+                });
+            }
+
             return parameters;
         }
 
@@ -234,6 +253,12 @@ namespace MCPForUnity.Editor.Services
                 return "number";
             if (type == typeof(bool))
                 return "boolean";
+            if (typeof(System.Collections.IDictionary).IsAssignableFrom(type) ||
+                type.GetInterfaces().Concat(new[] { type }).Any(candidate =>
+                    candidate.IsGenericType &&
+                    (candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>) ||
+                     candidate.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>))))
+                return "object";
             if (type.IsArray || typeof(System.Collections.IEnumerable).IsAssignableFrom(type))
                 return "array";
 
