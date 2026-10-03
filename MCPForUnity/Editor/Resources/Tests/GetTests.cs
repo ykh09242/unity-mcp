@@ -55,8 +55,8 @@ namespace MCPForUnity.Editor.Resources.Tests
                 return new ErrorResponse("Failed to retrieve tests");
             }
 
-            // Apply name filter if provided and convert to List for pagination
-            List<Dictionary<string, string>> filteredTests;
+            // Reuse indexable results when no name filter needs materialization.
+            IList<Dictionary<string, string>> filteredTests;
             if (!string.IsNullOrEmpty(nameFilter))
             {
                 filteredTests = allTests
@@ -68,7 +68,7 @@ namespace MCPForUnity.Editor.Resources.Tests
             }
             else
             {
-                filteredTests = allTests.ToList();
+                filteredTests = allTests as IList<Dictionary<string, string>> ?? allTests.ToList();
             }
 
             // Clamp page_size before parsing pagination to ensure cursor is computed correctly
@@ -143,8 +143,8 @@ namespace MCPForUnity.Editor.Resources.Tests
                 return new ErrorResponse("Failed to retrieve tests");
             }
 
-            // Apply name filter if provided and convert to List for pagination
-            List<Dictionary<string, string>> filteredTests;
+            // Reuse indexable results when no name filter needs materialization.
+            IList<Dictionary<string, string>> filteredTests;
             if (!string.IsNullOrEmpty(nameFilter))
             {
                 filteredTests = allTests
@@ -156,7 +156,7 @@ namespace MCPForUnity.Editor.Resources.Tests
             }
             else
             {
-                filteredTests = allTests.ToList();
+                filteredTests = allTests as IList<Dictionary<string, string>> ?? allTests.ToList();
             }
 
             // Clamp page_size before parsing pagination to ensure cursor is computed correctly
