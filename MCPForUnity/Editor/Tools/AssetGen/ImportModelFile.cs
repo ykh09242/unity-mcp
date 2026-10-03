@@ -10,7 +10,7 @@ using UnityEditor;
 namespace MCPForUnity.Editor.Tools.AssetGen
 {
     /// <summary>
-    /// Import a local 3D model file (already on disk — e.g. exported from Blender/Maya) into the
+    /// Import a local 3D model file already within Assets (e.g. exported from Blender/Maya) into the
     /// Unity project. DCC-agnostic and key-free: the file is copied under Assets/ and run through
     /// the shared ModelImportPipeline (glTFast/FBX/OBJ/zip handling, scale-normalize, material
     /// settings). Placement into the scene is the caller's job (kept single-purpose).
@@ -71,8 +71,14 @@ namespace MCPForUnity.Editor.Tools.AssetGen
         private static string ResolveSource(string source)
         {
             string s = source.Replace('\\', '/');
-            if (s == "Assets" || s.StartsWith("Assets/")) return AssetGenPaths.ToAbsolute(s);
-            return s; // absolute path on disk
+            if (Array.IndexOf(s.Split('/'), "..") >= 0 ||
+                (s.Length >= 2 && s[1] == ':' && (s.Length < 3 || s[2] != '/')) ||
+                !AssetGenPaths.TryGetAssetsRelativePath(s, out string relative))
+                throw new ArgumentException("'source_path' must resolve under the project's Assets folder without traversal or links.");
+
+            // Validate the source's physical boundary before existence checks or staging.
+            // Contained absolute paths retain the same contract as Assets-relative paths.
+            return AssetGenPaths.ToAbsolute(relative);
         }
 
         private static string StageUnderAssets(string srcAbs, string baseName, string ext, string outputFolder)
@@ -92,11 +98,15 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
             string safe = SanitizeName(baseName);
             string fileName = safe + ext;
-            string abs = Path.Combine(absRoot, fileName);
+            string abs = AssetGenPaths.ToAbsolute(root.TrimEnd('/') + "/" + fileName);
             int n = 1;
-            while (File.Exists(abs)) { fileName = safe + "_" + n++ + ext; abs = Path.Combine(absRoot, fileName); }
+            while (File.Exists(abs))
+            {
+                fileName = safe + "_" + n++ + ext;
+                abs = AssetGenPaths.ToAbsolute(root.TrimEnd('/') + "/" + fileName);
+            }
 
-            File.Copy(srcAbs, abs);
+            File.Copy(AssetGenPaths.ToAbsolute(srcAbs), AssetGenPaths.ToAbsolute(abs));
             return (root.TrimEnd('/') + "/" + fileName).Replace('\\', '/');
         }
 

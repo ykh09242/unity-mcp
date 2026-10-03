@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         public static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions = null,
             CancellationToken cancellationToken = default)
             => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096,
-                256L * 1024 * 1024, 1024L * 1024 * 1024, 200);
+                512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200);
 
         internal static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions,
             CancellationToken cancellationToken, int maxEntries, long maxEntryBytes, long maxTotalBytes, int maxRatio)

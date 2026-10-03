@@ -121,7 +121,7 @@ def import_model(
 
 @asset_gen.command("import-model-file")
 @click.option("--source-path", "source_path", required=True,
-              help="Path to a local model file (.fbx/.obj/.glb/.gltf/.zip).")
+              help="Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip); traversal and links are rejected.")
 @click.option("--name", default=None, help="Base name for the imported asset.")
 @click.option("--output-folder", default=None, help="Destination folder under Assets/.")
 @click.option("--target-size", default=None, type=float, help="Normalize largest dimension (meters).")
@@ -131,7 +131,7 @@ def import_model(
                    "legacy selects Unity's legacy Animation system (glTF ignores this).")
 @handle_unity_errors
 def import_model_file(source_path, name, output_folder, target_size, animation_type):
-    """Import a local 3D model file (e.g. a Blender export) into the Unity project."""
+    """Import a 3D model file already within this Unity project's Assets folder."""
     config = get_config()
     params = {
         "sourcePath": source_path,

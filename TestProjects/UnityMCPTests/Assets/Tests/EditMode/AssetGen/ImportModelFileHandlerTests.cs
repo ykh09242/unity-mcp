@@ -19,13 +19,17 @@ namespace MCPForUnityTests.Editor.AssetGen
     public class ImportModelFileHandlerTests
     {
         private string _tempDir;
-        private const string TestFolder = "Assets/__import_model_file_test";
+        private string TestFolder;
+        private string _sourceFolder;
 
         [SetUp]
         public void SetUp()
         {
             _tempDir = Path.Combine(Path.GetTempPath(), "mcp_imf_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_tempDir);
+            TestFolder = "Assets/__import_model_file_test_" + Guid.NewGuid().ToString("N");
+            _sourceFolder = TestFolder + "/Sources";
+            Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(Application.dataPath), _sourceFolder));
         }
 
         [TearDown]
@@ -33,6 +37,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             if (AssetDatabase.IsValidFolder(TestFolder))
                 AssetDatabase.DeleteAsset(TestFolder);
+            string ownedAssetsFolder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder));
+            Assert.IsTrue(ownedAssetsFolder.StartsWith(Path.GetFullPath(Application.dataPath) + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase), "cleanup must remain within Assets");
+            if (Directory.Exists(ownedAssetsFolder)) Directory.Delete(ownedAssetsFolder, true);
             try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); } catch { /* ignore */ }
         }
 
@@ -41,8 +49,8 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private string WriteCubeObj()
         {
-            string path = Path.Combine(_tempDir, "cube.obj");
-            File.WriteAllText(path,
+            string path = _sourceFolder + "/cube.obj";
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), path),
                 "o Cube\n" +
                 "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n" +
                 "f 1 2 3 4\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n");
@@ -52,7 +60,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void MissingSource_ReturnsError()
         {
-            JObject resp = Call(new JObject { ["sourcePath"] = Path.Combine(_tempDir, "nope.obj") });
+            JObject resp = Call(new JObject { ["sourcePath"] = _sourceFolder + "/nope.obj" });
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("not found", ((string)resp["error"]).ToLowerInvariant());
         }
@@ -60,8 +68,8 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void UnsupportedExtension_ReturnsError()
         {
-            string txt = Path.Combine(_tempDir, "readme.txt");
-            File.WriteAllText(txt, "hi");
+            string txt = _sourceFolder + "/readme.txt";
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), txt), "hi");
             JObject resp = Call(new JObject { ["sourcePath"] = txt });
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("unsupported", ((string)resp["error"]).ToLowerInvariant());
@@ -77,8 +85,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             object previous = availability.GetValue(null);
             string outputFolder = TestFolder + "/missing_gltf_" + Guid.NewGuid().ToString("N");
             string absoluteOutput = Path.Combine(Path.GetDirectoryName(Application.dataPath), outputFolder);
-            string source = Path.Combine(_tempDir, "source" + extension);
-            File.WriteAllBytes(source, new byte[] { 0 });
+            string source = _sourceFolder + "/source" + extension;
+            string absoluteSource = Path.Combine(Path.GetDirectoryName(Application.dataPath), source);
+            File.WriteAllBytes(absoluteSource, new byte[] { 0 });
             try
             {
                 availability.SetValue(null, false);
@@ -89,7 +98,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Assert.AreEqual(false, (bool)response["success"]);
                 StringAssert.Contains("glTFast", (string)response["error"]);
                 Assert.IsFalse(Directory.Exists(absoluteOutput), "rejected input must not create a staging folder");
-                Assert.IsTrue(File.Exists(source), "source must remain intact");
+                Assert.IsTrue(File.Exists(absoluteSource), "source must remain intact");
             }
             finally
             {
@@ -116,8 +125,8 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private string WriteArchive(string name, string entryName, string contents)
         {
-            string path = Path.Combine(_tempDir, name + ".zip");
-            using (var stream = File.Create(path))
+            string path = _sourceFolder + "/" + name + ".zip";
+            using (var stream = File.Create(Path.Combine(Path.GetDirectoryName(Application.dataPath), path)))
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
             using (var writer = new StreamWriter(archive.CreateEntry(entryName).Open()))
                 writer.Write(contents);
@@ -130,7 +139,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             string folder = Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder, "bundle");
             Directory.CreateDirectory(folder);
             string existing = Path.Combine(folder, "old.obj");
-            string original = File.ReadAllText(WriteCubeObj());
+            string original = File.ReadAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), WriteCubeObj()));
             File.WriteAllText(existing, original);
             string source = WriteArchive("textures", "materials.mtl", "newmtl Unused\n");
             JObject response = Call(new JObject
@@ -157,7 +166,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 existing = Path.Combine(stem, "new.obj");
             }
             File.WriteAllText(existing, "existing file must remain intact");
-            string source = WriteArchive("new_model", "new.obj", File.ReadAllText(WriteCubeObj()));
+            string source = WriteArchive("new_model", "new.obj", File.ReadAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath), WriteCubeObj())));
             JObject response = Call(new JObject
             {
                 ["sourcePath"] = source, ["name"] = "bundle", ["outputFolder"] = TestFolder
@@ -165,6 +174,39 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(true, (bool)response["success"], response.ToString());
             Assert.AreEqual(TestFolder + "/bundle_1/new.obj", (string)response["data"]["asset_path"]);
             Assert.AreEqual("existing file must remain intact", File.ReadAllText(existing));
+        }
+
+        [Test]
+        public void AbsoluteSourceWithinAssets_ImportsNormally()
+        {
+            string source = Path.Combine(Path.GetDirectoryName(Application.dataPath), WriteCubeObj());
+            JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = TestFolder });
+            Assert.AreEqual(true, (bool)response["success"], response.ToString());
+            Assert.IsTrue(File.Exists(source), "import must preserve the source");
+        }
+
+        [Test]
+        public void AbsoluteExternalSource_DoesNotCreateOutputOrCopyBytes()
+        {
+            string source = Path.Combine(_tempDir, "external.obj");
+            File.WriteAllText(source, "owned external source");
+            string outputFolder = TestFolder + "/Rejected";
+            JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = outputFolder });
+            Assert.AreEqual(false, (bool)response["success"]);
+            StringAssert.Contains("source_path", (string)response["error"]);
+            Assert.IsFalse(Directory.Exists(Path.Combine(Path.GetDirectoryName(Application.dataPath), outputFolder)));
+            Assert.AreEqual("owned external source", File.ReadAllText(source));
+        }
+
+        [TestCase("Assets/../external.obj")]
+        [TestCase("C:external.obj")]
+        [TestCase("relative.obj")]
+        public void MalformedSource_DoesNotCreateOutput(string source)
+        {
+            string outputFolder = TestFolder + "/Rejected";
+            JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = outputFolder });
+            Assert.AreEqual(false, (bool)response["success"]);
+            Assert.IsFalse(Directory.Exists(Path.Combine(Path.GetDirectoryName(Application.dataPath), outputFolder)));
         }
 
         [Test]
