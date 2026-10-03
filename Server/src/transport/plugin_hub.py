@@ -780,16 +780,16 @@ class PluginHub(WebSocketEndpoint):
                         f"[Ping] Session {session_id} stale: no pong for {elapsed:.1f}s "
                         f"(timeout={cls.PING_TIMEOUT}s). Closing connection."
                     )
-                    try:
-                        await websocket.close(code=1001)  # Going away
-                    except Exception as close_ex:
-                        logger.debug(f"[Ping] Error closing stale websocket: {close_ex}")
+                    await cls._evict_connection(session_id, "heartbeat_timeout")
                     break
 
                 # Send a ping to the client
                 try:
                     ping_msg = PingMessage()
-                    await websocket.send_json(ping_msg.model_dump())
+                    await asyncio.wait_for(
+                        websocket.send_json(ping_msg.model_dump()),
+                        timeout=cls.PING_TIMEOUT,
+                    )
                     logger.debug(f"[Ping] Sent ping to session {session_id}")
                 except Exception as send_ex:
                     # Send failed - connection is dead
@@ -797,10 +797,7 @@ class PluginHub(WebSocketEndpoint):
                         f"[Ping] Failed to send ping to session {session_id}: {send_ex}. "
                         "Connection likely dead."
                     )
-                    try:
-                        await websocket.close(code=1006)  # Abnormal closure
-                    except Exception:
-                        pass
+                    await cls._evict_connection(session_id, "heartbeat_send_failed")
                     break
 
         except asyncio.CancelledError:
@@ -846,7 +843,7 @@ class PluginHub(WebSocketEndpoint):
             for key in keys_to_remove:
                 cls._pending.pop(key, None)
 
-        if ping_task is not None and not ping_task.done():
+        if ping_task is not None and ping_task is not asyncio.current_task() and not ping_task.done():
             ping_task.cancel()
 
         for future in pending_futures:
