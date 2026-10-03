@@ -14,6 +14,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 class TestItem(BaseModel):
     name: Annotated[str, Field(description="The name of the test.")]
     full_name: Annotated[str, Field(description="The full name of the test.")]
+    path: Annotated[str | None, Field(description="The hierarchical path of the test.")] = None
     mode: Annotated[Literal["EditMode", "PlayMode"],
                     Field(description="The mode the test is for.")]
 
