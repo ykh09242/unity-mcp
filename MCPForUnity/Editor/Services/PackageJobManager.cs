@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
@@ -23,6 +24,75 @@ namespace MCPForUnity.Editor.Services
         public string Error { get; set; }
         public string ResultVersion { get; set; }
         public string ResultName { get; set; }
+    }
+
+    internal static class PackageRecoveryIdentity
+    {
+        internal static bool IsSourceIdentifier(string identifier)
+        {
+            return !string.IsNullOrEmpty(identifier)
+                && (identifier.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    || identifier.StartsWith("git", StringComparison.OrdinalIgnoreCase)
+                    || identifier.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
+                    || identifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                    || identifier.EndsWith(".git", StringComparison.OrdinalIgnoreCase));
+        }
+
+        internal static bool MatchesVersion(PackageInfo info, string identifier)
+        {
+            if (IsSourceIdentifier(identifier))
+                return true;
+
+            int atIndex = identifier?.IndexOf('@') ?? -1;
+            return atIndex < 0 || atIndex == identifier.Length - 1
+                || string.Equals(info.version, identifier.Substring(atIndex + 1), StringComparison.Ordinal);
+        }
+
+        internal static bool MatchesSource(PackageInfo info, string identifier, string packagesDirectory)
+        {
+            bool isFile = identifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+            if (isFile ? info.source != PackageSource.Local && info.source != PackageSource.LocalTarball && info.source != PackageSource.Git
+                       : info.source != PackageSource.Git)
+                return false;
+
+            // file: can identify a local package or a Git FILE URL. Registered source is authoritative.
+            bool isLocalFile = isFile && info.source != PackageSource.Git;
+
+            string source = info.packageId;
+            string prefix = info.name + "@";
+            if (source != null && source.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                source = source.Substring(prefix.Length);
+
+            // Unity's Git marker is not part of the URL passed to Git; local IDs normalize separators.
+            string requested = NormalizeSource(identifier, isLocalFile);
+            source = NormalizeSource(source, isLocalFile);
+            if (string.Equals(source, requested, StringComparison.Ordinal))
+                return true;
+
+            // A local folder ID may be absolute even when the request was relative to Packages.
+            // Tarball resolvedPath is an extracted folder, not the requested archive.
+            if (!isLocalFile || info.source != PackageSource.Local || string.IsNullOrEmpty(info.resolvedPath))
+                return false;
+
+            string path = requested.Substring("file:".Length);
+            string fullPath = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(packagesDirectory, path))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string resolvedPath = Path.GetFullPath(info.resolvedPath.Replace('\\', '/'))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(fullPath, resolvedPath, comparison);
+        }
+
+        private static string NormalizeSource(string source, bool isFile)
+        {
+            if (source == null)
+                return null;
+            if (isFile)
+                return source.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                    ? "file:" + source.Substring("file:".Length).Replace('\\', '/')
+                    : source.Replace('\\', '/');
+            return source.StartsWith("git+", StringComparison.OrdinalIgnoreCase) ? source.Substring(4) : source;
+        }
     }
 
     internal static class PackageJobManager
@@ -133,7 +203,9 @@ namespace MCPForUnity.Editor.Services
 
                 if (job.Operation == "add" || job.Operation == "embed")
                 {
-                    if (info != null)
+                    if (info != null && (job.Operation == "embed"
+                        ? info.source == PackageSource.Embedded
+                        : PackageRecoveryIdentity.MatchesVersion(info, job.Package)))
                     {
                         job.Status = PackageJobStatus.Succeeded;
                         job.FinishedUnixMs = nowMs;
@@ -181,32 +253,23 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         private static PackageInfo FindPackageInfo(PackageInfo[] allPackages, string packageName, string originalIdentifier)
         {
-            // Direct name match (handles normal com.company.package identifiers)
-            var info = allPackages.FirstOrDefault(p =>
-                string.Equals(p.name, packageName, StringComparison.OrdinalIgnoreCase));
-            if (info != null)
-                return info;
+            if (!PackageRecoveryIdentity.IsSourceIdentifier(originalIdentifier))
+                return allPackages.FirstOrDefault(p =>
+                    string.Equals(p.name, packageName, StringComparison.OrdinalIgnoreCase));
 
-            // For git URLs / file: paths, packageName == originalIdentifier and won't match .name.
-            // Try matching by packageId or source (git/local).
-            bool isGitOrFile = originalIdentifier.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                               || originalIdentifier.StartsWith("git", StringComparison.OrdinalIgnoreCase)
-                               || originalIdentifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-                               || originalIdentifier.EndsWith(".git", StringComparison.OrdinalIgnoreCase);
-
-            if (!isGitOrFile)
-                return null;
-
+            string packagesDirectory = originalIdentifier.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetFullPath(Path.Combine(UnityEngine.Application.dataPath, "..", "Packages"))
+                : null;
             return allPackages.FirstOrDefault(p =>
-                p.source == PackageSource.Git || p.source == PackageSource.Local
-                    ? p.packageId != null && p.packageId.Contains(originalIdentifier)
-                      || p.resolvedPath != null && p.resolvedPath.Contains(originalIdentifier)
-                    : false);
+                PackageRecoveryIdentity.MatchesSource(p, originalIdentifier, packagesDirectory));
         }
 
         internal static string ExtractPackageName(string packageIdentifier)
         {
             if (string.IsNullOrEmpty(packageIdentifier))
+                return packageIdentifier;
+
+            if (PackageRecoveryIdentity.IsSourceIdentifier(packageIdentifier))
                 return packageIdentifier;
 
             // Strip version: "com.unity.foo@1.0.0" -> "com.unity.foo"
