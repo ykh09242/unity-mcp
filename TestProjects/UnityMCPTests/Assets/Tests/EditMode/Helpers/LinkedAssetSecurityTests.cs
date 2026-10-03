@@ -102,6 +102,69 @@ namespace MCPForUnityTests.Editor.Helpers
             }
         }
 
+        [TestCase("create", false, true, false)]
+        [TestCase("duplicate", false, true, false)]
+        [TestCase("move", false, true, false)]
+        [TestCase("rename", false, true, false)]
+        [TestCase("create", false, true, true)]
+        [TestCase("duplicate", false, false, true)]
+        [TestCase("move", false, false, true)]
+        [TestCase("duplicate", true, true, false)]
+        [TestCase("move", true, true, false)]
+        [TestCase("rename", true, false, false)]
+        [TestCase("duplicate", true, false, true)]
+        [TestCase("move", true, true, true)]
+        public void AssetOperationsRejectLinksBeforeCreatingDirectories(
+            string action, bool sourceLink, bool directory, bool broken)
+        {
+            string id = "LinkedAssetOperation_" + Guid.NewGuid().ToString("N");
+            string root = Path.Combine(Application.dataPath, id);
+            string outside = Path.Combine(root, "Outside");
+            string link = Path.Combine(root, directory ? "Linked" : "Linked.asset");
+            string normalSource = Path.Combine(root, "Source.asset");
+            Directory.CreateDirectory(root);
+            File.WriteAllText(normalSource, "source sentinel");
+            if (!broken)
+            {
+                Directory.CreateDirectory(outside);
+                File.WriteAllText(Path.Combine(outside, "Source.asset"), "outside sentinel");
+            }
+            try
+            {
+                Link(link, directory ? outside : Path.Combine(outside, "Source.asset"), directory);
+                string relative = "Assets/" + id;
+                string linkedPath = relative + (directory ? "/Linked/Source.asset" : "/Linked.asset");
+                string destination = sourceLink
+                    ? relative + "/New/Probe.asset"
+                    : relative + (directory ? "/Linked/New/Probe.asset" : "/Linked.asset");
+                LogAssert.Expect(LogType.Error, new Regex(@"\[ManageAsset\] Action '" + action + @"' failed"));
+                var result = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+                {
+                    ["action"] = action,
+                    ["path"] = action == "create" ? destination : sourceLink ? linkedPath : relative + "/Source.asset",
+                    ["destination"] = destination,
+                    ["assetType"] = "PhysicsMaterial"
+                }));
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.IsFalse(Directory.Exists(Path.Combine(root, "New")), "Rejected source must not prepare a destination.");
+                Assert.IsFalse(Directory.Exists(Path.Combine(outside, "New")), "Rejected destination must not create linked children.");
+                Assert.AreEqual("source sentinel", File.ReadAllText(normalSource));
+                if (!broken)
+                    Assert.AreEqual("outside sentinel", File.ReadAllText(Path.Combine(outside, "Source.asset")));
+            }
+            finally
+            {
+                // Remove the link itself first; every target belongs to this GUID-named tree.
+                if (directory)
+                {
+                    try { Directory.Delete(link); } catch (DirectoryNotFoundException) { }
+                }
+                else File.Delete(link);
+                Directory.Delete(root, true);
+                File.Delete(root + ".meta");
+            }
+        }
+
         [Test]
         public void AbsentFilesAreAllowedOnlyInsideTheRoot()
         {

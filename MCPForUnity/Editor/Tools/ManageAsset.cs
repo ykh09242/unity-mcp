@@ -183,7 +183,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(assetType))
                 return new ErrorResponse("'assetType' is required for create.");
 
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             if (AssetExists(fullPath))
                 return new ErrorResponse($"Asset already exists at path: {fullPath}");
 
@@ -236,6 +236,7 @@ namespace MCPForUnity.Editor.Tools
                             MaterialOps.ApplyProperties(mat, propertiesForApply, UnityJsonSerializer.Instance);
                         }
                     }
+                    AssetPathUtility.GetFullAssetPath(fullPath);
                     AssetDatabase.CreateAsset(mat, fullPath);
                 }
                 else if (lowerAssetType == "physicsmaterial")
@@ -244,6 +245,7 @@ namespace MCPForUnity.Editor.Tools
                     newAsset = pmat;
                     if (properties != null)
                         ApplyPhysicsMaterialProperties(pmat, properties);
+                    AssetPathUtility.GetFullAssetPath(fullPath);
                     AssetDatabase.CreateAsset(pmat, fullPath);
                 }
 
@@ -280,7 +282,7 @@ namespace MCPForUnity.Editor.Tools
         {
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for create_folder.");
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             string parentDir = AssetPathUtility.NormalizeSeparators(Path.GetDirectoryName(fullPath));
             string folderName = Path.GetFileName(fullPath);
 
@@ -312,6 +314,7 @@ namespace MCPForUnity.Editor.Tools
                         return parentResult;
                 }
 
+                AssetPathUtility.GetFullAssetPath(fullPath);
                 string guid = AssetDatabase.CreateFolder(parentDir, folderName);
                 if (string.IsNullOrEmpty(guid))
                 {
@@ -528,7 +531,7 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for duplicate.");
 
-            string sourcePath = AssetPathUtility.SanitizeAssetPath(path);
+            string sourcePath = AssetPathUtility.GetContainedAssetPath(path);
             if (!AssetExists(sourcePath))
                 return new ErrorResponse($"Source asset not found at path: {sourcePath}");
 
@@ -536,11 +539,12 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(destinationPath))
             {
                 // Generate a unique path if destination is not provided
-                destPath = AssetDatabase.GenerateUniqueAssetPath(sourcePath);
+                destPath = AssetPathUtility.GetContainedAssetPath(
+                    AssetDatabase.GenerateUniqueAssetPath(sourcePath));
             }
             else
             {
-                destPath = AssetPathUtility.SanitizeAssetPath(destinationPath);
+                destPath = AssetPathUtility.GetContainedAssetPath(destinationPath);
                 if (AssetExists(destPath))
                     return new ErrorResponse($"Asset already exists at destination path: {destPath}");
                 // Ensure destination directory exists
@@ -549,6 +553,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                AssetPathUtility.GetFullAssetPath(sourcePath);
+                AssetPathUtility.GetFullAssetPath(destPath);
                 bool success = AssetDatabase.CopyAsset(sourcePath, destPath);
                 if (success)
                 {
@@ -578,8 +584,8 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(destinationPath))
                 return new ErrorResponse("'destination' path is required for move/rename.");
 
-            string sourcePath = AssetPathUtility.SanitizeAssetPath(path);
-            string destPath = AssetPathUtility.SanitizeAssetPath(destinationPath);
+            string sourcePath = AssetPathUtility.GetContainedAssetPath(path);
+            string destPath = AssetPathUtility.GetContainedAssetPath(destinationPath);
 
             if (!AssetExists(sourcePath))
                 return new ErrorResponse($"Source asset not found at path: {sourcePath}");
@@ -594,6 +600,8 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 // Validate will return an error string if failed, null if successful
+                AssetPathUtility.GetFullAssetPath(sourcePath);
+                AssetPathUtility.GetFullAssetPath(destPath);
                 string error = AssetDatabase.ValidateMoveAsset(sourcePath, destPath);
                 if (!string.IsNullOrEmpty(error))
                 {
@@ -602,6 +610,8 @@ namespace MCPForUnity.Editor.Tools
                     );
                 }
 
+                AssetPathUtility.GetFullAssetPath(sourcePath);
+                AssetPathUtility.GetFullAssetPath(destPath);
                 string moveError = AssetDatabase.MoveAsset(sourcePath, destPath);
                 if (string.IsNullOrEmpty(moveError))
                 {
@@ -865,10 +875,10 @@ namespace MCPForUnity.Editor.Tools
         {
             if (string.IsNullOrEmpty(directoryPath))
                 return;
-            string fullDirPath = Path.Combine(Directory.GetCurrentDirectory(), directoryPath);
+            string fullDirPath = AssetPathUtility.GetFullAssetPath(directoryPath);
             if (!Directory.Exists(fullDirPath))
             {
-                Directory.CreateDirectory(fullDirPath);
+                Directory.CreateDirectory(AssetPathUtility.GetFullAssetPath(directoryPath));
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport); // Let Unity know about the new folder
             }
         }
