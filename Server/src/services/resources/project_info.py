@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastmcp import Context
 
 from models import MCPResponse
@@ -16,6 +16,9 @@ class ProjectInfoData(BaseModel):
     unityVersion: str = ""
     platform: str = ""
     assetsPath: str = ""
+    renderPipeline: str = ""
+    activeInputHandler: str = ""
+    packages: dict[str, bool] = Field(default_factory=dict)
 
 
 class ProjectInfoResponse(MCPResponse):
