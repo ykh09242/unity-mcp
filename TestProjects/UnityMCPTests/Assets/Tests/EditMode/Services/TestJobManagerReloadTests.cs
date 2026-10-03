@@ -179,10 +179,55 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(TestRunStatus.IsRunning);
             Assert.AreEqual(2, job.CompletedTests);
             Assert.AreEqual(2, job.Result.Results.Count);
+            Assert.AreEqual(0, RetainedResults(service).Count, "Final results must not retain Unity adaptor trees.");
             var payload = JObject.FromObject(TestJobManager.ToSerializable(job, false, true));
             Assert.AreEqual(1, (int)payload["result"]["summary"]["failed"]);
             Assert.AreEqual("assertion failed", (string)payload["result"]["results"][0]["message"]);
         }
+
+        [Test]
+        public void IdleService_DoesNotRetainManualRunResults()
+        {
+            var service = new TestRunnerService();
+            ServiceField.SetValue(null, service);
+            service.TestFinished(new ResultStub("Manual.First", "Passed"));
+            service.TestFinished(new ResultStub("Manual.Second", "Failed"));
+            Assert.AreEqual(0, RetainedResults(service).Count, "Global manual-run callbacks must not accumulate in the idle MCP service.");
+        }
+
+        [Test]
+        public void RecoveredRunError_ReleasesCollectedResults()
+        {
+            AddJob();
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.BeforeError", "Passed"));
+            Assert.AreEqual(1, RetainedResults(service).Count);
+            service.OnError("Run interrupted");
+            Assert.AreEqual(0, RetainedResults(service).Count);
+        }
+
+        [Test]
+        public void StartupFailure_ReleasesCollectedResults()
+        {
+            AddJob();
+            var service = new TestRunnerService();
+            ServiceField.SetValue(null, service);
+            var api = typeof(TestRunnerService).GetField("_testRunnerApi", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(service);
+            var scheduler = typeof(TestRunnerApi).GetField("ScheduleJob", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(scheduler);
+            scheduler.SetValue(api, new Func<ExecutionSettings, string>(_ =>
+            {
+                service.TestFinished(new ResultStub("Fixture.BeforeStartupFailure", "Passed"));
+                throw new InvalidOperationException("schedule-failure");
+            }));
+            var run = service.RunTestsAsync(TestMode.EditMode);
+            Assert.IsTrue(run.IsCompleted);
+            Assert.Throws<InvalidOperationException>(() => run.GetAwaiter().GetResult());
+            Assert.AreEqual(0, RetainedResults(service).Count);
+        }
+
+        private static List<ITestResultAdaptor> RetainedResults(TestRunnerService service) =>
+            (List<ITestResultAdaptor>)typeof(TestRunnerService).GetField("_leafResults", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(service);
 
         [Test]
         public void LateCallbacksFromRecoveredJob_DoNotMutateNewJobOrItsSettings()

@@ -294,6 +294,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     _trackedJobId = null;
                     _runCompletionSource = null;
+                    _leafResults.Clear();
                 }
                 if (appliedNoThrottling)
                 {
@@ -421,6 +422,8 @@ namespace MCPForUnity.Editor.Services
             var completion = _runCompletionSource;
             _runCompletionSource = null;
             _trackedJobId = null;
+            // The payload owns materialized result values, not Unity's adaptor trees.
+            _leafResults.Clear();
             if (completion != null)
             {
                 if (error == null) completion.TrySetResult(payload);
@@ -452,7 +455,7 @@ namespace MCPForUnity.Editor.Services
 
         public void TestFinished(ITestResultAdaptor result)
         {
-            if (result == null)
+            if (result == null || (_runCompletionSource == null && _trackedJobId == null))
             {
                 return;
             }
