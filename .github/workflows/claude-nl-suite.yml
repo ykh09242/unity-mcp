@@ -4,8 +4,6 @@ on: [workflow_dispatch]
 
 permissions:
   contents: read
-  checks: write
-  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +14,11 @@ env:
 
 jobs:
   nl-suite:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      checks: write
+      id-token: write
     timeout-minutes: 60
     env:
       JUNIT_OUT: reports/junit-nl-suite.xml
@@ -41,14 +43,17 @@ jobs:
             echo "unity_ok=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       # ---------- Python env for MCP server (uv) ----------
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: "3.11"
+          version: "0.12.22"
+          python-version: "3.14.8"
+          enable-cache: false
 
       - name: Install MCP server
         run: |
@@ -644,7 +649,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude NL pass
-        uses: anthropics/claude-code-action@cc5ef44546fda0649ddde3c5ab0cd3db7b7c5035
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -658,7 +663,7 @@ jobs:
             --allowedTools mcp__unity,Edit(reports/**),MultiEdit(reports/**)
             --disallowedTools Bash,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit,NotebookRead
             --model claude-haiku-4-5-20251001
-            --fallback-model claude-sonnet-4-5-20250929
+            --fallback-model claude-sonnet-5-5
           track_progress: false
           show_full_output: true
           display_report: false
@@ -706,7 +711,7 @@ jobs:
 
       - name: Retry NL pass (Sonnet) if incomplete or failed
         if: steps.nl_cov.outputs.missing != '0' || steps.nl_cov.outputs.failed != '0'
-        uses: anthropics/claude-code-action@cc5ef44546fda0649ddde3c5ab0cd3db7b7c5035
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         continue-on-error: true
         env:
           UNITY_MCP_DEFAULT_INSTANCE: ${{ env.UNITY_MCP_DEFAULT_INSTANCE }}
@@ -718,7 +723,7 @@ jobs:
             --mcp-config .claude/mcp.json
             --allowedTools mcp__unity,Edit(reports/**),MultiEdit(reports/**)
             --disallowedTools Bash,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit,NotebookRead
-            --model claude-sonnet-4-5-20250929
+            --model claude-sonnet-5-5
             --fallback-model claude-haiku-4-5-20251001
           track_progress: false
           show_full_output: true
@@ -768,7 +773,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude T pass A-J
-        uses: anthropics/claude-code-action@cc5ef44546fda0649ddde3c5ab0cd3db7b7c5035
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -782,7 +787,7 @@ jobs:
             --allowedTools mcp__unity,Edit(reports/**),MultiEdit(reports/**)
             --disallowedTools Bash,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit,NotebookRead
             --model claude-haiku-4-5-20251001
-            --fallback-model claude-sonnet-4-5-20250929
+            --fallback-model claude-sonnet-5-5
           track_progress: false
           show_full_output: true
           display_report: false
@@ -809,7 +814,7 @@ jobs:
 
       - name: Retry T pass (Sonnet) if incomplete
         if: steps.t_cov.outputs.missing != '0'
-        uses: anthropics/claude-code-action@cc5ef44546fda0649ddde3c5ab0cd3db7b7c5035
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         env:
           GITHUB_STEP_SUMMARY: /dev/null
         with:
@@ -819,7 +824,7 @@ jobs:
             --mcp-config .claude/mcp.json
             --allowedTools mcp__unity,Edit(reports/**),MultiEdit(reports/**)
             --disallowedTools Bash,MultiEdit(/!(reports/**)),WebFetch,WebSearch,Task,TodoWrite,NotebookEdit,NotebookRead
-            --model claude-sonnet-4-5-20250929
+            --model claude-sonnet-5-5
             --fallback-model claude-haiku-4-5-20251001
           track_progress: false
           show_full_output: true
@@ -882,7 +887,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude GO pass
-        uses: anthropics/claude-code-action@cc5ef44546fda0649ddde3c5ab0cd3db7b7c5035
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -896,7 +901,7 @@ jobs:
             --allowedTools mcp__unity,Edit(reports/**),MultiEdit(reports/**)
             --disallowedTools Bash,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit,NotebookRead
             --model claude-haiku-4-5-20251001
-            --fallback-model claude-sonnet-4-5-20250929
+            --fallback-model claude-sonnet-5-5
           track_progress: false
           show_full_output: true
           display_report: false
@@ -921,7 +926,7 @@ jobs:
 
       - name: Retry GO pass (Sonnet) if incomplete
         if: steps.go_cov.outputs.missing != '0'
-        uses: anthropics/claude-code-action@cc5ef44546fda0649ddde3c5ab0cd3db7b7c5035
+        uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         env:
           GITHUB_STEP_SUMMARY: /dev/null
         with:
@@ -931,7 +936,7 @@ jobs:
             --mcp-config .claude/mcp.json
             --allowedTools mcp__unity,Edit(reports/**),MultiEdit(reports/**)
             --disallowedTools Bash,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit,NotebookRead
-            --model claude-sonnet-4-5-20250929
+            --model claude-sonnet-5-5
             --fallback-model claude-haiku-4-5-20251001
           track_progress: false
           show_full_output: true
@@ -1631,7 +1636,7 @@ jobs:
 
       - name: Publish JUnit report
         if: always()
-        uses: mikepenz/action-junit-report@v5
+        uses: mikepenz/action-junit-report@a9170d5795813c01ab4901ffb045b52bab4ab09d # v6.5.0
         with:
           report_paths: "${{ env.JUNIT_OUT }}"
           include_passed: false
@@ -1646,7 +1651,7 @@ jobs:
 
       - name: Upload artifacts (reports + fragments + transcript + debug)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: claude-nl-suite-artifacts
           path: |
@@ -1666,7 +1671,7 @@ jobs:
 
       - name: Return Pro license (if used)
         if: always() && steps.lic.outputs.use_ebl == 'true' && steps.lic.outputs.has_serial == 'true'
-        uses: game-ci/unity-return-license@v2
+        uses: game-ci/unity-return-license@39eed66c5d43dc75f6d7eef74ba94acaa0fd2933 # v2.0.0
         continue-on-error: true
         env:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}

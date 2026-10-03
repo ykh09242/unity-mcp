@@ -1,0 +1,6 @@
+# Ubuntu 26.04 is GitHub-hosted GA, but actionlint 1.7.12's label catalog predates it.
+# https://github.blog/changelog/2026-09-17-ubuntu-26-generally-available-and-latest-migration/
+# actionlint's configured-label extension uses this key for additional known labels.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

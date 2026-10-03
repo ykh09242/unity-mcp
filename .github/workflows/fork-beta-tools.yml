@@ -1,14 +1,15 @@
 name: Fork Beta Tool Tests
 
-# beta-release.yml validates Server/MCPForUnity changes. Tool-only fork beta
-# pushes need their own trigger without expanding upstream release triggers.
+# beta-release.yml validates Server/MCPForUnity changes. Tooling and CI-policy
+# fork beta pushes need their own trigger without expanding release triggers.
 on:
   push:
     branches: [beta]
     paths:
       - tools/**
-      - .github/workflows/python-tests.yml
-      - .github/workflows/fork-beta-tools.yml
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/actionlint.yaml
 
 permissions:
   contents: read

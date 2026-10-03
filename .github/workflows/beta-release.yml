@@ -12,12 +12,19 @@ on:
       - "Server/**"
       - "MCPForUnity/**"
 
+permissions:
+  contents: read
+
 jobs:
   unity_tests:
     name: Unity tests gate
     if: github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/unity-tests.yml
-    secrets: inherit
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
 
   python_tests:
     name: Python tests gate
@@ -38,8 +45,10 @@ jobs:
       unity_beta_version: ${{ steps.version.outputs.unity_beta_version }}
       version_updated: ${{ steps.commit.outputs.updated }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # This job pushes its version-update branch back to GitHub.
+          persist-credentials: true
           fetch-depth: 0
           ref: beta
 
@@ -165,15 +174,16 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
           ref: beta
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "latest"
+          version: "0.12.22"
           enable-cache: true
           cache-dependency-glob: "Server/uv.lock"
 
@@ -236,6 +246,6 @@ jobs:
         working-directory: ./Server
 
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: Server/dist/

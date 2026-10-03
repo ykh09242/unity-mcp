@@ -38,8 +38,7 @@ jobs:
     # Branch protection treats a skipped required check as satisfied, so merges are not blocked.
     name: Detect Unity license secrets
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: {}
     outputs:
       unity_ok: ${{ steps.detect.outputs.unity_ok }}
     steps:
@@ -73,18 +72,21 @@ jobs:
 
 
   e2e-bridge:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: license
     if: needs.license.outputs.unity_ok == 'true'
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: "3.11"
+          version: "0.12.22"
+          python-version: "3.14.8"
+          enable-cache: false
 
       - name: Install MCP server
         run: |
@@ -159,7 +161,7 @@ jobs:
 
       - name: Upload E2E report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-bridge-report
           # The harness snapshots redacted Editor logs before removing its container.

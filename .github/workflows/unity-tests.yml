@@ -3,6 +3,15 @@ name: Unity Tests
 on:
   workflow_dispatch: {}
   workflow_call:
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
     inputs:
       ref:
         description: "Git ref to test (defaults to the triggering ref)."
@@ -46,6 +55,9 @@ on:
 # Dedup runs for the same branch across push / pull_request / workflow_call.
 # Same-repo PRs would otherwise fire both push (on the branch SHA) AND pull_request (on the PR);
 # concurrency keeps only the newer in-flight run per branch.
+permissions:
+  contents: read
+
 concurrency:
   group: unity-tests-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -60,7 +72,7 @@ jobs:
       versions: ${{ steps.set.outputs.versions }}
     steps:
       - name: Checkout version manifest
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
           sparse-checkout: tools/unity-versions.json
@@ -99,8 +111,7 @@ jobs:
     # check as satisfied, so this does not block merges.
     name: Detect Unity license secrets
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: {}
     outputs:
       unity_ok: ${{ steps.detect.outputs.unity_ok }}
     steps:
@@ -153,13 +164,13 @@ jobs:
         unityVersion: ${{ fromJson(needs.matrix.outputs.versions) }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
           ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.ref }}
           persist-credentials: false
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ matrix.projectPath }}/Library
           key: Library-${{ matrix.projectPath }}-${{ matrix.unityVersion }}
@@ -172,7 +183,7 @@ jobs:
       # release changed behavior under this workflow once (red beta since 2026-09-05); a pinned
       # cliVersion also skips the unauthenticated releases/latest lookup. Bump both on purpose.
       - name: Run domain reload tests
-        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
         id: domain-tests
         continue-on-error: true
         env:
@@ -198,7 +209,7 @@ jobs:
         run: python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
 
       - name: Run tests
-        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
         id: tests
         continue-on-error: true
         env:
@@ -230,7 +241,7 @@ jobs:
           fi
           python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && steps.domain-tests.outcome != 'skipped'
         with:
           name: Test results for ${{ matrix.testMode }} on Unity ${{ matrix.unityVersion }}

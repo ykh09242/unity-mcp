@@ -18,13 +18,20 @@ on:
         default: patch
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   unity_tests:
     name: Unity tests gate
     uses: ./.github/workflows/unity-tests.yml
     with:
       ref: beta
-    secrets: inherit
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
 
   python_tests:
     name: Python tests gate
@@ -54,8 +61,10 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # This job pushes its version-update branch back to GitHub.
+          persist-credentials: true
           ref: main
           fetch-depth: 0
 
@@ -308,7 +317,7 @@ jobs:
           git push origin --delete "$BRANCH" || true
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
@@ -324,8 +333,10 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout beta
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # This job pushes its version-update branch back to GitHub.
+          persist-credentials: true
           ref: beta
           fetch-depth: 0
 
@@ -463,8 +474,9 @@ jobs:
       contents: read
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.bump.outputs.tag }}
           fetch-depth: 0
 
@@ -492,17 +504,18 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.bump.outputs.tag }}
           fetch-depth: 0
 
       # Inlined from .github/actions/publish-pypi to avoid nested composite action issue
       # with pypa/gh-action-pypi-publish (see https://github.com/pypa/gh-action-pypi-publish/issues/338)
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "latest"
+          version: "0.12.22"
           enable-cache: true
           cache-dependency-glob: "Server/uv.lock"
 
@@ -512,7 +525,7 @@ jobs:
         working-directory: ./Server
 
       - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: Server/dist/
 
@@ -525,20 +538,23 @@ jobs:
       contents: write
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ needs.bump.outputs.tag }}
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "26.10.0"
+          # This write-enabled publishing job does not need automatic npm caching.
+          package-manager-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.14.8"
 
       - name: Generate MCPB bundle
         env:
@@ -551,7 +567,7 @@ jobs:
             --icon docs/images/coplay-logo.png
 
       - name: Upload MCPB to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.bump.outputs.tag }}
           files: unity-mcp-${{ needs.bump.outputs.new_version }}.mcpb
