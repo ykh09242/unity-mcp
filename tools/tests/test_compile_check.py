@@ -328,7 +328,25 @@ def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: 
         f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
         for module in ("AR", "SharedInternals", "Substance", "UnityTestProtocol", "VR")
     }
-    assert selected - default == {"DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"}
+    assert selected - default == {
+        "DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll",
+        "DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll",
+    }
+
+
+@pytest.mark.parametrize("version", ["6000.7.0b2", "6000.7.0a6"])
+@pytest.mark.parametrize("name", ["Runtime", "Editor"])
+def test_preview_ui_common_module_is_required_metadata(harness: CompileHarness, version: str, name: str) -> None:
+    entry = "DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll"
+    profile = Path("tools/compile-refs/6000.7") / f"{name}.txt"
+    assert entry in (ROOT / profile).read_text(encoding="utf-8").splitlines()
+    manifest = harness.repo / profile
+    manifest.write_text(manifest.read_text(encoding="utf-8") + entry + "\n", encoding="utf-8")
+    result = harness.run(version)
+    assert result.returncode != 0
+    assert entry in result.stderr
+    calls = harness.calls.read_text(encoding="utf-8").splitlines() if harness.calls.exists() else []
+    assert len(calls) == (0 if name == "Runtime" else 1)
 
 
 @pytest.mark.parametrize("family,module", [

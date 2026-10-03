@@ -56,6 +56,7 @@ DATA/Managed/UnityEngine/UnityEngine.TilemapModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TLSModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UIElementsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UIModule.dll
+DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UmbraModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityAnalyticsCommonModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityAnalyticsModule.dll
