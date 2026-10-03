@@ -221,8 +221,14 @@ for platform in $PLATFORMS; do
     compile UnityEngine.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEngine.TestRunner" "$platform" \
       "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
     cecil_refs=()
-    for dll in Mono.Cecil.dll Mono.Cecil.Pdb.dll Mono.Cecil.Mdb.dll Mono.Cecil.Rocks.dll; do
-      ref="$UNITY_DATA/Tools/Compilation/ApiUpdater/$dll"
+    # These editor versions ship Unity's fork with the Mono.Cecil namespace. Select
+    # its complete editor-managed group by version, never by DLL search order.
+    case "$ver_major.$ver_minor" in
+      2021.3|2022.3|6000.3) cecil_dir="$UNITY_DATA/Managed"; cecil_name=Unity.Cecil ;;
+      *) cecil_dir="$UNITY_DATA/Tools/Compilation/ApiUpdater"; cecil_name=Mono.Cecil ;;
+    esac
+    for suffix in '' .Pdb .Mdb .Rocks; do
+      ref="$cecil_dir/$cecil_name$suffix.dll"
       if [ ! -f "$ref" ]; then
         echo "available Cecil reference candidates (diagnostic only):" >&2
         find "$UNITY_DATA/Managed" "$UNITY_DATA/Tools/ScriptUpdater" "$UNITY_DATA/Tools/Compilation/ApiUpdater" \

@@ -305,6 +305,36 @@ def test_missing_cecil_reports_bounded_candidates_without_selecting_them(
     assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 1
 
 
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1"])
+def test_legacy_cecil_uses_complete_editor_managed_fork_group(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str,
+) -> None:
+    project, framework = staged_tests
+    for suffix in ("", ".Pdb", ".Mdb", ".Rocks"):
+        (harness.data / f"Managed/Unity.Cecil{suffix}.dll").touch()
+    result = harness.run(version, test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rsp = (harness.output / "linux/UnityEditor.TestRunner.rsp").read_text(encoding="utf-8")
+    for suffix in ("", ".Pdb", ".Mdb", ".Rocks"):
+        assert f'/Managed/Unity.Cecil{suffix}.dll"' in rsp
+    assert "/Tools/Compilation/ApiUpdater/Mono.Cecil" not in rsp
+
+
+@pytest.mark.parametrize("suffix", ["", ".Pdb", ".Mdb", ".Rocks"])
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.76f1", "6000.3.25f1"])
+def test_legacy_missing_cecil_component_cannot_fall_back_to_modern_group(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], suffix: str, version: str,
+) -> None:
+    project, framework = staged_tests
+    for component in ("", ".Pdb", ".Mdb", ".Rocks"):
+        if component != suffix:
+            (harness.data / f"Managed/Unity.Cecil{component}.dll").touch()
+    result = harness.run(version, test_project=project, framework=framework)
+    assert result.returncode != 0
+    assert f"Managed/Unity.Cecil{suffix}.dll" in result.stderr
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 1
+
+
 def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
     project = ROOT / "TestProjects/UnityMCPTests"
     fixture = json.loads((project / "Assets/Scripts/TestAsmdef/TestAsmdef.asmdef").read_text(encoding="utf-8"))
