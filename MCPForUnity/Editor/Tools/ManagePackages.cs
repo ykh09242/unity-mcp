@@ -24,6 +24,9 @@ namespace MCPForUnity.Editor.Tools
         // Pending list/search requests keyed by job ID
         private static readonly Dictionary<string, ListRequest> PendingListRequests = new();
         private static readonly Dictionary<string, SearchRequest> PendingSearchRequests = new();
+        private static readonly Dictionary<string, object> CompletedQueryResults = new();
+        private static readonly Queue<string> CompletedQueryOrder = new();
+        private const int MaxCompletedQueries = 10;
 
         public static object HandleCommand(JObject @params)
         {
@@ -169,6 +172,9 @@ namespace MCPForUnity.Editor.Tools
             // Check pending list/search requests first
             if (!string.IsNullOrEmpty(jobId))
             {
+                if (CompletedQueryResults.TryGetValue(jobId, out var completedQuery))
+                    return completedQuery;
+
                 if (PendingListRequests.TryGetValue(jobId, out var listReq))
                     return CheckListRequest(jobId, listReq);
 
@@ -198,7 +204,8 @@ namespace MCPForUnity.Editor.Tools
                     if (req.IsCompleted)
                     {
                         FinalizeRequest(job.JobId, req);
-                        job = PackageJobManager.GetJob(job.JobId);
+                        // Completed-only history pruning may evict this job immediately.
+                        job = PackageJobManager.GetJob(job.JobId) ?? job;
                     }
                 }
                 else
@@ -271,7 +278,7 @@ namespace MCPForUnity.Editor.Tools
             PendingListRequests.Remove(jobId);
 
             if (request.Status == StatusCode.Failure)
-                return new ErrorResponse($"Failed to list packages: {request.Error?.message ?? "Unknown error"}");
+                return CacheQueryResult(jobId, new ErrorResponse($"Failed to list packages: {request.Error?.message ?? "Unknown error"}"));
 
             var packages = request.Result
                 .Select(pkg => new
@@ -283,10 +290,10 @@ namespace MCPForUnity.Editor.Tools
                 })
                 .ToArray();
 
-            return new SuccessResponse(
+            return CacheQueryResult(jobId, new SuccessResponse(
                 $"Found {packages.Length} installed package(s).",
                 new { packages, count = packages.Length }
-            );
+            ));
         }
 
         // === search_packages ===
@@ -331,7 +338,7 @@ namespace MCPForUnity.Editor.Tools
             PendingSearchRequests.Remove(jobId);
 
             if (request.Status == StatusCode.Failure)
-                return new ErrorResponse($"Package search failed: {request.Error?.message ?? "Unknown error"}");
+                return CacheQueryResult(jobId, new ErrorResponse($"Package search failed: {request.Error?.message ?? "Unknown error"}"));
 
             var packages = request.Result
                 .Select(pkg => new
@@ -343,10 +350,10 @@ namespace MCPForUnity.Editor.Tools
                 })
                 .ToArray();
 
-            return new SuccessResponse(
+            return CacheQueryResult(jobId, new SuccessResponse(
                 $"Found {packages.Length} matching package(s).",
                 new { packages, count = packages.Length }
-            );
+            ));
         }
 
         // === get_package_info ===
@@ -402,7 +409,7 @@ namespace MCPForUnity.Editor.Tools
                 if (!File.Exists(manifestPath))
                     return new ErrorResponse("Packages/manifest.json not found.");
 
-                var manifest = JObject.Parse(File.ReadAllText(manifestPath));
+                var manifest = ReadRegistryManifest(manifestPath);
                 var registries = manifest["scopedRegistries"] as JArray ?? new JArray();
 
                 var result = registries.Select(r => new
@@ -444,7 +451,7 @@ namespace MCPForUnity.Editor.Tools
                 if (!File.Exists(manifestPath))
                     return new ErrorResponse("Packages/manifest.json not found.");
 
-                var manifest = JObject.Parse(File.ReadAllText(manifestPath));
+                var manifest = ReadRegistryManifest(manifestPath);
                 var registries = manifest["scopedRegistries"] as JArray;
                 if (registries == null)
                 {
@@ -470,7 +477,7 @@ namespace MCPForUnity.Editor.Tools
                 };
                 registries.Add(newRegistry);
 
-                File.WriteAllText(manifestPath, manifest.ToString(Formatting.Indented));
+                McpConfigurationHelper.WriteAtomicFile(manifestPath, manifest.ToString(Formatting.Indented));
                 Client.Resolve();
 
                 return new SuccessResponse(
@@ -504,7 +511,7 @@ namespace MCPForUnity.Editor.Tools
                 if (!File.Exists(manifestPath))
                     return new ErrorResponse("Packages/manifest.json not found.");
 
-                var manifest = JObject.Parse(File.ReadAllText(manifestPath));
+                var manifest = ReadRegistryManifest(manifestPath);
                 var registries = manifest["scopedRegistries"] as JArray;
                 if (registries == null || registries.Count == 0)
                     return new ErrorResponse("No scoped registries configured.");
@@ -536,7 +543,7 @@ namespace MCPForUnity.Editor.Tools
                 if (registries.Count == 0)
                     manifest.Remove("scopedRegistries");
 
-                File.WriteAllText(manifestPath, manifest.ToString(Formatting.Indented));
+                McpConfigurationHelper.WriteAtomicFile(manifestPath, manifest.ToString(Formatting.Indented));
                 Client.Resolve();
 
                 return new SuccessResponse($"Removed scoped registry '{removedName}'.");
@@ -612,6 +619,27 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // --- Helpers ---
+
+        private static object CacheQueryResult(string jobId, object result)
+        {
+            CompletedQueryResults[jobId] = result;
+            CompletedQueryOrder.Enqueue(jobId);
+            while (CompletedQueryOrder.Count > MaxCompletedQueries)
+                CompletedQueryResults.Remove(CompletedQueryOrder.Dequeue());
+            return result;
+        }
+
+        private static JObject ReadRegistryManifest(string path)
+        {
+            var manifest = JObject.Parse(File.ReadAllText(path), new JsonLoadSettings
+            {
+                DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error
+            });
+            var registries = manifest["scopedRegistries"];
+            if (registries != null && registries.Type != JTokenType.Null && registries is not JArray)
+                throw new FormatException("'scopedRegistries' must be an array; the manifest was not changed.");
+            return manifest;
+        }
 
         private static void RegisterCompletionCallback(string jobId, Request request)
         {
