@@ -547,7 +547,7 @@ namespace MCPForUnity.Editor.Services
             if (completed != tcs.Task)
             {
                 McpLog.Warn($"[TestRunnerService] Timeout waiting for test retrieval callback for {mode}");
-                return null;
+                throw new TimeoutException($"Timed out retrieving the {mode} test list.");
             }
 
             try
@@ -581,7 +581,7 @@ namespace MCPForUnity.Editor.Services
 
             bool hasChildren = node.HasChildren && node.Children != null;
 
-            if (!hasChildren)
+            if (!node.IsSuite)
             {
                 string fullName = string.IsNullOrEmpty(node.FullName) ? node.Name ?? string.Empty : node.FullName;
                 string key = $"{mode}:{fullName}";
@@ -598,7 +598,7 @@ namespace MCPForUnity.Editor.Services
                     });
                 }
             }
-            else if (node.Children != null)
+            else if (hasChildren)
             {
                 foreach (var child in node.Children)
                 {
