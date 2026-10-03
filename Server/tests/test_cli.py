@@ -1130,12 +1130,14 @@ class TestInstanceCommands:
             assert result.exit_code == 0
             assert "TestProject" in result.output
 
-    def test_instance_set(self, runner, mock_unity_response):
-        """Test setting active instance."""
-        with patch("cli.commands.instance.run_command", return_value=mock_unity_response):
+    def test_instance_set(self, runner):
+        """Stateless CLI selection is explained without forwarding a Unity command."""
+        with patch("cli.utils.connection.send_command", side_effect=AssertionError("Unsupported selection was sent")) as send:
             result = runner.invoke(
                 cli, ["instance", "set", "TestProject@abc123"])
-            assert result.exit_code == 0
+            assert result.exit_code == 1
+            assert "--instance" in result.output and "UNITY_MCP_INSTANCE" in result.output
+            send.assert_not_called()
 
     def test_instance_current(self, runner):
         """Test showing current instance."""
