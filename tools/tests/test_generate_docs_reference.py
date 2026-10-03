@@ -8,8 +8,12 @@ from typing import Annotated, Union
 import pytest
 from pydantic import BeforeValidator, Field
 
-from tools.generate_docs_reference import _annotation_description, _diff_trees, _render_type
-from tools import generate_docs_reference as docs
+_TOOLS_DIR = Path(__file__).resolve().parents[1]
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+
+import generate_docs_reference as docs  # noqa: E402
+from generate_docs_reference import _annotation_description, _diff_trees, _render_type  # noqa: E402
 
 
 def test_pep604_and_typing_unions_render_bare_collections_consistently():
