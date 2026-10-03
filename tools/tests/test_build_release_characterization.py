@@ -1043,7 +1043,7 @@ class TestStressTestSetupPatterns:
 
         Pattern: Atomic frame write with buffering flush
         """
-        mock_writer = AsyncMock()
+        mock_writer = Mock(spec=asyncio.StreamWriter)
         mock_writer.drain = AsyncMock()
 
         payload = b"hello world test"
@@ -1055,7 +1055,7 @@ class TestStressTestSetupPatterns:
         await asyncio.wait_for(mock_writer.drain(), timeout=2.0)
 
         assert mock_writer.write.call_count == 2
-        mock_writer.drain.assert_called_once()
+        mock_writer.drain.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_connection_handshake_validation(self):
