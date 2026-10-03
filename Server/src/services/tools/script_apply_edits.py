@@ -4,7 +4,8 @@ import hashlib
 import re
 from bisect import bisect_right
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Annotated, Any, Union
+from threading import BoundedSemaphore
+from typing import Annotated, Any, Callable, TypeVar, Union
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -18,6 +19,38 @@ from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+
+_REGEX_WORKERS = BoundedSemaphore(2)
+_RegexResult = TypeVar("_RegexResult")
+
+
+async def _run_regex_work(budget: bounded_regex.WorkBudget, work: Callable[[], _RegexResult]) -> _RegexResult:
+    """Keep queued/running script regex work bounded until the worker exits."""
+    budget.check()
+    if not _REGEX_WORKERS.acquire(blocking=False):
+        raise ValueError("Script regex workers are busy; retry later")
+
+    def run() -> _RegexResult:
+        try:
+            budget.check()
+            return work()
+        finally:
+            _REGEX_WORKERS.release()
+
+    # Preserve this module's asyncio backend. Submit before awaiting so even a
+    # queued cancelled request eventually releases admission in the worker.
+    try:
+        future = asyncio.get_running_loop().run_in_executor(None, run)
+    except BaseException:
+        _REGEX_WORKERS.release()
+        raise
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        budget.cancelled.set()
+        future.add_done_callback(lambda finished: finished.exception() if not finished.cancelled() else None)
+        raise
 
 
 def _iter_csharp_tokens(text: str):
@@ -39,6 +72,7 @@ def _iter_csharp_tokens(text: str):
     """
     i = 0
     end = len(text)
+    dollar_run_end = 0
     while i < end:
         c = text[i]
         nxt = text[i + 1] if i + 1 < end else '\0'
@@ -77,11 +111,14 @@ def _iter_csharp_tokens(text: str):
 
         # Interpolated raw string: $"""...""" or $$"""...""" etc. (C# 11)
         # Must check BEFORE regular $" and BEFORE plain """
-        if c == '$':
+        if c == '$' and i >= dollar_run_end:
             dollar_count = 1
             while i + dollar_count < end and text[i + dollar_count] == '$':
                 dollar_count += 1
             after_dollars = i + dollar_count
+            # A non-raw dollar run still reaches the ordinary lexer below;
+            # avoid probing the same remaining run again at every character.
+            dollar_run_end = after_dollars
             if (after_dollars + 2 < end and text[after_dollars] == '"'
                     and text[after_dollars + 1] == '"' and text[after_dollars + 2] == '"'):
                 q = 3
@@ -385,7 +422,9 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
     if len(edits or []) > 32:
         raise ValueError("At most 32 edits are permitted per request")
     text = original_text
+    budget = bounded_regex.WorkBudget()
     for edit in edits or []:
+        budget.consume(len(text))
         op = (
             (edit.get("op")
              or edit.get("operation")
@@ -404,9 +443,11 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
 
         if op == "prepend":
             prepend_text = edit.get("text", "")
+            budget.consume(len(prepend_text))
             text = prepend_text + text
         elif op == "append":
             append_text = edit.get("text", "")
+            budget.consume(len(append_text))
             text += append_text
         elif op == "anchor_insert":
             anchor = edit.get("anchor", "")
@@ -416,13 +457,14 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
                 re.IGNORECASE if edit.get("ignore_case") else 0)
 
             # Find the best match using improved heuristics
-            match = await asyncio.to_thread(_find_best_anchor_match,
-                anchor, text, flags, bool(edit.get("prefer_last", True)))
+            match = await _run_regex_work(budget, lambda: _find_best_anchor_match(
+                anchor, text, flags, bool(edit.get("prefer_last", True)), budget=budget))
             if not match:
                 if edit.get("allow_noop", True):
                     continue
                 raise RuntimeError(f"anchor not found: {anchor}")
             idx = match.start() if position == "before" else match.end()
+            budget.consume(len(text) + len(insert_text))
             text = text[:idx] + insert_text + text[idx:]
         elif op == "replace_range":
             start_line = int(edit.get("startLine", 1))
@@ -430,6 +472,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             end_line = int(edit.get("endLine", start_line))
             end_col = int(edit.get("endCol", 1))
             replacement = edit.get("text", "")
+            budget.consume(len(replacement))
             lines = text.splitlines(keepends=True)
             max_line = len(lines) + 1  # 1-based, exclusive end
             if (start_line < 1 or end_line < start_line or end_line > max_line
@@ -446,17 +489,20 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
         elif op == "regex_replace":
             pattern = edit.get("pattern", "")
             repl = edit.get("replacement", "")
+            budget.consume(len(repl))
             # Translate $n backrefs (our input) to Python \g<n>
             repl_py = re.sub(r"\$(\d+)", r"\\g<\1>", repl)
             count = int(edit.get("count", 0))  # 0 = replace all
             flags = re.MULTILINE
             if edit.get("ignore_case"):
                 flags |= re.IGNORECASE
-            text = await asyncio.to_thread(bounded_regex.substitute, pattern, repl_py, text, count, flags)
+            text = await _run_regex_work(budget, lambda: bounded_regex.substitute(
+                pattern, repl_py, text, count, flags, budget=budget))
         else:
             allowed = "anchor_insert, prepend, append, replace_range, regex_replace"
             raise RuntimeError(
                 f"unknown edit op: {op}; allowed: {allowed}. Use 'op' (aliases accepted: type/mode/operation).")
+    budget.consume(len(text))
     return text
 
 
@@ -468,6 +514,8 @@ class _TextEditError(ValueError):
 
 async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed: bool = False) -> list[dict[str, Any]]:
     """Build literal edits against the original buffer for write and preview."""
+    budget = bounded_regex.WorkBudget()
+    budget.consume(len(contents))
     lines, offsets = _script_lines_and_starts(contents)
 
     def line_col(index: int) -> tuple[int, int]:
@@ -479,6 +527,7 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
 
     spans = []
     for edit in edits:
+        budget.check()
         op = edit.get("op", "")
         payload = next((edit[field] for field in ("text", "insert", "content", "replacement")
                         if edit.get(field) is not None), "")
@@ -495,22 +544,45 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
             flags = re.MULTILINE | (re.IGNORECASE if edit.get("ignore_case") else 0)
             # Preserve each existing write route's selection: mixed first match;
             # pure text uses the established best/last anchor selection.
-            try:
+            def select_and_expand():
                 if mixed:
-                    match = await asyncio.to_thread(bounded_regex.search, pattern, contents, flags)
+                    match = bounded_regex.search(pattern, contents, flags, budget=budget)
                 else:
-                    match = await asyncio.to_thread(_find_best_anchor_match, pattern, contents, flags, True)
+                    match = _find_best_anchor_match(pattern, contents, flags, True, budget=budget)
+                if match is None:
+                    return match, payload
+                budget.consume(len(payload))
+                output_length = len(payload)
+                if output_length > bounded_regex.MAX_TEXT_CHARS:
+                    raise ValueError("Regex replacement exceeds the output size limit")
+
+                def expand(group):
+                    nonlocal output_length
+                    value = match.group(int(group.group(1))) or ""
+                    output_length += len(value) - len(group.group())
+                    budget.consume(len(value))
+                    if output_length > bounded_regex.MAX_TEXT_CHARS:
+                        raise ValueError("Regex replacement exceeds the output size limit")
+                    return value
+
+                expanded = re.sub(r"\$(\d+)", expand, payload)
+                budget.check()
+                return match, expanded
+
+            try:
+                match, payload = await _run_regex_work(budget, select_and_expand)
             except Exception as exc:
                 raise _TextEditError("bad_regex", f"Invalid regex pattern: {exc}") from exc
             if not match:
                 continue
-            payload = re.sub(r"\$(\d+)", lambda group: match.group(int(group.group(1))) or "", payload)
             start_line, start_col = line_col(match.start())
             end_line, end_col = line_col(match.end())
             span = {"startLine": start_line, "startCol": start_col, "endLine": end_line, "endCol": end_col}
         else:
             raise _TextEditError("unsupported_op", f"Unsupported text edit op: {op}")
+        budget.consume(len(payload))
         spans.append({**span, "newText": payload})
+    budget.check()
     return spans
 
 
@@ -542,7 +614,7 @@ def _preview_text_spans(contents: str, spans: list[dict[str, Any]]) -> str:
     return text
 
 
-def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bool = True):
+def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bool = True, *, budget: bounded_regex.WorkBudget | None = None):
     """
     Find the best anchor match using improved heuristics.
 
@@ -564,7 +636,8 @@ def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bo
     """
 
     # Find all matches
-    matches = bounded_regex.find_matches(pattern, text, flags)
+    budget = budget or bounded_regex.WorkBudget()
+    matches = bounded_regex.find_matches(pattern, text, flags, budget=budget)
     if not matches:
         return None
 
@@ -578,13 +651,13 @@ def _find_best_anchor_match(pattern: str, text: str, flags: int, prefer_last: bo
 
     if is_closing_brace_pattern and prefer_last:
         # Use heuristics to find the best closing brace match
-        return _find_best_closing_brace_match(matches, text)
+        return _find_best_closing_brace_match(matches, text, budget=budget)
 
     # Default behavior: use last match if prefer_last, otherwise first match
     return matches[-1] if prefer_last else matches[0]
 
 
-def _brace_depth_at_positions(text: str, positions: set[int]) -> dict[int, int]:
+def _brace_depth_at_positions(text: str, positions: set[int], budget: bounded_regex.WorkBudget | None = None) -> dict[int, int]:
     """Compute the brace depth just before each requested position.
 
     For every ``}`` in real code at a position in *positions*, stores the
@@ -593,8 +666,12 @@ def _brace_depth_at_positions(text: str, positions: set[int]) -> dict[int, int]:
     Returns a dict mapping position -> depth-before.
     """
     depths: dict[int, int] = {}
+    budget = budget or bounded_regex.WorkBudget()
+    budget.consume(len(text))
     depth = 0
     for pos, c, is_code, _ in _iter_csharp_tokens(text):
+        if pos % 1024 == 0:
+            budget.check()
         if not is_code:
             continue
         if c == '{':
@@ -603,10 +680,11 @@ def _brace_depth_at_positions(text: str, positions: set[int]) -> dict[int, int]:
             if pos in positions:
                 depths[pos] = depth
             depth = max(0, depth - 1)
+    budget.check()
     return depths
 
 
-def _find_best_closing_brace_match(matches, text: str):
+def _find_best_closing_brace_match(matches, text: str, *, budget: bounded_regex.WorkBudget | None = None):
     """
     Find the best closing brace match using brace-depth analysis.
 
@@ -625,31 +703,36 @@ def _find_best_closing_brace_match(matches, text: str):
     if not matches:
         return None
 
+    budget = budget or bounded_regex.WorkBudget()
     # Find the position of the '}' character within each match, filtering out
     # braces inside strings/comments
     brace_positions: dict[int, object] = {}  # brace_pos → match
     for m in matches:
-        for offset in range(m.start(), m.end()):
-            if offset < len(text) and text[offset] == '}':
-                if not _is_in_string_context(text, offset):
-                    brace_positions[offset] = m
-                break
+        budget.consume(m.end() - m.start() + 1)
+        offset = text.find('}', m.start(), m.end())
+        if offset >= 0:
+            brace_positions[offset] = m
 
     if not brace_positions:
         return None
 
-    depths = _brace_depth_at_positions(text, set(brace_positions.keys()))
+    # This one lexer pass both filters non-code candidates and records depth.
+    depths = _brace_depth_at_positions(text, set(brace_positions), budget)
 
     # Score: prefer shallowest depth (outermost brace), then latest position
     best_match = None
     best_key = (float('inf'), -1)  # (depth, -position) — lower is better
     for pos, m in brace_positions.items():
-        d = depths.get(pos, float('inf'))
+        budget.consume(1)
+        if pos not in depths:
+            continue
+        d = depths[pos]
         key = (d, -pos)  # lower depth wins, then later position wins
         if key < best_key:
             best_key = key
             best_match = m
 
+    budget.check()
     return best_match
 
 
