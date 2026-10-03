@@ -192,6 +192,49 @@ def read_package(path: Path, name: str, unity_version: str, source: str, expecte
     return ResolvedPackage(name, version, path, source, minimum, tuple(dependencies.items()), archive_sha256)
 
 
+def reference_diagnostic(unity_version: str, package: ResolvedPackage, root: Path, filename: str) -> str:
+    """Expose bounded import evidence, never infer compatibility from a DLL filename."""
+    directory = root / package.name
+    dlls = sorted(directory.rglob("*.dll"))
+    metadata = []
+    for dll in (path for path in dlls if path.name == filename):
+        if len(metadata) == 4:
+            break
+        path = dll.with_suffix(".dll.meta")
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            with path.open(encoding="utf-8", errors="replace") as stream:
+                content = stream.read(4097)
+            metadata.append({"path": path.relative_to(directory).as_posix(), "content": content[:4096], "truncated": len(content) > 4096})
+        except OSError:
+            metadata.append({"path": path.relative_to(directory).as_posix(), "unreadable": True})
+    assemblies = []
+    framework = root / "com.unity.test-framework"
+    for path in sorted(framework.rglob("*.asmdef")):
+        if len(assemblies) == 8:
+            break
+        try:
+            with path.open(encoding="utf-8") as stream:
+                content = stream.read(16385)
+            if len(content) > 16384:
+                continue
+            definition = json.loads(content)
+            if not isinstance(definition, dict) or filename not in definition.get("precompiledReferences", []):
+                continue
+            fields = {key: definition[key] for key in ("name", "includePlatforms", "excludePlatforms", "precompiledReferences", "overrideReferences", "defineConstraints") if key in definition}
+            # Bound both candidate count and JSON field sizes from package-provided metadata.
+            if len(json.dumps(fields)) > 2048:
+                fields = {"metadataTruncated": True}
+            assemblies.append({"path": path.relative_to(root).as_posix(), **fields})
+        except (OSError, ValueError, TypeError):
+            continue
+    return json.dumps({"unityVersion": unity_version, "package": f"{package.name}@{package.version}",
+                       "dllPaths": [path.relative_to(directory).as_posix() for path in dlls[:20]],
+                       "dllPathsTruncated": len(dlls) > 20, "pluginMetadata": metadata,
+                       "referencingAssemblies": assemblies}, separators=(",", ":"))
+
+
 def prepare(unity_version: str, unity_data: Path, output: Path, *, repo: Path = ROOT, profiles_path: Path = PROFILES, registry_cache: Path | None = None) -> Preparation:
     major, minor, _ = unity_numbers(unity_version)
     config = read_json(profiles_path)
@@ -268,7 +311,8 @@ def prepare(unity_version: str, unity_data: Path, output: Path, *, repo: Path = 
                                          ("com.unity.nuget.newtonsoft-json", "Runtime/Newtonsoft.Json.dll", "Newtonsoft.Json.dll")):
             source = scratch / "packages" / name / relative
             if not source.is_file() or source.is_symlink():
-                raise PreparationError(f"Required reference DLL missing: {name}/{relative}")
+                diagnostic = reference_diagnostic(unity_version, resolved[name], scratch / "packages", filename)
+                raise PreparationError(f"Required reference DLL missing: {name}/{relative}; diagnostic={diagnostic}")
             shutil.copyfile(source, refs / filename)
         framework = scratch / "packages" / "com.unity.test-framework"
         for assembly in ("UnityEngine.TestRunner", "UnityEditor.TestRunner"):

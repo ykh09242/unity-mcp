@@ -133,6 +133,51 @@ def test_transitive_minimum_cannot_be_silently_downgraded(environment: tuple[Pat
         prepare(environment)
 
 
+def test_missing_nunit_reports_bundled_layout_without_selecting_unverified_dll(environment: tuple[Path, Path, Path, Path]) -> None:
+    repo, data, _, _ = environment
+    builtin = data / "Resources/PackageManager/BuiltInPackages"
+    nunit = builtin / "com.unity.ext.nunit"
+    (nunit / "net40/unity-custom/nunit.framework.dll").unlink()
+    alternative = nunit / "unverified-target/nunit.framework.dll"
+    alternative.parent.mkdir()
+    alternative.write_bytes(b"not an established Editor reference")
+    (alternative.with_suffix(".dll.meta")).write_text("PluginImporter:\n  platformData:\n  - first:\n      Editor: Editor\n    second:\n      enabled: 0\n", encoding="utf-8")
+    asmdef = builtin / "com.unity.test-framework/UnityEditor.TestRunner/UnityEditor.TestRunner.asmdef"
+    asmdef.write_text(json.dumps({"name": "UnityEditor.TestRunner", "includePlatforms": ["Editor"], "precompiledReferences": ["nunit.framework.dll"]}), encoding="utf-8")
+    with pytest.raises(packages.PreparationError) as caught:
+        prepare(environment, "6000.6.4f1")
+    message = str(caught.value)
+    assert message.startswith("Required reference DLL missing: com.unity.ext.nunit/net40/unity-custom/nunit.framework.dll")
+    diagnostic = json.loads(message.split("; diagnostic=", 1)[1])
+    assert diagnostic["unityVersion"] == "6000.6.4f1"
+    assert diagnostic["package"] == "com.unity.ext.nunit@2.0.5"
+    assert diagnostic["dllPaths"] == ["unverified-target/nunit.framework.dll"]
+    assert "enabled: 0" in diagnostic["pluginMetadata"][0]["content"]
+    assert diagnostic["referencingAssemblies"] == [{"path": "com.unity.test-framework/UnityEditor.TestRunner/UnityEditor.TestRunner.asmdef", "name": "UnityEditor.TestRunner", "includePlatforms": ["Editor"], "precompiledReferences": ["nunit.framework.dll"]}]
+    assert not (repo / ".unity-ci/6000.6.4f1").exists()
+
+
+def test_missing_reference_diagnostic_is_bounded_and_single_line(environment: tuple[Path, Path, Path, Path]) -> None:
+    _, data, _, _ = environment
+    nunit = data / "Resources/PackageManager/BuiltInPackages/com.unity.ext.nunit"
+    (nunit / "net40/unity-custom/nunit.framework.dll").unlink()
+    for index in range(30):
+        dll = nunit / f"candidate-{index:02}/nunit.framework.dll"
+        dll.parent.mkdir()
+        dll.write_bytes(b"unverified")
+        dll.with_suffix(".dll.meta").write_text("PluginImporter:\n" + "x" * 8000, encoding="utf-8")
+    with pytest.raises(packages.PreparationError) as caught:
+        prepare(environment)
+    message = str(caught.value)
+    assert "\n" not in message and "\r" not in message
+    diagnostic = json.loads(message.split("; diagnostic=", 1)[1])
+    assert len(diagnostic["dllPaths"]) == 20
+    assert diagnostic["dllPathsTruncated"] is True
+    assert len(diagnostic["pluginMetadata"]) == 4
+    assert all(len(item["content"]) <= 4096 and item["truncated"] for item in diagnostic["pluginMetadata"])
+    assert len(message) < 20000
+
+
 @pytest.mark.parametrize("image", ["unity-mcp-editor:6000.7.0b2", "unity-mcp-editor:6000.7.0b2-tests",
                                   "unityci/editor:ubuntu-6000.7.0b2-base-3@sha256:" + "a" * 64,
                                   "unityci/editor:ubuntu-6000.7.0b2-linux-il2cpp-3@sha256:" + "a" * 64])
