@@ -1,8 +1,11 @@
+import os
+from pathlib import Path
 from typing import Annotated, Union
 
+import pytest
 from pydantic import BeforeValidator, Field
 
-from tools.generate_docs_reference import _annotation_description, _render_type
+from tools.generate_docs_reference import _annotation_description, _diff_trees, _render_type
 
 
 def test_pep604_and_typing_unions_render_bare_collections_consistently():
@@ -48,3 +51,20 @@ def test_existing_string_description_precedes_field_metadata():
     described = Annotated[int, Field(description="Field description"), "Existing description"]
     assert _annotation_description(described) == "Existing description"
     assert _annotation_description(Annotated[int, Field(), 7]) is None
+
+
+@pytest.mark.parametrize("committed,generated,expected", [
+    (b"same\n", b"same\r\n", []),
+    (b"old\n", b"new\n", ["differs: index.md"]),
+])
+def test_reference_drift_compares_text_not_newlines_or_file_metadata(
+    tmp_path: Path, committed: bytes, generated: bytes, expected: list[str],
+) -> None:
+    left, right = tmp_path / "committed", tmp_path / "generated"
+    for directory, content in ((left, committed), (right, generated)):
+        directory.mkdir()
+        path = directory / "index.md"
+        path.write_bytes(content)
+        os.utime(path, (1_700_000_000, 1_700_000_000))
+
+    assert _diff_trees(left, right) == expected

@@ -53,17 +53,17 @@ CAPTURE:
 | `search_method` | `Literal['by_id', 'by_name', 'by_path'] \| None` | — | How to find target. |
 | `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON string). |
 | `screenshot_file_name` | `str \| None` | — | Screenshot file name (optional). Defaults to timestamp. |
-| `screenshot_super_size` | `int \| str \| None` | — | Screenshot supersize multiplier (integer >= 1). |
+| `screenshot_super_size` | `int \| str \| None` | — | Screenshot supersize multiplier (integer 1 to 4). |
 | `camera` | `str \| None` | — | Camera to capture from (name, path, or instance ID). Omit to use ScreenCapture API (captures all layers including Screen Space Overlay UI). Specify only when you need a particular camera viewpoint; note that Screen Space - Overlay canvases will NOT appear in camera-rendered captures. |
 | `include_image` | `bool \| str \| None` | — | If true, return screenshot as inline base64 PNG. Default false. |
-| `max_resolution` | `int \| str \| None` | — | Max resolution (longest edge px) for inline image. Default 640. |
+| `max_resolution` | `int \| str \| None` | — | Max resolution (longest edge px) for inline image, 1 to 8192. Default 640. The Editor also enforces frame and aggregate pixel budgets. |
 | `capture_source` | `Literal['game_view', 'scene_view'] \| None` | — | Screenshot source. 'game_view' (default) captures the game/camera path; 'scene_view' captures the active Unity Scene View viewport. |
 | `batch` | `str \| None` | — | Batch capture mode: 'surround' (6 angles) or 'orbit' (configurable grid). |
 | `view_target` | `str \| int \| list[float] \| None` | — | Target to focus on. GameObject name/path/ID or [x,y,z]. For game_view: aims camera at target. For scene_view: frames the Scene View on the target. |
 | `view_position` | `list[float] \| str \| None` | — | World position [x,y,z] to place camera for positioned capture. |
 | `view_rotation` | `list[float] \| str \| None` | — | Euler rotation [x,y,z] for camera. Overrides view_target if both provided. |
 | `orbit_angles` | `int \| str \| None` | — | Number of azimuth samples for batch='orbit' (default 8, max 36). |
-| `orbit_elevations` | `list[float] \| str \| None` | — | Elevation angles in degrees for batch='orbit' (default [0, 30, -15]). |
+| `orbit_elevations` | `list[float] \| str \| None` | — | Elevation angles in degrees for batch='orbit' (default [0, 30, -15]). 1 to 16 finite angles; at most 128 total orbit shots. |
 | `orbit_distance` | `float \| str \| None` | — | Camera distance from target for batch='orbit' (default auto). |
 | `orbit_fov` | `float \| str \| None` | — | Camera FOV in degrees for batch='orbit' (default 60). |
 | `output_folder` | `str \| None` | — | Optional folder for screenshot output. Project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute path inside the project. Overrides the user's Editor preference. If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots). |

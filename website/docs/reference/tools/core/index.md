@@ -16,7 +16,7 @@ Essential scene, script, asset & editor tools (always on by default)
 - **[`execute_custom_tool`](./execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
 - **[`execute_menu_item`](./execute_menu_item.md)** — Execute a Unity menu item by path.
 - **[`find_gameobjects`](./find_gameobjects.md)** — Search for GameObjects in the scene by name, tag, layer, component type, or path.
-- **[`find_in_file`](./find_in_file.md)** — Searches a file with a regex pattern and returns line numbers and excerpts.
+- **[`find_in_file`](./find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
 - **[`manage_audio`](./manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.

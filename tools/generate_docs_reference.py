@@ -567,8 +567,12 @@ def _diff_trees(a: Path, b: Path) -> list[str]:
             diffs.append(f"committed-only: {rel / name}")
         for name in cmp.right_only:
             diffs.append(f"generated-only: {rel / name}")
-        for name in cmp.diff_files:
-            diffs.append(f"differs: {rel / name}")
+        for name in cmp.common_files:
+            # Match _write's newline normalization and avoid shallow stat equality.
+            committed = (a / rel / name).read_text(encoding="utf-8")
+            generated = (b / rel / name).read_text(encoding="utf-8")
+            if committed != generated:
+                diffs.append(f"differs: {rel / name}")
         for name in cmp.common_dirs:
             _walk(rel / name)
 

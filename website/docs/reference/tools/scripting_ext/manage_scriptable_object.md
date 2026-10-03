@@ -24,7 +24,7 @@ Creates and modifies ScriptableObject assets using Unity SerializedObject proper
 | `asset_name` | `str \| None` | — | Asset file name without extension (for create). |
 | `overwrite` | `bool \| str \| None` | — | If true, overwrite existing asset at same path (for create). |
 | `target` | `dict[str, Any] \| str \| None` | — | Target asset reference {guid\|path} (for modify). |
-| `patches` | `list[dict[str, Any]] \| str \| None` | — | Patch list (or JSON string) to apply. For object references: use {"ref": {"guid": "..."}} or {"value": {"guid": "..."}}. For Sprite sub-assets: include "spriteName" in the ref/value object. Single-sprite textures auto-resolve from guid/path alone. |
+| `patches` | `list[dict[str, Any]] \| str \| None` | — | Patch list (or JSON string) to apply. For object references: use {"ref": {"guid": "..."}} or {"value": {"guid": "..."}}. For Sprite sub-assets: include "spriteName" in the ref/value object. Single-sprite textures auto-resolve from guid/path alone. Unity preflights growth: 1,048,576 elements per growing array and 2,097,152 added serialized elements/fields per request, including nested copies. |
 | `dry_run` | `bool \| str \| None` | — | If true, validate patches without applying (modify only). |
 
 ## Returns

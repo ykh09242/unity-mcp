@@ -20,18 +20,18 @@ Procedural texture generation for Unity. Creates textures with solid fills, patt
 |------|------|----------|-------------|
 | `action` | `Literal['create', 'modify', 'delete', 'create_sprite', 'apply_pattern', 'apply_gradient', 'apply_noise', 'set_import_settings']` | yes | Action to perform. |
 | `path` | `str \| None` | — | Output texture path (e.g., 'Assets/Textures/MyTexture.png') |
-| `width` | `int \| None` | — | Texture width in pixels (default: 64) |
-| `height` | `int \| None` | — | Texture height in pixels (default: 64) |
+| `width` | `int \| None` | — | Texture width in pixels (1-4096, default: 64) |
+| `height` | `int \| None` | — | Texture height in pixels (1-4096, default: 64) |
 | `fill_color` | `list[int \| float] \| dict[str, int \| float] \| str \| None` | — | Fill color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or hex string. Accepts both 0-255 range (e.g., [255, 0, 0]) or 0.0-1.0 normalized range (e.g., [1.0, 0, 0]) |
 | `pattern` | `Literal['checkerboard', 'stripes', 'stripes_h', 'stripes_v', 'stripes_diag', 'dots', 'grid', 'brick'] \| None` | — | Pattern type for apply_pattern action |
 | `palette` | `list[list[int \| float]] \| str \| None` | — | Color palette as [[r,g,b,a], ...]. Accepts both 0-255 range or 0.0-1.0 normalized range |
 | `pattern_size` | `int \| None` | — | Pattern cell size in pixels (default: 8) |
 | `pixels` | `list[list[int]] \| str \| None` | — | Pixel data as JSON array of [r,g,b,a] values or base64 string |
-| `image_path` | `str \| None` | — | Source image file path for create/create_sprite (PNG/JPG). |
+| `image_path` | `str \| None` | — | Source PNG/JPG/JPEG for create/create_sprite (up to 4096 per side and 96 MiB encoded). |
 | `gradient_type` | `Literal['linear', 'radial'] \| None` | — | Gradient type (default: linear) |
 | `gradient_angle` | `float \| None` | — | Gradient angle in degrees for linear gradient (default: 0) |
 | `noise_scale` | `float \| None` | — | Noise scale/frequency (default: 0.1) |
-| `octaves` | `int \| None` | — | Number of noise octaves for detail (default: 1) |
+| `octaves` | `int \| None` | — | Number of noise octaves (default: 1); width * height * octaves must not exceed 33,554,432 samples. |
 | `set_pixels` | `dict[Any] \| None` | — | Region to modify: {x, y, width, height, color or pixels} |
 | `as_sprite` | `dict[Any] \| bool \| None` | — | Configure as sprite: {pivot: [x,y], pixels_per_unit: 100} or true for defaults |
 | `import_settings` | `dict[Any] \| None` | — | TextureImporter settings dict. Keys: texture_type (default/normal_map/sprite/etc), texture_shape (2d/cube), srgb (bool), alpha_source (none/from_input/from_gray_scale), alpha_is_transparency (bool), readable (bool), generate_mipmaps (bool), wrap_mode/wrap_mode_u/wrap_mode_v (repeat/clamp/mirror/mirror_once), filter_mode (point/bilinear/trilinear), aniso_level (0-16), max_texture_size (32-16384), compression (none/low_quality/normal_quality/high_quality), compression_quality (0-100), sprite_mode (single/multiple/polygon), sprite_pixels_per_unit, sprite_pivot, sprite_mesh_type (full_rect/tight), sprite_extrude (0-32) |
