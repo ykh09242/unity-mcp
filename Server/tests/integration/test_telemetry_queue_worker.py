@@ -1,65 +1,50 @@
 import logging
-import types
+from pathlib import Path
 import threading
 import time
-import queue as q
 
+import core.config
 import core.telemetry as telemetry
 
 
-def test_telemetry_queue_backpressure_and_single_worker(monkeypatch, caplog):
-    # Directly attach caplog's handler to the telemetry logger so that
-    # earlier tests calling logging.basicConfig() can't steal the records
-    # via a root handler before caplog sees them.
+def test_telemetry_queue_backpressure_and_single_worker(tmp_path, monkeypatch, caplog):
+    for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME"):
+        monkeypatch.setenv(key, str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    for key in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(core.config.config, "telemetry_enabled", True)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def controlled_send(self, record):
+        entered.set()
+        release.wait()
+
+    # Configure the enabled collector and intercept sends before construction.
+    monkeypatch.setattr(telemetry.TelemetryCollector, "_send_telemetry", controlled_send)
     tel_logger = logging.getLogger("unity-mcp-telemetry")
     tel_logger.addHandler(caplog.handler)
+    collector = None
     try:
         caplog.set_level("DEBUG", logger="unity-mcp-telemetry")
-
         collector = telemetry.TelemetryCollector()
-        # Force-enable telemetry regardless of env settings from conftest
-        collector.config.enabled = True
-
-        # Wake existing worker once so it observes the new queue on the next loop
         collector.record(telemetry.RecordType.TOOL_EXECUTION, {"i": -1})
-        # Replace queue with tiny one to trigger backpressure quickly
-        small_q = q.Queue(maxsize=2)
-        collector._queue = small_q
-        # Give the worker time to finish processing the seeded item and
-        # re-enter _queue.get() on the new small queue
-        time.sleep(0.2)
-
-        # Make sends slow to build backlog and exercise worker
-        def slow_send(self, rec):
-            time.sleep(0.05)
-
-        collector._send_telemetry = types.MethodType(slow_send, collector)
-
-        # Fire many events quickly; record() should not block even when queue fills
+        assert entered.wait(timeout=1.0), "Worker did not enter the controlled sender"
+        # Fill the real bounded queue while its sole consumer is event-gated.
         start = time.perf_counter()
-        for i in range(50):
+        for i in range(collector._queue.maxsize + 50):
             collector.record(telemetry.RecordType.TOOL_EXECUTION, {"i": i})
         elapsed_ms = (time.perf_counter() - start) * 1000.0
-
-        # Should be fast despite backpressure (non-blocking enqueue or drop)
-        # Threshold set high (500ms) to accommodate CI environments with variable load.
-        # The key assertion is that 50 record() calls don't block on a full queue;
-        # even under heavy CI load, non-blocking calls should complete well under 500ms.
-        assert elapsed_ms < 500.0, f"Took {elapsed_ms:.1f}ms (expected <500ms for non-blocking calls)"
-
-        # Allow worker to process some
-        time.sleep(0.3)
-
-        # Verify drops were logged (queue full backpressure)
-        dropped_logs = [
-            m for m in caplog.messages if "Telemetry queue full; dropping" in m]
-        assert len(dropped_logs) >= 1
-
-        # Ensure only one worker thread exists and is alive
+        assert elapsed_ms < 500.0, f"Took {elapsed_ms:.1f}ms for nonblocking records"
+        assert collector._queue.full()
+        assert any("Telemetry queue full; dropping" in message for message in caplog.messages)
         assert collector._worker.is_alive()
-        worker_threads = [
-            t for t in threading.enumerate() if t is collector._worker]
-        assert len(worker_threads) == 1
+        assert sum(thread is collector._worker for thread in threading.enumerate()) == 1
     finally:
+        release.set()
+        if collector is not None:
+            collector.shutdown()
+            assert not collector._worker.is_alive()
         if caplog.handler in tel_logger.handlers:
             tel_logger.removeHandler(caplog.handler)

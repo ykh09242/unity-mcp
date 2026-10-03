@@ -1,68 +1,54 @@
-import os
 import importlib
+from pathlib import Path
+
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def isolate_windows_telemetry_storage(tmp_path, monkeypatch):
-    # Windows uses APPDATA instead of XDG_DATA_HOME. Never write real user state.
-    monkeypatch.setenv("APPDATA", str(tmp_path))
-
-
-def test_endpoint_rejects_non_http(tmp_path, monkeypatch):
-    # Point data dir to temp to avoid touching real files
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "file:///etc/passwd")
-
-    # Import the telemetry module
+@pytest.fixture
+def collector_factory(tmp_path, monkeypatch):
+    for key in ("HOME", "USERPROFILE", "APPDATA", "XDG_DATA_HOME"):
+        monkeypatch.setenv(key, str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    for key in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY", "UNITY_MCP_TELEMETRY_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
     telemetry = importlib.import_module("core.telemetry")
-    importlib.reload(telemetry)
+    config = importlib.import_module("core.config").config
+    monkeypatch.setattr(config, "telemetry_enabled", True)
+    monkeypatch.setattr(config, "telemetry_endpoint", "https://example.com/telemetry")
+    # Intercept the sender before any worker can start.
+    monkeypatch.setattr(telemetry.TelemetryCollector, "_send_telemetry", lambda self, record: None)
+    collectors = []
 
-    tc = telemetry.TelemetryCollector()
-    # Should have fallen back to default endpoint
-    assert tc.config.endpoint == tc.config.default_endpoint
+    def create():
+        collector = telemetry.TelemetryCollector()
+        collectors.append(collector)
+        return collector
 
-
-def test_config_preferred_then_env_override(tmp_path, monkeypatch):
-    # Simulate config telemetry endpoint
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    monkeypatch.delenv("UNITY_MCP_TELEMETRY_ENDPOINT", raising=False)
-
-    # Patch config.telemetry_endpoint via import mocking
-    cfg_mod = importlib.import_module("src.core.config")
-    old_endpoint = cfg_mod.config.telemetry_endpoint
-    cfg_mod.config.telemetry_endpoint = "https://example.com/telemetry"
     try:
-        telemetry = importlib.import_module("core.telemetry")
-        importlib.reload(telemetry)
-        tc = telemetry.TelemetryCollector()
-        # When no env override is set, config endpoint is preferred
-        assert tc.config.endpoint == "https://example.com/telemetry"
-
-        # Env should override config
-        monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT",
-                           "https://override.example/ep")
-        importlib.reload(telemetry)
-        tc2 = telemetry.TelemetryCollector()
-        assert tc2.config.endpoint == "https://override.example/ep"
+        yield create
     finally:
-        cfg_mod.config.telemetry_endpoint = old_endpoint
+        for collector in collectors:
+            collector.shutdown()
 
 
-def test_uuid_preserved_on_malformed_milestones(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+def test_endpoint_rejects_non_http(collector_factory, monkeypatch):
+    monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "file:///etc/passwd")
+    collector = collector_factory()
+    assert collector.config.endpoint == collector.config.default_endpoint
 
-    # Import the telemetry module
-    telemetry = importlib.import_module("core.telemetry")
-    importlib.reload(telemetry)
 
-    tc1 = telemetry.TelemetryCollector()
-    first_uuid = tc1._customer_uuid
+def test_config_preferred_then_env_override(collector_factory, monkeypatch):
+    collector = collector_factory()
+    assert collector.config.endpoint == "https://example.com/telemetry"
+    monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "https://override.example/ep")
+    overridden = collector_factory()
+    assert overridden.config.endpoint == "https://override.example/ep"
 
-    # Write malformed milestones
-    tc1.config.milestones_file.write_text("{not-json}", encoding="utf-8")
 
-    # Reload collector; UUID should remain same despite bad milestones
-    importlib.reload(telemetry)
-    tc2 = telemetry.TelemetryCollector()
-    assert tc2._customer_uuid == first_uuid
+def test_uuid_preserved_on_malformed_milestones(collector_factory):
+    first = collector_factory()
+    first_uuid = first._customer_uuid
+    first.config.milestones_file.write_text("{not-json}", encoding="utf-8")
+    first.shutdown()
+    second = collector_factory()
+    assert second._customer_uuid == first_uuid

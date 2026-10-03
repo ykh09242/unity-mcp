@@ -127,7 +127,8 @@ class TelemetryConfig:
         """
         server_config = None
         for modname in (
-            # Prefer plain module to respect test-time overrides and sys.path injection
+            # Use the same config module as the server entry point.
+            "core.config",
             "src.core.config",
             "config",
             "src.config",
@@ -211,7 +212,8 @@ class TelemetryConfig:
             base_dir = Path.home() / '.unity-mcp'
 
         data_dir = base_dir / 'UnityMCP'
-        data_dir.mkdir(parents=True, exist_ok=True)
+        if self.enabled:
+            data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir
 
     def _validated_endpoint(self, candidate: str, fallback: str) -> str:
@@ -250,9 +252,12 @@ class TelemetryCollector:
         # Bounded queue with single background worker (records only; no context propagation)
         self._queue: "queue.Queue[TelemetryRecord]" = queue.Queue(maxsize=1000)
         self._shutdown: bool = False
+        self._worker: threading.Thread | None = None
+        if not self.config.enabled:
+            return
         # Load persistent data before starting worker so first events have UUID
         self._load_persistent_data()
-        self._worker: threading.Thread = threading.Thread(
+        self._worker = threading.Thread(
             target=self._worker_loop, daemon=True)
         self._worker.start()
 
@@ -273,7 +278,7 @@ class TelemetryCollector:
                 except OSError as e:
                     logger.debug(
                         f"Failed to persist customer UUID: {e}", exc_info=True)
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.debug(f"Failed to load customer UUID: {e}", exc_info=True)
             self._customer_uuid = str(uuid.uuid4())
 
