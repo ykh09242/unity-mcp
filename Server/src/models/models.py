@@ -28,7 +28,8 @@ class ToolDefinitionModel(BaseModel):
     structured_output: bool | None = True
     requires_polling: bool | None = False
     poll_action: str | None = "status"
-    max_poll_seconds: int = 0
+    # Zero selects the server default; plugins cannot extend the server lifetime.
+    max_poll_seconds: int = Field(default=0, ge=0, le=600)
     parameters: list[ToolParameterModel] = Field(default_factory=list)
 
 

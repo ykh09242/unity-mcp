@@ -17,7 +17,10 @@ from services.custom_tool_service import CustomToolService
     {"success": False, "error": "No job found", "data": {"job_id": "batch-new"}},
 ])
 async def test_initial_batch_response_job_id_targets_status_until_terminal(monkeypatch, caller, final):
-    service = object.__new__(CustomToolService)
+    class Mcp:
+        def custom_route(self, *args, **kwargs):
+            return lambda fn: fn
+    service = CustomToolService(Mcp())
     monkeypatch.setattr(service, "get_tool_definition", AsyncMock(return_value=ToolDefinitionModel(
         name="manage_build", requires_polling=True, poll_action="status")))
     monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())

@@ -6,6 +6,7 @@ import keyword
 import logging
 import time
 from hashlib import sha256
+from threading import Lock
 from typing import Annotated, Optional
 
 from fastmcp import Context, FastMCP
@@ -30,6 +31,9 @@ logger = logging.getLogger("mcp-for-unity-server")
 
 _DEFAULT_POLL_INTERVAL = 1.0
 _MAX_POLL_SECONDS = 600
+_MAX_ACTIVE_POLLS_PER_SESSION = 16
+_MAX_ACTIVE_POLLS_PER_USER = 32
+_MAX_ACTIVE_POLLS_GLOBAL = 256
 
 
 async def get_user_id_from_context(ctx: Context) -> str | None:
@@ -72,6 +76,12 @@ class CustomToolService:
         self._project_tools: dict[str, dict[str, ToolDefinitionModel]] = {}
         self._hash_to_project: dict[str, str] = {}
         self._global_tools: dict[str, ToolDefinitionModel] = {}
+        # Reservations include initial dispatch, sleeps and all subsequent polls.
+        # The tenant/project key survives plugin reconnects and target name aliases.
+        self._polling_lock = Lock()
+        self._active_polls = 0
+        self._polls_by_session: dict[tuple[str | None, str], int] = {}
+        self._polls_by_user: dict[str | None, int] = {}
         self._register_http_routes()
 
     @classmethod
@@ -155,6 +165,8 @@ class CustomToolService:
     ) -> MCPResponse:
         params = params or {}
         logger.info("Executing custom tool")
+        if config.http_remote_hosted and not user_id:
+            return MCPResponse(success=False, message="Authenticated user required for custom tools")
 
         definition = await self.get_tool_definition(project_id, tool_name, user_id=user_id)
         if definition is None:
@@ -163,32 +175,85 @@ class CustomToolService:
                 message=f"Tool '{tool_name}' not found for project {project_id}",
             )
 
-        response = await send_with_unity_instance(
-            async_send_command_with_retry,
-            unity_instance,
-            tool_name,
-            params,
-            user_id=user_id,
-        )
-
         if not definition.requires_polling:
+            response = await send_with_unity_instance(
+                async_send_command_with_retry, unity_instance, tool_name, params, user_id=user_id,
+            )
             result = self._normalize_response(response)
             logger.info("Custom tool completed (success=%s, polled=False)", result.success)
             return result
 
-        result = await self._poll_until_complete(
-            tool_name,
-            unity_instance,
-            params,
-            response,
-            definition.poll_action or "status",
-            user_id=user_id,
-            max_poll_seconds=definition.max_poll_seconds or 0,
-        )
-        logger.info("Custom tool completed (success=%s, polled=True)", result.success)
-        return result
+        if not unity_instance:
+            return MCPResponse(success=False, message="Explicit Unity instance required for custom tool polling")
+        target = unity_instance.rsplit("@", 1)[-1].lower()
+        session_key = (user_id, target)
+        if not self._reserve_polling(session_key):
+            return MCPResponse(
+                success=False,
+                message="Custom tool polling capacity reached; please retry after active work completes",
+                hint="retry",
+            )
+
+        try:
+            timeout = self._bounded_poll_seconds(definition.max_poll_seconds)
+            deadline = time.monotonic() + timeout
+            try:
+                response = await asyncio.wait_for(
+                    send_with_unity_instance(
+                        async_send_command_with_retry, unity_instance, tool_name, params, user_id=user_id,
+                    ),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return self._poll_timeout(tool_name, None)
+            result = await self._poll_until_complete(
+                tool_name, unity_instance, params, response, definition.poll_action or "status",
+                user_id=user_id, max_poll_seconds=timeout, deadline=deadline,
+            )
+            logger.info("Custom tool completed (success=%s, polled=True)", result.success)
+            return result
+        finally:
+            self._release_polling(session_key)
 
     # --- Internal helpers ------------------------------------------------
+    @staticmethod
+    def _bounded_poll_seconds(seconds: int) -> int:
+        """Clamp again for definitions constructed or mutated without validation."""
+        return min(seconds, _MAX_POLL_SECONDS) if seconds > 0 else _MAX_POLL_SECONDS
+
+    def _reserve_polling(self, session_key: tuple[str | None, str]) -> bool:
+        """Reject excess work immediately; do not accumulate admission waiters."""
+        user_id = session_key[0]
+        with self._polling_lock:
+            session_count = self._polls_by_session.get(session_key, 0)
+            user_count = self._polls_by_user.get(user_id, 0)
+            if (self._active_polls >= _MAX_ACTIVE_POLLS_GLOBAL
+                    or session_count >= _MAX_ACTIVE_POLLS_PER_SESSION
+                    or user_count >= _MAX_ACTIVE_POLLS_PER_USER):
+                return False
+            self._active_polls += 1
+            self._polls_by_session[session_key] = session_count + 1
+            self._polls_by_user[user_id] = user_count + 1
+            return True
+
+    def _release_polling(self, session_key: tuple[str | None, str]) -> None:
+        """Release once in execute_tool's finally, including cancellation/error."""
+        user_id = session_key[0]
+        with self._polling_lock:
+            self._active_polls -= 1
+            session_count = self._polls_by_session.pop(session_key) - 1
+            user_count = self._polls_by_user.pop(user_id) - 1
+            if session_count:
+                self._polls_by_session[session_key] = session_count
+            if user_count:
+                self._polls_by_user[user_id] = user_count
+
+    def _poll_timeout(self, tool_name: str, response) -> MCPResponse:
+        return MCPResponse(
+            success=False, message=f"Timeout waiting for {tool_name} to complete",
+            data=self._safe_response(response),
+        )
+
     def _is_registered(self, project_id: str, tool_name: str) -> bool:
         return tool_name in self._project_tools.get(project_id, {})
 
@@ -212,6 +277,7 @@ class CustomToolService:
         poll_action: str,
         user_id: str | None = None,
         max_poll_seconds: int = 0,
+        deadline: float | None = None,
     ) -> MCPResponse:
         poll_params = dict(initial_params)
         poll_params["action"] = poll_action or "status"
@@ -221,11 +287,13 @@ class CustomToolService:
             if isinstance(job_id, str) and job_id.strip():
                 poll_params["job_id"] = job_id
 
-        timeout = max_poll_seconds if max_poll_seconds > 0 else _MAX_POLL_SECONDS
-        deadline = time.monotonic() + timeout
+        timeout = self._bounded_poll_seconds(max_poll_seconds)
+        deadline = min(deadline, time.monotonic() + timeout) if deadline is not None else time.monotonic() + timeout
         response = initial_response
 
         while True:
+            if time.monotonic() >= deadline:
+                break
             status, poll_interval = self._interpret_status(response)
 
             if status in ("complete", "error", "final"):
@@ -266,11 +334,7 @@ class CustomToolService:
                     "message": f"Retrying after transient error: {exc}",
                 }
 
-        return MCPResponse(
-            success=False,
-            message=f"Timeout waiting for {tool_name} to complete",
-            data=self._safe_response(response),
-        )
+        return self._poll_timeout(tool_name, response)
 
     def _interpret_status(self, response) -> tuple[str, float]:
         if response is None:

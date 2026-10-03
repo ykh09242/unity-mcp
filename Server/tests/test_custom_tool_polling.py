@@ -11,7 +11,10 @@ from services.custom_tool_service import CustomToolService
 @pytest.fixture
 def service():
     # Polling and normalization do not need HTTP route registration.
-    return object.__new__(CustomToolService)
+    class Mcp:
+        def custom_route(self, *args, **kwargs):
+            return lambda fn: fn
+    return CustomToolService(Mcp())
 
 
 @pytest.mark.asyncio
