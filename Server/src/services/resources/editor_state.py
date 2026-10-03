@@ -294,9 +294,8 @@ async def get_editor_state(ctx: Context) -> MCPResponse:
     except Exception:
         pass
 
-    state_v2 = _enrich_advice_and_staleness(state_v2)
-
     try:
+        state_v2 = _enrich_advice_and_staleness(state_v2)
         if hasattr(EditorStateData, "model_validate"):
             validated = EditorStateData.model_validate(state_v2)
         else:
