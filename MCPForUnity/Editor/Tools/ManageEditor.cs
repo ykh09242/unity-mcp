@@ -276,48 +276,48 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrWhiteSpace(layerName))
                 return new ErrorResponse("Layer name cannot be empty or whitespace.");
 
-            // Access the TagManager asset
-            SerializedObject tagManager = GetTagManager();
-            if (tagManager == null)
-                return new ErrorResponse("Could not access TagManager asset.");
-
-            SerializedProperty layersProp = tagManager.FindProperty("layers");
-            if (layersProp == null || !layersProp.isArray)
-                return new ErrorResponse("Could not find 'layers' property in TagManager.");
-
-            // Check if layer name already exists (case-insensitive check recommended)
-            for (int i = 0; i < TotalLayerCount; i++)
-            {
-                SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
-                if (
-                    layerSP != null
-                    && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase)
-                )
-                {
-                    return new ErrorResponse($"Layer '{layerName}' already exists at index {i}.");
-                }
-            }
-
-            // Find the first empty user layer slot (indices 8 to 31)
-            int firstEmptyUserLayer = -1;
-            for (int i = FirstUserLayerIndex; i < TotalLayerCount; i++)
-            {
-                SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
-                if (layerSP != null && string.IsNullOrEmpty(layerSP.stringValue))
-                {
-                    firstEmptyUserLayer = i;
-                    break;
-                }
-            }
-
-            if (firstEmptyUserLayer == -1)
-            {
-                return new ErrorResponse("No empty User Layer slots available (8-31 are full).");
-            }
-
-            // Assign the name to the found slot
             try
             {
+                // Access the TagManager asset
+                using var tagManager = GetTagManager();
+                if (tagManager == null)
+                    return new ErrorResponse("Could not access TagManager asset.");
+
+                SerializedProperty layersProp = tagManager.FindProperty("layers");
+                if (layersProp == null || !layersProp.isArray)
+                    return new ErrorResponse("Could not find 'layers' property in TagManager.");
+
+                // Check if layer name already exists (case-insensitive check recommended)
+                for (int i = 0; i < TotalLayerCount; i++)
+                {
+                    SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
+                    if (
+                        layerSP != null
+                        && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase)
+                    )
+                    {
+                        return new ErrorResponse($"Layer '{layerName}' already exists at index {i}.");
+                    }
+                }
+
+                // Find the first empty user layer slot (indices 8 to 31)
+                int firstEmptyUserLayer = -1;
+                for (int i = FirstUserLayerIndex; i < TotalLayerCount; i++)
+                {
+                    SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
+                    if (layerSP != null && string.IsNullOrEmpty(layerSP.stringValue))
+                    {
+                        firstEmptyUserLayer = i;
+                        break;
+                    }
+                }
+
+                if (firstEmptyUserLayer == -1)
+                {
+                    return new ErrorResponse("No empty User Layer slots available (8-31 are full).");
+                }
+
+                // Assign the name to the found slot
                 SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(
                     firstEmptyUserLayer
                 );
@@ -341,39 +341,39 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrWhiteSpace(layerName))
                 return new ErrorResponse("Layer name cannot be empty or whitespace.");
 
-            // Access the TagManager asset
-            SerializedObject tagManager = GetTagManager();
-            if (tagManager == null)
-                return new ErrorResponse("Could not access TagManager asset.");
-
-            SerializedProperty layersProp = tagManager.FindProperty("layers");
-            if (layersProp == null || !layersProp.isArray)
-                return new ErrorResponse("Could not find 'layers' property in TagManager.");
-
-            // Find the layer by name (must be user layer)
-            int layerIndexToRemove = -1;
-            for (int i = FirstUserLayerIndex; i < TotalLayerCount; i++) // Start from user layers
-            {
-                SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
-                // Case-insensitive comparison is safer
-                if (
-                    layerSP != null
-                    && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase)
-                )
-                {
-                    layerIndexToRemove = i;
-                    break;
-                }
-            }
-
-            if (layerIndexToRemove == -1)
-            {
-                return new ErrorResponse($"User layer '{layerName}' not found.");
-            }
-
-            // Clear the name for that index
             try
             {
+                // Access the TagManager asset
+                using var tagManager = GetTagManager();
+                if (tagManager == null)
+                    return new ErrorResponse("Could not access TagManager asset.");
+
+                SerializedProperty layersProp = tagManager.FindProperty("layers");
+                if (layersProp == null || !layersProp.isArray)
+                    return new ErrorResponse("Could not find 'layers' property in TagManager.");
+
+                // Find the layer by name (must be user layer)
+                int layerIndexToRemove = -1;
+                for (int i = FirstUserLayerIndex; i < TotalLayerCount; i++) // Start from user layers
+                {
+                    SerializedProperty layerSP = layersProp.GetArrayElementAtIndex(i);
+                    // Case-insensitive comparison is safer
+                    if (
+                        layerSP != null
+                        && layerName.Equals(layerSP.stringValue, StringComparison.OrdinalIgnoreCase)
+                    )
+                    {
+                        layerIndexToRemove = i;
+                        break;
+                    }
+                }
+
+                if (layerIndexToRemove == -1)
+                {
+                    return new ErrorResponse($"User layer '{layerName}' not found.");
+                }
+
+                // Clear the name for that index
                 SerializedProperty targetLayerSP = layersProp.GetArrayElementAtIndex(
                     layerIndexToRemove
                 );
