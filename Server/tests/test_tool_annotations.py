@@ -16,6 +16,7 @@ required: omitting it means *false*, which is the safe direction and is already
 correct for every tool that leaves it unset.
 """
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,12 +69,34 @@ AUTO_APPROVABLE = READ_ONLY | NON_DESTRUCTIVE
 def _hint(annotations, field: str):
     """Read one hint, treating 'not stated' as None.
 
-    The real ToolAnnotations is a pydantic model with every field defaulting to
-    None, but tests/integration/conftest.py substitutes a stub that only sets
-    the kwargs actually passed. getattr with a default reads the same answer
-    from either, so this guard means the same thing whatever ran before it.
+    Prefer SDK v2's Python field names without touching deprecated properties.
+    Older SDK models and test doubles may expose only the camelCase names.
     """
-    return getattr(annotations, field, None)
+    python_field = {
+        "destructiveHint": "destructive_hint",
+        "readOnlyHint": "read_only_hint",
+    }.get(field, field)
+    try:
+        return getattr(annotations, python_field)
+    except AttributeError:
+        return getattr(annotations, field, None)
+
+
+@pytest.mark.parametrize("field, python_field", [
+    ("destructiveHint", "destructive_hint"),
+    ("readOnlyHint", "read_only_hint"),
+])
+@pytest.mark.parametrize("value", [True, False, None])
+def test_hint_prefers_current_fields_and_supports_legacy_models(field, python_field, value):
+    current = SimpleNamespace(**{python_field: value, field: not value})
+    legacy = SimpleNamespace(**{field: value})
+    assert _hint(current, field) is value
+    assert _hint(legacy, field) is value
+
+
+@pytest.mark.parametrize("field", ["title", "destructiveHint", "readOnlyHint"])
+def test_hint_leaves_unstated_fields_as_none(field):
+    assert _hint(SimpleNamespace(), field) is None
 
 
 @pytest.fixture(scope="module")
