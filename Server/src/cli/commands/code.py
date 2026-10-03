@@ -87,7 +87,7 @@ def replay(index: int):
 
 
 def _print_execution_result(result: dict[str, Any]) -> None:
-    if result.get("success"):
+    if result.get("success") and get_config().format != "json":
         data = result.get("data", {})
         if data and data.get("result") is not None:
             print_success(f"Result: {data['result']}")
