@@ -1,9 +1,31 @@
 """JSON and value parsing utilities for CLI commands."""
 import json
+import re
 import sys
 from typing import Any
 
 from cli.utils.output import print_error, print_info
+
+
+_JSON_COMPAT_TOKENS = re.compile(
+    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:True|False)\b'''
+)
+
+
+def _repair_json_token(match: re.Match[str]) -> str:
+    token = match.group()
+    if token in ("True", "False"):
+        return token.lower()
+    if token.startswith('"'):
+        return token
+
+    # Convert single-quoted strings without changing their JSON escape sequences.
+    contents = re.sub(
+        r'\\.|"',
+        lambda part: {r"\'": "'", '"': r'\"'}.get(part.group(), part.group()),
+        token[1:-1],
+    )
+    return f'"{contents}"'
 
 
 def parse_value_safe(value: str) -> Any:
@@ -59,7 +81,7 @@ def parse_json_or_exit(value: str, context: str = "parameter") -> Any:
     except json.JSONDecodeError:
         # Try to fix common shell quoting issues (single quotes, Python bools)
         try:
-            fixed = value.replace("'", '"').replace("True", "true").replace("False", "false")
+            fixed = _JSON_COMPAT_TOKENS.sub(_repair_json_token, value)
             return json.loads(fixed)
         except json.JSONDecodeError as e:
             print_error(f"Invalid JSON for {context}: {e}")
