@@ -94,7 +94,7 @@ namespace MCPForUnity.Editor.Setup
             log?.Invoke($"Plan => Added:{plan.Added.Count} Updated:{plan.Updated.Count} Deleted:{plan.Deleted.Count}");
             LogPlanDetails(plan, log);
 
-            ApplyPlan(repoInfo, snapshot.CommitSha, snapshot.SubdirPath, installPath, plan, pathComparison, log);
+            ApplyPlan(repoInfo, snapshot.CommitSha, snapshot.SubdirPath, installPath, plan, snapshot.Files, pathComparison, log);
             log?.Invoke("Files mirrored to install directory.");
 
             ValidateFileHashes(installPath, snapshot.Files, pathComparison, log);
@@ -433,23 +433,59 @@ namespace MCPForUnity.Editor.Setup
             return plan;
         }
 
-        private static void ApplyPlan(GitHubRepoInfo repoInfo, string commitSha, string remoteSubdir, string targetRoot, SyncPlan plan, StringComparison pathComparison, Action<string> log)
+        private static void ApplyPlan(GitHubRepoInfo repoInfo, string commitSha, string remoteSubdir, string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Action<string> log)
         {
             using var client = CreateGitHubClient();
-            foreach (var relativePath in plan.Added.Concat(plan.Updated))
+            ApplyPlan(targetRoot, plan, remoteFiles, pathComparison,
+                relativePath => DownloadBytes(client, BuildRawFileUrl(repoInfo, commitSha, CombineRemotePath(remoteSubdir, relativePath))), log);
+        }
+
+        internal static void ApplyPlan(string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Func<string, byte[]> download, Action<string> log)
+        {
+            var changedPaths = plan.Added.Concat(plan.Updated).ToArray();
+            var downloadedFiles = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var relativePath in changedPaths)
             {
-                var remoteFilePath = CombineRemotePath(remoteSubdir, relativePath);
-                var downloadUrl = BuildRawFileUrl(repoInfo, commitSha, remoteFilePath);
+                ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
+                log?.Invoke($"Download: {relativePath}");
+                var bytes = download(relativePath);
+                var downloadedHash = ComputeGitBlobSha1(bytes);
+                if (!string.Equals(downloadedHash, remoteFiles[relativePath], StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException($"File hash mismatch: {relativePath} ({ShortHash(downloadedHash)} != {ShortHash(remoteFiles[relativePath])})");
+                }
+                downloadedFiles[relativePath] = bytes;
+            }
+
+            // Only obsolete paths that block a new file or its parent must be removed early.
+            // All downloads are verified first so a download failure preserves the old files.
+            foreach (var relativePath in plan.Deleted)
+            {
+                if (!changedPaths.Any(changed => relativePath.StartsWith(changed + "/", pathComparison)
+                    || changed.StartsWith(relativePath + "/", pathComparison)))
+                {
+                    continue;
+                }
+
+                var obsoleteFile = ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
+                if (File.Exists(obsoleteFile)) File.Delete(obsoleteFile);
+            }
+
+            foreach (var relativePath in changedPaths)
+            {
                 var targetFile = ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
+                if (Directory.Exists(targetFile))
+                {
+                    RemoveEmptyDirectories(targetFile);
+                    if (!Directory.EnumerateFileSystemEntries(targetFile).Any()) Directory.Delete(targetFile, false);
+                }
                 var targetDirectory = Path.GetDirectoryName(targetFile);
                 if (!string.IsNullOrEmpty(targetDirectory))
                 {
                     Directory.CreateDirectory(targetDirectory);
                 }
 
-                log?.Invoke($"Download: {relativePath}");
-                var bytes = DownloadBytes(client, downloadUrl);
-                File.WriteAllBytes(targetFile, bytes);
+                File.WriteAllBytes(targetFile, downloadedFiles[relativePath]);
             }
 
             foreach (var relativePath in plan.Deleted)
