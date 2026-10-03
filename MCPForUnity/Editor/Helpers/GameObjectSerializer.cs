@@ -669,9 +669,11 @@ namespace MCPForUnity.Editor.Helpers
                     return list;
 
                 case JTokenType.Integer:
-                    return token.ToObject<long>(); // Use long for safety
                 case JTokenType.Float:
-                    return token.ToObject<double>(); // Use double for safety
+                    // Preserve the numeric CLR payload: Integer/Float also represent
+                    // UInt64, BigInteger and Decimal, which can overflow or lose precision
+                    // when narrowed to Int64/Double.
+                    return ((JValue)token).Value;
                 case JTokenType.String:
                     return token.ToObject<string>();
                 case JTokenType.Boolean:
