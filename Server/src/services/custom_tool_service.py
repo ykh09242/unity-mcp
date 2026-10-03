@@ -290,11 +290,12 @@ class CustomToolService:
         timeout = self._bounded_poll_seconds(max_poll_seconds)
         deadline = min(deadline, time.monotonic() + timeout) if deadline is not None else time.monotonic() + timeout
         response = initial_response
+        poll_response = False
 
         while True:
             if time.monotonic() >= deadline:
                 break
-            status, poll_interval = self._interpret_status(response)
+            status, poll_interval = self._interpret_status(response, poll_response=poll_response)
 
             if status in ("complete", "error", "final"):
                 return self._normalize_response(response)
@@ -319,6 +320,7 @@ class CustomToolService:
                     ),
                     timeout=remaining,
                 )
+                poll_response = True
                 if time.monotonic() >= deadline:
                     break
             except asyncio.TimeoutError:
@@ -336,7 +338,7 @@ class CustomToolService:
 
         return self._poll_timeout(tool_name, response)
 
-    def _interpret_status(self, response) -> tuple[str, float]:
+    def _interpret_status(self, response, *, poll_response: bool = False) -> tuple[str, float]:
         if response is None:
             return "pending", _DEFAULT_POLL_INTERVAL
 
@@ -345,6 +347,9 @@ class CustomToolService:
 
         status = response.get("_mcp_status")
         if status is None:
+            # A transient status-poll failure does not terminate a job already started.
+            if poll_response and response.get("success") is False and response.get("hint") == "retry":
+                return "pending", _DEFAULT_POLL_INTERVAL
             if len(response.keys()) == 0:
                 return "pending", _DEFAULT_POLL_INTERVAL
             return "final", _DEFAULT_POLL_INTERVAL
