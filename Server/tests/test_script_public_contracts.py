@@ -26,6 +26,7 @@ def _run(program, tmp_path):
 
 CLI_PROGRAM = r'''
 import copy
+import os
 import json
 import base64
 import httpx
@@ -113,7 +114,10 @@ for args, wire in cases:
     check(text_result.exit_code == 0, 'text success ' + repr(args))
     if args[0] == 'read':
         wanted = '😀second\n' if '--start-line' in args else raw['data']['contents']
-        check(text_result.output.rstrip('\n') == wanted.rstrip('\n'), 'raw text read ' + repr(args))
+        # Result.output normalizes CRLF; raw bytes retain source text and the
+        # platform TextIOWrapper translation, including echo's final newline.
+        wanted_bytes = (wanted + '\n').replace('\n', os.linesep).encode(runner.charset)
+        check(text_result.stdout_bytes == wanted_bytes, 'raw text read ' + repr(args))
     elif args[0] != 'validate':
         check('✓' in text_result.output or 'Created' in text_result.output
               or 'Deleted' in text_result.output or 'Applied' in text_result.output,
