@@ -25,7 +25,8 @@ BAKE (Edit mode only):
 
 STATS:
 - stats_get: Rendering counters (draw calls, batches, triangles, etc.)
-- stats_list_counters, stats_set_scene_debug, stats_get_memory
+- stats_list_counters: Available profiler counters for category (default Render)
+- stats_set_scene_debug, stats_get_memory
 
 PIPELINE:
 - pipeline_get_info, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings
@@ -88,6 +89,7 @@ SKYBOX / ENVIRONMENT:
 | `fog_end` | `float \| None` | — | Fog end distance (Linear mode). |
 | `bounces` | `int \| None` | — | Reflection bounces. |
 | `reflection_mode` | `str \| None` | — | Default reflection mode: Skybox, Custom. |
+| `category` | `str \| None` | — | Profiler counter category for stats_list_counters (default Render). |
 
 ## Returns
 

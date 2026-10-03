@@ -69,7 +69,8 @@ def _reject_boolean_feature_index(value: Any) -> Any:
         "- bake_create_light_probe_group, bake_create_reflection_probe, bake_set_probe_positions\n\n"
         "STATS:\n"
         "- stats_get: Rendering counters (draw calls, batches, triangles, etc.)\n"
-        "- stats_list_counters, stats_set_scene_debug, stats_get_memory\n\n"
+        "- stats_list_counters: Available profiler counters for category (default Render)\n"
+        "- stats_set_scene_debug, stats_get_memory\n\n"
         "PIPELINE:\n"
         "- pipeline_get_info, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings\n\n"
         "FEATURES (URP only):\n"
@@ -136,6 +137,7 @@ async def manage_graphics(
     fog_end: Annotated[Optional[float], "Fog end distance (Linear mode)."] = None,
     bounces: Annotated[Optional[int], "Reflection bounces."] = None,
     reflection_mode: Annotated[Optional[str], "Default reflection mode: Skybox, Custom."] = None,
+    category: Annotated[Optional[str], "Profiler counter category for stats_list_counters (default Render)."] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:
@@ -165,7 +167,7 @@ async def manage_graphics(
         "fog_mode": fog_mode, "fog_color": fog_color,
         "fog_density": fog_density, "fog_start": fog_start,
         "fog_end": fog_end, "bounces": bounces,
-        "reflection_mode": reflection_mode,
+        "reflection_mode": reflection_mode, "category": category,
     }
     for key, val in param_map.items():
         if val is not None:
