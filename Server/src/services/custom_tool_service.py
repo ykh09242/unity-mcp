@@ -531,7 +531,7 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
         instances = pool.discover_all_instances()
         target = None
         if "@" in unity_instance:
-            name_part, _, hash_hint = unity_instance.partition("@")
+            name_part, _, hash_hint = unity_instance.rpartition("@")
             target = next(
                 (
                     inst for inst in instances
@@ -564,7 +564,7 @@ def resolve_project_id_for_unity_instance(unity_instance: str | None) -> str | N
     try:
         hash_part: Optional[str] = None
         if "@" in unity_instance:
-            _, _, suffix = unity_instance.partition("@")
+            _, _, suffix = unity_instance.rpartition("@")
             hash_part = suffix or None
         else:
             hash_part = unity_instance
