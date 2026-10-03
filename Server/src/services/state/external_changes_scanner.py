@@ -26,7 +26,7 @@ class ExternalChangesState:
     dirty_since_unix_ms: int | None = None
     external_changes_last_seen_unix_ms: int | None = None
     last_cleared_unix_ms: int | None = None
-    # Cached package roots referenced by Packages/manifest.json "file:" dependencies
+    # Resolved file: dependency paths; directory existence is checked on each scan.
     extra_roots: list[str] | None = None
     manifest_last_mtime_ns: int | None = None
 
@@ -103,6 +103,18 @@ class ExternalChangesScanner:
 
         return newest
 
+    @staticmethod
+    def _existing_directory_roots(roots: Iterable[str]) -> list[Path]:
+        existing = []
+        for root in roots:
+            candidate = Path(root)
+            try:
+                if candidate.is_dir():
+                    existing.append(candidate)
+            except OSError:
+                continue
+        return existing
+
     def _resolve_manifest_extra_roots(self, project_root: Path, st: ExternalChangesState) -> list[Path]:
         """
         Parse Packages/manifest.json for local file: dependencies and resolve them to absolute paths.
@@ -119,7 +131,7 @@ class ExternalChangesScanner:
         mtime_ns = getattr(stat, "st_mtime_ns", int(
             stat.st_mtime * 1_000_000_000))
         if st.extra_roots is not None and st.manifest_last_mtime_ns == mtime_ns:
-            return [Path(p) for p in st.extra_roots if p]
+            return self._existing_directory_roots(st.extra_roots)
 
         try:
             raw = manifest_path.read_text(encoding="utf-8")
@@ -152,11 +164,7 @@ class ExternalChangesScanner:
                 candidate = Path(suffix)
             else:
                 candidate = (base_dir / suffix).resolve()
-            try:
-                if candidate.exists() and candidate.is_dir():
-                    roots.append(str(candidate))
-            except OSError:
-                continue
+            roots.append(str(candidate))
 
         # De-dupe, preserve order
         deduped: list[str] = []
@@ -168,7 +176,7 @@ class ExternalChangesScanner:
 
         st.extra_roots = deduped
         st.manifest_last_mtime_ns = mtime_ns
-        return [Path(p) for p in deduped if p]
+        return self._existing_directory_roots(deduped)
 
     def update_and_get(self, instance_id: str) -> dict[str, int | bool | None]:
         """
