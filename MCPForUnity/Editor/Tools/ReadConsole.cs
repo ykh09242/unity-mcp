@@ -30,6 +30,7 @@ namespace MCPForUnity.Editor.Tools
         private static FieldInfo _messageField;
         private static FieldInfo _fileField;
         private static FieldInfo _lineField;
+        private static FieldInfo _callstackTextStartField;
 
         // Optional reflection members: used to neutralize the Console window's own filters
         // while reading. Absent members degrade to the previous (filter-inheriting) behavior.
@@ -112,6 +113,10 @@ namespace MCPForUnity.Editor.Tools
                 if (_lineField == null)
                     throw new Exception("Failed to reflect LogEntry.line");
 
+                // Unity supplies the boundary in UTF-16 string indices. Keep this optional
+                // so older or renamed layouts can still use the stack-frame fallback.
+                _callstackTextStartField = logEntryType.GetField("callstackTextStartUTF16", instanceFlags);
+
                 // Console window UI state. Present on every Unity version this package
                 // supports, but reflected optionally so a future rename degrades to the old
                 // behavior rather than disabling console reads outright.
@@ -134,7 +139,7 @@ namespace MCPForUnity.Editor.Tools
                     _getCountMethod =
                     _getEntryMethod =
                         null;
-                _modeField = _messageField = _fileField = _lineField = null;
+                _modeField = _messageField = _fileField = _lineField = _callstackTextStartField = null;
                 _consoleFlagsProperty = null;
                 _setFilteringTextMethod = _getFilteringTextMethod = null;
             }
@@ -369,6 +374,7 @@ namespace MCPForUnity.Editor.Tools
             bool consoleFlagsOverridden = false;
             string savedFilteringText = null;
             bool filteringTextOverridden = false;
+            bool entriesStarted = false;
 
             try
             {
@@ -379,6 +385,7 @@ namespace MCPForUnity.Editor.Tools
                 // StartGettingEntries() returns the entry count — use it instead of GetCount()
                 // which may return stale values within an active iteration session.
                 object startResult = _startGettingEntriesMethod.Invoke(null, null);
+                entriesStarted = true;
                 int totalEntries = startResult is int startCount
                     ? startCount
                     : (int)_getCountMethod.Invoke(null, null);
@@ -395,7 +402,9 @@ namespace MCPForUnity.Editor.Tools
                 for (int i = 0; i < totalEntries; i++)
                 {
                     // Get the entry data into our instance using reflection
-                    _getEntryMethod.Invoke(null, new object[] { i, logEntryInstance });
+                    object entryResult = _getEntryMethod.Invoke(null, new object[] { i, logEntryInstance });
+                    if (entryResult is bool entryAvailable && !entryAvailable)
+                        continue;
 
                     // Extract data using reflection
                     int mode = (int)_modeField.GetValue(logEntryInstance);
@@ -412,13 +421,8 @@ namespace MCPForUnity.Editor.Tools
                     // (Calibration removed)
 
                     // --- Filtering ---
-                    // Prefer classifying severity from message/stacktrace; fallback to mode bits if needed
-                    LogType unityType = InferTypeFromMessage(message);
-                    bool isExplicitDebug = IsExplicitDebugLog(message);
-                    if (!isExplicitDebug && unityType == LogType.Log)
-                    {
-                        unityType = GetLogTypeFromMode(mode);
-                    }
+                    // Severity comes from Unity, not words or API names in the user's message.
+                    LogType unityType = GetLogTypeFromMode(mode);
 
                     bool want;
                     // Treat Exception/Assert as errors for filtering convenience
@@ -446,7 +450,8 @@ namespace MCPForUnity.Editor.Tools
                         continue;
                     }
 
-                    var (messageOnly, stackTrace) = SplitMessageAndStackTrace(message);
+                    int? callstackStart = _callstackTextStartField?.GetValue(logEntryInstance) as int?;
+                    var (messageOnly, stackTrace) = SplitMessageAndStackTrace(message, callstackStart);
                     if (!includeStacktrace)
                     {
                         stackTrace = null;
@@ -509,10 +514,11 @@ namespace MCPForUnity.Editor.Tools
             }
             finally
             {
-                // Ensure we always call EndGettingEntries
+                // Pair End only with a successfully opened iteration session.
                 try
                 {
-                    _endGettingEntriesMethod.Invoke(null, null);
+                    if (entriesStarted)
+                        _endGettingEntriesMethod.Invoke(null, null);
                 }
                 catch (Exception e)
                 {
@@ -606,57 +612,30 @@ namespace MCPForUnity.Editor.Tools
         // (Calibration helpers removed)
 
         /// <summary>
-        /// Classifies severity using message/stacktrace content. Works across Unity versions.
-        /// </summary>
-        private static LogType InferTypeFromMessage(string fullMessage)
-        {
-            if (string.IsNullOrEmpty(fullMessage)) return LogType.Log;
-
-            // Fast path: look for explicit Debug API names in the appended stack trace
-            // e.g., "UnityEngine.Debug:LogError (object)" or "LogWarning"
-            if (fullMessage.IndexOf("LogError", StringComparison.OrdinalIgnoreCase) >= 0)
-                return LogType.Error;
-            if (fullMessage.IndexOf("LogWarning", StringComparison.OrdinalIgnoreCase) >= 0)
-                return LogType.Warning;
-
-            // Compiler diagnostics (C#): "warning CSxxxx" / "error CSxxxx"
-            if (fullMessage.IndexOf(" warning CS", StringComparison.OrdinalIgnoreCase) >= 0
-                || fullMessage.IndexOf(": warning CS", StringComparison.OrdinalIgnoreCase) >= 0)
-                return LogType.Warning;
-            if (fullMessage.IndexOf(" error CS", StringComparison.OrdinalIgnoreCase) >= 0
-                || fullMessage.IndexOf(": error CS", StringComparison.OrdinalIgnoreCase) >= 0)
-                return LogType.Error;
-
-            // Exceptions (avoid misclassifying compiler diagnostics)
-            if (fullMessage.IndexOf("Exception", StringComparison.OrdinalIgnoreCase) >= 0)
-                return LogType.Exception;
-
-            // Unity assertions
-            if (fullMessage.IndexOf("Assertion", StringComparison.OrdinalIgnoreCase) >= 0)
-                return LogType.Assert;
-
-            return LogType.Log;
-        }
-
-        private static bool IsExplicitDebugLog(string fullMessage)
-        {
-            if (string.IsNullOrEmpty(fullMessage)) return false;
-            if (fullMessage.IndexOf("Debug:Log (", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            if (fullMessage.IndexOf("UnityEngine.Debug:Log (", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            return false;
-        }
-
-        /// <summary>
         /// Splits a Unity log message into its body and appended stack trace.
         /// Unity concatenates both, separated by newlines, so the body may span
         /// several lines before the stack trace begins.
         /// </summary>
         /// <param name="fullMessage">The complete log message including any appended stack trace.</param>
         /// <returns>The message body (line endings normalized to "\n", internal blank lines preserved) and the stack trace, or null when none is found.</returns>
-        private static (string body, string stackTrace) SplitMessageAndStackTrace(string fullMessage)
+        private static (string body, string stackTrace) SplitMessageAndStackTrace(string fullMessage, int? callstackStart = null)
         {
             if (string.IsNullOrEmpty(fullMessage))
                 return (fullMessage, null);
+
+            if (callstackStart.HasValue && callstackStart.Value >= 0 && callstackStart.Value <= fullMessage.Length)
+            {
+                int start = callstackStart.Value;
+                if (start == 0 || start == fullMessage.Length)
+                    return (fullMessage.Replace("\r\n", "\n").Replace('\r', '\n'), null);
+
+                string body = fullMessage.Substring(0, start);
+                // The newline separating the body and stack is not part of either value.
+                if (body.EndsWith("\r\n", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
+                else if (body.EndsWith("\n", StringComparison.Ordinal) || body.EndsWith("\r", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 1);
+                string stack = fullMessage.Substring(start);
+                return (body.Replace("\r\n", "\n").Replace('\r', '\n'), stack.Replace("\r\n", "\n").Replace('\r', '\n'));
+            }
 
             string[] lines = fullMessage.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
 
