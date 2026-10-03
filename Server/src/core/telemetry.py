@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from importlib import import_module, metadata
 import json
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ import queue
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, Callable, Literal, get_args, get_origin, get_type_hints
 from urllib.parse import urlparse
 import uuid
 
@@ -131,11 +132,53 @@ def _error_class(error: object) -> str:
     return "Exception"
 
 
+_tool_actions: dict[str, tuple[frozenset[str], bool]] = {}
+
+
+def register_tool_actions(tool_name: str, func: Callable) -> None:
+    """Snapshot trusted built-in action contracts without importing tool modules."""
+    original = inspect.unwrap(func)
+    if type(tool_name) is not str or original.__module__ != f"services.tools.{tool_name}" or original.__name__ != tool_name:
+        return  # Dynamic plugin schemas cannot add telemetry dimensions.
+    labels: frozenset[str] = frozenset()
+    normalize_case = False
+    try:
+        action_type = get_type_hints(original).get("action")
+        if get_origin(action_type) is Literal:
+            labels = frozenset(value for value in get_args(action_type) if type(value) is str)
+        elif action_type is str:
+            # Unrestricted tools already validate against this server-owned constant.
+            actions = original.__globals__.get("ALL_ACTIONS", ())
+            if type(actions) in (list, tuple, set, frozenset):
+                labels = frozenset(value for value in actions if type(value) is str)
+                normalize_case = True
+    except Exception:
+        pass  # Missing/unresolvable schemas suppress the dimension.
+    _tool_actions[tool_name] = (labels, normalize_case)
+
+
+def tool_action_label(tool_name: object, action: object) -> str | None:
+    """Return only registered action labels; never format arbitrary caller values."""
+    if type(tool_name) is not str or type(action) is not str:
+        return None
+    labels, normalize_case = _tool_actions.get(tool_name, (frozenset(), False))
+    if not labels or len(action) > max(map(len, labels)):
+        return None
+    value = action.lower() if normalize_case else action
+    return value if value in labels else None
+
+
 def _metadata_only_error(data: dict[str, Any]) -> dict[str, Any]:
-    """Detach event metadata and constrain the shared error channel."""
+    """Detach metadata and constrain error/action dimensions at every boundary."""
     sanitized = dict(data)
     if "error" in sanitized and sanitized["error"] is not None:
         sanitized["error"] = _error_class(sanitized["error"])
+    if "sub_action" in sanitized:
+        label = tool_action_label(sanitized.get("tool_name"), sanitized["sub_action"])
+        if label is None:
+            sanitized.pop("sub_action")
+        else:
+            sanitized["sub_action"] = label
     return sanitized
 
 
@@ -515,7 +558,7 @@ def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: 
         success: Whether the tool completed successfully.
         duration_ms: Execution duration in milliseconds.
         error: Optional exception or stable class label; messages are never sent.
-        sub_action: Optional sub-action/operation within the tool (e.g., 'get_hierarchy').
+        sub_action: Only labels from the registered built-in action contract are emitted.
     """
     data = {
         "tool_name": tool_name,
@@ -523,12 +566,9 @@ def record_tool_usage(tool_name: str, success: bool, duration_ms: float, error: 
         "duration_ms": round(duration_ms, 2)
     }
 
-    if sub_action is not None:
-        try:
-            data["sub_action"] = str(sub_action)
-        except Exception:
-            # Ensure telemetry is never disruptive
-            data["sub_action"] = "unknown"
+    label = tool_action_label(tool_name, sub_action)
+    if label is not None:
+        data["sub_action"] = label
 
     if error:
         data["error"] = _error_class(error)

@@ -8,7 +8,7 @@ import logging
 import time
 from typing import Callable, Any
 
-from core.telemetry import record_resource_usage, record_tool_usage, record_milestone, MilestoneType
+from core.telemetry import record_resource_usage, record_tool_usage, record_milestone, MilestoneType, register_tool_actions, tool_action_label
 
 _log = logging.getLogger("unity-mcp-telemetry")
 _decorator_log_count = 0
@@ -17,6 +17,7 @@ _decorator_log_count = 0
 def telemetry_tool(tool_name: str):
     """Decorator to add telemetry tracking to MCP tools"""
     def decorator(func: Callable) -> Callable:
+        register_tool_actions(tool_name, func)
         @functools.wraps(func)
         def _sync_wrapper(*args, **kwargs) -> Any:
             start_time = time.time()
@@ -28,7 +29,7 @@ def telemetry_tool(tool_name: str):
                 sig = inspect.signature(func)
                 bound = sig.bind_partial(*args, **kwargs)
                 bound.apply_defaults()
-                sub_action = bound.arguments.get("action")
+                sub_action = tool_action_label(tool_name, bound.arguments.get("action"))
             except Exception:
                 sub_action = None
             try:
@@ -38,7 +39,7 @@ def telemetry_tool(tool_name: str):
                     _decorator_log_count += 1
                 result = func(*args, **kwargs)
                 success = True
-                action_val = sub_action or kwargs.get("action")
+                action_val = sub_action
                 try:
                     if tool_name == "manage_script" and action_val == "create":
                         record_milestone(MilestoneType.FIRST_SCRIPT_CREATION)
@@ -71,7 +72,7 @@ def telemetry_tool(tool_name: str):
                 sig = inspect.signature(func)
                 bound = sig.bind_partial(*args, **kwargs)
                 bound.apply_defaults()
-                sub_action = bound.arguments.get("action")
+                sub_action = tool_action_label(tool_name, bound.arguments.get("action"))
             except Exception:
                 sub_action = None
             try:
@@ -81,7 +82,7 @@ def telemetry_tool(tool_name: str):
                     _decorator_log_count += 1
                 result = await func(*args, **kwargs)
                 success = True
-                action_val = sub_action or kwargs.get("action")
+                action_val = sub_action
                 try:
                     if tool_name == "manage_script" and action_val == "create":
                         record_milestone(MilestoneType.FIRST_SCRIPT_CREATION)

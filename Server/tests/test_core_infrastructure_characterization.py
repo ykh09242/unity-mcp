@@ -516,7 +516,10 @@ class TestTelemetrySubAction:
 
     def test_telemetry_tool_extracts_action_parameter(self):
         """Verify telemetry_tool extracts 'action' parameter as sub_action."""
+        import functools
+        from services.tools.manage_script import manage_script
         @telemetry_tool("manage_script")
+        @functools.wraps(manage_script)
         def tool_with_action(name, action=None):
             return f"result_{action}"
 
@@ -1094,7 +1097,9 @@ class TestTelemetryRecordTypes:
             assert data["error"] == "Exception"
 
     def test_record_tool_usage_with_sub_action(self):
-        """Verify record_tool_usage includes sub_action when provided."""
+        """Verify the helper retains actions from a registered built-in schema."""
+        from services.tools.manage_script import manage_script
+        telemetry_tool("manage_script")(manage_script)
         with patch("core.telemetry.get_telemetry") as mock_get:
             mock_collector = MagicMock()
             mock_get.return_value = mock_collector
