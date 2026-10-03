@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -284,6 +285,27 @@ def test_tests_purpose_cli_build_failure_does_not_publish(tmp_path, test_metadat
     assert unity_ci.main(["prepare", "6000.7.0b2", "--purpose", "tests", "--manifest", str(path)]) == 1
     assert capsys.readouterr().out == ""
     assert not output.exists()
+
+
+def test_preview_dockerfile_default_base_matches_pinned_manifest():
+    tools_dir = Path(unity_ci.__file__).parent
+    metadata = json.loads((tools_dir / "unity-versions.json").read_text())
+    lines = (tools_dir / "unity-ci" / "Dockerfile").read_text().splitlines()
+    assert "ARG PREVIEW_BASE_IMAGE=" + metadata["previewBaseImage"] in lines
+
+
+def test_preview_downloads_retry_tls_failures_with_bounded_time():
+    text = (Path(unity_ci.__file__).parent / "unity-ci" / "Dockerfile").read_text()
+    commands = text.replace("\\\n", "").split("curl ")[1:]
+    assert len(commands) == 2
+    for command in commands:
+        args = shlex.split(command.split(";", 1)[0])
+        assert "--fail" in args and "--retry-all-errors" in args
+        for option, value in (("--retry", "3"), ("--retry-max-time", "300"),
+                              ("--connect-timeout", "30"), ("--max-time", "300"),
+                              ("--proto", "=https"), ("--proto-redir", "=https")):
+            assert args[args.index(option) + 1] == value
+        assert args[args.index("--output") + 1] == "$archive"
 
 
 def test_preview_dockerfile_verifies_before_extraction_and_cleans_archive():
