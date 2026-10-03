@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 import uuid
 import weakref
@@ -134,6 +135,54 @@ class PluginHub(WebSocketEndpoint):
     # session_id -> ping task
     _ping_tasks: ClassVar[dict[str, asyncio.Task]] = {}
     CLOSE_TIMEOUT = 5.0
+    # Bound both retained tasks and their request/model/JSON working set. These
+    # ceilings are independent of execution deadlines for legitimate long jobs.
+    MAX_PENDING_COMMANDS = 256
+    MAX_PENDING_PER_USER = 32
+    MAX_PENDING_PER_SESSION = 16
+    MAX_PENDING_PAYLOAD_BYTES = 32 * 1024 * 1024
+    MAX_PENDING_PAYLOAD_BYTES_PER_USER = 8 * 1024 * 1024
+    MAX_PENDING_PAYLOAD_BYTES_PER_SESSION = 4 * 1024 * 1024
+    MAX_COMMAND_PAYLOAD_BYTES = 4 * 1024 * 1024
+    MAX_COMMAND_PAYLOAD_NODES = 65_536
+    MAX_COMMAND_PAYLOAD_DEPTH = 64
+
+    @classmethod
+    def _command_payload_size(cls, command_type: str, params: dict[str, Any]) -> int | None:
+        """Conservatively charge JSON inputs without allocating a serialized copy.
+
+        Count retained Python objects, model/dump copies and worst-case JSON
+        string escapes. Stop traversing at the budget, node or depth ceiling;
+        even a cyclic or very wide input cannot cause unbounded work here.
+        """
+        size = 1024  # Per-command future/task/message overhead.
+        nodes = 0
+
+        def visit(value: Any, depth: int) -> bool:
+            nonlocal size, nodes
+            nodes += 1
+            if depth > cls.MAX_COMMAND_PAYLOAD_DEPTH or nodes > cls.MAX_COMMAND_PAYLOAD_NODES:
+                return False
+            size += 128 + 2 * sys.getsizeof(value)
+            if isinstance(value, str):
+                # Supplementary code points can escape as two six-byte surrogates.
+                size += 12 * len(value)
+            if size > cls.MAX_COMMAND_PAYLOAD_BYTES:
+                return False
+            if isinstance(value, dict):
+                return all(visit(key, depth + 1) and visit(item, depth + 1) for key, item in value.items())
+            if isinstance(value, (list, tuple)):
+                return all(visit(item, depth + 1) for item in value)
+            return value is None or isinstance(value, (str, bool, int, float))
+
+        return size if visit(command_type, 0) and visit(params, 0) else None
+
+    @staticmethod
+    def _command_capacity_response() -> dict[str, Any]:
+        return MCPResponse(
+            success=False, error="Unity command capacity reached; please retry", hint="retry",
+            data={"reason": "command_capacity", "retry_after_ms": 250},
+        ).model_dump()
 
     @classmethod
     def configure(
@@ -312,8 +361,10 @@ class PluginHub(WebSocketEndpoint):
     @classmethod
     async def send_command(cls, session_id: str, command_type: str, params: dict[str, Any]) -> dict[str, Any]:
         websocket = await cls._get_connection(session_id)
-        command_id = str(uuid.uuid4())
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        registry = cls._registry
+        session = await registry.get_session(session_id) if registry is not None else None
+        # Admission follows the registered principal, never caller parameters.
+        user_id = session.user_id if session is not None else None
         # Compute a per-command timeout:
         # - fast-path commands: short timeout (encourage retry)
         # - long-running commands: allow caller to request a longer timeout via params
@@ -352,13 +403,41 @@ class PluginHub(WebSocketEndpoint):
         async with lock:
             # Disconnect can run between the initial lookup and this lock.
             if cls._connections.get(session_id) is not websocket:
-                future.cancel()
                 raise RuntimeError(f"Plugin session {session_id} not connected")
+            # _pending is the single source of accounting: every existing pop on
+            # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
+            user_count = session_count = total_bytes = user_bytes = session_bytes = 0
+            for entry in cls._pending.values():
+                entry_bytes = entry.get("payload_bytes", 0)
+                total_bytes += entry_bytes
+                if entry.get("user_id") == user_id:
+                    user_count += 1
+                    user_bytes += entry_bytes
+                if entry["session_id"] == session_id:
+                    session_count += 1
+                    session_bytes += entry_bytes
+            if (len(cls._pending) >= cls.MAX_PENDING_COMMANDS
+                    or user_count >= cls.MAX_PENDING_PER_USER
+                    or session_count >= cls.MAX_PENDING_PER_SESSION):
+                return cls._command_capacity_response()
+            payload_bytes = cls._command_payload_size(command_type, params)
+            if payload_bytes is None:
+                return MCPResponse(
+                    success=False, error="Unity command payload exceeds supported size or structure",
+                    data={"reason": "command_payload_limit"},
+                ).model_dump()
+            if (total_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES
+                    or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
+                    or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION):
+                return cls._command_capacity_response()
+            command_id = str(uuid.uuid4())
             if command_id in cls._pending:
                 raise RuntimeError(
                     f"Duplicate command id generated: {command_id}")
+            future: asyncio.Future = asyncio.get_running_loop().create_future()
             cls._pending[command_id] = {
-                "future": future, "session_id": session_id}
+                "future": future, "session_id": session_id,
+                "user_id": user_id, "payload_bytes": payload_bytes}
 
         send_task: asyncio.Task | None = None
         try:
@@ -395,17 +474,18 @@ class PluginHub(WebSocketEndpoint):
                     ).model_dump()
                 raise
         finally:
-            if send_task is not None:
-                if not send_task.done():
-                    send_task.cancel()
-                await asyncio.gather(send_task, return_exceptions=True)
+            # Release synchronously on the owner loop before cancellation-sensitive
+            # I/O cleanup. AnyIO level cancellation can interrupt every await here.
+            cls._pending.pop(command_id, None)
             if not future.done():
                 future.cancel()
             elif not future.cancelled():
                 # A disconnect may finish the future while the socket write fails.
                 future.exception()
-            async with lock:
-                cls._pending.pop(command_id, None)
+            if send_task is not None:
+                if not send_task.done():
+                    send_task.cancel()
+                await asyncio.gather(send_task, return_exceptions=True)
 
     @classmethod
     async def get_sessions(cls, user_id: str | None = None) -> SessionList:
@@ -1109,6 +1189,12 @@ class PluginHub(WebSocketEndpoint):
                         probe = await cls.send_command(session_id, "ping", {})
                     except Exception:
                         probe = None
+
+                    # Capacity refusal must stay cheap for readiness-gated tools
+                    # too; repeated probes cannot make space for the caller.
+                    if isinstance(probe, dict) and isinstance(probe.get("data"), dict):
+                        if probe["data"].get("reason") == "command_capacity":
+                            return probe
 
                     # The Unity-side dispatcher responds with {status:"success", result:{message:"pong"}}
                     if isinstance(probe, dict) and probe.get("status") == "success":
