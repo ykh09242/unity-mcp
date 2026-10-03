@@ -61,7 +61,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 Method = "POST",
                 Url = url,
                 ContentType = "application/json",
-                Body = Encoding.UTF8.GetBytes(body.ToString(Formatting.None))
+                Body = ProviderHttp.SerializeRequest(body)
             };
             spec.Headers["Authorization"] = "Key " + apiKey;
 
