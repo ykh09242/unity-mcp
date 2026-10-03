@@ -1,8 +1,11 @@
+using System;
 using System.IO;
 using NUnit.Framework;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using MCPForUnity.Editor.Tools;
 
 namespace MCPForUnity.Tests.EditMode.Tools
@@ -107,6 +110,140 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 string meta = dir + ".meta";
                 if (File.Exists(meta)) File.Delete(meta);
                 AssetDatabase.Refresh();
+            }
+        }
+
+        [TestCase(null, true)]
+        [TestCase(null, false)]
+        [TestCase("empty", false)]
+        [TestCase("default", false)]
+        [TestCase("3d_basic", false)]
+        [TestCase("2d_basic", false)]
+        public void Create_PreservesUnsavedLoadedScene(string template, bool dirtyIsActive)
+        {
+            using (var fixture = new SceneReplacementFixture(dirtyIsActive))
+            {
+                var command = new JObject
+                {
+                    ["action"] = "create",
+                    ["name"] = "Replacement",
+                    ["path"] = fixture.Folder + "/Rejected"
+                };
+                if (template != null) command["template"] = template;
+
+                var response = JObject.FromObject(ManageScene.HandleCommand(command));
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("unsaved changes", response.Value<string>("error"));
+                fixture.AssertUnsavedScenePreserved();
+                Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath,
+                    fixture.Folder.Substring("Assets/".Length), "Rejected")));
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LoadSingle_PreservesUnsavedInactiveScene(bool byBuildIndex)
+        {
+            using (var fixture = new SceneReplacementFixture(false))
+            {
+                var command = new JObject { ["action"] = "load" };
+                if (byBuildIndex)
+                {
+                    EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(fixture.TargetPath, true) };
+                    command["buildIndex"] = 0;
+                }
+                else command["path"] = fixture.TargetPath;
+
+                var response = JObject.FromObject(ManageScene.HandleCommand(command));
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("unsaved changes", response.Value<string>("error"));
+                fixture.AssertUnsavedScenePreserved();
+                Assert.IsFalse(SceneManager.GetSceneByPath(fixture.TargetPath).isLoaded);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LoadAdditive_AllowsUnsavedInactiveScene(bool byBuildIndex)
+        {
+            using (var fixture = new SceneReplacementFixture(false))
+            {
+                var command = new JObject { ["action"] = "load", ["additive"] = true };
+                if (byBuildIndex)
+                {
+                    EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(fixture.TargetPath, true) };
+                    command["buildIndex"] = 0;
+                }
+                else command["path"] = fixture.TargetPath;
+
+                var response = JObject.FromObject(ManageScene.HandleCommand(command));
+
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                fixture.AssertUnsavedScenePreserved();
+                Assert.IsTrue(SceneManager.GetSceneByPath(fixture.TargetPath).isLoaded);
+            }
+        }
+
+        private sealed class SceneReplacementFixture : IDisposable
+        {
+            private readonly SceneSetup[] _originalSetup;
+            private readonly EditorBuildSettingsScene[] _originalBuildScenes;
+            private readonly Scene _dirtyScene;
+            private readonly GameObject _unsavedObject;
+            public string Folder { get; }
+            public string TargetPath => Folder + "/Target.unity";
+
+            public SceneReplacementFixture(bool dirtyIsActive)
+            {
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                    if (SceneManager.GetSceneAt(i).isDirty)
+                        Assert.Ignore("Scene replacement fixtures require saved pre-existing scenes.");
+                _originalSetup = EditorSceneManager.GetSceneManagerSetup();
+                _originalBuildScenes = EditorBuildSettings.scenes;
+                Folder = "Assets/SceneReplacementTests_" + Guid.NewGuid().ToString("N");
+                try
+                {
+                    AssetDatabase.CreateFolder("Assets", Folder.Substring("Assets/".Length));
+                    var clean = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                    Assert.IsTrue(EditorSceneManager.SaveScene(clean, Folder + "/Clean.unity"));
+                    var target = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                    Assert.IsTrue(EditorSceneManager.SaveScene(target, TargetPath));
+                    EditorSceneManager.CloseScene(target, true);
+                    _dirtyScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                    SceneManager.SetActiveScene(_dirtyScene);
+                    _unsavedObject = new GameObject("UnsavedObject");
+                    EditorSceneManager.MarkSceneDirty(_dirtyScene);
+                    SceneManager.SetActiveScene(dirtyIsActive ? _dirtyScene : clean);
+                    Assert.IsFalse(clean.isDirty, "The inactive-scene regression requires a clean active scene.");
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            public void AssertUnsavedScenePreserved()
+            {
+                Assert.IsTrue(_dirtyScene.IsValid() && _dirtyScene.isLoaded && _dirtyScene.isDirty);
+                Assert.IsTrue(_unsavedObject != null, "The unsaved object must survive the command.");
+                Assert.AreEqual(_dirtyScene, _unsavedObject.scene);
+            }
+
+            public void Dispose()
+            {
+                EditorBuildSettings.scenes = _originalBuildScenes;
+                try
+                {
+                    EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                    if (_originalSetup.Length > 0) EditorSceneManager.RestoreSceneManagerSetup(_originalSetup);
+                }
+                finally
+                {
+                    AssetDatabase.DeleteAsset(Folder);
+                }
             }
         }
     }

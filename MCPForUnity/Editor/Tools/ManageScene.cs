@@ -284,6 +284,8 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse(string.IsNullOrEmpty(cmd.template)
                             ? $"Scene already exists at '{relativePath}'."
                             : $"Scene already exists at '{relativePath}'. Delete it first or use a different name.");
+                    var createDirtyError = RequireSavedScenesBeforeReplacement();
+                    if (createDirtyError != null) return createDirtyError;
                     try
                     {
                         Directory.CreateDirectory(fullPathDir);
@@ -435,16 +437,8 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Scene file not found at '{relativePath}'.");
             }
 
-            // Check for unsaved changes in the current scene
-            if (EditorSceneManager.GetActiveScene().isDirty)
-            {
-                // Optionally prompt the user or save automatically before loading
-                return new ErrorResponse(
-                    "Current scene has unsaved changes. Please save or discard changes before loading a new scene."
-                );
-                // Example: bool saveOK = EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
-                // if (!saveOK) return new ErrorResponse("Load cancelled by user.");
-            }
+            var dirtyError = RequireSavedScenesBeforeReplacement();
+            if (dirtyError != null) return dirtyError;
 
             try
             {
@@ -473,12 +467,10 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            // Check for unsaved changes
-            if (!additive && EditorSceneManager.GetActiveScene().isDirty)
+            if (!additive)
             {
-                return new ErrorResponse(
-                    "Current scene has unsaved changes. Please save or discard changes before loading a new scene."
-                );
+                var dirtyError = RequireSavedScenesBeforeReplacement();
+                if (dirtyError != null) return dirtyError;
             }
 
             try
@@ -503,6 +495,19 @@ namespace MCPForUnity.Editor.Tools
                     $"Error loading scene with build index {buildIndex}: {e.Message}"
                 );
             }
+        }
+
+        private static ErrorResponse RequireSavedScenesBeforeReplacement()
+        {
+            // Single mode closes every open scene, including inactive additive scenes.
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded && scene.isDirty)
+                    return new ErrorResponse(
+                        $"Scene '{scene.name}' has unsaved changes. Please save or discard changes before replacing loaded scenes.");
+            }
+            return null;
         }
 
         private static object SaveScene(string fullPath, string relativePath)
