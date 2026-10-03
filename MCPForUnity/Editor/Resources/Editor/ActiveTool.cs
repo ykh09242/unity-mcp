@@ -17,8 +17,10 @@ namespace MCPForUnity.Editor.Resources.Editor
             {
                 Tool currentTool = UnityEditor.Tools.current;
                 string toolName = currentTool.ToString();
-                bool customToolActive = UnityEditor.Tools.current == Tool.Custom;
-                string activeToolName = customToolActive ? EditorTools.GetActiveToolName() : toolName;
+                bool customToolActive = currentTool == Tool.Custom;
+                string activeToolName = customToolActive ? EditorTools.GetActiveToolName(currentTool) : toolName;
+                var handleRotation = UnityEditor.Tools.handleRotation.eulerAngles;
+                var handlePosition = UnityEditor.Tools.handlePosition;
 
                 var toolInfo = new
                 {
@@ -28,15 +30,15 @@ namespace MCPForUnity.Editor.Resources.Editor
                     pivotRotation = UnityEditor.Tools.pivotRotation.ToString(),
                     handleRotation = new
                     {
-                        x = UnityEditor.Tools.handleRotation.eulerAngles.x,
-                        y = UnityEditor.Tools.handleRotation.eulerAngles.y,
-                        z = UnityEditor.Tools.handleRotation.eulerAngles.z
+                        x = handleRotation.x,
+                        y = handleRotation.y,
+                        z = handleRotation.z
                     },
                     handlePosition = new
                     {
-                        x = UnityEditor.Tools.handlePosition.x,
-                        y = UnityEditor.Tools.handlePosition.y,
-                        z = UnityEditor.Tools.handlePosition.z
+                        x = handlePosition.x,
+                        y = handlePosition.y,
+                        z = handlePosition.z
                     }
                 };
 
@@ -52,13 +54,13 @@ namespace MCPForUnity.Editor.Resources.Editor
     // Helper class for custom tool names
     internal static class EditorTools
     {
-        public static string GetActiveToolName()
+        public static string GetActiveToolName(Tool currentTool)
         {
-            if (UnityEditor.Tools.current == Tool.Custom)
+            if (currentTool == Tool.Custom)
             {
                 return "Unknown Custom Tool";
             }
-            return UnityEditor.Tools.current.ToString();
+            return currentTool.ToString();
         }
     }
 }

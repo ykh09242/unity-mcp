@@ -17,12 +17,13 @@ namespace MCPForUnity.Editor.Resources.Editor
         {
             try
             {
+                var activeObject = UnityEditor.Selection.activeObject;
                 var selectionInfo = new
                 {
-                    activeObject = UnityEditor.Selection.activeObject?.name,
+                    activeObject = activeObject?.name,
                     activeGameObject = UnityEditor.Selection.activeGameObject?.name,
                     activeTransform = UnityEditor.Selection.activeTransform?.name,
-                    activeInstanceID = UnityEditor.Selection.activeObject?.GetInstanceIDCompat() ?? 0,
+                    activeInstanceID = activeObject?.GetInstanceIDCompat() ?? 0,
                     count = UnityEditor.Selection.count,
                     objects = UnityEditor.Selection.objects
                         .Select(obj => new

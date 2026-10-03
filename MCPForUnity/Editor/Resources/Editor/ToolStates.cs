@@ -55,12 +55,12 @@ namespace MCPForUnity.Editor.Resources.Editor
                     });
                 }
 
-                var groups = allTools
-                    .GroupBy(t => t.Group ?? "core")
+                var groups = toolsArray
+                    .GroupBy(t => (string)t["group"])
                     .Select(g => new JObject
                     {
                         ["name"] = g.Key,
-                        ["enabled_count"] = g.Count(t => discovery.IsToolEnabled(t.Name)),
+                        ["enabled_count"] = g.Count(t => (bool)t["enabled"]),
                         ["total_count"] = g.Count()
                     });
 

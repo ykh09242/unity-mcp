@@ -28,6 +28,7 @@ namespace MCPForUnity.Editor.Resources.Editor
 
                     try
                     {
+                        var position = window.position;
                         openWindows.Add(new
                         {
                             title = window.titleContent.text,
@@ -35,10 +36,10 @@ namespace MCPForUnity.Editor.Resources.Editor
                             isFocused = EditorWindow.focusedWindow == window,
                             position = new
                             {
-                                x = window.position.x,
-                                y = window.position.y,
-                                width = window.position.width,
-                                height = window.position.height
+                                x = position.x,
+                                y = position.y,
+                                width = position.width,
+                                height = position.height
                             },
                             instanceID = window.GetInstanceIDCompat()
                         });
