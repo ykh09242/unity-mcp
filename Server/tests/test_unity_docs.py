@@ -381,6 +381,53 @@ def test_no_duplicate_actions():
     assert len(ALL_ACTIONS) == len(set(ALL_ACTIONS))
 
 
+@pytest.mark.parametrize("status", [403, 429, 503])
+@pytest.mark.parametrize("options", [
+    {"action": "get_doc", "class_name": "Physics"},
+    {"action": "get_manual", "slug": "execution-order"},
+    {"action": "get_package_doc", "package": "com.unity.render-pipelines.universal",
+     "page": "index", "pkg_version": "17.0"},
+])
+def test_documentation_http_errors_return_failure(status, options):
+    # Given: a documentation endpoint returns an HTTP error page.
+    async def fetch(url):
+        return status, "<h1>Service unavailable</h1>"
+
+    async def fetch_full(url):
+        code, body = await fetch(url)
+        return code, body, url
+
+    with patch("services.tools.unity_docs._fetch_url", side_effect=fetch), \
+         patch("services.tools.unity_docs._fetch_url_full", side_effect=fetch_full):
+        # When: the public action attempts to retrieve the documentation.
+        result = asyncio.run(unity_docs(SimpleNamespace(), **options))
+
+    # Then: the error page is not reported as successfully found documentation.
+    assert result["success"] is False
+    assert str(status) in result["message"]
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_member_version_fallback_stops_when_endpoint_reports_http_error(status):
+    # Given: versioned pages are absent and the unversioned endpoint fails.
+    responses = iter([(404, ""), (404, ""), (status, ""), (200, SAMPLE_DOC_HTML)])
+
+    async def fetch(url):
+        return next(responses)
+
+    with patch("services.tools.unity_docs._fetch_url", side_effect=fetch) as fetch_mock:
+        # When: a member lookup traverses the version fallback.
+        result = asyncio.run(unity_docs(
+            SimpleNamespace(), action="get_doc", class_name="Transform",
+            member_name="position", version="6000.0.38f1",
+        ))
+
+    # Then: HTTP errors remain errors without another property request.
+    assert result["success"] is False
+    assert str(status) in result["message"]
+    assert fetch_mock.call_count == 3
+
+
 def test_all_actions_includes_new():
     assert "get_manual" in ALL_ACTIONS
     assert "get_package_doc" in ALL_ACTIONS

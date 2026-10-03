@@ -458,6 +458,9 @@ async def _get_manual(slug: str, version: str | None) -> dict[str, Any]:
                 },
             }
 
+        if status != 200:
+            return {"success": False, "message": f"docs.unity3d.com returned HTTP {status}."}
+
         parsed = _parse_manual_html(body)
         return {
             "success": True,
@@ -501,6 +504,9 @@ async def _get_package_doc(
                     ),
                 },
             }
+
+        if status != 200:
+            return {"success": False, "message": f"docs.unity3d.com returned HTTP {status}."}
 
         parsed = _parse_manual_html(body)
         return {
@@ -874,7 +880,7 @@ async def _get_doc(
             status, body = await _fetch_url(fallback_url)
             if status == 200:
                 url = fallback_url
-            elif member_name:
+            elif status == 404 and member_name:
                 # Also try property fallback without version
                 prop_fallback = _build_property_url(class_name, member_name, None)
                 status, body = await _fetch_url(prop_fallback)
@@ -892,6 +898,9 @@ async def _get_doc(
                     ),
                 },
             }
+
+        if status != 200:
+            return {"success": False, "message": f"docs.unity3d.com returned HTTP {status}."}
 
         parsed = _parse_unity_doc_html(body)
         return {
