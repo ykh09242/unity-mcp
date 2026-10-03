@@ -1,9 +1,12 @@
 """Output formatting utilities for CLI."""
 
 import json
+from itertools import islice
 from typing import Any
 
 import click
+
+_TABLE_ROW_LIMIT = 50
 
 
 def format_output(data: Any, format_type: str = "text") -> str:
@@ -118,8 +121,8 @@ def format_as_table(data: Any) -> str:
                 return _build_table(result)
 
         # Single dict as key-value table
-        rows = [[str(k), str(v)[:60]] for k, v in data.items()]
-        return _build_table(rows, headers=["Key", "Value"])
+        rows = [[str(k), str(v)[:60]] for k, v in islice(data.items(), _TABLE_ROW_LIMIT)]
+        return _build_table(rows, headers=["Key", "Value"], total_rows=len(data))
 
     if isinstance(data, list):
         return _build_table(data)
@@ -127,10 +130,15 @@ def format_as_table(data: Any) -> str:
     return str(data)
 
 
-def _build_table(data: list[Any], headers: list[str] | None = None) -> str:
+def _build_table(
+    data: list[Any], headers: list[str] | None = None, *, total_rows: int | None = None
+) -> str:
     """Build an ASCII table from list data."""
     if not data:
         return "(no data)"
+
+    total_rows = len(data) if total_rows is None else total_rows
+    data = data[:_TABLE_ROW_LIMIT]
 
     # Convert list of dicts to rows
     if isinstance(data[0], dict):
@@ -162,15 +170,15 @@ def _build_table(data: list[Any], headers: list[str] | None = None) -> str:
     lines.append("-+-".join("-" * w for w in col_widths))
 
     # Rows
-    for row in rows[:50]:  # Limit rows
+    for row in rows:
         row_line = " | ".join(
             (row[i] if i < len(row) else "").ljust(col_widths[i])
             for i in range(len(headers))
         )
         lines.append(row_line)
 
-    if len(rows) > 50:
-        lines.append(f"... ({len(rows) - 50} more rows)")
+    if total_rows > len(rows):
+        lines.append(f"... ({total_rows - len(rows)} more rows)")
 
     return "\n".join(lines)
 
