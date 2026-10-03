@@ -315,7 +315,8 @@ class UnityConnection:
                         if status_path.stem.endswith(target_hash):
                             with status_path.open('r') as f:
                                 return json.load(f)
-                # Fallback: return most recent regardless of hash
+                    return None
+                # Untargeted legacy connections use the most recent status.
                 with status_files[0].open('r') as f:
                     return json.load(f)
             except FileNotFoundError:
@@ -332,10 +333,10 @@ class UnityConnection:
                 logger.debug(f"Preflight status check failed: {exc}")
                 return None
 
-        # Extract hash suffix from instance id (e.g., Project@hash)
+        # Canonical IDs end in the hash; older IDs may be just the hash.
         target_hash: str | None = None
-        if self.instance_id and '@' in self.instance_id:
-            maybe_hash = self.instance_id.split('@', 1)[1].strip()
+        if self.instance_id:
+            maybe_hash = self.instance_id.rsplit('@', 1)[-1].strip()
             if maybe_hash:
                 target_hash = maybe_hash
 
@@ -713,7 +714,9 @@ class UnityConnectionPool:
                 if conn.port != target.port:
                     logger.info(
                         f"Updating cached port for {target.id}: {conn.port} -> {target.port}")
-                    conn.port = target.port
+                    with conn._io_lock:
+                        conn.disconnect()
+                        conn.port = target.port
                 logger.debug(f"Reusing existing connection to: {target.id}")
 
             return self._connections[target.id]
