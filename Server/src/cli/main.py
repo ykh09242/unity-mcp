@@ -111,7 +111,7 @@ def cli(ctx: Context, host: str, port: int, timeout: int, format: str, instance:
     Examples:
         unity-mcp status
         unity-mcp gameobject find "Player"
-        unity-mcp scene hierarchy --format json
+        unity-mcp --format json scene hierarchy
         unity-mcp editor play
 
     \b
@@ -143,6 +143,30 @@ def cli(ctx: Context, host: str, port: int, timeout: int, format: str, instance:
 def status(ctx: Context):
     """Check connection status to Unity MCP server."""
     config = ctx.config or get_config()
+
+    if config.format != "text":
+        connected = run_check_connection(config)
+        result = {
+            "success": connected,
+            "host": config.host,
+            "port": config.port,
+            "instances": [],
+        }
+        if connected:
+            try:
+                instances_result = run_list_instances(config)
+                if isinstance(instances_result, dict):
+                    result["instances"] = instances_result.get("instances", [])
+            except UnityConnectionError as e:
+                result["warning"] = f"Could not retrieve Unity instances: {e}"
+        else:
+            result["error"] = (
+                f"Cannot connect to Unity MCP server at {config.host}:{config.port}"
+            )
+        click.echo(format_output(result, config.format))
+        if not connected:
+            sys.exit(1)
+        return
 
     click.echo(f"Checking connection to {config.host}:{config.port}...")
 
