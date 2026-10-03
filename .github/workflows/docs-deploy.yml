@@ -68,7 +68,7 @@ jobs:
         run: npm ci
 
       - name: Setup Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/beta'
+        if: github.repository == 'CoplayDev/unity-mcp' && github.event_name == 'push' && github.ref == 'refs/heads/beta'
         uses: actions/configure-pages@v5
 
       - name: Build
@@ -81,7 +81,7 @@ jobs:
         run: npm run build
 
       - name: Upload Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/beta'
+        if: github.repository == 'CoplayDev/unity-mcp' && github.event_name == 'push' && github.ref == 'refs/heads/beta'
         uses: actions/upload-pages-artifact@v3
         with:
           path: website/build
@@ -89,7 +89,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/beta'
+    if: github.repository == 'CoplayDev/unity-mcp' && github.event_name == 'push' && github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
