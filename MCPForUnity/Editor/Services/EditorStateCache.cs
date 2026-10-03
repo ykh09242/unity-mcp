@@ -41,6 +41,7 @@ namespace MCPForUnity.Editor.Services
         private static bool _lastTrackedIsUpdating;
         private static bool _lastTrackedTestsRunning;
         private static string _lastTrackedActivityPhase;
+        private static int _lastTrackedBatchLimit;
 
         private static JObject _cached;
 
@@ -299,6 +300,8 @@ namespace MCPForUnity.Editor.Services
                 return;
             }
 
+            _lastUpdateTimeSinceStartup = now;
+
             // Fast state-change detection BEFORE building snapshot.
             // This avoids the expensive BuildSnapshot() call entirely when nothing changed.
             // These checks are much cheaper than building a full JSON snapshot.
@@ -310,6 +313,7 @@ namespace MCPForUnity.Editor.Services
             bool isPaused = EditorApplication.isPaused;
             bool isUpdating = EditorApplication.isUpdating;
             bool testsRunning = TestRunStatus.IsRunning;
+            int batchLimit = Tools.BatchExecute.GetMaxCommandsPerBatch();
 
             var activityPhase = "idle";
             if (testsRunning)
@@ -341,12 +345,18 @@ namespace MCPForUnity.Editor.Services
                 || _lastTrackedIsPaused != isPaused
                 || _lastTrackedIsUpdating != isUpdating
                 || _lastTrackedTestsRunning != testsRunning
-                || _lastTrackedActivityPhase != activityPhase;
+                || _lastTrackedActivityPhase != activityPhase
+                || _lastTrackedBatchLimit != batchLimit;
 
             if (!hasChanges)
             {
                 // No state change - skip the expensive BuildSnapshot entirely.
                 // This is the key optimization that prevents the 28ms GC spikes.
+                lock (LockObj)
+                {
+                    _observedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    SnapshotObservation.UpdateTimestamp(_cached, _observedUnixMs);
+                }
                 return;
             }
 
@@ -359,9 +369,18 @@ namespace MCPForUnity.Editor.Services
             _lastTrackedIsUpdating = isUpdating;
             _lastTrackedTestsRunning = testsRunning;
             _lastTrackedActivityPhase = activityPhase;
+            _lastTrackedBatchLimit = batchLimit;
 
-            _lastUpdateTimeSinceStartup = now;
             ForceUpdate("tick");
+        }
+
+        // A successful unchanged observation refreshes liveness without changing content.
+        private static class SnapshotObservation
+        {
+            internal static void UpdateTimestamp(JObject snapshot, long observedAtUnixMs)
+            {
+                snapshot["observed_at_unix_ms"] = observedAtUnixMs;
+            }
         }
 
         private static void ForceUpdate(string reason)
