@@ -178,6 +178,70 @@ def test_missing_reference_diagnostic_is_bounded_and_single_line(environment: tu
     assert len(message) < 20000
 
 
+def bundled_nunit_21(environment: tuple[Path, Path, Path, Path], version: str = "2.1.0") -> Path:
+    _, data, _, _ = environment
+    directory = data / "Resources/PackageManager/BuiltInPackages/com.unity.ext.nunit"
+    metadata = json.loads((directory / "package.json").read_text(encoding="utf-8"))
+    metadata.update(version=version, unity="6000.6")
+    (directory / "package.json").write_text(json.dumps(metadata), encoding="utf-8")
+    previous = directory / "net40/unity-custom/nunit.framework.dll"
+    dll = directory / "net472/unity-custom/nunit.framework.dll"
+    dll.parent.mkdir(parents=True)
+    previous.rename(dll)
+    dll.with_suffix(".dll.meta").write_text("fileFormatVersion: 2\nguid: e59094b434ebb46e6844f02ec9c4dc42", encoding="utf-8")
+    return dll
+
+
+@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+@pytest.mark.parametrize("nunit_version", ["2.1.0", "2.1.1"])
+def test_bundled_nunit_21_uses_verified_net472_editor_reference(environment: tuple[Path, Path, Path, Path], version: str, nunit_version: str) -> None:
+    repo, _, _, _ = environment
+    dll = bundled_nunit_21(environment, nunit_version)
+    original = dll.read_bytes()
+    result = prepare(environment, version)
+    assert (repo / result.refs / "nunit.framework.dll").read_bytes() == original
+    report = json.loads((repo / result.resolution_report).read_text(encoding="utf-8"))
+    assert next(item for item in report["packages"] if item["name"] == "com.unity.ext.nunit")["version"] == nunit_version
+    assert dll.read_bytes() == original
+
+
+@pytest.mark.parametrize("invalid", ["missing", "ambiguous", "importer", "metadata", "version", "registry", "old-editor"])
+@pytest.mark.parametrize("nunit_version", ["2.1.0", "2.1.1"])
+def test_bundled_nunit_21_rejects_unverified_layout(environment: tuple[Path, Path, Path, Path], invalid: str, nunit_version: str) -> None:
+    repo, _, cache, profiles = environment
+    dll = bundled_nunit_21(environment, nunit_version)
+    selected = "6000.6.4f1"
+    if invalid == "missing":
+        dll.unlink()
+    elif invalid == "ambiguous":
+        other = dll.parents[2] / "netstandard/nunit.framework.dll"
+        other.parent.mkdir()
+        other.write_bytes(b"another target")
+    elif invalid == "importer":
+        dll.with_suffix(".dll.meta").write_text("PluginImporter:\n  platformData:\n  - first:\n      Editor: Editor\n    second:\n      enabled: 0\n", encoding="utf-8")
+    elif invalid == "metadata":
+        dll.with_suffix(".dll.meta").unlink()
+    elif invalid == "version":
+        metadata = dll.parents[2] / "package.json"
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        value["version"] = "2.1.2"
+        metadata.write_text(json.dumps(value), encoding="utf-8")
+    elif invalid == "registry":
+        shutil.copytree(dll.parents[2], cache / f"com.unity.ext.nunit@{nunit_version}")
+        value = json.loads(profiles.read_text(encoding="utf-8"))
+        value["profiles"]["modern"]["packages"]["com.unity.ext.nunit"] = {"source": "registry", "version": nunit_version}
+        profiles.write_text(json.dumps(value), encoding="utf-8")
+    else:
+        selected = "6000.3.25f1"
+        metadata = dll.parents[2] / "package.json"
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        value["unity"] = "6000.0"
+        metadata.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(packages.PreparationError, match="diagnostic="):
+        prepare(environment, selected)
+    assert not (repo / ".unity-ci" / selected).exists()
+
+
 @pytest.mark.parametrize("image", ["unity-mcp-editor:6000.7.0b2", "unity-mcp-editor:6000.7.0b2-tests",
                                   "unityci/editor:ubuntu-6000.7.0b2-base-3@sha256:" + "a" * 64,
                                   "unityci/editor:ubuntu-6000.7.0b2-linux-il2cpp-3@sha256:" + "a" * 64])

@@ -235,6 +235,35 @@ def reference_diagnostic(unity_version: str, package: ResolvedPackage, root: Pat
                        "referencingAssemblies": assemblies}, separators=(",", ":"))
 
 
+def nunit_reference_path(unity_version: str, package: ResolvedPackage, root: Path) -> str:
+    legacy = "net40/unity-custom/nunit.framework.dll"
+    if package.version.startswith("2.0.") and "-" not in package.version:
+        return legacy
+    relative = "net472/unity-custom/nunit.framework.dll"
+    directory = root / package.name
+    reason = None
+    major, minor, _ = unity_numbers(unity_version)
+    if package.version not in {"2.1.0", "2.1.1"} or package.source != "editor" or major != 6000 or minor < 6:
+        reason = "Unverified NUnit package/layout"
+    elif sorted(path.relative_to(directory).as_posix() for path in directory.rglob("nunit.framework.dll")) != [relative]:
+        reason = "Required reference DLL missing or ambiguous"
+    else:
+        # Hosted Unity 6.6/6.7 bundles 2.1.0/2.1.1 with this path and default Editor metadata.
+        # Do not interpret arbitrary PluginImporter restrictions as a compatible alternative.
+        metadata = (directory / relative).with_suffix(".dll.meta")
+        if not metadata.is_file() or metadata.is_symlink():
+            reason = "Unverified NUnit Editor import metadata"
+        else:
+            with metadata.open(encoding="utf-8") as stream:
+                content = stream.read(4097)
+            if not re.fullmatch(r"fileFormatVersion: 2\nguid: [0-9a-f]{32}\n?", content):
+                reason = "Unverified NUnit Editor import metadata"
+    if reason:
+        diagnostic = reference_diagnostic(unity_version, package, root, "nunit.framework.dll")
+        raise PreparationError(f"{reason}: {package.name}@{package.version}/{relative}; diagnostic={diagnostic}")
+    return relative
+
+
 def prepare(unity_version: str, unity_data: Path, output: Path, *, repo: Path = ROOT, profiles_path: Path = PROFILES, registry_cache: Path | None = None) -> Preparation:
     major, minor, _ = unity_numbers(unity_version)
     config = read_json(profiles_path)
@@ -307,7 +336,8 @@ def prepare(unity_version: str, unity_data: Path, output: Path, *, repo: Path = 
                 raise PreparationError(f"MCP package requires {name}>={minimum}")
         refs = scratch / "refs"
         refs.mkdir()
-        for name, relative, filename in (("com.unity.ext.nunit", "net40/unity-custom/nunit.framework.dll", "nunit.framework.dll"),
+        nunit = nunit_reference_path(unity_version, resolved["com.unity.ext.nunit"], scratch / "packages")
+        for name, relative, filename in (("com.unity.ext.nunit", nunit, "nunit.framework.dll"),
                                          ("com.unity.nuget.newtonsoft-json", "Runtime/Newtonsoft.Json.dll", "Newtonsoft.Json.dll")):
             source = scratch / "packages" / name / relative
             if not source.is_file() or source.is_symlink():
