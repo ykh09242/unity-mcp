@@ -91,6 +91,21 @@ def test_compilation_saves_new_sdk_before_package_or_compiler_failures():
     assert prepare_index < steps.index(save) < package_index < compile_index
 
 
+def test_failed_restored_sdk_has_bounded_read_only_diagnostics():
+    steps = workflow("compile-check.yml")["jobs"]["compile"]["steps"]
+    diagnostic = next(step for step in steps if step.get("name") == "Diagnose restored compiler cache")
+    assert diagnostic["if"] == (
+        "failure() && steps.sdk.outcome == 'failure' && steps.sdk_cache.outputs.cache-hit == 'true'"
+    )
+    assert diagnostic["env"] == {
+        "UNITY_VERSION": "${{ matrix.unity.version }}",
+        "SDK_PATH": "${{ steps.sdk_identity.outputs.cache_path }}",
+    }
+    assert 'python3 tools/unity_compile_cache_diagnostics.py "$UNITY_VERSION" --cache "$SDK_PATH"' in diagnostic["run"]
+    assert steps.index(diagnostic) > next(i for i, step in enumerate(steps) if step.get("id") == "sdk")
+    assert "continue-on-error" not in diagnostic
+
+
 def test_compilation_uses_cached_data_with_small_pinned_runtime_image():
     steps = workflow("compile-check.yml")["jobs"]["compile"]["steps"]
     assert not any(step.get("id") == "editor" for step in steps)
@@ -102,11 +117,12 @@ def test_compilation_uses_cached_data_with_small_pinned_runtime_image():
     assert '"$UNITY_IMAGE" /repo/tools/compile-check.sh' in compile_step["run"]
 
 
-def test_sdk_extractor_changes_trigger_compilation():
+@pytest.mark.parametrize("path", ["tools/unity_compile_cache.py", "tools/unity_compile_cache_diagnostics.py"])
+def test_sdk_extractor_changes_trigger_compilation(path):
     config = workflow("compile-check.yml")
     triggers = config.get("on", config.get(True))
     for event in ("push", "pull_request"):
-        assert any(fnmatchcase("tools/unity_compile_cache.py", pattern) for pattern in triggers[event]["paths"])
+        assert any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
 
 
 @pytest.mark.parametrize("name", ["compile-check.yml", "unity-tests.yml"])

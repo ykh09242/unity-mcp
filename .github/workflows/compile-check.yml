@@ -30,6 +30,7 @@ on:
       - tools/unity-versions.json
       - tools/unity_ci.py
       - tools/unity_compile_cache.py
+      - tools/unity_compile_cache_diagnostics.py
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
@@ -104,6 +105,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/unity_compile_cache.py prepare "$UNITY_VERSION" --output "$SDK_PATH"
+
+      - name: Diagnose restored compiler cache
+        if: failure() && steps.sdk.outcome == 'failure' && steps.sdk_cache.outputs.cache-hit == 'true'
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+          SDK_PATH: ${{ steps.sdk_identity.outputs.cache_path }}
+        run: |
+          set -euo pipefail
+          python3 tools/unity_compile_cache_diagnostics.py "$UNITY_VERSION" --cache "$SDK_PATH"
 
       # Save verified public inputs even if a later source compile fails.
       - name: Save Unity compiler cache
