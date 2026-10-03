@@ -2,20 +2,29 @@
 import asyncio
 import importlib
 import time
+from collections import OrderedDict
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 jobs = importlib.import_module("services.tools.run_tests")
-RUNNING = {"success": True, "data": {"job_id": "job", "status": "running"}}
+RUNNING = {"success": True, "data": {
+    "job_id": "job", "status": "running", "last_update_unix_ms": 1,
+    "progress": {"editor_is_focused": False},
+}}
 
 
 @pytest.fixture
 def job_transport(monkeypatch):
-    sender = AsyncMock(return_value=RUNNING)
+    sender = AsyncMock(return_value=deepcopy(RUNNING))
+    monkeypatch.setattr(jobs, "_nudge_states", OrderedDict())
+    monkeypatch.setattr(jobs, "_terminal_nudge_jobs", OrderedDict())
+    monkeypatch.setattr(jobs, "_background_tasks", set())
+    monkeypatch.setattr(jobs, "_active_nudge_task", None)
     monkeypatch.setattr(jobs, "get_unity_instance_from_context", AsyncMock(return_value="Project@aaaa"))
-    monkeypatch.setattr(jobs, "_get_unity_project_path", AsyncMock(return_value=None))
+    monkeypatch.setattr(jobs, "_get_unity_project_path", AsyncMock(return_value="/project"))
     monkeypatch.setattr(jobs.unity_transport, "send_with_unity_instance", sender)
     monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: False)
     return sender
@@ -26,7 +35,7 @@ async def test_wait_does_not_start_another_fetch_at_deadline(job_transport):
     # Given: a running job with no completion during the one-second wait.
     async def fetch(*args, **kwargs):
         await asyncio.sleep(0.05)
-        return RUNNING
+        return deepcopy(RUNNING)
     job_transport.side_effect = fetch
     # When: the tool waits to its deadline.
     response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
@@ -40,7 +49,7 @@ async def test_slow_first_fetch_is_bounded_by_wait_timeout(job_transport):
     # Given: a fetch whose normal transport timeout exceeds the caller's budget.
     async def fetch(*args, **kwargs):
         await asyncio.sleep(1.4)
-        return RUNNING
+        return deepcopy(RUNNING)
     job_transport.side_effect = fetch
     started = time.monotonic()
     # When: the tool waits for at most one second.
@@ -56,13 +65,16 @@ async def test_slow_first_fetch_is_bounded_by_wait_timeout(job_transport):
 async def test_focus_nudge_shares_the_wait_budget(job_transport, monkeypatch, slow_stage):
     # Given: a running status whose focus recovery would take longer than the wait.
     monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: True)
+    entered, cancelled = asyncio.Event(), asyncio.Event()
     async def slow_nudge(**kwargs):
-        await asyncio.sleep(1.4)
-        return True
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
     if slow_stage == "project":
         async def slow_project(*args):
-            await asyncio.sleep(1.4)
-            return None
+            await slow_nudge()
         monkeypatch.setattr(jobs, "_get_unity_project_path", slow_project)
         monkeypatch.setattr(jobs, "nudge_unity_focus", AsyncMock(return_value=True))
     else:
@@ -73,6 +85,8 @@ async def test_focus_nudge_shares_the_wait_budget(job_transport, monkeypatch, sl
     # Then: it returns its known running status even though recovery timed out.
     assert time.monotonic() - started < 1.2
     assert response.success and response.data.status == "running"
+    assert entered.is_set() and cancelled.is_set()
+    assert not jobs._background_tasks
 
 
 @pytest.mark.asyncio

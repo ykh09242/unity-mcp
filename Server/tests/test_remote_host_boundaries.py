@@ -274,6 +274,7 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
     if _run_sdk_child(request, tmp_path):
         return
     from fastmcp import Client, FastMCP
+    from unittest.mock import AsyncMock
     from core.config import config
     from services.tools import run_tests
     from transport.plugin_hub import PluginHub
@@ -281,7 +282,7 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
     monkeypatch.setattr(config, "transport_mode", "http")
     async def send(instance, command, params, **kwargs):
         return {"success": True, "data": {"job_id": "fixture-job", "status": "running", "last_update_unix_ms": 1, "progress": {"editor_is_focused": False}}}
-    async def project(instance):
+    async def project(instance, user_id=None):
         return str(tmp_path)
     nudges = []
     release = asyncio.Event()
@@ -291,6 +292,7 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
         return True
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
     monkeypatch.setattr(run_tests, "_get_unity_project_path", project)
+    monkeypatch.setattr(run_tests, "get_unity_instance_from_context", AsyncMock(return_value="Selected@fixture"))
     monkeypatch.setattr(run_tests, "nudge_unity_focus", focus)
     app = FastMCP("local-focus-contract")
     app.tool(name="get_test_job")(run_tests.get_test_job)
@@ -302,7 +304,8 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
     release.set()
     if run_tests._background_tasks:
         await asyncio.gather(*run_tests._background_tasks)
-    assert nudges == [{"unity_project_path": str(tmp_path)}]
+    assert nudges == [{"unity_project_path": str(tmp_path), "force": True,
+                       "focus_duration_s": run_tests.focus_nudge._DEFAULT_FOCUS_DURATION_S}]
 
 
 def test_remote_scanner_guard_precedes_state_and_filesystem(monkeypatch):
