@@ -1,11 +1,12 @@
 import asyncio
 import functools
 import inspect
+import json
 import keyword
 import logging
 import time
 from hashlib import sha256
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field, ValidationError
@@ -92,6 +93,8 @@ class CustomToolService:
         async def register_tools(request: Request) -> JSONResponse:
             try:
                 payload = RegisterToolsPayload.model_validate(await request.json())
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return JSONResponse({"success": False, "error": "Request body must be valid JSON"}, status_code=400)
             except ValidationError as exc:
                 return JSONResponse({"success": False, "error": exc.errors()}, status_code=400)
 
@@ -474,17 +477,16 @@ class CustomToolService:
 
     def _map_param_type(self, param: ToolParameterModel):
         ptype = (param.type or "string").lower()
-        if ptype in ("integer", "int"):
-            return int
-        if ptype in ("number", "float", "double"):
-            return float
-        if ptype in ("bool", "boolean"):
-            return bool
-        if ptype in ("array", "list"):
-            return list
-        if ptype in ("object", "dict"):
-            return dict
-        return str
+        mapped_type = {
+            "integer": int, "int": int,
+            "number": float, "float": float, "double": float,
+            "bool": bool, "boolean": bool,
+            "array": list, "list": list,
+            "object": dict, "dict": dict,
+        }.get(ptype, str)
+        if param.description:
+            return Annotated[mapped_type, Field(description=param.description)]
+        return mapped_type
 
     def _coerce_default(self, value: str | None, param_type: str | None):
         if value is None:
@@ -497,6 +499,11 @@ class CustomToolService:
                 return float(value)
             if ptype in ("bool", "boolean"):
                 return str(value).lower() in ("1", "true", "yes", "on")
+            container_type = {"array": list, "list": list, "object": dict, "dict": dict}.get(ptype)
+            if container_type is not None:
+                decoded = json.loads(value)
+                if isinstance(decoded, container_type):
+                    return decoded
             return value
         except Exception:
             return value
