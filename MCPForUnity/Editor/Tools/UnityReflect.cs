@@ -327,9 +327,22 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Try properties
-            var prop = type.GetProperty(memberName, flags);
-            if (prop != null)
+            var properties = type.GetProperties(flags).Where(pr => pr.Name == memberName).ToArray();
+            if (properties.Length > 1)
             {
+                return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
+                {
+                    found = true,
+                    type_name = FormatTypeName(type),
+                    member_name = memberName,
+                    member_type = "property",
+                    overload_count = properties.Length,
+                    overloads = properties.Select(FormatPropertyDetail).ToArray()
+                });
+            }
+            if (properties.Length == 1)
+            {
+                var prop = properties[0];
                 return new SuccessResponse($"Member '{memberName}' on '{FormatTypeName(type)}'.", new
                 {
                     found = true,
@@ -341,7 +354,8 @@ namespace MCPForUnity.Editor.Tools
                     can_write = prop.CanWrite,
                     is_static = (prop.GetMethod ?? prop.SetMethod)?.IsStatic ?? false,
                     is_obsolete = prop.GetCustomAttribute<ObsoleteAttribute>() != null,
-                    declaring_type = prop.DeclaringType != type ? FormatTypeName(prop.DeclaringType) : null
+                    declaring_type = prop.DeclaringType != type ? FormatTypeName(prop.DeclaringType) : null,
+                    index_parameters = FormatIndexParameters(prop)
                 });
             }
 
@@ -556,7 +570,7 @@ namespace MCPForUnity.Editor.Tools
                 return friendly;
 
             if (type.IsArray)
-                return FormatTypeName(type.GetElementType()) + "[]";
+                return FormatTypeName(type.GetElementType()) + "[" + new string(',', type.GetArrayRank() - 1) + "]";
 
             if (type.IsByRef)
                 return FormatTypeName(type.GetElementType());
@@ -581,6 +595,30 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // --- Method Formatting ---
+
+        private static object[] FormatIndexParameters(PropertyInfo property)
+        {
+            return property.GetIndexParameters().Select(parameter => (object)new
+            {
+                name = parameter.Name,
+                type = FormatTypeName(parameter.ParameterType)
+            }).ToArray();
+        }
+
+        private static object FormatPropertyDetail(PropertyInfo property)
+        {
+            return new
+            {
+                property_type = FormatTypeName(property.PropertyType),
+                can_read = property.CanRead,
+                can_write = property.CanWrite,
+                is_static = (property.GetMethod ?? property.SetMethod)?.IsStatic ?? false,
+                is_obsolete = property.GetCustomAttribute<ObsoleteAttribute>() != null,
+                declaring_type = property.DeclaringType != property.ReflectedType
+                    ? FormatTypeName(property.DeclaringType) : null,
+                index_parameters = FormatIndexParameters(property)
+            };
+        }
 
         private static object FormatMethodDetail(MethodInfo m)
         {
@@ -776,13 +814,18 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool IsGenericMatch(Type genericParamType, Type targetType)
         {
-            if (!genericParamType.IsGenericType) return false;
+            // Closed receivers are already checked by IsAssignableFrom. Comparing only
+            // their definitions would match e.g. ICollection<int> to ICollection<string>.
+            if (!genericParamType.IsGenericType || !genericParamType.ContainsGenericParameters) return false;
 
             var genDef = genericParamType.GetGenericTypeDefinition();
 
             // Check if targetType implements or inherits from the generic definition
-            if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == genDef)
-                return true;
+            for (var current = targetType; current != null; current = current.BaseType)
+            {
+                if (current.IsGenericType && current.GetGenericTypeDefinition() == genDef)
+                    return true;
+            }
 
             foreach (var iface in targetType.GetInterfaces())
             {
