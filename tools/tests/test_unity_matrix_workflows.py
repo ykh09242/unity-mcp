@@ -38,25 +38,75 @@ def test_every_unity_job_uses_the_full_validated_manifest(name, job_name):
     assert "${{ matrix.unity.channel }}" in job["name"]
 
 
-@pytest.mark.parametrize("name,job_name", [
-    ("compile-check.yml", "compile"),
-    ("unity-tests.yml", "testAllModes"),
-])
-def test_unity_jobs_prepare_the_selected_immutable_editor_image(name, job_name):
-    job = workflow(name)["jobs"][job_name]
+def test_licensed_tests_prepare_the_selected_immutable_editor_image():
+    job = workflow("unity-tests.yml")["jobs"]["testAllModes"]
     preparation = next(step for step in job["steps"] if step.get("id") == "editor")
     assert preparation["env"]["UNITY_VERSION"] == "${{ matrix.unity.version }}"
     assert 'python3 tools/unity_ci.py prepare "$UNITY_VERSION" --purpose tests' in preparation["run"]
-    if name == "unity-tests.yml":
-        runners = [step for step in job["steps"] if step.get("uses", "").startswith("game-ci/unity-test-runner@")]
-        assert len(runners) == 2
-        for runner in runners:
-            assert runner["with"]["customImage"] == "${{ steps.editor.outputs.image }}"
-            assert runner["with"]["unityVersion"] == "${{ matrix.unity.version }}"
-    else:
-        compile_step = next(step for step in job["steps"] if step.get("name") == "Compile")
-        assert compile_step["env"]["UNITY_IMAGE"] == "${{ steps.editor.outputs.image }}"
-        assert '"$UNITY_IMAGE"' in compile_step["run"]
+    runners = [step for step in job["steps"] if step.get("uses", "").startswith("game-ci/unity-test-runner@")]
+    assert len(runners) == 2
+    for runner in runners:
+        assert runner["with"]["customImage"] == "${{ steps.editor.outputs.image }}"
+        assert runner["with"]["unityVersion"] == "${{ matrix.unity.version }}"
+
+
+def test_compilation_restores_exact_sdk_cache_and_validates_it_on_every_run():
+    config = workflow("compile-check.yml")
+    assert config["permissions"] == {"contents": "read"}
+    job = config["jobs"]["compile"]
+    assert "permissions" not in job
+    steps = job["steps"]
+    identity = next(step for step in steps if step.get("id") == "sdk_identity")
+    assert identity["env"]["UNITY_VERSION"] == "${{ matrix.unity.version }}"
+    assert 'python3 tools/unity_compile_cache.py identity "$UNITY_VERSION"' in identity["run"]
+    restore = next(step for step in steps if step.get("id") == "sdk_cache")
+    assert restore["uses"] == "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+    assert restore["with"] == {
+        "path": "${{ steps.sdk_identity.outputs.cache_path }}",
+        "key": "${{ steps.sdk_identity.outputs.cache_key }}",
+    }
+    preparation = next(step for step in steps if step.get("id") == "sdk")
+    assert "if" not in preparation
+    assert preparation["env"]["UNITY_VERSION"] == "${{ matrix.unity.version }}"
+    assert preparation["env"]["SDK_PATH"] == "${{ steps.sdk_identity.outputs.cache_path }}"
+    assert 'python3 tools/unity_compile_cache.py prepare "$UNITY_VERSION" --output "$SDK_PATH"' in preparation["run"]
+    assert steps.index(identity) < steps.index(restore) < steps.index(preparation)
+
+
+def test_compilation_saves_new_sdk_before_package_or_compiler_failures():
+    steps = workflow("compile-check.yml")["jobs"]["compile"]["steps"]
+    save = next(step for step in steps if step.get("uses", "").startswith("actions/cache/save@"))
+    assert save["uses"] == "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+    assert save["if"] == (
+        "github.event_name != 'pull_request' && steps.sdk_cache.outputs.cache-hit != 'true' "
+        "&& steps.sdk.outputs.populated == 'true'"
+    )
+    assert save["with"] == {
+        "path": "${{ steps.sdk_identity.outputs.cache_path }}",
+        "key": "${{ steps.sdk_identity.outputs.cache_key }}",
+    }
+    prepare_index = next(i for i, step in enumerate(steps) if step.get("id") == "sdk")
+    package_index = next(i for i, step in enumerate(steps) if step.get("id") == "packages")
+    compile_index = next(i for i, step in enumerate(steps) if step.get("name") == "Compile")
+    assert prepare_index < steps.index(save) < package_index < compile_index
+
+
+def test_compilation_uses_cached_data_with_small_pinned_runtime_image():
+    steps = workflow("compile-check.yml")["jobs"]["compile"]["steps"]
+    assert not any(step.get("id") == "editor" for step in steps)
+    compile_step = next(step for step in steps if step.get("name") == "Compile")
+    assert compile_step["env"]["UNITY_IMAGE"] == "${{ steps.sdk.outputs.runtime_image }}"
+    assert compile_step["env"]["UNITY_DATA"] == "${{ steps.sdk.outputs.unity_data }}"
+    assert '--entrypoint /bin/bash' in compile_step["run"]
+    assert '-e UNITY_DATA="/repo/$UNITY_DATA"' in compile_step["run"]
+    assert '"$UNITY_IMAGE" /repo/tools/compile-check.sh' in compile_step["run"]
+
+
+def test_sdk_extractor_changes_trigger_compilation():
+    config = workflow("compile-check.yml")
+    triggers = config.get("on", config.get(True))
+    for event in ("push", "pull_request"):
+        assert any(fnmatchcase("tools/unity_compile_cache.py", pattern) for pattern in triggers[event]["paths"])
 
 
 @pytest.mark.parametrize("name", ["compile-check.yml", "unity-tests.yml"])
@@ -112,13 +162,16 @@ def test_compilation_and_editor_tests_share_isolated_package_preparation(name, j
     job = workflow(name)["jobs"][job_name]
     packages = next(step for step in job["steps"] if step.get("id") == "packages")
     assert packages["env"]["UNITY_VERSION"] == "${{ matrix.unity.version }}"
-    assert packages["env"]["UNITY_IMAGE"] == "${{ steps.editor.outputs.image }}"
     assert "python3 tools/unity_ci_packages.py prepare" in packages["run"]
     assert '--output ".unity-ci/$UNITY_VERSION"' in packages["run"]
     if name == "unity-tests.yml":
+        assert packages["env"]["UNITY_IMAGE"] == "${{ steps.editor.outputs.image }}"
         runners = [step for step in job["steps"] if step.get("uses", "").startswith("game-ci/unity-test-runner@")]
         assert all(step["with"]["projectPath"] == "${{ steps.packages.outputs.project_path }}" for step in runners)
     else:
+        assert packages["env"]["UNITY_DATA"] == "${{ steps.sdk.outputs.unity_data }}"
+        assert '--unity-data "$UNITY_DATA"' in packages["run"]
+        assert "--image" not in packages["run"]
         compile_step = next(step for step in job["steps"] if step.get("name") == "Compile")
         assert compile_step["env"]["EXTRA_REFS"] == "${{ steps.packages.outputs.refs }}"
         assert compile_step["env"]["TEST_FRAMEWORK_SOURCE"] == "${{ steps.packages.outputs.test_framework_source }}"

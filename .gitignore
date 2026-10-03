@@ -79,3 +79,6 @@ docs/superpowers/
 
 # Isolated Unity CI projects, package copies and generated reference assemblies
 .unity-ci/
+
+# Public Unity compiler inputs cached independently of source and package profiles
+.unity-ci-sdk/
