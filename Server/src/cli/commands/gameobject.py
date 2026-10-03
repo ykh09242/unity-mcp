@@ -51,7 +51,7 @@ def find(search_term: str, method: str, include_inactive: bool, limit: int, curs
     Examples:
         unity-mcp gameobject find "Player"
         unity-mcp gameobject find "Enemy" --method by_tag
-        unity-mcp gameobject find "-81840" --method by_id
+        unity-mcp gameobject find --method by_id -- "-81840"
         unity-mcp gameobject find "Rigidbody" --method by_component
         unity-mcp gameobject find "/Canvas/Panel" --method by_path
     """
