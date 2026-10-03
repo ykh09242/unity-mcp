@@ -19,8 +19,8 @@ ENV UNITY_VERSION=${UNITY_VERSION}
 
 RUN set -eu; \
     archive=/tmp/unity-editor.tar.xz; \
-    curl --fail --location --retry 3 --retry-all-errors --retry-max-time 300 \
-        --connect-timeout 30 --max-time 300 --proto '=https' --proto-redir '=https' \
+    curl --fail --location --retry 3 --retry-all-errors --retry-max-time 600 \
+        --connect-timeout 30 --max-time 600 --proto '=https' --proto-redir '=https' \
         "$EDITOR_URL" --output "$archive"; \
     test "$(stat -c%s "$archive")" = "$EDITOR_SIZE"; \
     printf '%s  %s\n' "$EDITOR_MD5" "$archive" | md5sum -c -; \
@@ -37,8 +37,8 @@ RUN set -eu; \
                 SERVER) module_url="$SERVER_URL"; module_md5="$SERVER_MD5"; module_size="$SERVER_SIZE" ;; \
             esac; \
             archive="/tmp/unity-$module.tar.xz"; \
-            curl --fail --location --retry 3 --retry-all-errors --retry-max-time 300 \
-                --connect-timeout 30 --max-time 300 --proto '=https' --proto-redir '=https' \
+            curl --fail --location --retry 3 --retry-all-errors --retry-max-time 600 \
+                --connect-timeout 30 --max-time 600 --proto '=https' --proto-redir '=https' \
                 "$module_url" --output "$archive"; \
             test "$(stat -c%s "$archive")" = "$module_size"; \
             printf '%s  %s\n' "$module_md5" "$archive" | md5sum -c -; \

@@ -301,8 +301,8 @@ def test_preview_downloads_retry_tls_failures_with_bounded_time():
     for command in commands:
         args = shlex.split(command.split(";", 1)[0])
         assert "--fail" in args and "--retry-all-errors" in args
-        for option, value in (("--retry", "3"), ("--retry-max-time", "300"),
-                              ("--connect-timeout", "30"), ("--max-time", "300"),
+        for option, value in (("--retry", "3"), ("--retry-max-time", "600"),
+                              ("--connect-timeout", "30"), ("--max-time", "600"),
                               ("--proto", "=https"), ("--proto-redir", "=https")):
             assert args[args.index(option) + 1] == value
         assert args[args.index("--output") + 1] == "$archive"
