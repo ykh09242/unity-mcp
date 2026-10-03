@@ -9,7 +9,7 @@ import pytest
 
 
 @pytest.mark.parametrize("case", [
-    "race_valid_retained", "race_negative_retained", "race_second_negative",
+    "race_valid_retained", "race_negative_retained", "refresh_negative_retained",
     "distinct_negative", "negative_priority", "expired_cleanup", "transient_retry",
 ])
 def test_api_key_cache_contract(case, tmp_path):
@@ -78,18 +78,33 @@ async def _scenario(case):
             first = asyncio.create_task(service.validate("fixture-concurrent"))
             await started[0].wait()
             second = asyncio.create_task(service.validate("fixture-concurrent"))
-            await started[1].wait()
+            # Identical misses now share one validation; no second outbound request.
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert race_index == 1
             release[0].set()
             assert (await first).valid
-            release[1].set()
             second_result = await second
-            assert second_result.valid is (case != "race_second_negative")
+            assert second_result.valid
             before = len(requests)
             assert (await service.validate("fixture-retained")).valid is retained.valid
             assert len(requests) == before, "Replacing the same cached key must not evict another entry"
-            assert (await service.validate("fixture-concurrent")).valid is second_result.valid
-            assert len(requests) == before, "A definitive negative replacement must replace the cached positive"
+            assert (await service.validate("fixture-concurrent")).valid
+            assert len(requests) == before, "The shared definitive verdict must remain cached"
             assert len(service._cache) == 2
+        elif case == "refresh_negative_retained":
+            await service.validate("fixture-retained")
+            release[0].set()
+            await service.validate("fixture-concurrent")
+            await service.invalidate_cache("fixture-concurrent")
+            # A new definitive negative refresh at capacity retains unrelated keys.
+            case = "race_second_negative"
+            release[1].set()
+            assert not (await service.validate("fixture-concurrent")).valid
+            before = len(requests)
+            assert (await service.validate("fixture-retained")).valid
+            assert not (await service.validate("fixture-concurrent")).valid
+            assert len(requests) == before and len(service._cache) == 2
         elif case == "distinct_negative":
             await service.validate("fixture-one")
             await service.validate("fixture-two")
@@ -127,6 +142,7 @@ async def _scenario(case):
             assert len(requests) == 2
         else:
             raise AssertionError("Unknown fixture scenario")
+        await service.aclose()
     print(json.dumps({"case": case, "requests": requests, "cacheKeys": sorted(service._cache)}))
 
 

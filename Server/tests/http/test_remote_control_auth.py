@@ -23,11 +23,11 @@ def remote_app(monkeypatch):
     monkeypatch.setattr(config, "api_key_login_url", "https://auth.example/keys")
     monkeypatch.setenv("DISABLE_TELEMETRY", "1")
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
-    validator = AsyncMock(side_effect=lambda key: ValidationResult(
+    validator = AsyncMock(side_effect=lambda key, **kwargs: ValidationResult(
         valid=key in ("alice-key", "bob-key"),
         user_id={"alice-key": "alice", "bob-key": "bob"}.get(key),
     ))
-    monkeypatch.setattr(ApiKeyService, "_instance", SimpleNamespace(validate=validator))
+    monkeypatch.setattr(ApiKeyService, "_instance", SimpleNamespace(validate=validator, aclose=AsyncMock()))
     server = create_mcp_server(False)
 
     @server.resource("test://identity")
@@ -163,6 +163,7 @@ def test_authenticated_session_catalogs_and_resource_identity(remote_app):
             assert response.json()["result"]["contents"][0]["text"] == user
         del headers["X-API-Key"]
         assert client.post("/mcp", headers=headers, content="not-json").status_code == 401
-        validator.side_effect = lambda key: ValidationResult(valid=False)
+        validator.side_effect = lambda key, **kwargs: ValidationResult(valid=False)
         headers["X-API-Key"] = "alice-key"
         assert client.post("/mcp", headers=headers, content="not-json").status_code == 401
+    ApiKeyService.get_instance().aclose.assert_awaited_once()

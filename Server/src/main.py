@@ -160,6 +160,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Handle server startup and shutdown."""
     global _unity_connection_pool, _server_version
     _server_version = get_package_version()
+    api_key_service = ApiKeyService.get_instance() if ApiKeyService.is_initialized() else None
     logger.info(f"MCP for Unity Server v{_server_version} starting up")
 
     # Register custom tool management endpoints with FastMCP
@@ -306,8 +307,12 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 if _unity_connection_pool:
                     _unity_connection_pool.disconnect_all()
             finally:
-                _plugin_registry = None
-                _unity_connection_pool = None
+                try:
+                    if api_key_service is not None:
+                        await api_key_service.aclose()
+                finally:
+                    _plugin_registry = None
+                    _unity_connection_pool = None
         logger.info("MCP for Unity Server shut down")
 
 

@@ -260,7 +260,12 @@ class PluginHub(WebSocketEndpoint):
                 return
 
             service = ApiKeyService.get_instance()
-            result = await service.validate(api_key)
+            source_id = websocket.client.host if websocket.client is not None else "unknown"
+            result = await service.validate(api_key, source_id=source_id)
+
+            if result.overloaded:
+                await websocket.close(code=1013, reason="Authentication temporarily busy")
+                return
 
             if not result.valid:
                 # Transient auth failures are retryable (1013)
