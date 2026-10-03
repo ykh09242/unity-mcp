@@ -114,7 +114,9 @@ namespace MCPForUnity.Editor.Tools
             if (code.Length > MaxCodeLength)
                 return new ErrorResponse($"Code exceeds maximum length of {MaxCodeLength} characters.");
 
-            bool safetyChecks = @params["safety_checks"]?.Value<bool>() ?? true;
+            if (!TryReadOptionalValue<bool>(@params, "safety_checks", out bool? requestedSafetyChecks, out ErrorResponse inputError))
+                return inputError;
+            bool safetyChecks = requestedSafetyChecks ?? true;
             string compiler = @params["compiler"]?.ToString()?.ToLowerInvariant() ?? "auto";
 
             if (safetyChecks)
@@ -144,7 +146,9 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleGetHistory(JObject @params)
         {
-            int limit = @params["limit"]?.Value<int>() ?? 10;
+            if (!TryReadOptionalValue<int>(@params, "limit", out int? requestedLimit, out ErrorResponse inputError))
+                return inputError;
+            int limit = requestedLimit ?? 10;
             limit = Math.Clamp(limit, 1, MaxHistoryEntries);
 
             if (_history.Count == 0)
@@ -182,7 +186,8 @@ namespace MCPForUnity.Editor.Tools
             if (_history.Count == 0)
                 return new ErrorResponse("No execution history to replay.");
 
-            int? index = @params["index"]?.Value<int>();
+            if (!TryReadOptionalValue<int>(@params, "index", out int? index, out ErrorResponse inputError))
+                return inputError;
             if (index == null || index < 0 || index >= _history.Count)
                 return new ErrorResponse($"Invalid history index. Valid range: 0-{_history.Count - 1}");
 
@@ -195,6 +200,23 @@ namespace MCPForUnity.Editor.Tools
                 compiler = entry.compiler ?? "auto",
             });
             return HandleExecute(replayParams);
+        }
+
+        private static bool TryReadOptionalValue<T>(JObject @params, string field, out T? value, out ErrorResponse error)
+            where T : struct
+        {
+            value = null;
+            error = null;
+            try
+            {
+                value = @params[field]?.Value<T?>();
+                return true;
+            }
+            catch (Exception e) when (e is FormatException || e is InvalidCastException || e is OverflowException || e is ArgumentException)
+            {
+                error = new ErrorResponse($"Invalid parameter '{field}': expected {typeof(T).Name}.");
+                return false;
+            }
         }
 
         // ──────────────────── Compilation ────────────────────
