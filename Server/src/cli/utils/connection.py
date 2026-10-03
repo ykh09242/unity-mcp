@@ -81,6 +81,14 @@ def warn_if_remote_host(config: CLIConfig) -> None:
         )
 
 
+def _server_url(config: CLIConfig, path: str) -> str:
+    """Build an HTTP endpoint authority, including raw IPv6 host literals."""
+    host = config.host
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"http://{host}:{config.port}{path}"
+
+
 async def send_command(
     command_type: str,
     params: Dict[str, Any],
@@ -102,7 +110,7 @@ async def send_command(
         UnityConnectionError: If connection fails
     """
     cfg = config or get_config()
-    url = f"http://{cfg.host}:{cfg.port}/api/command"
+    url = _server_url(cfg, "/api/command")
 
     payload = {
         "type": command_type,
@@ -178,7 +186,7 @@ async def check_connection(config: Optional[CLIConfig] = None) -> bool:
         True if connection successful, False otherwise
     """
     cfg = config or get_config()
-    url = f"http://{cfg.host}:{cfg.port}/health"
+    url = _server_url(cfg, "/health")
 
     try:
         async with httpx.AsyncClient() as client:
@@ -204,7 +212,7 @@ async def list_unity_instances(config: Optional[CLIConfig] = None) -> Dict[str, 
     """
     cfg = config or get_config()
 
-    url = f"http://{cfg.host}:{cfg.port}/api/instances"
+    url = _server_url(cfg, "/api/instances")
 
     try:
         async with httpx.AsyncClient() as client:
@@ -242,7 +250,7 @@ def run_list_instances(config: Optional[CLIConfig] = None) -> Dict[str, Any]:
 async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any]:
     """List custom tools registered for the active Unity project."""
     cfg = config or get_config()
-    url = f"http://{cfg.host}:{cfg.port}/api/custom-tools"
+    url = _server_url(cfg, "/api/custom-tools")
     params: Dict[str, Any] = {}
     if cfg.unity_instance:
         params["instance"] = cfg.unity_instance
