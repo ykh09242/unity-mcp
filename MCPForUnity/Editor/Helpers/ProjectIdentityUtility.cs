@@ -140,15 +140,21 @@ namespace MCPForUnity.Editor.Helpers
             {
                 try
                 {
-                    string projectHash = GetProjectHash();
-                    string projectSpecificKey = $"{SessionPrefKey}_{projectHash}";
-                    EditorPrefs.SetString(projectSpecificKey, sessionId);
+                    PersistSessionIdOnMainThread(sessionId);
                 }
                 catch (Exception ex)
                 {
                     McpLog.Warn($"Failed to persist session ID: {ex.Message}");
                 }
             };
+        }
+
+        internal static void PersistSessionIdOnMainThread(string sessionId)
+        {
+            if (string.IsNullOrEmpty(sessionId)) return;
+            string projectHash = GetProjectHash();
+            string projectSpecificKey = $"{SessionPrefKey}_{projectHash}";
+            EditorPrefs.SetString(projectSpecificKey, sessionId);
         }
 
         /// <summary>

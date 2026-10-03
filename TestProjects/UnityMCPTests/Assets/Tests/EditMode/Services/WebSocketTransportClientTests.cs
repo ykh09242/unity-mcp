@@ -8,7 +8,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -58,13 +62,205 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 var closure = typeof(WebSocketTransportClient).GetMethod("HandleSocketClosureAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-                ((Task)closure.Invoke(client, new object[] { "Server closed connection" })).GetAwaiter().GetResult();
+                ((Task)closure.Invoke(client, new object[] { "Server closed connection", connection.Token })).GetAwaiter().GetResult();
                 Assert.IsFalse(client.IsConnected);
                 Assert.IsFalse(client.State.IsConnected, "A reconnecting transport must not publish a connected state snapshot.");
                 Assert.AreEqual("Server closed connection", client.State.Error);
                 Assert.AreEqual(0, GetField(client, "_isReconnectingFlag"), "Canceled reconnect scheduling must release its guard.");
             }
             finally { client.ForceStop(); }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HandleSocketClosureAsync_OldConnectionError_PreservesReplacementSession(bool cancelOldConnection)
+        {
+            using var client = new WebSocketTransportClient();
+            using var oldConnection = new CancellationTokenSource();
+            using var newLifecycle = new CancellationTokenSource();
+            using var newConnection = new CancellationTokenSource();
+            using var registration = newConnection.Token.Register(() => newLifecycle.Cancel());
+            if (cancelOldConnection) oldConnection.Cancel();
+            SetField(client, "_lifecycleCts", newLifecycle);
+            SetField(client, "_connectionCts", newConnection);
+            SetField(client, "_isConnected", true);
+            SetField(client, "_state", TransportState.Connected("websocket", sessionId: "new-session"));
+            try
+            {
+                var closure = typeof(WebSocketTransportClient).GetMethod("HandleSocketClosureAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                ((Task)closure.Invoke(client, new object[] { "Old socket was disposed", oldConnection.Token })).GetAwaiter().GetResult();
+                Assert.AreSame(newConnection, GetField(client, "_connectionCts"));
+                Assert.IsFalse(newConnection.IsCancellationRequested, "An old socket error must not cancel the replacement connection.");
+                Assert.IsFalse(newLifecycle.IsCancellationRequested);
+                Assert.IsTrue(client.IsConnected);
+                Assert.AreEqual("new-session", client.State.SessionId);
+                Assert.AreEqual(0, GetField(client, "_isReconnectingFlag"));
+            }
+            finally { client.ForceStop(); }
+        }
+
+        [Test]
+        public void HandleSocketClosureAsync_ForceStopAndRestartAfterValidation_PreservesReplacementSession()
+        {
+            using var client = new WebSocketTransportClient();
+            using var oldLifecycle = new CancellationTokenSource();
+            using var oldConnection = new CancellationTokenSource();
+            using var newLifecycle = new CancellationTokenSource();
+            using var newConnection = new CancellationTokenSource();
+            using var reachedLog = new ManualResetEventSlim();
+            using var resumeClosure = new ManualResetEventSlim();
+            using var registration = newConnection.Token.Register(() => newLifecycle.Cancel());
+            var logField = typeof(MCPForUnity.Editor.Helpers.McpLog).GetField("_debugEnabled", BindingFlags.Static | BindingFlags.NonPublic);
+            bool previousDebug = (bool)logField.GetValue(null);
+            logField.SetValue(null, true);
+            SetField(client, "_lifecycleCts", oldLifecycle);
+            SetField(client, "_connectionCts", oldConnection);
+            SetField(client, "_isConnected", true);
+            SetField(client, "_state", TransportState.Connected("websocket", sessionId: "old-session"));
+            UnityEngine.Application.LogCallback pauseClosure = (message, trace, type) =>
+            {
+                if (!message.Contains("HandleSocketClosureAsync called. Reason: overlap-old")) return;
+                reachedLog.Set();
+                resumeClosure.Wait(TimeSpan.FromSeconds(5));
+            };
+            UnityEngine.Application.logMessageReceivedThreaded += pauseClosure;
+            Task closureTask = null;
+            try
+            {
+                var closure = typeof(WebSocketTransportClient).GetMethod("HandleSocketClosureAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                var oldToken = oldConnection.Token;
+                closureTask = Task.Run(async () => await (Task)closure.Invoke(client, new object[] { "overlap-old", oldToken }));
+                Assert.IsTrue(reachedLog.Wait(TimeSpan.FromSeconds(5)), "Pause the actual background callback after its ownership validation.");
+                client.ForceStop();
+                var restartLock = typeof(WebSocketTransportClient).GetField("_ownershipLock", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client) ?? new object();
+                lock (restartLock)
+                {
+                    SetField(client, "_lifecycleCts", newLifecycle);
+                    SetField(client, "_connectionCts", newConnection);
+                    SetField(client, "_isConnected", true);
+                    SetField(client, "_state", TransportState.Connected("websocket", sessionId: "new-session"));
+                }
+                resumeClosure.Set();
+                Assert.IsTrue(SpinWait.SpinUntil(() => closureTask.IsCompleted, TimeSpan.FromSeconds(5)));
+                closureTask.GetAwaiter().GetResult();
+                Assert.AreSame(newConnection, GetField(client, "_connectionCts"));
+                Assert.AreSame(newLifecycle, GetField(client, "_lifecycleCts"));
+                Assert.IsFalse(newConnection.IsCancellationRequested);
+                Assert.IsFalse(newLifecycle.IsCancellationRequested);
+                Assert.IsTrue(client.IsConnected);
+                Assert.AreEqual("new-session", client.State.SessionId);
+            }
+            finally
+            {
+                resumeClosure.Set();
+                if (closureTask != null) SpinWait.SpinUntil(() => closureTask.IsCompleted, TimeSpan.FromSeconds(5));
+                UnityEngine.Application.logMessageReceivedThreaded -= pauseClosure;
+                logField.SetValue(null, previousDebug);
+                client.ForceStop();
+            }
+        }
+
+        [TestCase("welcome")]
+        [TestCase("registered")]
+        public void HandleMessageAsync_ObsoleteConnection_PreservesCurrentSessionAndNegotiatedIntervals(string messageType)
+        {
+            using var client = new WebSocketTransportClient();
+            using var oldConnection = new CancellationTokenSource();
+            using var newLifecycle = new CancellationTokenSource();
+            using var newConnection = new CancellationTokenSource();
+            var previousCallbacks = EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>();
+            SetField(client, "_lifecycleCts", newLifecycle);
+            SetField(client, "_connectionCts", newConnection);
+            SetField(client, "_endpointUri", new Uri("ws://127.0.0.1:9100/hub/plugin"));
+            SetField(client, "_sessionId", "new-session");
+            SetField(client, "_state", TransportState.Connected("websocket", sessionId: "new-session"));
+            try
+            {
+                var payload = new JObject
+                {
+                    ["type"] = messageType, ["session_id"] = "old-session",
+                    ["keepAliveInterval"] = 90, ["serverTimeout"] = 120
+                };
+                var handler = typeof(WebSocketTransportClient).GetMethod("HandleMessageAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                ((Task)handler.Invoke(client, new object[] { payload.ToString(), oldConnection.Token })).GetAwaiter().GetResult();
+                Assert.AreEqual("new-session", GetField(client, "_sessionId"));
+                Assert.AreEqual("new-session", client.State.SessionId);
+                Assert.AreEqual(TimeSpan.FromSeconds(15), GetField(client, "_keepAliveInterval"));
+                Assert.AreEqual(TimeSpan.FromSeconds(15), GetField(client, "_socketKeepAliveInterval"));
+                CollectionAssert.AreEqual(previousCallbacks, EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>(),
+                    "An obsolete registration must not enqueue a session preference write.");
+            }
+            finally
+            {
+                RemoveAddedDelayCallbacks(previousCallbacks);
+                client.ForceStop();
+            }
+        }
+
+        [Test]
+        public void RegisteredSession_RestartBeforeDeferredPersistence_PreservesReplacementPreference()
+        {
+            using var client = new WebSocketTransportClient();
+            using var oldLifecycle = new CancellationTokenSource();
+            using var oldConnection = new CancellationTokenSource();
+            using var newLifecycle = new CancellationTokenSource();
+            using var newConnection = new CancellationTokenSource();
+            string preferenceKey = $"{EditorPrefKeys.SessionId}_{ProjectIdentityUtility.GetProjectHash()}";
+            bool hadPreference = EditorPrefs.HasKey(preferenceKey);
+            string previousPreference = EditorPrefs.GetString(preferenceKey, string.Empty);
+            var previousCallbacks = EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>();
+            SetField(client, "_lifecycleCts", oldLifecycle);
+            SetField(client, "_connectionCts", oldConnection);
+            SetField(client, "_endpointUri", new Uri("ws://127.0.0.1:9000/hub/plugin"));
+            try
+            {
+                var registered = typeof(WebSocketTransportClient).GetMethod("HandleRegisteredAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                ((Task)registered.Invoke(client, new object[] { new JObject { ["session_id"] = "old-session" }, oldConnection.Token })).GetAwaiter().GetResult();
+                var callbacks = (EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>()).Except(previousCallbacks).ToArray();
+                Assert.AreEqual(1, callbacks.Length);
+                Assert.AreEqual("old-session", client.State.SessionId, "The current owner must still publish registration.");
+                client.ForceStop();
+                lock (GetField(client, "_ownershipLock"))
+                {
+                    SetField(client, "_lifecycleCts", newLifecycle);
+                    SetField(client, "_connectionCts", newConnection);
+                    SetField(client, "_sessionId", "new-session");
+                }
+                EditorPrefs.SetString(preferenceKey, "new-session");
+                foreach (var callback in callbacks) ((EditorApplication.CallbackFunction)callback)();
+                Assert.AreEqual("new-session", EditorPrefs.GetString(preferenceKey));
+            }
+            finally
+            {
+                RemoveAddedDelayCallbacks(previousCallbacks);
+                if (hadPreference) EditorPrefs.SetString(preferenceKey, previousPreference);
+                else EditorPrefs.DeleteKey(preferenceKey);
+                client.ForceStop();
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TryPublishConnectedEndpoint_RequiresExactCurrentConnection(bool currentOwner)
+        {
+            using var client = new WebSocketTransportClient();
+            using var oldConnection = new CancellationTokenSource();
+            using var newConnection = new CancellationTokenSource();
+            var currentEndpoint = new Uri("ws://localhost:9100/hub/plugin");
+            var oldFallback = new Uri("ws://127.0.0.1:9000/hub/plugin");
+            SetField(client, "_connectionCts", newConnection);
+            SetField(client, "_endpointUri", currentEndpoint);
+            var publish = typeof(WebSocketTransportClient).GetMethod("TryPublishConnectedEndpoint", BindingFlags.Instance | BindingFlags.NonPublic);
+            bool published = (bool)publish.Invoke(client, new object[] { currentOwner ? newConnection.Token : oldConnection.Token, oldFallback });
+            Assert.AreEqual(currentOwner, published);
+            Assert.AreEqual(currentOwner ? oldFallback : currentEndpoint, GetField(client, "_endpointUri"));
+        }
+
+        private static void RemoveAddedDelayCallbacks(Delegate[] previousCallbacks)
+        {
+            var callbacks = EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>();
+            foreach (var callback in callbacks.Except(previousCallbacks))
+                EditorApplication.delayCall -= (EditorApplication.CallbackFunction)callback;
         }
 
         [Test]
