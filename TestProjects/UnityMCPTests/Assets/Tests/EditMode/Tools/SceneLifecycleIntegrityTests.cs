@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -14,6 +15,11 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class SceneLifecycleIntegrityTests
     {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool CreateSymbolicLinkW(string link, string target, int flags);
+        [DllImport("libc", SetLastError = true)]
+        private static extern int symlink(string target, string link);
         private Scene originalActive;
         private Scene first;
         private Scene second;
@@ -110,6 +116,54 @@ namespace MCPForUnityTests.Editor.Tools
         private static int[] Handles() => Enumerable.Range(0, SceneManager.sceneCount).Select(i => SceneManager.GetSceneAt(i).handle).ToArray();
         private static int SceneIndex(Scene scene) => Array.IndexOf(Handles(), scene.handle);
         private JObject Select(string action) => new JObject { ["action"] = action, ["sceneName"] = sceneName, ["scenePath"] = secondPath };
+
+        [TestCase("create", "rooted")]
+        [TestCase("create", "traversal")]
+        [TestCase("create", "invalid_leaf")]
+        [TestCase("create", "invalid_ancestor")]
+        [TestCase("save", "rooted")]
+        [TestCase("save", "traversal")]
+        [TestCase("save", "invalid_leaf")]
+        [TestCase("save", "invalid_ancestor")]
+        [TestCase("load", "rooted")]
+        [TestCase("load", "traversal")]
+        [TestCase("load", "invalid_leaf")]
+        [TestCase("load", "invalid_ancestor")]
+        public void HostileScenePath_IsRejectedBeforeSceneOrFilesystemChanges(string action, string kind)
+        {
+            string path = kind == "rooted" ? SystemPath(assetRoot + "/First")
+                : kind == "traversal" ? assetRoot + "/Second/../First"
+                : kind == "invalid_ancestor" ? assetRoot + "/Bad?Directory"
+                : assetRoot + "/First";
+            string name = kind == "invalid_leaf" ? sceneName + "?" : sceneName;
+            int[] before = Handles();
+            string[] files = Directory.GetFiles(SystemPath(assetRoot), "*", SearchOption.AllDirectories);
+            bool wasDirty = first.isDirty;
+
+            var response = Call(new JObject { ["action"] = action, ["path"] = path, ["name"] = name });
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.StartsWith("Invalid scene path:", response.Value<string>("error"));
+            CollectionAssert.AreEqual(before, Handles());
+            Assert.AreEqual(first, SceneManager.GetActiveScene());
+            Assert.AreEqual(wasDirty, first.isDirty);
+            CollectionAssert.AreEquivalent(files, Directory.GetFiles(SystemPath(assetRoot), "*", SearchOption.AllDirectories));
+            Assert.IsFalse(Directory.Exists(SystemPath(assetRoot + "/Bad?Directory")));
+        }
+
+        [TestCase("create")]
+        [TestCase("save")]
+        [TestCase("load")]
+        public void SceneNameWithDirectory_IsRejectedBeforeMutation(string action)
+        {
+            int[] before = Handles();
+            var response = Call(new JObject { ["action"] = action, ["path"] = assetRoot + "/First", ["name"] = "../Rejected" });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.StartsWith("Invalid scene path:", response.Value<string>("error"));
+            CollectionAssert.AreEqual(before, Handles());
+            Assert.AreEqual(first, SceneManager.GetActiveScene());
+            Assert.IsFalse(File.Exists(SystemPath(assetRoot + "/Rejected.unity")));
+        }
 
         [Test]
         public void CombinedSelector_ActivatesExactLaterPath()
@@ -233,6 +287,42 @@ namespace MCPForUnityTests.Editor.Tools
             Success(Call(new JObject { ["action"] = "save" }));
             Assert.AreEqual(firstPath, first.path);
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(firstPath));
+        }
+
+        [Test]
+        public void SaveCurrentScene_RejectsAncestorChangedToLinkBeforeOverwriting()
+        {
+            string owner = Path.GetFullPath(SystemPath(assetRoot)) + Path.DirectorySeparatorChar;
+            string original = SystemPath(assetRoot + "/First");
+            string retained = SystemPath(assetRoot + "/RetainedFirst");
+            string target = SystemPath(assetRoot + "/OwnedOutside");
+            foreach (string path in new[] { original, retained, target })
+                StringAssert.StartsWith(owner, Path.GetFullPath(path));
+            Directory.CreateDirectory(target);
+            string sentinel = Path.Combine(target, sceneName + ".unity");
+            File.WriteAllText(sentinel, "owned sentinel");
+            Directory.Move(original, retained);
+            bool linked = false;
+            try
+            {
+                linked = Application.platform == RuntimePlatform.WindowsEditor
+                    ? CreateSymbolicLinkW(original, target, 1 | 2)
+                    : symlink(target, original) == 0;
+                if (!linked) Assert.Ignore("Owned symbolic-link creation unavailable: " + Marshal.GetLastWin32Error());
+                int[] before = Handles();
+                var response = Call(new JObject { ["action"] = "save" });
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("symbolic links or junctions", response.Value<string>("error"));
+                Assert.AreEqual("owned sentinel", File.ReadAllText(sentinel));
+                CollectionAssert.AreEqual(before, Handles());
+                Assert.AreEqual(first, SceneManager.GetActiveScene());
+            }
+            finally
+            {
+                // Remove only the link itself, then restore the exact captured owned directory.
+                if (linked) Directory.Delete(original);
+                Directory.Move(retained, original);
+            }
         }
 
         [Test]

@@ -171,13 +171,31 @@ namespace MCPForUnity.Editor.Tools
             int? buildIndex = cmd.buildIndex;
             // bool loadAdditive = @params["loadAdditive"]?.ToObject<bool>() ?? false; // Example for future extension
 
+            if (action == "create" || action == "save" || action == "load")
+            {
+                try
+                {
+                    if (path != null)
+                        path = GetContainedScenePath(path, action != "load");
+                    if (name != null && (name.IndexOfAny(new[] { '/', '\\', '\0', ':', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0
+                        || name == "." || name == ".."))
+                        throw new ArgumentException("Scene name must be a single file name.");
+                }
+                catch (Exception e)
+                {
+                    return new ErrorResponse($"Invalid scene path: {e.Message}");
+                }
+            }
+
             // Paths are relative to a project root folder — "Assets" by default, or "Packages"
             // when the caller addresses a scene shipped inside a package (see issue #1197).
             string rootFolder = "Assets";
             string relativeDir = path ?? string.Empty;
             if (!string.IsNullOrEmpty(relativeDir))
             {
-                relativeDir = AssetPathUtility.NormalizeSeparators(relativeDir).Trim('/');
+                relativeDir = AssetPathUtility.NormalizeSeparators(relativeDir).TrimEnd('/');
+                if (relativeDir.Equals("Assets", StringComparison.OrdinalIgnoreCase))
+                    relativeDir = string.Empty;
                 if (relativeDir.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
                 {
                     relativeDir = relativeDir.Substring("Assets/".Length).TrimStart('/');
@@ -225,6 +243,23 @@ namespace MCPForUnity.Editor.Tools
             string relativePath = string.IsNullOrEmpty(sceneFileName)
                 ? null
                 : AssetPathUtility.NormalizeSeparators(Path.Combine(rootFolder, relativeDir, sceneFileName));
+
+            if ((action == "create" || action == "save" || action == "load") && relativePath != null)
+            {
+                try
+                {
+                    relativePath = GetContainedScenePath(relativePath, action != "load");
+                    if (rootFolder == "Assets")
+                    {
+                        fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+                        fullPathDir = Path.GetDirectoryName(fullPath);
+                    }
+                }
+                catch (Exception e)
+                {
+                    return new ErrorResponse($"Invalid scene path: {e.Message}");
+                }
+            }
 
             // Route action
             try { McpLog.Info($"[ManageScene] Route action='{action}' name='{name}' path='{path}' buildIndex={(buildIndex.HasValue ? buildIndex.Value.ToString() : "null")}", always: false); } catch { }
@@ -481,10 +516,13 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // Save As...
                     // Ensure directory exists
+                    relativePath = GetContainedScenePath(relativePath, true);
+                    fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
                     string dir = Path.GetDirectoryName(fullPath);
                     if (!Directory.Exists(dir))
                         Directory.CreateDirectory(dir);
 
+                    AssetPathUtility.GetFullAssetPath(relativePath);
                     saved = EditorSceneManager.SaveScene(currentScene, relativePath);
                     finalPath = relativePath;
                 }
@@ -498,6 +536,8 @@ namespace MCPForUnity.Editor.Tools
                             "Cannot save an untitled scene without providing a 'name' and 'path'. Use Save As functionality."
                         );
                     }
+                    string currentPath = GetContainedScenePath(currentScene.path, true);
+                    AssetPathUtility.GetFullAssetPath(currentPath);
                     saved = EditorSceneManager.SaveScene(currentScene);
                 }
 
@@ -1604,35 +1644,54 @@ namespace MCPForUnity.Editor.Tools
         internal static bool IsProjectRooted(string path)
         {
             if (string.IsNullOrEmpty(path)) return false;
-            string normalized = AssetPathUtility.NormalizeSeparators(path).TrimStart('/');
+            string normalized = AssetPathUtility.NormalizeSeparators(path);
             return normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
                 || normalized.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
-        /// Existence check that works for both roots, accepting either answer.
-        /// The AssetDatabase is the only one that resolves "Packages/..." — embedded packages
-        /// live in Library/PackageCache, not under the project root, so File.Exists misses them
-        /// (ManageAsset.cs carries the same note). File.Exists still covers an Assets/ scene
-        /// written to disk but not yet imported, which the AssetDatabase does not know about
-        /// until a refresh. This guard only exists to produce a clearer error than
-        /// EditorSceneManager.OpenScene would, so erring toward accepting is the safe direction.
+        /// Checks contained scene paths before any lookup. Unity resolves registered Packages
+        /// paths, including PackageCache and local packages; Assets also permits a disk check
+        /// for scenes written before an AssetDatabase refresh.
         /// </summary>
         internal static bool SceneAssetExists(string projectRelativePath)
         {
             if (string.IsNullOrEmpty(projectRelativePath)) return false;
-
-            if (AssetDatabase.LoadAssetAtPath<SceneAsset>(projectRelativePath) != null) return true;
-
             try
             {
-                return File.Exists(Path.Combine(GetProjectRoot(), projectRelativePath));
+                projectRelativePath = GetContainedScenePath(projectRelativePath, false);
+                if (AssetDatabase.LoadAssetAtPath<SceneAsset>(projectRelativePath) != null) return true;
+                // Registered package scenes are resolved by Unity, including PackageCache and
+                // local packages. Never turn a virtual package path into a raw filesystem read.
+                if (projectRelativePath.StartsWith("Packages/", StringComparison.Ordinal)) return false;
+                return File.Exists(AssetPathUtility.GetFullAssetPath(projectRelativePath));
             }
-            catch (ArgumentException)
+            catch (Exception)
             {
-                // Invalid path characters — treat as not found rather than throwing.
                 return false;
             }
+        }
+
+        private static string GetContainedScenePath(string path, bool forWrite)
+        {
+            string normalized = AssetPathUtility.NormalizeSeparators(path);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.StartsWith("/", StringComparison.Ordinal)
+                || normalized.IndexOf(':') >= 0)
+                throw new ArgumentException("A project-relative scene path is required.");
+            normalized = normalized.TrimEnd('/');
+            if (!normalized.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase)
+                && !normalized.Equals("Packages", StringComparison.OrdinalIgnoreCase))
+                return AssetPathUtility.GetContainedAssetPath(normalized);
+            if (forWrite)
+                throw new ArgumentException("Package scenes are read-only; save scenes under Assets.");
+            foreach (string part in normalized.Split('/'))
+                if (part.Length == 0 || part == "." || part == ".."
+                    || part.IndexOfAny(new[] { '\0', '*', '?', '"', '<', '>', '|', '\r', '\n' }) >= 0)
+                    throw new ArgumentException("Invalid scene path segment.");
+            normalized = "Packages" + normalized.Substring("Packages".Length);
+            SafePathUtility.ResolveWithinRoot(Path.Combine(GetProjectRoot(), "Packages"),
+                normalized.Length == 8 ? "." : normalized.Substring(9));
+            return normalized;
         }
 
         // ── Multi-scene editing ────────────────────────────────────────────

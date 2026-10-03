@@ -55,6 +55,29 @@ namespace MCPForUnity.Tests.EditMode.Tools
             Assert.IsFalse(ManageScene.SceneAssetExists(null));
         }
 
+        [TestCase("create")]
+        [TestCase("save")]
+        public void PackageSceneWrites_AreRejectedAtThePublicEntry(string action)
+        {
+            var response = JObject.FromObject(ManageScene.HandleCommand(new JObject
+            {
+                ["action"] = action,
+                ["path"] = "Packages/com.example.doesnotexist",
+                ["name"] = "Rejected"
+            }));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("read-only", response.Value<string>("error"));
+        }
+
+        [TestCase("Assets/../Packages/com.example.doesnotexist/A.unity")]
+        [TestCase("Packages/../Assets/A.unity")]
+        [TestCase("/Assets/A.unity")]
+        [TestCase("Assets/Bad?Directory/A.unity")]
+        public void SceneAssetExists_RejectsMalformedPaths(string path)
+        {
+            Assert.IsFalse(ManageScene.SceneAssetExists(path));
+        }
+
         /// <summary>
         /// The AssetDatabase does not know about a file written to disk until it is imported.
         /// Swapping File.Exists for an AssetDatabase lookup would have made such a scene
