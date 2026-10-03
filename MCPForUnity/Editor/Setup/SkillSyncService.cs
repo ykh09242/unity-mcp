@@ -181,6 +181,7 @@ namespace MCPForUnity.Editor.Setup
             var treeApiUrl = BuildTreeApiUrl(repoInfo, commitSha);
             log?.Invoke($"Fetching remote directory tree at commit {ShortCommit(commitSha)}...");
             var json = DownloadString(client, treeApiUrl);
+            SkillSyncDownload.ValidateTreeJson(json);
             var treeResponse = JsonUtility.FromJson<GitHubTreeResponse>(json);
             if (treeResponse == null || treeResponse.tree == null)
             {
@@ -197,6 +198,7 @@ namespace MCPForUnity.Editor.Setup
             var normalizedSubdir = NormalizeRemotePath(subdir);
             var subdirPrefix = string.IsNullOrEmpty(normalizedSubdir) ? string.Empty : $"{normalizedSubdir}/";
             var remoteFiles = new Dictionary<string, string>(StringComparer.Ordinal);
+            var remoteBudget = new SkillSyncDownload.ByteBudget();
 
             foreach (var entry in treeResponse.tree)
             {
@@ -231,6 +233,10 @@ namespace MCPForUnity.Editor.Setup
                     continue;
                 }
 
+                if (remoteFiles.ContainsKey(safeRelativePath))
+                    throw new InvalidOperationException("GitHub tree contains duplicate skill file paths.");
+                SkillSyncDownload.RequireFileCount((long)remoteFiles.Count + 1);
+                remoteBudget.Admit(entry.size);
                 remoteFiles[safeRelativePath] = entry.sha.Trim().ToLowerInvariant();
             }
 
@@ -247,7 +253,7 @@ namespace MCPForUnity.Editor.Setup
         {
             var branchApiUrl = BuildBranchApiUrl(repoInfo, branch);
             log?.Invoke($"Fetching branch head commit...");
-            var branchJson = DownloadString(client, branchApiUrl);
+            var branchJson = DownloadString(client, branchApiUrl, SkillSyncDownload.MaxBranchBytes);
             var branchResponse = JsonUtility.FromJson<GitHubBranchResponse>(branchJson);
             var commitSha = branchResponse?.commit?.sha?.Trim();
             if (string.IsNullOrWhiteSpace(commitSha))
@@ -288,28 +294,17 @@ namespace MCPForUnity.Editor.Setup
             return client;
         }
 
-        internal static string DownloadString(HttpClient client, string url)
+        internal static string DownloadString(HttpClient client, string url, int maxBytes = SkillSyncDownload.MaxTreeBytes)
         {
-            using var response = client.GetAsync(url).GetAwaiter().GetResult();
-            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new InvalidOperationException($"GitHub request failed: {(int)response.StatusCode} {response.ReasonPhrase} ({url})\n{body}");
-            }
-
-            return body;
+            byte[] bytes = SkillSyncDownload.ReadBytes(client, url, maxBytes);
+            using var stream = new MemoryStream(bytes, false);
+            using var reader = new StreamReader(stream, Encoding.UTF8, true);
+            return reader.ReadToEnd();
         }
 
-        private static byte[] DownloadBytes(HttpClient client, string url)
+        private static byte[] DownloadBytes(HttpClient client, string url, long maxBytes)
         {
-            using var response = client.GetAsync(url).GetAwaiter().GetResult();
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                throw new InvalidOperationException($"File download failed: {(int)response.StatusCode} {response.ReasonPhrase} ({url})\n{body}");
-            }
-
-            return response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+            return SkillSyncDownload.ReadBytes(client, url, maxBytes);
         }
 
         internal static string NormalizeRemotePath(string path)
@@ -436,19 +431,28 @@ namespace MCPForUnity.Editor.Setup
         private static void ApplyPlan(GitHubRepoInfo repoInfo, string commitSha, string remoteSubdir, string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Action<string> log)
         {
             using var client = CreateGitHubClient();
-            ApplyPlan(targetRoot, plan, remoteFiles, pathComparison,
-                relativePath => DownloadBytes(client, BuildRawFileUrl(repoInfo, commitSha, CombineRemotePath(remoteSubdir, relativePath))), log);
+            ApplyBoundedPlan(targetRoot, plan, remoteFiles, pathComparison,
+                (relativePath, limit) => DownloadBytes(client, BuildRawFileUrl(repoInfo, commitSha, CombineRemotePath(remoteSubdir, relativePath)), limit), log);
         }
 
         internal static void ApplyPlan(string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Func<string, byte[]> download, Action<string> log)
         {
+            ApplyBoundedPlan(targetRoot, plan, remoteFiles, pathComparison, (path, limit) => download(path), log);
+        }
+
+        internal static void ApplyBoundedPlan(string targetRoot, SyncPlan plan, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Func<string, long, byte[]> download, Action<string> log)
+        {
+            SkillSyncDownload.RequireFileCount((long)plan.Added.Count + plan.Updated.Count);
+            SkillSyncDownload.RequireFileCount(remoteFiles.Count);
             var changedPaths = plan.Added.Concat(plan.Updated).ToArray();
             var downloadedFiles = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            var budget = new SkillSyncDownload.ByteBudget();
             foreach (var relativePath in changedPaths)
             {
                 ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
                 log?.Invoke($"Download: {relativePath}");
-                var bytes = download(relativePath);
+                var bytes = download(relativePath, budget.NextBlobLimit);
+                budget.Admit(bytes.LongLength);
                 var downloadedHash = ComputeGitBlobSha1(bytes);
                 if (!string.Equals(downloadedHash, remoteFiles[relativePath], StringComparison.Ordinal))
                 {
@@ -525,8 +529,16 @@ namespace MCPForUnity.Editor.Setup
 
         internal static string ComputeGitBlobSha1(string filePath)
         {
-            var bytes = File.ReadAllBytes(filePath);
-            return ComputeGitBlobSha1(bytes);
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var headerBytes = Encoding.UTF8.GetBytes($"blob {stream.Length}\0");
+            using var sha1 = SHA1.Create();
+            sha1.TransformBlock(headerBytes, 0, headerBytes.Length, null, 0);
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) != 0)
+                sha1.TransformBlock(buffer, 0, read, null, 0);
+            sha1.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+            return BitConverter.ToString(sha1.Hash ?? Array.Empty<byte>()).Replace("-", string.Empty).ToLowerInvariant();
         }
 
         internal static string ComputeGitBlobSha1(byte[] bytes)
@@ -534,7 +546,8 @@ namespace MCPForUnity.Editor.Setup
             var headerBytes = Encoding.UTF8.GetBytes($"blob {bytes.Length}\0");
             using var sha1 = SHA1.Create();
             sha1.TransformBlock(headerBytes, 0, headerBytes.Length, null, 0);
-            sha1.TransformFinalBlock(bytes, 0, bytes.Length);
+            sha1.TransformBlock(bytes, 0, bytes.Length, null, 0);
+            sha1.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
             return BitConverter.ToString(sha1.Hash ?? Array.Empty<byte>()).Replace("-", string.Empty).ToLowerInvariant();
         }
 
@@ -840,6 +853,7 @@ namespace MCPForUnity.Editor.Setup
             public string path;
             public string type;
             public string sha;
+            public long size;
         }
 
         internal sealed class SyncPlan
