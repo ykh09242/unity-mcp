@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
+from services.tools.rendering_limits import render_dimensions_error, screenshot_limits_error
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -122,13 +123,15 @@ async def manage_ui(
 
     # render_ui
     width: Annotated[int,
-                      "Render width in pixels (default 1920). For render_ui."] | None = None,
+                      "Render width in pixels, 1 to 8192 (default 1920). "
+                      "The frame may contain at most 33,554,432 pixels. For render_ui."] | None = None,
     height: Annotated[int,
-                       "Render height in pixels (default 1080). For render_ui."] | None = None,
+                       "Render height in pixels, 1 to 8192 (default 1080). For render_ui."] | None = None,
     include_image: Annotated[bool,
                               "Return inline base64 PNG in the response (default false). For render_ui."] | None = None,
     max_resolution: Annotated[int,
-                               "Max resolution for inline base64 image (default 640). For render_ui."] | None = None,
+                               "Max resolution for inline base64 image, 1 to 8192 "
+                               "(default 640; 0 selects the default). For render_ui."] | None = None,
     screenshot_file_name: Annotated[str,
                                      "Custom file name for the render output (default: auto-generated). "
                                      "For render_ui."] | None = None,
@@ -175,9 +178,15 @@ async def manage_ui(
                         "Set element tooltip text. For modify_visual_element."] | None = None,
 
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
-
     action_lower = action.lower()
+
+    if action_lower == "render_ui":
+        render_error = render_dimensions_error(
+            1920 if width is None else width,
+            1080 if height is None else height,
+        ) or screenshot_limits_error(1, 640 if max_resolution in (None, 0) else max_resolution)
+        if render_error:
+            return {"success": False, "message": render_error}
 
     # --- Path validation for file operations ---
     try:
@@ -268,6 +277,7 @@ async def manage_ui(
         params_dict["tooltip"] = tooltip
 
     # --- Route to Unity ---
+    unity_instance = await get_unity_instance_from_context(ctx)
     is_mutation = action_lower in (
         "create", "update", "delete", "attach_ui_document", "detach_ui_document",
         "create_panel_settings", "update_panel_settings", "render_ui", "link_stylesheet", "modify_visual_element",

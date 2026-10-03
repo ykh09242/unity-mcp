@@ -52,6 +52,110 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public const string DefaultFolder = "Assets/Screenshots";
 
+        // Support 8K UHD captures, with independent batch work and retained-image limits.
+        public const int MaxCaptureDimension = 8192;
+        public const long MaxCapturePixels = 32L * 1024 * 1024;
+        public const int MaxSuperSize = 4;
+        public const int MaxBatchShots = 128;
+        public const int MaxOrbitElevations = 16;
+        public const long MaxBatchRenderedPixels = 256L * 1024 * 1024;
+        public const long MaxRetainedTilePixels = 32L * 1024 * 1024;
+        public const long MaxContactSheetPixels = 32L * 1024 * 1024;
+
+        public static void ValidateFrameDimensions(int width, int height)
+        {
+            if (width <= 0 || height <= 0 || width > MaxCaptureDimension || height > MaxCaptureDimension
+                || (long)width * height > MaxCapturePixels)
+                throw new ArgumentException($"Capture dimensions must be positive, at most {MaxCaptureDimension} per side and {MaxCapturePixels} pixels.");
+        }
+
+        public static void ValidateSuperSize(int superSize)
+        {
+            if (superSize < 1 || superSize > MaxSuperSize)
+                throw new ArgumentException($"superSize must be between 1 and {MaxSuperSize}.");
+        }
+
+        public static void ValidateMaxResolution(int maxResolution)
+        {
+            if (maxResolution < 0 || maxResolution > MaxCaptureDimension)
+                throw new ArgumentException($"maxResolution must be between 0 (default) and {MaxCaptureDimension}.");
+        }
+
+        public static void ValidateCaptureDimensions(int width, int height, int superSize, out int captureWidth, out int captureHeight)
+        {
+            ValidateSuperSize(superSize);
+            ValidateFrameDimensions(width, height);
+            if (width > MaxCaptureDimension / superSize || height > MaxCaptureDimension / superSize)
+                throw new ArgumentException("Supersampled capture exceeds the maximum dimensions.");
+            captureWidth = width * superSize;
+            captureHeight = height * superSize;
+            ValidateFrameDimensions(captureWidth, captureHeight);
+        }
+
+        private static void GetTileDimensions(int width, int height, int maxResolution, out int tileWidth, out int tileHeight)
+        {
+            ValidateMaxResolution(maxResolution);
+            int targetMax = maxResolution > 0 ? maxResolution : 640;
+            float scale = Mathf.Min(1f, (float)targetMax / Mathf.Max(width, height));
+            tileWidth = Mathf.Max(1, Mathf.RoundToInt(width * scale));
+            tileHeight = Mathf.Max(1, Mathf.RoundToInt(height * scale));
+        }
+
+        public static void GetContactSheetDimensions(int tileWidth, int tileHeight, int count, int padding, out int sheetWidth, out int sheetHeight)
+        {
+            ValidateFrameDimensions(tileWidth, tileHeight);
+            if (count < 1 || count > MaxBatchShots || padding < 0 || padding > MaxCaptureDimension)
+                throw new ArgumentException("Contact sheet tile count or padding exceeds its budget.");
+            if ((long)tileWidth * tileHeight > MaxRetainedTilePixels / count)
+                throw new ArgumentException("Contact sheet tiles exceed the retained pixel budget.");
+            int cols = Mathf.CeilToInt(Mathf.Sqrt(count));
+            int rows = (count + cols - 1) / cols;
+            int labelHeight = Mathf.Max(14, tileHeight / 12);
+            long width = (long)cols * (tileWidth + padding) + padding;
+            long height = (long)rows * (tileHeight + labelHeight + padding) + padding;
+            if (width > MaxCaptureDimension || height > MaxCaptureDimension || width * height > MaxContactSheetPixels)
+                throw new ArgumentException("Contact sheet dimensions or pixels exceed its budget.");
+            sheetWidth = (int)width;
+            sheetHeight = (int)height;
+        }
+
+        public static void ValidateBatchCapture(int width, int height, int shots, int maxResolution)
+        {
+            ValidateFrameDimensions(width, height);
+            if (shots < 1 || shots > MaxBatchShots)
+                throw new ArgumentException($"Batch capture must contain between 1 and {MaxBatchShots} shots.");
+            if ((long)width * height > MaxBatchRenderedPixels / shots)
+                throw new ArgumentException("Batch capture exceeds the aggregate rendered pixel budget.");
+            GetTileDimensions(width, height, maxResolution, out int tileWidth, out int tileHeight);
+            GetContactSheetDimensions(tileWidth, tileHeight, shots, 4, out _, out _);
+        }
+
+        public sealed class CaptureBatchBudget
+        {
+            private long renderedPixels, retainedPixels;
+            private int shots;
+
+            // Account actual per-frame dimensions in case a render callback changes the viewport.
+            public void AdmitFrame(int width, int height, int tileWidth, int tileHeight)
+            {
+                ValidateFrameDimensions(width, height);
+                ValidateFrameDimensions(tileWidth, tileHeight);
+                long framePixels = (long)width * height, tilePixels = (long)tileWidth * tileHeight;
+                if (shots >= MaxBatchShots || framePixels > MaxBatchRenderedPixels - renderedPixels
+                    || tilePixels > MaxRetainedTilePixels - retainedPixels)
+                    throw new ArgumentException("Batch capture exceeds its frame or aggregate pixel budget.");
+                renderedPixels += framePixels;
+                retainedPixels += tilePixels;
+                shots++;
+            }
+        }
+
+        public static void ReleaseCaptureTiles(IEnumerable<Texture2D> tiles)
+        {
+            if (tiles != null)
+                foreach (var tile in tiles) DestroyTexture(tile);
+        }
+
         private static Camera FindAvailableCamera()
         {
             var main = Camera.main;
@@ -77,6 +181,7 @@ namespace MCPForUnity.Runtime.Helpers
             bool ensureUniqueFileName = true,
             string folderOverride = null)
         {
+            ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: true);
             // ScreenCapture.CaptureScreenshot accepts paths relative to the project root.
             SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), result.FullPath);
@@ -103,13 +208,11 @@ namespace MCPForUnity.Runtime.Helpers
                 throw new ArgumentNullException(nameof(camera));
             }
 
-            ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: false);
-            int size = result.SuperSize;
-
             int width = Mathf.Max(1, camera.pixelWidth > 0 ? camera.pixelWidth : Screen.width);
             int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
-            width *= size;
-            height *= size;
+            ValidateCaptureDimensions(width, height, superSize, out width, out height);
+            ValidateMaxResolution(maxResolution);
+            ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: false);
 
             RenderTexture prevRT = camera.targetTexture;
             RenderTexture prevActive = RenderTexture.active;
@@ -230,6 +333,8 @@ namespace MCPForUnity.Runtime.Helpers
             int maxResolution = 0,
             string folderOverride = null)
         {
+            ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
+            ValidateMaxResolution(maxResolution);
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride: folderOverride, isAsync: false);
             Texture2D tex = null;
             Texture2D downscaled = null;
@@ -258,6 +363,7 @@ namespace MCPForUnity.Runtime.Helpers
 
                 int width = tex.width;
                 int height = tex.height;
+                ValidateFrameDimensions(width, height);
 
                 byte[] png = tex.EncodeToPNG();
                 WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
@@ -306,6 +412,8 @@ namespace MCPForUnity.Runtime.Helpers
 
             int width = Mathf.Max(1, camera.pixelWidth > 0 ? camera.pixelWidth : Screen.width);
             int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
+            ValidateFrameDimensions(width, height);
+            ValidateMaxResolution(maxResolution);
 
             RenderTexture prevRT = camera.targetTexture;
             RenderTexture prevActive = RenderTexture.active;
@@ -349,12 +457,15 @@ namespace MCPForUnity.Runtime.Helpers
         /// Renders a camera to a Texture2D without saving to disk.
         /// Caller owns the returned texture and must destroy it.
         /// </summary>
-        public static Texture2D RenderCameraToTexture(Camera camera, int maxResolution = 640)
+        public static Texture2D RenderCameraToTexture(Camera camera, int maxResolution = 640, CaptureBatchBudget budget = null)
         {
             if (camera == null) throw new ArgumentNullException(nameof(camera));
 
             int width = Mathf.Max(1, camera.pixelWidth > 0 ? camera.pixelWidth : Screen.width);
             int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
+            ValidateFrameDimensions(width, height);
+            GetTileDimensions(width, height, maxResolution, out int tileWidth, out int tileHeight);
+            budget?.AdmitFrame(width, height, tileWidth, tileHeight);
 
             RenderTexture prevRT = camera.targetTexture;
             RenderTexture prevActive = RenderTexture.active;
@@ -399,27 +510,24 @@ namespace MCPForUnity.Runtime.Helpers
         public static (string base64, int width, int height) ComposeContactSheet(
             List<Texture2D> tiles, List<string> labels, int padding = 4)
         {
-            if (tiles == null || tiles.Count == 0)
-                throw new ArgumentException("No tiles to compose.", nameof(tiles));
-
-            int tileW = tiles[0].width;
-            int tileH = tiles[0].height;
-            int count = tiles.Count;
-
-            // Calculate grid: prefer wider than tall (cols >= rows)
-            int cols = Mathf.CeilToInt(Mathf.Sqrt(count));
-            int rows = Mathf.CeilToInt((float)count / cols);
-
-            int labelHeight = Mathf.Max(14, tileH / 12);
-            int cellW = tileW + padding;
-            int cellH = tileH + labelHeight + padding;
-
-            int sheetW = cols * cellW + padding;
-            int sheetH = rows * cellH + padding;
-
             Texture2D sheet = null;
             try
             {
+                if (tiles == null || tiles.Count == 0 || tiles[0] == null)
+                    throw new ArgumentException("No tiles to compose.", nameof(tiles));
+                int tileW = tiles[0].width;
+                int tileH = tiles[0].height;
+                int count = tiles.Count;
+                GetContactSheetDimensions(tileW, tileH, count, padding, out int sheetW, out int sheetH);
+                foreach (var tile in tiles)
+                    if (tile == null || tile.width != tileW || tile.height != tileH)
+                        throw new ArgumentException("Contact sheet tiles must have matching dimensions.");
+
+                int cols = Mathf.CeilToInt(Mathf.Sqrt(count));
+                int rows = (count + cols - 1) / cols;
+                int labelHeight = Mathf.Max(14, tileH / 12);
+                int cellW = tileW + padding;
+                int cellH = tileH + labelHeight + padding;
                 sheet = new Texture2D(sheetW, sheetH, TextureFormat.RGBA32, false);
 
                 // Build the full sheet in a Color32[] buffer, then upload once
@@ -446,6 +554,8 @@ namespace MCPForUnity.Runtime.Helpers
                         int dstOffset = (y + labelHeight + ty) * sheetW + x;
                         System.Array.Copy(tilePixels, srcOffset, sheetPixels, dstOffset, tileW);
                     }
+                    DestroyTexture(tiles[idx]);
+                    tiles[idx] = null; // release each retained native texture as soon as it is copied
 
                     // Draw label banner (dark background strip below tile)
                     var bannerColor = new Color32(20, 20, 20, 220);
@@ -482,7 +592,7 @@ namespace MCPForUnity.Runtime.Helpers
             }
             finally
             {
-                foreach (var tile in tiles) DestroyTexture(tile);
+                ReleaseCaptureTiles(tiles);
                 DestroyTexture(sheet);
             }
         }
@@ -585,6 +695,8 @@ namespace MCPForUnity.Runtime.Helpers
 
             int srcW = source.width;
             int srcH = source.height;
+            ValidateFrameDimensions(srcW, srcH);
+            ValidateMaxResolution(maxEdge);
             float scale = Mathf.Min((float)maxEdge / srcW, (float)maxEdge / srcH);
             scale = Mathf.Min(scale, 1f); // never upscale
             int dstW = Mathf.Max(1, Mathf.RoundToInt(srcW * scale));
@@ -645,6 +757,7 @@ namespace MCPForUnity.Runtime.Helpers
 
         public static ScreenshotCaptureResult PrepareCaptureResult(string fileName, int superSize, bool ensureUniqueFileName, string folderOverride, bool isAsync)
         {
+            ValidateSuperSize(superSize);
             int size = Mathf.Max(1, superSize);
             string resolvedName = BuildFileName(fileName);
             string folderAbsolute = ResolveFolderAbsolute(folderOverride);
@@ -806,9 +919,10 @@ namespace MCPForUnity.Runtime.Helpers
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
         public static void Begin(int superSize, Action<Texture2D> onComplete)
         {
+            ScreenshotUtility.ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             var go = new GameObject("__MCP_ScreenshotCapturer__") { hideFlags = HideFlags.HideAndDontSave };
             var c = go.AddComponent<ScreenshotCapturer>();
-            c._superSize = Mathf.Max(1, superSize);
+            c._superSize = superSize;
             c._onComplete = onComplete;
         }
 
@@ -816,8 +930,18 @@ namespace MCPForUnity.Runtime.Helpers
         {
             yield return new WaitForEndOfFrame();
             Texture2D tex = null;
-            try { tex = ScreenCapture.CaptureScreenshotAsTexture(_superSize); }
-            catch (Exception ex) { Debug.LogError($"[MCP for Unity] CaptureScreenshotAsTexture failed: {ex.Message}"); }
+            try
+            {
+                ScreenshotUtility.ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), _superSize, out _, out _);
+                tex = ScreenCapture.CaptureScreenshotAsTexture(_superSize);
+                if (tex != null) ScreenshotUtility.ValidateFrameDimensions(tex.width, tex.height);
+            }
+            catch (Exception ex)
+            {
+                if (tex != null) Destroy(tex);
+                tex = null;
+                Debug.LogError($"[MCP for Unity] CaptureScreenshotAsTexture failed: {ex.Message}");
+            }
             _onComplete?.Invoke(tex);
             Destroy(gameObject);
         }

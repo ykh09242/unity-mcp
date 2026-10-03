@@ -6,6 +6,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.rendering_limits import orbit_limits_error, screenshot_limits_error
 from services.tools.utils import (
     build_screenshot_params, extract_screenshot_images, normalize_properties,
     coerce_bool, coerce_int,
@@ -95,7 +96,7 @@ async def manage_camera(
     screenshot_file_name: Annotated[str | None,
         "Screenshot file name (optional). Defaults to timestamp."] = None,
     screenshot_super_size: Annotated[int | str | None,
-        "Screenshot supersize multiplier (integer >= 1)."] = None,
+        "Screenshot supersize multiplier (integer 1 to 4)."] = None,
     camera: Annotated[str | None,
         "Camera to capture from (name, path, or instance ID). "
         "Omit to use ScreenCapture API (captures all layers including Screen Space Overlay UI). "
@@ -104,7 +105,8 @@ async def manage_camera(
     include_image: Annotated[bool | str | None,
         "If true, return screenshot as inline base64 PNG. Default false."] = None,
     max_resolution: Annotated[int | str | None,
-        "Max resolution (longest edge px) for inline image. Default 640."] = None,
+        "Max resolution (longest edge px) for inline image, 1 to 8192. Default 640. "
+        "The Editor also enforces frame and aggregate pixel budgets."] = None,
     capture_source: Annotated[Literal["game_view", "scene_view"] | None,
         "Screenshot source. 'game_view' (default) captures the game/camera path; "
         "'scene_view' captures the active Unity Scene View viewport."] = None,
@@ -120,7 +122,8 @@ async def manage_camera(
     orbit_angles: Annotated[int | str | None,
         "Number of azimuth samples for batch='orbit' (default 8, max 36)."] = None,
     orbit_elevations: Annotated[list[float] | str | None,
-        "Elevation angles in degrees for batch='orbit' (default [0, 30, -15])."] = None,
+        "Elevation angles in degrees for batch='orbit' (default [0, 30, -15]). "
+        "1 to 16 finite angles; at most 128 total orbit shots."] = None,
     orbit_distance: Annotated[float | str | None,
         "Camera distance from target for batch='orbit' (default auto)."] = None,
     orbit_fov: Annotated[float | str | None,
@@ -197,6 +200,19 @@ async def manage_camera(
         )
         if err is not None:
             return err
+
+        capture_error = screenshot_limits_error(
+            params_dict.get("superSize", 1), params_dict.get("maxResolution", 640),
+        )
+        # The native shorthand always selects surround. Nested properties are
+        # not used by the native screenshot dispatcher.
+        if action_normalized == "screenshot" and str(params_dict.get("batch", "")).lower() == "orbit":
+            capture_error = capture_error or orbit_limits_error(
+                params_dict.get("orbitAngles", 8),
+                params_dict.get("orbitElevations", [0.0, 30.0, -15.0]),
+            )
+        if capture_error:
+            return {"success": False, "message": capture_error}
 
     unity_instance = await get_unity_instance_from_context(ctx)
     result = await send_with_unity_instance(

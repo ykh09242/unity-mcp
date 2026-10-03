@@ -35,6 +35,9 @@ namespace MCPForUnity.Editor.Tools
             foreach (var kvp in s_panelRTs)
             {
                 if (kvp.Value == null) continue;
+                if (s_panelBindings.TryGetValue(kvp.Key, out var binding) && binding.panel != null
+                    && binding.panel.targetTexture == kvp.Value)
+                    binding.panel.targetTexture = binding.previousTarget;
                 string assetPath = AssetDatabase.GetAssetPath(kvp.Value);
                 kvp.Value.Release();
                 if (!string.IsNullOrEmpty(assetPath))
@@ -43,6 +46,10 @@ namespace MCPForUnity.Editor.Tools
                     UnityEngine.Object.DestroyImmediate(kvp.Value);
             }
             s_panelRTs.Clear();
+            s_panelBindings.Clear();
+            if (s_pendingCaptureTex != null) UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
+            s_pendingCaptureTex = null;
+            s_pendingCaptureDone = s_pendingCaptureStarted = false;
         }
 
         public static object HandleCommand(JObject @params)
@@ -824,6 +831,27 @@ namespace MCPForUnity.Editor.Tools
         // Persistent RenderTextures keyed by PanelSettings instance ID so the panel
         // renders into them automatically every frame.
         private static readonly Dictionary<int, RenderTexture> s_panelRTs = new();
+        private static readonly Dictionary<int, (PanelSettings panel, RenderTexture previousTarget)> s_panelBindings = new();
+        private const int MaxCachedPanels = 8;
+        private const long MaxCachedPanelPixels = 64L * 1024 * 1024;
+
+        private static void ValidateUICacheBudget(int panelId, int width, int height)
+        {
+            long pixels = (long)width * height;
+            int panels = 1;
+            foreach (var entry in s_panelRTs)
+            {
+                if (entry.Key == panelId) continue;
+                panels++;
+                if (entry.Value == null) continue;
+                long retained = (long)entry.Value.width * entry.Value.height;
+                if (retained > MaxCachedPanelPixels - pixels)
+                    throw new ArgumentException("UI render textures exceed the cached pixel budget.");
+                pixels += retained;
+            }
+            if (panels > MaxCachedPanels)
+                throw new ArgumentException($"UI rendering can cache at most {MaxCachedPanels} panels.");
+        }
 
         // Play-mode coroutine capture state.  Only one capture is in-flight at a
         // time; concurrent render_ui calls while a capture is pending are rejected
@@ -844,6 +872,15 @@ namespace MCPForUnity.Editor.Tools
             int maxResolution = p.GetInt("max_resolution") ?? p.GetInt("maxResolution") ?? 640;
             string fileName = p.Get("file_name") ?? p.Get("fileName");
             string outputFolderOverride = p.Get("output_folder") ?? p.Get("outputFolder");
+            try
+            {
+                ScreenshotUtility.ValidateFrameDimensions(width, height);
+                ScreenshotUtility.ValidateMaxResolution(maxResolution);
+                if (Application.isPlaying)
+                    ScreenshotUtility.ValidateFrameDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height));
+            }
+            catch (ArgumentException ex) { return new ErrorResponse(ex.Message); }
+            if (maxResolution == 0) maxResolution = 640;
 
             if (string.IsNullOrEmpty(target) && string.IsNullOrEmpty(uxmlPath))
             {
@@ -895,6 +932,7 @@ namespace MCPForUnity.Editor.Tools
                     byte[] capturePng;
                     try
                     {
+                        ScreenshotUtility.ValidateFrameDimensions(captureW, captureH);
                         capturePng = captureTex.EncodeToPNG();
                     }
                     finally
@@ -964,12 +1002,20 @@ namespace MCPForUnity.Editor.Tools
                 s_pendingCaptureDone = false;
                 s_pendingCaptureTex = null;
                 s_pendingCaptureStarted = true;
-                ScreenshotCapturer.Begin(1, tex =>
+                try
                 {
-                    s_pendingCaptureTex = tex;
-                    s_pendingCaptureDone = true;
+                    ScreenshotCapturer.Begin(1, tex =>
+                    {
+                        s_pendingCaptureTex = tex;
+                        s_pendingCaptureDone = true;
+                        s_pendingCaptureStarted = false;
+                    });
+                }
+                catch
+                {
                     s_pendingCaptureStarted = false;
-                });
+                    throw;
+                }
 
                 return new SuccessResponse(
                     "Play-mode screenshot capture queued (WaitForEndOfFrame). Call render_ui again to retrieve the rendered image.",
@@ -1034,6 +1080,11 @@ namespace MCPForUnity.Editor.Tools
 
                 var panelSettings = uiDoc.panelSettings;
                 int psId = panelSettings.GetInstanceIDCompat();
+                ValidateUICacheBudget(psId, width, height);
+                bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget)
+                    || panelSettings.targetTexture != ownedTarget;
+                var previousTarget = rememberBinding
+                    ? panelSettings.targetTexture : s_panelBindings[psId].previousTarget;
 
                 // Check if we already have a persistent RT assigned to this PanelSettings.
                 // If the RT exists and its size matches, the panel has been rendering into it.
@@ -1049,6 +1100,8 @@ namespace MCPForUnity.Editor.Tools
                     if (cachedRt.width == width && cachedRt.height == height)
                     {
                         rt = cachedRt;
+                        if (rememberBinding)
+                            s_panelBindings[psId] = (panelSettings, previousTarget);
                         // Re-attach if it was detached after the previous read
                         if (panelSettings.targetTexture != rt)
                         {
@@ -1064,7 +1117,7 @@ namespace MCPForUnity.Editor.Tools
                     else
                     {
                         // Size changed — release the old RT
-                        panelSettings.targetTexture = null;
+                        panelSettings.targetTexture = previousTarget;
                         string oldPath = AssetDatabase.GetAssetPath(cachedRt);
                         cachedRt.Release();
                         if (!string.IsNullOrEmpty(oldPath))
@@ -1078,19 +1131,43 @@ namespace MCPForUnity.Editor.Tools
                 if (rt == null)
                 {
                     // Create RT as an asset so PanelSettings can serialize the reference properly
-                    rt = new RenderTexture(width, height, 32, RenderTextureFormat.ARGB32);
-                    rt.name = $"MCP_UI_Render_{psId}";
-                    rt.Create();
+                    bool adopted = false;
+                    try
+                    {
+                        rt = new RenderTexture(width, height, 32, RenderTextureFormat.ARGB32);
+                        rt.name = $"MCP_UI_Render_{psId}";
+                        rt.Create();
 
-                    string rtFolder = "Assets/UI";
-                    if (!AssetDatabase.IsValidFolder(rtFolder))
-                        AssetDatabase.CreateFolder("Assets", "UI");
-                    string rtAssetPath = $"{rtFolder}/RT_MCP_UI_Render_{psId}.renderTexture";
-                    AssetDatabase.CreateAsset(rt, rtAssetPath);
-                    AssetDatabase.SaveAssets();
+                        string rtFolder = "Assets/UI";
+                        if (!AssetDatabase.IsValidFolder(rtFolder))
+                            AssetDatabase.CreateFolder("Assets", "UI");
+                        string rtAssetPath = $"{rtFolder}/RT_MCP_UI_Render_{psId}.renderTexture";
+                        AssetDatabase.CreateAsset(rt, rtAssetPath);
+                        AssetDatabase.SaveAssets();
 
-                    panelSettings.targetTexture = rt;
-                    s_panelRTs[psId] = rt;
+                        s_panelRTs[psId] = rt;
+                        s_panelBindings[psId] = (panelSettings, previousTarget);
+                        adopted = true;
+                        panelSettings.targetTexture = rt;
+                    }
+                    finally
+                    {
+                        if (!adopted)
+                        {
+                            s_panelBindings.Remove(psId);
+                            if (s_panelRTs.TryGetValue(psId, out var failedCachedRt) && failedCachedRt == null)
+                                s_panelRTs.Remove(psId);
+                            if (rt != null)
+                            {
+                                rt.Release();
+                                string failedPath = AssetDatabase.GetAssetPath(rt);
+                                if (!string.IsNullOrEmpty(failedPath))
+                                    AssetDatabase.DeleteAsset(failedPath);
+                                else
+                                    UnityEngine.Object.DestroyImmediate(rt);
+                            }
+                        }
+                    }
                     rtJustAssigned = true;
 
                     // Mark dirty and force editor repaint so the panel renders into the RT
@@ -1116,12 +1193,13 @@ namespace MCPForUnity.Editor.Tools
                     RenderTexture.active = prevActive;
                 }
 
-                // Restore targetTexture to null so the UI renders back to the
-                // actual display / camera.  The RT stays cached in s_panelRTs
+                // Restore the caller's target so the UI renders back to its
+                // prior display / render target. The RT stays cached in s_panelRTs
                 // and will be re-attached on the next render_ui call.
                 if (!rtJustAssigned)
                 {
-                    panelSettings.targetTexture = null;
+                    if (panelSettings.targetTexture == rt)
+                        panelSettings.targetTexture = s_panelBindings[psId].previousTarget;
                     EditorUtility.SetDirty(panelSettings);
                 }
 

@@ -54,6 +54,7 @@ namespace MCPForUnity.Editor.Helpers
                 throw new ArgumentNullException(nameof(sceneView));
 
             int effectiveSuperSize = NormalizeSceneViewSuperSize(superSize);
+            ScreenshotUtility.ValidateMaxResolution(maxResolution);
 
             FocusAndRepaint(sceneView);
 
@@ -69,6 +70,7 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 captured = CaptureViewRect(sceneView, viewportRectPixels);
+                ScreenshotUtility.ValidateFrameDimensions(captured.width, captured.height);
 
                 var result = PrepareCaptureResult(fileName, effectiveSuperSize, ensureUniqueFileName, folderOverride);
                 byte[] png = captured.EncodeToPNG();
@@ -179,6 +181,10 @@ namespace MCPForUnity.Editor.Helpers
 
         private static Texture2D CaptureViewRect(SceneView sceneView, Rect viewportRectPixels)
         {
+            int width = Mathf.RoundToInt(viewportRectPixels.width);
+            int height = Mathf.RoundToInt(viewportRectPixels.height);
+            ScreenshotUtility.ValidateFrameDimensions(width, height);
+
             object hostView = GetHostView(sceneView);
             if (hostView == null)
                 throw new InvalidOperationException("Failed to resolve Scene view host view.");
@@ -195,9 +201,6 @@ namespace MCPForUnity.Editor.Helpers
 
             if (grabPixels == null)
                 throw new MissingMethodException($"{hostView.GetType().FullName}.GrabPixels(RenderTexture, Rect)");
-
-            int width = Mathf.RoundToInt(viewportRectPixels.width);
-            int height = Mathf.RoundToInt(viewportRectPixels.height);
 
             RenderTexture rt = null;
             Texture2D texture = null;

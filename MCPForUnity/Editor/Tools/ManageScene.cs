@@ -72,12 +72,16 @@ namespace MCPForUnity.Editor.Tools
             if (token.Type == JTokenType.Array)
             {
                 var arr = (JArray)token;
+                if (arr.Count < 1 || arr.Count > ScreenshotUtility.MaxOrbitElevations)
+                    throw new ArgumentException($"Orbit elevations must contain between 1 and {ScreenshotUtility.MaxOrbitElevations} values.");
                 var result = new float[arr.Count];
                 for (int i = 0; i < arr.Count; i++)
                 {
                     try
                     {
                         result[i] = arr[i].ToObject<float>();
+                        if (float.IsNaN(result[i]) || float.IsInfinity(result[i]))
+                            throw new ArgumentException("Orbit elevations must be finite.");
                     }
                     catch (Exception ex)
                     {
@@ -164,7 +168,9 @@ namespace MCPForUnity.Editor.Tools
         public static object HandleCommand(JObject @params)
         {
             try { McpLog.Info("[ManageScene] HandleCommand: start", always: false); } catch { }
-            var cmd = ToSceneCommand(@params);
+            SceneCommand cmd;
+            try { cmd = ToSceneCommand(@params); }
+            catch (Exception ex) { return new ErrorResponse($"Invalid scene command: {ex.Message}"); }
             string action = cmd.action;
             string name = string.IsNullOrEmpty(cmd.name) ? null : cmd.name;
             string path = string.IsNullOrEmpty(cmd.path) ? null : cmd.path; // Relative to Assets/
@@ -565,9 +571,11 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 string fileName = cmd.fileName;
-                int resolvedSuperSize = (cmd.superSize.HasValue && cmd.superSize.Value > 0) ? cmd.superSize.Value : 1;
+                int resolvedSuperSize = cmd.superSize ?? 1;
+                ScreenshotUtility.ValidateSuperSize(resolvedSuperSize);
                 bool includeImage = cmd.includeImage ?? false;
                 int maxResolution = cmd.maxResolution ?? 0; // 0 = let ScreenshotUtility default to 640
+                ScreenshotUtility.ValidateMaxResolution(maxResolution);
                 string cameraRef = cmd.camera;
                 string captureSource = string.IsNullOrWhiteSpace(cmd.captureSource)
                     ? "game_view"
@@ -903,6 +911,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 int maxRes = cmd.maxResolution ?? 480;
+                ScreenshotUtility.ValidateBatchCapture(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), 6, maxRes);
 
                 Vector3 center;
                 float radius;
@@ -985,16 +994,18 @@ namespace MCPForUnity.Editor.Tools
                 SceneView.RepaintAll();
 
                 var tiles = new List<Texture2D>();
+                var captureBudget = new ScreenshotUtility.CaptureBatchBudget();
                 var tileLabels = new List<string>();
                 var shotMeta = new List<object>();
                 try
                 {
+                    ScreenshotUtility.ValidateBatchCapture(Mathf.Max(1, tempCam.pixelWidth), Mathf.Max(1, tempCam.pixelHeight), 6, maxRes);
                     foreach (var (label, pos) in angles)
                     {
                         tempCam.transform.position = pos;
                         tempCam.transform.LookAt(center);
 
-                        Texture2D tile = ScreenshotUtility.RenderCameraToTexture(tempCam, maxRes);
+                        Texture2D tile = ScreenshotUtility.RenderCameraToTexture(tempCam, maxRes, captureBudget);
                         tiles.Add(tile);
                         tileLabels.Add(label);
                         shotMeta.Add(new Dictionary<string, object>
@@ -1023,6 +1034,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 finally
                 {
+                    ScreenshotUtility.ReleaseCaptureTiles(tiles);
                     UnityEngine.Object.DestroyImmediate(tempGo);
                 }
             }
@@ -1042,8 +1054,18 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 int maxRes = cmd.maxResolution ?? 480;
-                int azimuthCount = Mathf.Clamp(cmd.orbitAngles ?? 8, 1, 36);
+                int azimuthCount = cmd.orbitAngles ?? 8;
+                if (azimuthCount < 1 || azimuthCount > 36)
+                    return new ErrorResponse("Orbit angles must be between 1 and 36.");
                 float[] elevations = cmd.orbitElevations ?? new[] { 0f, 30f, -15f };
+                if (elevations.Length < 1 || elevations.Length > ScreenshotUtility.MaxOrbitElevations
+                    || azimuthCount > ScreenshotUtility.MaxBatchShots / elevations.Length)
+                    return new ErrorResponse("Orbit elevation or total shot count exceeds its budget.");
+                foreach (float elevation in elevations)
+                    if (float.IsNaN(elevation) || float.IsInfinity(elevation))
+                        return new ErrorResponse("Orbit elevations must be finite.");
+                int shots = azimuthCount * elevations.Length;
+                ScreenshotUtility.ValidateBatchCapture(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), shots, maxRes);
                 float fov = Mathf.Clamp(cmd.orbitFov ?? 60f, 10f, 120f);
 
                 Vector3 center;
@@ -1107,10 +1129,12 @@ namespace MCPForUnity.Editor.Tools
                 SceneView.RepaintAll();
 
                 var tiles = new List<Texture2D>();
+                var captureBudget = new ScreenshotUtility.CaptureBatchBudget();
                 var tileLabels = new List<string>();
                 var shotMeta = new List<object>();
                 try
                 {
+                    ScreenshotUtility.ValidateBatchCapture(Mathf.Max(1, tempCam.pixelWidth), Mathf.Max(1, tempCam.pixelHeight), shots, maxRes);
                     foreach (float elevDeg in elevations)
                     {
                         float elevRad = elevDeg * Mathf.Deg2Rad;
@@ -1137,7 +1161,7 @@ namespace MCPForUnity.Editor.Tools
                                              : "level";
                             string angleLabel = $"{dirLabel}_{elevLabel}";
 
-                            Texture2D tile = ScreenshotUtility.RenderCameraToTexture(tempCam, maxRes);
+                            Texture2D tile = ScreenshotUtility.RenderCameraToTexture(tempCam, maxRes, captureBudget);
                             tiles.Add(tile);
                             tileLabels.Add(angleLabel);
                             shotMeta.Add(new Dictionary<string, object>
@@ -1173,6 +1197,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 finally
                 {
+                    ScreenshotUtility.ReleaseCaptureTiles(tiles);
                     UnityEngine.Object.DestroyImmediate(tempGo);
                 }
             }
