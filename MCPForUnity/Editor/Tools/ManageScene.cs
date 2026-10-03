@@ -2058,7 +2058,8 @@ namespace MCPForUnity.Editor.Tools
                 // NOTE: maxDepth is accepted for forward-compatibility, but current paging mode
                 // returns a single level (roots or direct children). This keeps payloads bounded.
 
-                List<GameObject> nodes;
+                List<GameObject> nodes = null;
+                Transform parentTransform = null;
                 string scope;
 
                 GameObject parentGo = ResolveGameObject(cmd.parent, activeScene);
@@ -2075,22 +2076,18 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"Parent GameObject ('{cmd.parent}') not found.");
                     }
                     try { McpLog.Info($"[ManageScene] get_hierarchy: listing children of '{parentGo.name}' (paged summary)", always: false); } catch { }
-                    nodes = new List<GameObject>(parentGo.transform.childCount);
-                    foreach (Transform child in parentGo.transform)
-                    {
-                        if (child != null) nodes.Add(child.gameObject);
-                    }
+                    parentTransform = parentGo.transform;
                     scope = "children";
                 }
 
-                int total = nodes.Count;
+                int total = parentTransform != null ? parentTransform.childCount : nodes.Count;
                 if (resolvedCursor > total) resolvedCursor = total;
-                int end = Mathf.Min(total, resolvedCursor + effectiveTake);
+                int end = resolvedCursor + Mathf.Min(effectiveTake, total - resolvedCursor);
 
                 var items = new List<object>(Mathf.Max(0, end - resolvedCursor));
                 for (int i = resolvedCursor; i < end; i++)
                 {
-                    var go = nodes[i];
+                    var go = parentTransform != null ? parentTransform.GetChild(i).gameObject : nodes[i];
                     if (go == null) continue;
                     items.Add(BuildGameObjectSummary(go, includeTransform, resolvedMaxChildrenPerNode));
                 }

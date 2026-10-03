@@ -103,6 +103,41 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(7, childItems.Count);
         }
 
+        [TestCase(4, 4, 100, 4, true, "8")]
+        [TestCase(4, 4, 2, 2, true, "6")]
+        [TestCase(8, 4, 100, 3, false, null)]
+        [TestCase(11, 4, 100, 0, false, null)]
+        [TestCase(int.MaxValue, 4, 100, 0, false, null)]
+        public void GetHierarchy_ChildPagesPreserveOrderAndClampEndCursor(
+            int cursor, int pageSize, int maxNodes, int expectedCount, bool truncated, string nextCursor)
+        {
+            _root = new GameObject("HS_PagedParent");
+            for (int i = 0; i < 11; i++)
+                new GameObject($"HS_PagedChild_{i:D2}").transform.SetParent(_root.transform);
+
+            var response = JObject.FromObject(ManageScene.HandleCommand(new JObject
+            {
+                ["action"] = "get_hierarchy",
+                ["parent"] = _root.GetInstanceID(),
+                ["cursor"] = cursor,
+                ["pageSize"] = pageSize,
+                ["maxNodes"] = maxNodes
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var data = (JObject)response["data"];
+            Assert.AreEqual("children", data.Value<string>("scope"));
+            Assert.AreEqual(11, data.Value<int>("total"));
+            Assert.AreEqual(System.Math.Min(cursor, 11), data.Value<int>("cursor"));
+            Assert.AreEqual(truncated, data.Value<bool>("truncated"));
+            Assert.AreEqual(nextCursor, data.Value<string>("next_cursor"));
+            var items = (JArray)data["items"];
+            Assert.AreEqual(expectedCount, items.Count);
+            for (int i = 0; i < items.Count; i++)
+                Assert.AreEqual(_root.transform.GetChild(cursor + i).gameObject.GetInstanceID(),
+                    items[i].Value<int>("instanceID"));
+        }
+
         [Test]
         public void Screenshot_SceneViewRejectsSupersizeAboveOne()
         {
