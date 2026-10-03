@@ -42,9 +42,14 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[
         return (True, 0.0)
 
     start = time.monotonic()
-    while time.monotonic() - start < timeout_s:
+    deadline = start + timeout_s
+    while time.monotonic() < deadline:
         try:
-            state_resp = await editor_state.get_editor_state(ctx)
+            state_resp = await asyncio.wait_for(
+                editor_state.get_editor_state(ctx), timeout=max(0.0, deadline - time.monotonic()),
+            )
+            if time.monotonic() >= deadline:
+                break
             state = state_resp.model_dump() if hasattr(state_resp, "model_dump") else state_resp
             data = (state or {}).get("data") if isinstance(state, dict) else None
             advice = (data or {}).get("advice") if isinstance(data, dict) else None
@@ -56,7 +61,10 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[
                     return (True, time.monotonic() - start)
         except Exception:
             pass  # not ready yet — keep polling
-        await asyncio.sleep(0.25)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(0.25, remaining))
 
     return (False, time.monotonic() - start)
 
