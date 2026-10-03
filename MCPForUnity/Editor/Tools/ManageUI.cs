@@ -352,7 +352,7 @@ namespace MCPForUnity.Editor.Tools
                 string[] guids = AssetDatabase.FindAssets("t:PanelSettings");
                 if (guids.Length > 0)
                 {
-                    string existingPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                    string existingPath = AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true);
                     panelSettings = AssetDatabase.LoadAssetAtPath<PanelSettings>(existingPath);
                 }
 
@@ -1064,7 +1064,8 @@ namespace MCPForUnity.Editor.Tools
                     string[] guids = AssetDatabase.FindAssets("t:PanelSettings");
                     PanelSettings ps = null;
                     if (guids.Length > 0)
-                        ps = AssetDatabase.LoadAssetAtPath<PanelSettings>(AssetDatabase.GUIDToAssetPath(guids[0]));
+                        ps = AssetDatabase.LoadAssetAtPath<PanelSettings>(
+                            AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true));
                     if (ps == null)
                     {
                         ps = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset");
@@ -1395,8 +1396,12 @@ namespace MCPForUnity.Editor.Tools
             var p = new ToolParams(@params);
             string scope = p.Get("path") ?? "Assets";
             string filterType = p.Get("filter_type") ?? p.Get("filterType");
-            int pageSize = p.GetInt("page_size") ?? p.GetInt("pageSize") ?? 50;
-            int pageNumber = p.GetInt("page_number") ?? p.GetInt("pageNumber") ?? 1;
+            if (!PaginationBounds.TryRead(@params["page_size"] ?? @params["pageSize"], 50,
+                    1, PaginationBounds.MaxPageSize, "pageSize", out int pageSize, out string pageError)
+                || !PaginationBounds.TryRead(@params["page_number"] ?? @params["pageNumber"], 1,
+                    1, int.MaxValue, "pageNumber", out int pageNumber, out pageError))
+                return new ErrorResponse(pageError);
+            long startIndex = PaginationBounds.StartIndex(pageNumber, pageSize);
 
             scope = AssetPathUtility.GetContainedAssetPath(scope);
             if (scope == null)
@@ -1409,7 +1414,25 @@ namespace MCPForUnity.Editor.Tools
                 : null;
 
             // Find UXML and USS assets based on filter
-            var allAssets = new List<object>();
+            var paged = new List<object>();
+            int total = 0;
+
+            void AddPage(string guid, string type)
+            {
+                string assetPath;
+                try { assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true); }
+                catch (ArgumentException) { return; }
+                catch (InvalidOperationException) { return; }
+                if (string.IsNullOrEmpty(assetPath)) return;
+                if (total >= startIndex && paged.Count < pageSize)
+                    paged.Add(new Dictionary<string, object>
+                    {
+                        ["path"] = assetPath,
+                        ["type"] = type,
+                        ["name"] = Path.GetFileName(assetPath),
+                    });
+                total++;
+            }
 
             bool includeUxml = string.IsNullOrEmpty(filterType) ||
                                filterType.Equals("uxml", StringComparison.OrdinalIgnoreCase) ||
@@ -1425,16 +1448,7 @@ namespace MCPForUnity.Editor.Tools
                 string[] guids = AssetDatabase.FindAssets("t:VisualTreeAsset", folderScope);
                 foreach (string guid in guids)
                 {
-                    string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                    if (!string.IsNullOrEmpty(assetPath))
-                    {
-                        allAssets.Add(new Dictionary<string, object>
-                        {
-                            ["path"] = assetPath,
-                            ["type"] = "uxml",
-                            ["name"] = Path.GetFileName(assetPath),
-                        });
-                    }
+                    AddPage(guid, "uxml");
                 }
             }
 
@@ -1443,16 +1457,7 @@ namespace MCPForUnity.Editor.Tools
                 string[] guids = AssetDatabase.FindAssets("t:StyleSheet", folderScope);
                 foreach (string guid in guids)
                 {
-                    string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                    if (!string.IsNullOrEmpty(assetPath))
-                    {
-                        allAssets.Add(new Dictionary<string, object>
-                        {
-                            ["path"] = assetPath,
-                            ["type"] = "uss",
-                            ["name"] = Path.GetFileName(assetPath),
-                        });
-                    }
+                    AddPage(guid, "uss");
                 }
             }
 
@@ -1461,22 +1466,9 @@ namespace MCPForUnity.Editor.Tools
                 string[] guids = AssetDatabase.FindAssets("t:PanelSettings", folderScope);
                 foreach (string guid in guids)
                 {
-                    string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                    if (!string.IsNullOrEmpty(assetPath))
-                    {
-                        allAssets.Add(new Dictionary<string, object>
-                        {
-                            ["path"] = assetPath,
-                            ["type"] = "PanelSettings",
-                            ["name"] = Path.GetFileName(assetPath),
-                        });
-                    }
+                    AddPage(guid, "PanelSettings");
                 }
             }
-
-            int total = allAssets.Count;
-            int startIndex = (pageNumber - 1) * pageSize;
-            var paged = allAssets.Skip(startIndex).Take(pageSize).ToList();
 
             return new SuccessResponse(
                 $"Found {total} UI asset(s). Returning page {pageNumber} ({paged.Count} items).",
@@ -1485,6 +1477,7 @@ namespace MCPForUnity.Editor.Tools
                     total,
                     pageSize,
                     pageNumber,
+                    maxPageSize = PaginationBounds.MaxPageSize,
                     assets = paged,
                 });
         }

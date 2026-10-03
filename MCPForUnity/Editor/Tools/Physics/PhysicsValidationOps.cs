@@ -23,10 +23,13 @@ namespace MCPForUnity.Editor.Tools.Physics
             string dimension = (p.Get("dimension") ?? "both").ToLowerInvariant();
             string targetStr = p.Get("target");
             string searchMethod = p.Get("search_method");
-            int pageSize = p.GetInt("page_size") ?? p.GetInt("pageSize") ?? 50;
-            int cursor = p.GetInt("cursor") ?? 0;
+            if (!PaginationBounds.TryRead(@params["page_size"] ?? @params["pageSize"], 50,
+                    1, PaginationBounds.MaxPageSize, "page_size", out int pageSize, out string pageError)
+                || !PaginationBounds.TryRead(@params["cursor"], 0, 0, int.MaxValue,
+                    "cursor", out int cursor, out pageError))
+                return new ErrorResponse(pageError);
 
-            var warnings = new List<string>();
+            var warnings = new PagedWarnings(cursor, pageSize);
             var categoryCounts = new Dictionary<string, int>
             {
                 { Cat_NonConvexMesh, 0 },
@@ -63,9 +66,10 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             int totalWarnings = warnings.Count;
             int clampedCursor = Math.Min(cursor, totalWarnings);
-            var page = warnings.Skip(clampedCursor).Take(pageSize).ToList();
-            int? nextCursor = (clampedCursor + pageSize < totalWarnings)
-                ? (int?)(clampedCursor + pageSize)
+            var page = warnings.Page;
+            long next = (long)clampedCursor + page.Count;
+            int? nextCursor = (next < totalWarnings)
+                ? (int?)next
                 : null;
 
             return new
@@ -80,6 +84,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     warning_count = totalWarnings,
                     objects_scanned = scanned,
                     page_size = pageSize,
+                    max_page_size = PaginationBounds.MaxPageSize,
                     cursor = clampedCursor,
                     next_cursor = nextCursor,
                     summary = categoryCounts
@@ -87,7 +92,21 @@ namespace MCPForUnity.Editor.Tools.Physics
             };
         }
 
-        private static void ValidateRecursive(GameObject go, string dimension, List<string> warnings,
+        private sealed class PagedWarnings
+        {
+            private readonly int cursor;
+            private readonly int pageSize;
+            public int Count { get; private set; }
+            public List<string> Page { get; } = new List<string>();
+            public PagedWarnings(int cursor, int pageSize) { this.cursor = cursor; this.pageSize = pageSize; }
+            public void Add(Func<string> message)
+            {
+                if (Count >= cursor && Page.Count < pageSize) Page.Add(message());
+                Count++;
+            }
+        }
+
+        private static void ValidateRecursive(GameObject go, string dimension, PagedWarnings warnings,
             Dictionary<string, int> categoryCounts, ref int scanned)
         {
             ValidateGameObject(go, dimension, warnings, categoryCounts);
@@ -99,7 +118,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
         }
 
-        private static void ValidateGameObject(GameObject go, string dimension, List<string> warnings,
+        private static void ValidateGameObject(GameObject go, string dimension, PagedWarnings warnings,
             Dictionary<string, int> categoryCounts)
         {
             bool check3D = dimension == "3d" || dimension == "both";
@@ -115,7 +134,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     {
                         if (!mc.convex)
                         {
-                            warnings.Add(
+                            warnings.Add(() =>
                                 $"MeshCollider on '{go.name}' must be Convex for non-kinematic Rigidbody.");
                             categoryCounts[Cat_NonConvexMesh]++;
                         }
@@ -132,12 +151,12 @@ namespace MCPForUnity.Editor.Tools.Physics
                     bool hasAnimator = go.GetComponent<Animator>() != null || HasAnimatorInParent(go);
                     if (hasAnimator)
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"'{go.name}' has a Collider but no Rigidbody. Moving it via Transform causes broadphase rebuild every frame.");
                     }
                     else
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"[Info] '{go.name}' has a Collider but no Rigidbody. This is fine if the object isn't moved at runtime.");
                     }
                     categoryCounts[Cat_MissingRigidbody]++;
@@ -152,12 +171,12 @@ namespace MCPForUnity.Editor.Tools.Physics
                     bool hasAnimator = go.GetComponent<Animator>() != null || HasAnimatorInParent(go);
                     if (hasAnimator)
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"'{go.name}' has a Collider2D but no Rigidbody2D. Moving it via Transform causes broadphase rebuild every frame.");
                     }
                     else
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"[Info] '{go.name}' has a Collider2D but no Rigidbody2D. This is fine if the object isn't moved at runtime.");
                     }
                     categoryCounts[Cat_MissingRigidbody]++;
@@ -174,7 +193,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                                       || Mathf.Abs(scale.y - scale.z) > 0.01f;
                     if (nonUniform)
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"'{go.name}' has non-uniform scale ({scale.x:F2}, {scale.y:F2}, {scale.z:F2}) which degrades physics performance.");
                         categoryCounts[Cat_NonUniformScale]++;
                     }
@@ -190,7 +209,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     string nameLower = go.name.ToLowerInvariant();
                     if (nameLower.Contains("bullet") || nameLower.Contains("projectile") || nameLower.Contains("fast"))
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"'{go.name}' uses Discrete collision detection but appears to be a fast-moving object. Consider ContinuousDynamic.");
                         categoryCounts[Cat_FastObjectDiscrete]++;
                     }
@@ -204,7 +223,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (col.sharedMaterial == null)
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"[Info] Collider ({col.GetType().Name}) on '{go.name}' has no physics material (using defaults).");
                         categoryCounts[Cat_MissingPhysicsMaterial]++;
                     }
@@ -217,7 +236,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (col.sharedMaterial == null)
                     {
-                        warnings.Add(
+                        warnings.Add(() =>
                             $"[Info] Collider2D ({col.GetType().Name}) on '{go.name}' has no physics material (using defaults).");
                         categoryCounts[Cat_MissingPhysicsMaterial]++;
                     }
@@ -232,17 +251,19 @@ namespace MCPForUnity.Editor.Tools.Physics
 
                 if (has3D && has2D)
                 {
-                    var components3D = new List<string>();
-                    var components2D = new List<string>();
+                    warnings.Add(() =>
+                    {
+                        var components3D = new List<string>();
+                        var components2D = new List<string>();
 
-                    if (go.GetComponent<Rigidbody>() != null) components3D.Add("Rigidbody");
-                    foreach (var c in go.GetComponents<Collider>()) components3D.Add(c.GetType().Name);
+                        if (go.GetComponent<Rigidbody>() != null) components3D.Add("Rigidbody");
+                        foreach (var c in go.GetComponents<Collider>()) components3D.Add(c.GetType().Name);
 
-                    if (go.GetComponent<Rigidbody2D>() != null) components2D.Add("Rigidbody2D");
-                    foreach (var c in go.GetComponents<Collider2D>()) components2D.Add(c.GetType().Name);
+                        if (go.GetComponent<Rigidbody2D>() != null) components2D.Add("Rigidbody2D");
+                        foreach (var c in go.GetComponents<Collider2D>()) components2D.Add(c.GetType().Name);
 
-                    warnings.Add(
-                        $"'{go.name}' has both 3D ({string.Join(", ", components3D)}) and 2D ({string.Join(", ", components2D)}) physics components.");
+                        return $"'{go.name}' has both 3D ({string.Join(", ", components3D)}) and 2D ({string.Join(", ", components2D)}) physics components.";
+                    });
                     categoryCounts[Cat_Mixed2D3D]++;
                 }
             }
@@ -261,7 +282,7 @@ namespace MCPForUnity.Editor.Tools.Physics
         }
 
         // Check 6 (scene-wide): Unconfigured collision matrix
-        private static void CheckCollisionMatrix(List<string> warnings, Dictionary<string, int> categoryCounts)
+        private static void CheckCollisionMatrix(PagedWarnings warnings, Dictionary<string, int> categoryCounts)
         {
             var populatedLayers = new List<int>();
             for (int i = 0; i < 32; i++)
@@ -287,7 +308,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             if (allCollide && populatedLayers.Count > 2)
             {
-                warnings.Add(
+                warnings.Add(() =>
                     "All layers are set to collide with all other layers. Consider disabling unused layer pairs for performance.");
                 categoryCounts[Cat_CollisionMatrix]++;
             }

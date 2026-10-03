@@ -48,15 +48,15 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `reference_resolution` | `dict[str, int] \| None` | — | Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict. |
 | `settings` | `dict[str, Any] \| None` | — | Generic PanelSettings properties dict for create_panel_settings. Keys: scaleMode (ConstantPixelSize\|ConstantPhysicalSize\|ScaleWithScreenSize), referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight\|ShrinkToFit\|ExpandToFill), match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}). |
 | `max_depth` | `int \| None` | — | Max depth to traverse visual tree (default 10). |
-| `width` | `int \| None` | — | Render width in pixels (default 1920). For render_ui. |
-| `height` | `int \| None` | — | Render height in pixels (default 1080). For render_ui. |
+| `width` | `int \| None` | — | Render width in pixels, 1 to 8192 (default 1920). The frame may contain at most 33,554,432 pixels. For render_ui. |
+| `height` | `int \| None` | — | Render height in pixels, 1 to 8192 (default 1080). For render_ui. |
 | `include_image` | `bool \| None` | — | Return inline base64 PNG in the response (default false). For render_ui. |
-| `max_resolution` | `int \| None` | — | Max resolution for inline base64 image (default 640). For render_ui. |
+| `max_resolution` | `int \| None` | — | Max resolution for inline base64 image, 1 to 8192 (default 640; 0 selects the default). For render_ui. |
 | `screenshot_file_name` | `str \| None` | — | Custom file name for the render output (default: auto-generated). For render_ui. |
 | `output_folder` | `str \| None` | — | Optional folder for the render output. Project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute path inside the project. Overrides the user's Editor preference. If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots). For render_ui. |
 | `stylesheet` | `str \| None` | — | Path to USS stylesheet to link (e.g., 'Assets/UI/Styles.uss'). For link_stylesheet. |
 | `filter_type` | `str \| None` | — | Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. For list. |
-| `page_size` | `int \| None` | — | Number of results per page (default 50). For list. |
+| `page_size` | `int \| None` | — | Number of results per page: 1-1000 (default 50). For list. |
 | `page_number` | `int \| None` | — | Page number, 1-based (default 1). For list. |
 | `element_name` | `str \| None` | — | Name of the visual element to modify (the 'name' attribute in UXML). For modify_visual_element. |
 | `text` | `str \| None` | — | New text content for Label/Button elements. For modify_visual_element. |

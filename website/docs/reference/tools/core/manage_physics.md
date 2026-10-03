@@ -78,7 +78,7 @@ SIMULATION: simulate_step
 | `upwards_modifier` | `float \| None` | — | Explosion upwards modifier. |
 | `steps` | `int \| None` | — | Number of simulation steps (max 100). |
 | `step_size` | `float \| None` | — | Step size in seconds. |
-| `page_size` | `int \| None` | — | Page size for validate results (default 50). |
+| `page_size` | `int \| None` | — | Page size for validate results: 1-1000 (default 50). |
 | `cursor` | `int \| None` | — | Cursor offset for validate pagination. |
 | `component_index` | `int \| None` | — | Zero-based index to select which component when multiple of the same type exist (e.g., multiple HingeJoints or BoxColliders). If omitted, targets the first instance. |
 

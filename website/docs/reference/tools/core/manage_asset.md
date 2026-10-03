@@ -25,11 +25,11 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `asset_type` | `str \| None` | — | Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object. |
 | `properties` | `dict[str, Any] \| str \| None` | — | Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values. |
 | `destination` | `str \| None` | — | Target path for 'duplicate'/'move'. |
-| `generate_preview` | `bool` | — | Generate a preview/thumbnail for the asset when supported. Warning: previews may include large base64 payloads; keep false unless needed. |
+| `generate_preview` | `bool` | — | Generate previews up to 256 pixels per edge and 256 KiB PNG each; search allows at most 32 results and 4 MiB aggregate base64. |
 | `search_pattern` | `str \| None` | — | Search pattern (e.g., '*.prefab' or AssetDatabase filters like 't:MonoScript'). Recommended: put queries like 't:MonoScript' here and set path='Assets'. |
 | `filter_type` | `str \| None` | — | Filter type for search |
 | `filter_date_after` | `str \| None` | — | Date after which to filter |
-| `page_size` | `int \| float \| str \| None` | — | Page size for pagination. Recommended: 25 (smaller for LLM-friendly responses). |
+| `page_size` | `int \| float \| str \| None` | — | Page size: 1-1000 (default 50), or 1-32 with previews (default 32). |
 | `page_number` | `int \| float \| str \| None` | — | Page number for pagination (1-based). |
 
 ## Returns

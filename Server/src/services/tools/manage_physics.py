@@ -6,6 +6,7 @@ from pydantic import BeforeValidator, Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.pagination import validate_page
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -183,7 +184,7 @@ async def manage_physics(
     upwards_modifier: Annotated[Optional[float], "Explosion upwards modifier."] = None,
     steps: Annotated[Optional[int], "Number of simulation steps (max 100)."] = None,
     step_size: Annotated[Optional[float], "Step size in seconds."] = None,
-    page_size: Annotated[Optional[int], "Page size for validate results (default 50)."] = None,
+    page_size: Annotated[Optional[int], "Page size for validate results: 1-1000 (default 50)."] = None,
     cursor: Annotated[Optional[int], "Cursor offset for validate pagination."] = None,
     component_index: Annotated[
         Optional[int],
@@ -197,6 +198,11 @@ async def manage_physics(
     """Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries, validation, simulation."""
 
     action_lower = action.lower()
+    if action_lower == "validate":
+        try:
+            page_size, cursor = validate_page(page_size, cursor, cursor=True)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
     if action_lower not in ALL_ACTIONS:
         return {
             "success": False,

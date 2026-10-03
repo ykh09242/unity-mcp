@@ -14,6 +14,7 @@ from services.tools.utils import parse_json_payload, coerce_int, normalize_prope
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
+from services.tools.pagination import validate_page
 
 
 @mcp_for_unity_tool(
@@ -38,8 +39,8 @@ async def manage_asset(
     destination: Annotated[str,
                            "Target path for 'duplicate'/'move'."] | None = None,
     generate_preview: Annotated[bool,
-                                "Generate a preview/thumbnail for the asset when supported. "
-                                "Warning: previews may include large base64 payloads; keep false unless needed."] = False,
+                                "Generate previews up to 256 pixels per edge and 256 KiB PNG each; "
+                                "search allows at most 32 results and 4 MiB aggregate base64."] = False,
     search_pattern: Annotated[str,
                               "Search pattern (e.g., '*.prefab' or AssetDatabase filters like 't:MonoScript'). "
                               "Recommended: put queries like 't:MonoScript' here and set path='Assets'."] | None = None,
@@ -47,10 +48,16 @@ async def manage_asset(
     filter_date_after: Annotated[str,
                                  "Date after which to filter"] | None = None,
     page_size: Annotated[int | float | str,
-                         "Page size for pagination. Recommended: 25 (smaller for LLM-friendly responses)."] | None = None,
+                         "Page size: 1-1000 (default 50), or 1-32 with previews (default 32)."] | None = None,
     page_number: Annotated[int | float | str,
                            "Page number for pagination (1-based)."] | None = None,
 ) -> dict[str, Any]:
+    if (action or "").lower() == "search":
+        try:
+            page_size, page_number = validate_page(page_size, page_number, preview=generate_preview)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+
     # --- Normalize properties using robust module-level helper ---
     properties, parse_error = normalize_properties(properties)
     if parse_error:

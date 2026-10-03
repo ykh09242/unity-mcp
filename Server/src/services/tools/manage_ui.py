@@ -15,6 +15,7 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
 from services.tools.rendering_limits import render_dimensions_error, screenshot_limits_error
+from services.tools.pagination import validate_page
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -151,7 +152,7 @@ async def manage_ui(
                             "Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. "
                             "For list."] | None = None,
     page_size: Annotated[int,
-                          "Number of results per page (default 50). For list."] | None = None,
+                          "Number of results per page: 1-1000 (default 50). For list."] | None = None,
     page_number: Annotated[int,
                             "Page number, 1-based (default 1). For list."] | None = None,
 
@@ -179,6 +180,12 @@ async def manage_ui(
 
 ) -> dict[str, Any]:
     action_lower = action.lower()
+
+    if action_lower == "list":
+        try:
+            page_size, page_number = validate_page(page_size, page_number)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
 
     if action_lower == "render_ui":
         render_error = render_dimensions_error(

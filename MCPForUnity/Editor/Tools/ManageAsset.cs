@@ -712,14 +712,16 @@ namespace MCPForUnity.Editor.Tools
             string filterType = @params["filterType"]?.ToString();
             string pathScope = @params["path"]?.ToString(); // Use path as folder scope
             string filterDateAfterStr = @params["filterDateAfter"]?.ToString();
-            int pageSize = @params["pageSize"]?.ToObject<int?>() ?? 50; // Default page size
-            int pageNumber = @params["pageNumber"]?.ToObject<int?>() ?? 1; // Default page number (1-based)
             bool generatePreview = @params["generatePreview"]?.ToObject<bool>() ?? false;
+            int maximum = generatePreview ? PaginationBounds.MaxPreviewPageSize : PaginationBounds.MaxPageSize;
+            if (!PaginationBounds.TryRead(@params["page_size"] ?? @params["pageSize"], Math.Min(50, maximum),
+                    1, maximum, "pageSize", out int pageSize, out string pageError)
+                || !PaginationBounds.TryRead(@params["page_number"] ?? @params["pageNumber"], 1,
+                    1, int.MaxValue, "pageNumber", out int pageNumber, out pageError))
+                return new ErrorResponse(pageError);
 
-            if (pageSize <= 0 || pageNumber <= 0)
-                return new ErrorResponse("'pageSize' and 'pageNumber' must be greater than zero.");
-
-            long startIndex = ((long)pageNumber - 1) * pageSize;
+            long startIndex = PaginationBounds.StartIndex(pageNumber, pageSize);
+            var previewBudget = new PaginationBounds.PreviewBudget();
 
             List<string> searchFilters = new List<string>();
             if (!string.IsNullOrEmpty(searchPattern))
@@ -772,7 +774,10 @@ namespace MCPForUnity.Editor.Tools
 
                 foreach (string guid in guids)
                 {
-                    string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                    string assetPath;
+                    try { assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true); }
+                    catch (ArgumentException) { continue; }
+                    catch (InvalidOperationException) { continue; }
                     if (string.IsNullOrEmpty(assetPath))
                         continue;
 
@@ -790,7 +795,7 @@ namespace MCPForUnity.Editor.Tools
 
                     // Only load assets and generate previews for the requested page.
                     if (totalFound >= startIndex && results.Count < pageSize)
-                        results.Add(GetAssetData(assetPath, generatePreview));
+                        results.Add(GetAssetData(assetPath, generatePreview, previewBudget));
                     totalFound++;
                 }
 
@@ -801,6 +806,8 @@ namespace MCPForUnity.Editor.Tools
                         totalAssets = totalFound,
                         pageSize = pageSize,
                         pageNumber = pageNumber,
+                        maxPageSize = maximum,
+                        previewBase64Bytes = previewBudget.Base64Bytes,
                         assets = results,
                     }
                 );
@@ -1112,8 +1119,10 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Creates a serializable representation of an asset.
         /// </summary>
-        private static object GetAssetData(string path, bool generatePreview = false)
+        private static object GetAssetData(string path, bool generatePreview = false,
+            PaginationBounds.PreviewBudget previewBudget = null)
         {
+            path = AssetPathUtility.GetAssetReferencePath(path, allowPackages: true);
             if (string.IsNullOrEmpty(path) || !AssetExists(path))
                 return null;
 
@@ -1124,11 +1133,12 @@ namespace MCPForUnity.Editor.Tools
             int previewWidth = 0;
             int previewHeight = 0;
 
-            if (generatePreview && asset != null)
+            previewBudget ??= new PaginationBounds.PreviewBudget();
+            if (generatePreview && asset != null && previewBudget.CanGenerate)
             {
                 Texture2D preview = AssetPreview.GetAssetPreview(asset);
 
-                if (preview != null)
+                if (preview != null && preview.width > 0 && preview.height > 0)
                 {
                     try
                     {
@@ -1139,15 +1149,19 @@ namespace MCPForUnity.Editor.Tools
                         RenderTexture previous = RenderTexture.active;
                         try
                         {
-                            rt = RenderTexture.GetTemporary(preview.width, preview.height);
+                            double scale = Math.Min(1.0, (double)PaginationBounds.MaxPreviewEdge
+                                / Math.Max(preview.width, preview.height));
+                            int width = Math.Max(1, (int)(preview.width * scale));
+                            int height = Math.Max(1, (int)(preview.height * scale));
+                            rt = RenderTexture.GetTemporary(width, height);
                             UnityEngine.Graphics.Blit(preview, rt);
                             RenderTexture.active = rt;
-                            readablePreview = new Texture2D(preview.width, preview.height, TextureFormat.RGB24, false);
+                            readablePreview = new Texture2D(width, height, TextureFormat.RGB24, false);
                             readablePreview.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
                             readablePreview.Apply();
 
                             var pngData = readablePreview.EncodeToPNG();
-                            if (pngData != null && pngData.Length > 0)
+                            if (pngData != null && previewBudget.TryReserve(pngData.Length))
                             {
                                 previewBase64 = Convert.ToBase64String(pngData);
                                 previewWidth = readablePreview.width;
