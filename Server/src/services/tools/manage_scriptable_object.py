@@ -10,6 +10,8 @@ Actions:
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -20,6 +22,49 @@ from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_bool, parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+
+def _array_numeric_error(patches: list[Any]) -> str | None:
+    """Unity knows existing sizes; only reject impossible numeric domains here."""
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        path = patch.get("propertyPath", patch.get("property_path", patch.get("path", "")))
+        if not isinstance(path, str):
+            continue
+        for digits in re.findall(r"\[(-?\d+)\]", path):
+            try:
+                index = int(digits)
+                if index < 0 or index >= 2_147_483_647:
+                    return "Array index is outside the supported Int32 range."
+            except ValueError:
+                return "Array index is outside the supported Int32 range."
+        op = patch.get("op") or "set"
+        if not isinstance(op, str):
+            continue
+        if op.strip().lower() != "array_resize" and not (op.strip().lower() == "set" and path.endswith(".Array.size")):
+            continue
+        value = patch.get("value")
+        try:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ValueError
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError
+            if isinstance(value, str):
+                try:
+                    size = int(value)
+                except ValueError:
+                    number = float(value)
+                    if not math.isfinite(number):
+                        raise ValueError
+                    size = int(number)
+            else:
+                size = int(value)
+            if size < 0 or size > 2_147_483_647:
+                raise ValueError
+        except (ValueError, OverflowError):
+            return "Array size must be a non-negative Int32 value."
+    return None
 
 
 @mcp_for_unity_tool(
@@ -50,7 +95,9 @@ async def manage_scriptable_object(
                        "Patch list (or JSON string) to apply. "
                        "For object references: use {\"ref\": {\"guid\": \"...\"}} or {\"value\": {\"guid\": \"...\"}}. "
                        "For Sprite sub-assets: include \"spriteName\" in the ref/value object. "
-                       "Single-sprite textures auto-resolve from guid/path alone."] = None,
+                       "Single-sprite textures auto-resolve from guid/path alone. "
+                       "Unity preflights growth: 1,048,576 elements per growing array and "
+                       "2,097,152 added serialized elements/fields per request, including nested copies."] = None,
     # --- validation ---
     dry_run: Annotated[bool | str | None,
                        "If true, validate patches without applying (modify only)."] = None,
@@ -61,8 +108,6 @@ async def manage_scriptable_object(
         return {"success": False, "message": "manage_scriptable_object: 'overwrite' must be a boolean or a recognized boolean string."}
     if dry_run is not None and parsed_dry_run is None:
         return {"success": False, "message": "manage_scriptable_object: 'dry_run' must be a boolean or a recognized boolean string."}
-    unity_instance = await get_unity_instance_from_context(ctx)
-
     # Tolerate JSON-string payloads (LLMs sometimes stringify complex objects)
     parsed_target = parse_json_payload(target)
     parsed_patches = parse_json_payload(patches)
@@ -72,6 +117,13 @@ async def manage_scriptable_object(
 
     if parsed_patches is not None and not isinstance(parsed_patches, list):
         return {"success": False, "message": "manage_scriptable_object: 'patches' must be a list (or JSON string of a list)."}
+
+    if parsed_patches is not None:
+        numeric_error = _array_numeric_error(parsed_patches)
+        if numeric_error:
+            return {"success": False, "message": numeric_error}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
 
     params: dict[str, Any] = {
         "action": action,

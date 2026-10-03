@@ -4,6 +4,56 @@ from .test_helpers import DummyContext
 import services.tools.manage_scriptable_object as mod
 
 
+@pytest.mark.parametrize("patch", [
+    {"path": "items", "op": "array_resize", "value": 2_147_483_648},
+    {"path": "items", "op": "array_resize", "value": "9223372036854775808"},
+    {"path": "items.Array.size", "value": -1},
+    {"path": "items", "op": "array_resize", "value": True},
+    {"path": "items", "op": "array_resize", "value": 1e100},
+    {"path": "items[2147483647]", "value": 0},
+    {"path": "items[-1]", "value": 0},
+    {"path": "outer[1].inner[9999999999999999999999]", "value": 0},
+])
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.asyncio
+async def test_impossible_array_numbers_fail_before_instance_or_transport(monkeypatch, patch, dry_run):
+    async def forbidden(*args):
+        pytest.fail("Invalid numeric array request reached routing")
+
+    monkeypatch.setattr(mod, "get_unity_instance_from_context", forbidden)
+    monkeypatch.setattr(mod, "send_with_unity_instance", forbidden)
+    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", patches=[patch], dry_run=dry_run)
+    assert result["success"] is False
+    assert "Int32" in result["message"]
+
+
+@pytest.mark.parametrize("patch", [
+    {"path": "items", "op": "array_resize", "value": 1_500_000},
+    {"path": "items[1499999]", "value": 0},
+    {"path": "items", "op": "array_resize", "value": "4"},
+    {"path": "items", "op": "array_resize", "value": 4.75},
+    {"path": "items", "op": "array_resize", "value": "4.75"},
+    {"path": "items", "op": "array_resize", "value": "4e0"},
+    {"path": "nested", "value": {"numbers": [3, 4]}},
+])
+@pytest.mark.asyncio
+async def test_state_dependent_growth_is_forwarded_to_authoritative_unity_budget(monkeypatch, patch):
+    captured = {}
+
+    async def instance(ctx):
+        return None
+
+    async def send(fn, selected, command, params):
+        captured.update(params)
+        return {"success": False, "message": "controlled Unity response"}
+
+    monkeypatch.setattr(mod, "get_unity_instance_from_context", instance)
+    monkeypatch.setattr(mod, "send_with_unity_instance", send)
+    result = await mod.manage_scriptable_object(ctx=DummyContext(), action="modify", patches=[patch])
+    assert result["message"] == "controlled Unity response"
+    assert captured["patches"] == [patch]
+
+
 @pytest.mark.parametrize("flag", ["dry_run", "overwrite"])
 @pytest.mark.parametrize("value", ["garbage", "tru", ""])
 @pytest.mark.asyncio
