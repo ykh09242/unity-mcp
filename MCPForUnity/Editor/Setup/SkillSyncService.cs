@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Setup
 {
@@ -17,6 +18,8 @@ namespace MCPForUnity.Editor.Setup
         private const string SkillSubdir = ".claude/skills/unity-mcp-skill";
         private const string SyncOwnershipMarker = ".unity-mcp-skill-sync";
         private const string LastSyncedCommitKeyPrefix = "UnityMcpSkillSync.LastSyncedCommit";
+        private const int MaxLocalEntries = 8192;
+        private const int MaxLocalDepth = 64;
 
         public sealed class SyncResult
         {
@@ -72,15 +75,18 @@ namespace MCPForUnity.Editor.Setup
             }
 
             log?.Invoke($"Target repository: {repoInfo.Owner}/{repoInfo.Repo}@{branch}");
-            var snapshot = FetchRemoteSnapshot(repoInfo, branch, SkillSubdir, log);
             var installPath = ResolveAndValidateInstallPath(installDir);
+            // Inspect existing entries before any remote request, adoption or mutation.
+            var localFiles = ListFiles(installPath);
+            var snapshot = FetchRemoteSnapshot(repoInfo, branch, SkillSubdir, log);
 
             if (!Directory.Exists(installPath))
             {
+                ValidateUnlinkedPath(installPath);
                 Directory.CreateDirectory(installPath);
             }
 
-            var localFiles = ListFiles(installPath);
+            localFiles = ListFiles(installPath);
             var pathComparison = GetPathComparison(installPath);
             var pathComparer = GetPathComparer(pathComparison);
             EnsureManagedInstallRoot(installPath, localFiles.Keys, snapshot.Files.Keys, pathComparer);
@@ -98,6 +104,11 @@ namespace MCPForUnity.Editor.Setup
             log?.Invoke("Files mirrored to install directory.");
 
             ValidateFileHashes(installPath, snapshot.Files, pathComparison, log);
+            var markerPath = ResolvePathUnderRoot(installPath, SyncOwnershipMarker, pathComparison);
+            if (!File.Exists(markerPath))
+            {
+                File.WriteAllText(ResolvePathUnderRoot(installPath, SyncOwnershipMarker, pathComparison), "managed-by-unity-mcp-skill-sync");
+            }
             log?.Invoke($"Synced to commit: {snapshot.CommitSha}");
             log?.Invoke("=== Sync Done ===");
 
@@ -378,7 +389,14 @@ namespace MCPForUnity.Editor.Setup
                 throw new InvalidOperationException($"Path escapes install root: {relativePath}");
             }
 
-            return fullPath;
+            ValidateUnlinkedPath(root);
+            return SafePathUtility.ResolveWithinRoot(root, fullPath);
+        }
+
+        private static string ValidateUnlinkedPath(string path)
+        {
+            var fullPath = Path.GetFullPath(path);
+            return SafePathUtility.ResolveWithinRoot(Path.GetPathRoot(fullPath), fullPath);
         }
 
         private static string EnsureTrailingDirectorySeparator(string path)
@@ -406,7 +424,7 @@ namespace MCPForUnity.Editor.Setup
                     continue;
                 }
 
-                var localBlobSha = ComputeGitBlobSha1(localPath);
+                var localBlobSha = ComputeGitBlobSha1(ValidateUnlinkedPath(localPath));
                 if (!string.Equals(localBlobSha, remoteEntry.Value, StringComparison.Ordinal))
                 {
                     plan.Updated.Add(remoteEntry.Key);
@@ -444,6 +462,8 @@ namespace MCPForUnity.Editor.Setup
         {
             SkillSyncDownload.RequireFileCount((long)plan.Added.Count + plan.Updated.Count);
             SkillSyncDownload.RequireFileCount(remoteFiles.Count);
+            SkillSyncDownload.RequireFileCount(plan.Deleted.Count);
+            ValidatePlanPaths(targetRoot, plan, pathComparison);
             var changedPaths = plan.Added.Concat(plan.Updated).ToArray();
             var downloadedFiles = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             var budget = new SkillSyncDownload.ByteBudget();
@@ -461,6 +481,9 @@ namespace MCPForUnity.Editor.Setup
                 downloadedFiles[relativePath] = bytes;
             }
 
+            // A callback/download may have changed the tree since planning. Validate the
+            // entire tree and every planned destination again before the first mutation.
+            ValidatePlanPaths(targetRoot, plan, pathComparison);
             // Only obsolete paths that block a new file or its parent must be removed early.
             // All downloads are verified first so a download failure preserves the old files.
             foreach (var relativePath in plan.Deleted)
@@ -472,7 +495,7 @@ namespace MCPForUnity.Editor.Setup
                 }
 
                 var obsoleteFile = ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
-                if (File.Exists(obsoleteFile)) File.Delete(obsoleteFile);
+                if (File.Exists(obsoleteFile)) File.Delete(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison));
             }
 
             foreach (var relativePath in changedPaths)
@@ -481,15 +504,20 @@ namespace MCPForUnity.Editor.Setup
                 if (Directory.Exists(targetFile))
                 {
                     RemoveEmptyDirectories(targetFile);
-                    if (!Directory.EnumerateFileSystemEntries(targetFile).Any()) Directory.Delete(targetFile, false);
+                    if (!Directory.EnumerateFileSystemEntries(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison)).Any())
+                        Directory.Delete(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison), false);
                 }
                 var targetDirectory = Path.GetDirectoryName(targetFile);
                 if (!string.IsNullOrEmpty(targetDirectory))
                 {
+                    ValidateUnlinkedPath(targetDirectory);
                     Directory.CreateDirectory(targetDirectory);
                 }
 
-                File.WriteAllBytes(targetFile, downloadedFiles[relativePath]);
+                // Managed .NET does not provide an atomic open-at/no-follow boundary.
+                // Revalidate immediately at each sink; concurrent swaps after this check
+                // require OS-level isolation and are not prevented by these checks.
+                File.WriteAllBytes(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison), downloadedFiles[relativePath]);
             }
 
             foreach (var relativePath in plan.Deleted)
@@ -497,11 +525,18 @@ namespace MCPForUnity.Editor.Setup
                 var targetFile = ResolvePathUnderRoot(targetRoot, relativePath, pathComparison);
                 if (File.Exists(targetFile))
                 {
-                    File.Delete(targetFile);
+                    File.Delete(ResolvePathUnderRoot(targetRoot, relativePath, pathComparison));
                 }
             }
 
             RemoveEmptyDirectories(targetRoot);
+        }
+
+        private static void ValidatePlanPaths(string root, SyncPlan plan, StringComparison comparison)
+        {
+            ListFiles(root);
+            foreach (var path in plan.Added.Concat(plan.Updated).Concat(plan.Deleted))
+                ResolvePathUnderRoot(root, path, comparison);
         }
 
         private static void ValidateFileHashes(string installRoot, Dictionary<string, string> remoteFiles, StringComparison pathComparison, Action<string> log)
@@ -554,24 +589,55 @@ namespace MCPForUnity.Editor.Setup
         internal static Dictionary<string, string> ListFiles(string root)
         {
             var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (!Directory.Exists(root))
+            var normalizedRoot = ValidateUnlinkedPath(root);
+            foreach (var entry in EnumerateContainedEntries(normalizedRoot))
             {
-                return map;
-            }
-
-            var normalizedRoot = Path.GetFullPath(root);
-            foreach (var filePath in Directory.GetFiles(normalizedRoot, "*", SearchOption.AllDirectories))
-            {
-                var relativePath = Path.GetRelativePath(normalizedRoot, filePath).Replace('\\', '/');
+                if (entry.directory) continue;
+                var relativePath = Path.GetRelativePath(normalizedRoot, entry.path).Replace('\\', '/');
                 if (string.Equals(relativePath, SyncOwnershipMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                map[relativePath] = filePath;
+                SkillSyncDownload.RequireFileCount((long)map.Count + 1);
+                map[relativePath] = entry.path;
             }
 
             return map;
+        }
+
+        private static IEnumerable<(string path, bool directory)> EnumerateContainedEntries(string root)
+        {
+            root = ValidateUnlinkedPath(root);
+            if (!Directory.Exists(root)) yield break;
+            var pending = new Stack<(string path, int depth)>();
+            pending.Push((root, 0));
+            int count = 0;
+            while (pending.Count > 0)
+            {
+                var directory = pending.Pop();
+                ValidateUnlinkedPath(root);
+                var safeDirectory = SafePathUtility.ResolveWithinRoot(root, directory.path);
+                // Top-level enumeration never descends automatically through a link.
+                foreach (var entry in Directory.EnumerateFileSystemEntries(safeDirectory))
+                {
+                    if (++count > MaxLocalEntries)
+                        throw new InvalidOperationException("Local skill tree exceeds the entry limit.");
+                    ValidateUnlinkedPath(root);
+                    var safeEntry = SafePathUtility.ResolveWithinRoot(root, entry);
+                    var attributes = File.GetAttributes(safeEntry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        throw new InvalidOperationException("Linked skill entries are not permitted.");
+                    bool isDirectory = (attributes & FileAttributes.Directory) != 0;
+                    if (isDirectory)
+                    {
+                        if (directory.depth >= MaxLocalDepth)
+                            throw new InvalidOperationException("Local skill tree exceeds the directory depth limit.");
+                        pending.Push((safeEntry, directory.depth + 1));
+                    }
+                    yield return (safeEntry, isDirectory);
+                }
+            }
         }
 
         private static void EnsureManagedInstallRoot(
@@ -580,7 +646,9 @@ namespace MCPForUnity.Editor.Setup
             ICollection<string> remoteRelativePaths,
             StringComparer pathComparer)
         {
-            var markerPath = Path.Combine(installPath, SyncOwnershipMarker);
+            ListFiles(installPath);
+            var comparison = pathComparer.Equals("a", "A") ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var markerPath = ResolvePathUnderRoot(installPath, SyncOwnershipMarker, comparison);
             if (File.Exists(markerPath))
             {
                 return;
@@ -593,7 +661,7 @@ namespace MCPForUnity.Editor.Setup
                     "Please choose an empty folder or an existing unity-mcp-skill folder.");
             }
 
-            File.WriteAllText(markerPath, "managed-by-unity-mcp-skill-sync");
+            // Write the marker only after verified content has been applied.
         }
 
         private static bool CanAdoptLegacyManagedRoot(
@@ -665,47 +733,36 @@ namespace MCPForUnity.Editor.Setup
 
         private static bool IsCaseSensitiveFileSystem(string root)
         {
+            ListFiles(root);
+            var probeName = $".mcp-case-probe-{Guid.NewGuid():N}";
+            var lowercasePath = ResolvePathUnderRoot(root, probeName.ToLowerInvariant(), StringComparison.Ordinal);
+            // CreateNew rejects a colliding final entry instead of overwriting it.
+            using (new FileStream(lowercasePath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
             try
             {
-                var probeName = $".mcp-case-probe-{Guid.NewGuid():N}";
-                var lowercasePath = Path.Combine(root, probeName.ToLowerInvariant());
-                var uppercasePath = Path.Combine(root, probeName.ToUpperInvariant());
-                File.WriteAllText(lowercasePath, string.Empty);
-                try
-                {
-                    return !File.Exists(uppercasePath);
-                }
-                finally
-                {
-                    if (File.Exists(lowercasePath))
-                    {
-                        File.Delete(lowercasePath);
-                    }
-                }
+                var uppercasePath = ResolvePathUnderRoot(root, probeName.ToUpperInvariant(), StringComparison.OrdinalIgnoreCase);
+                return !File.Exists(uppercasePath);
             }
-            catch
+            finally
             {
-                return true;
+                File.Delete(ResolvePathUnderRoot(root, probeName.ToLowerInvariant(), StringComparison.Ordinal));
             }
         }
 
         private static void RemoveEmptyDirectories(string root)
         {
-            if (!Directory.Exists(root))
-            {
-                return;
-            }
-
-            var directories = Directory.GetDirectories(root, "*", SearchOption.AllDirectories);
-            Array.Sort(directories, (a, b) => string.CompareOrdinal(b, a));
+            var directories = EnumerateContainedEntries(root).Where(entry => entry.directory)
+                .Select(entry => entry.path).OrderByDescending(path => path.Length).ToArray();
             foreach (var directory in directories)
             {
-                if (Directory.EnumerateFileSystemEntries(directory).Any())
+                ValidateUnlinkedPath(root);
+                if (Directory.EnumerateFileSystemEntries(SafePathUtility.ResolveWithinRoot(root, directory)).Any())
                 {
                     continue;
                 }
 
-                Directory.Delete(directory, false);
+                ValidateUnlinkedPath(root);
+                Directory.Delete(SafePathUtility.ResolveWithinRoot(root, directory), false);
             }
         }
 
@@ -737,7 +794,7 @@ namespace MCPForUnity.Editor.Setup
                 throw new InvalidOperationException("Install Dir resolved to an empty path.");
             }
 
-            return expandedPath;
+            return ValidateUnlinkedPath(expandedPath);
         }
 
         internal static string ExpandPath(string path)
