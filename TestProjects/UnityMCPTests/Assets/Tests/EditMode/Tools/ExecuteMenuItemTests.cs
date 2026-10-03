@@ -1,11 +1,27 @@
 using NUnit.Framework;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Resources.MenuItems;
+using System.Reflection;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    [Parallelizable(ParallelScope.None)]
     public class ExecuteMenuItemTests
     {
+        private const string OwnedMenuPath = "Tools/MCPForUnityTests/Owned Menu 80f1a802b581420493c68b31d1b43d8c";
+        private static bool _ownedMenuInvoked;
+
+        [MenuItem(OwnedMenuPath)]
+        private static void InvokeOwnedMenu() => _ownedMenuInvoked = true;
+
+        [SetUp]
+        public void SetUp() => _ownedMenuInvoked = false;
+
+        [TearDown]
+        public void TearDown() => _ownedMenuInvoked = false;
+
         private static JObject ToJO(object o) => JObject.FromObject(o);
 
         [Test]
@@ -27,13 +43,102 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void Execute_NonBlacklisted_ReturnsImmediateSuccess()
+        public void Execute_OwnedHarmlessMenu_InvokesOnlyManagedCallback()
         {
-            // We don't rely on the menu actually existing; execution is delayed and we only check the immediate response shape
-            var res = ExecuteMenuItem.HandleCommand(new JObject { ["menuPath"] = "File/Save Project" });
-            var jo = ToJO(res);
-            Assert.IsTrue((bool)jo["success"], "Expected immediate success response");
-            StringAssert.Contains("Attempted to execute menu item", (string)jo["message"], "Expected attempt message");
+            try
+            {
+                var jo = ToJO(ExecuteMenuItem.HandleCommand(new JObject { ["menuPath"] = OwnedMenuPath }));
+                Assert.IsTrue((bool)jo["success"], jo.ToString());
+                Assert.IsTrue(_ownedMenuInvoked, "The exact owned callback must execute synchronously.");
+            }
+            finally
+            {
+                _ownedMenuInvoked = false;
+            }
+        }
+
+        [Test]
+        public void Execute_NullParameters_ReturnsError()
+        {
+            Assert.IsFalse(ToJO(ExecuteMenuItem.HandleCommand(null)).Value<bool>("success"));
+            Assert.IsFalse(_ownedMenuInvoked);
+        }
+
+        [TestCase("{}")]
+        [TestCase("{\"menu_path\":null,\"menuPath\":\"Fixture/A\"}")]
+        [TestCase("{\"menuPath\":\"\"}")]
+        [TestCase("{\"menu_path\":\"   \"}")]
+        [TestCase("{\"menu_path\":42}")]
+        [TestCase("{\"menuPath\":false}")]
+        [TestCase("{\"menu_path\":{\"path\":\"Fixture/A\"}}")]
+        [TestCase("{\"menuPath\":[\"Fixture/A\"]}")]
+        public void PathParserRejectsInvalidInputsWithoutMenuExecution(string json)
+        {
+            var parameters = JObject.Parse(json);
+            string before = parameters.ToString();
+            var method = typeof(ExecuteMenuItem).GetMethod("TryGetMenuPath", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            object[] arguments = { parameters, null, null };
+            Assert.IsFalse((bool)method.Invoke(null, arguments));
+            Assert.IsFalse(ToJO(arguments[2]).Value<bool>("success"));
+            StringAssert.Contains("menu_path", ToJO(arguments[2]).Value<string>("error"));
+            Assert.AreEqual(before, parameters.ToString());
+            Assert.IsFalse(_ownedMenuInvoked);
+        }
+
+        [TestCase("{\"menu_path\":\"Fixture/A\"}", "Fixture/A")]
+        [TestCase("{\"menuPath\":\"Fixture/Z\"}", "Fixture/Z")]
+        [TestCase("{\"menu_path\":\"Fixture/A\",\"menuPath\":\"Fixture/Z\"}", "Fixture/A")]
+        [TestCase("{\"menu_path\":\" Fixture/A \"}", " Fixture/A ")]
+        public void PathParserPreservesStringsAndPrecedence(string json, string expected)
+        {
+            var parameters = JObject.Parse(json);
+            string before = parameters.ToString();
+            var method = typeof(ExecuteMenuItem).GetMethod("TryGetMenuPath", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            object[] arguments = { parameters, null, null };
+            Assert.IsTrue((bool)method.Invoke(null, arguments));
+            Assert.AreEqual(expected, arguments[1]);
+            Assert.IsNull(arguments[2]);
+            Assert.AreEqual(before, parameters.ToString());
+            Assert.IsFalse(_ownedMenuInvoked);
+        }
+
+        [TestCase("{}", false)]
+        [TestCase("{\"refresh\":null}", false)]
+        [TestCase("{\"refresh\":false}", false)]
+        [TestCase("{\"refresh\":0}", false)]
+        [TestCase("{\"refresh\":\"false\"}", false)]
+        [TestCase("{\"refresh\":true}", true)]
+        [TestCase("{\"refresh\":1}", true)]
+        [TestCase("{\"refresh\":\"true\"}", true)]
+        public void RefreshParserPreservesDefaultsAndCoercions(string json, bool expected)
+        {
+            var parameters = JObject.Parse(json);
+            string before = parameters.ToString();
+            var method = typeof(GetMenuItems).GetMethod("TryReadRefresh", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            object[] arguments = { parameters, false, null };
+            Assert.IsTrue((bool)method.Invoke(null, arguments));
+            Assert.AreEqual(expected, arguments[1]);
+            Assert.IsNull(arguments[2]);
+            Assert.AreEqual(before, parameters.ToString());
+        }
+
+        [TestCase("{\"refresh\":\"invalid\"}")]
+        [TestCase("{\"refresh\":{}}")]
+        [TestCase("{\"refresh\":[]}")]
+        public void RefreshParserRejectsMalformedValuesWithoutDiscovery(string json)
+        {
+            var parameters = JObject.Parse(json);
+            string before = parameters.ToString();
+            var method = typeof(GetMenuItems).GetMethod("TryReadRefresh", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            object[] arguments = { parameters, false, null };
+            Assert.IsFalse((bool)method.Invoke(null, arguments));
+            Assert.IsFalse(ToJO(arguments[2]).Value<bool>("success"));
+            StringAssert.Contains("refresh", ToJO(arguments[2]).Value<string>("error"));
+            Assert.AreEqual(before, parameters.ToString());
         }
     }
 }

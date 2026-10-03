@@ -20,7 +20,8 @@ namespace MCPForUnity.Editor.Resources.MenuItems
 
         public static object HandleCommand(JObject @params)
         {
-            bool forceRefresh = @params?["refresh"]?.ToObject<bool>() ?? false;
+            if (!TryReadRefresh(@params, out bool forceRefresh, out ErrorResponse inputError))
+                return inputError;
             string search = @params?["search"]?.ToString();
 
             var items = GetMenuItemsInternal(forceRefresh);
@@ -34,6 +35,22 @@ namespace MCPForUnity.Editor.Resources.MenuItems
 
             string message = $"Retrieved {items.Count} menu items";
             return new SuccessResponse(message, items);
+        }
+
+        private static bool TryReadRefresh(JObject @params, out bool forceRefresh, out ErrorResponse error)
+        {
+            forceRefresh = false;
+            error = null;
+            try
+            {
+                forceRefresh = @params?["refresh"]?.ToObject<bool?>() ?? false;
+                return true;
+            }
+            catch (Exception e) when (e is FormatException || e is InvalidCastException || e is OverflowException || e is ArgumentException)
+            {
+                error = new ErrorResponse("Invalid parameter 'refresh': expected Boolean.");
+                return false;
+            }
         }
 
         internal static List<string> GetMenuItemsInternal(bool forceRefresh)
