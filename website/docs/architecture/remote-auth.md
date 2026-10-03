@@ -27,7 +27,7 @@ Users must explicitly select an instance with `set_active_instance`, or supply `
 
 ## Plugin connection and registry
 
-The outer ASGI boundary authenticates `/hub/plugin` before `PluginHub.on_connect`. The hub retains its own validation guard and stores `user_id` and API-key metadata on WebSocket state. After acceptance, `_handle_register` passes that identity to `PluginRegistry.register()`.
+The outer ASGI boundary authenticates `/hub/plugin` before `PluginHub.on_connect`. The hub retains its own validation guard and stores `user_id` and API-key metadata on WebSocket state. Before acceptance, it reserves connection capacity for that identity. The first message must register the plugin within 10 seconds; `_handle_register` passes the authenticated identity to `PluginRegistry.register()`.
 
 The registry uses separate keys for local and remote sessions:
 
@@ -36,7 +36,11 @@ The registry uses separate keys for local and remote sessions:
 | Local | `project_hash` |
 | Remote | `(user_id, project_hash)` |
 
-Two users may connect projects with the same hash without sharing sessions. Reconnecting the same user's project replaces its prior connection. Each socket registers once; limits are 32 sessions per user, 256 overall, and 256 tools / 512 KiB of metadata per plugin. Remote session listing without `user_id` raises `ValueError`.
+Two users may connect projects with the same hash without sharing sessions. Reconnecting the same user's project replaces its prior connection, but needs an available connection slot during the handshake. Each socket registers once. Pending and registered sockets together are limited to 32 per user and 256 overall; disconnect, timeout, cancellation, and failed admission release capacity. Catalog limits are 256 tools / 512 KiB of metadata per plugin. Remote session listing without `user_id` raises `ValueError`.
+
+Custom-tool polling is separately admitted before its initial dispatch: at most 16 active executions per selected project, 32 per user, and 256 overall. The server caps the entire execution at 600 seconds, including commands and sleeps, regardless of plugin metadata. The reservation remains until the execution exits.
+
+Plugin frames are limited to 32 MiB before JSON decoding, with graph-depth and node limits. Result admission measures both individual and aggregate retained data. MCP output is bounded again after conversion, including its text and structured copies. HTTP and SSE keep reservations until the matching response is sent or its delivery is cancelled, including legacy SSE responses queued after their POST has completed. Estimated retained-result limits are 256 MiB per plugin session, 512 MiB per user, and 1 GiB globally.
 
 The hub's inner guard can also close with `4401`, `4403`, or `1013` if authentication changes or fails after the outer gate. Normal missing/invalid credentials are rejected by the outer gate first.
 

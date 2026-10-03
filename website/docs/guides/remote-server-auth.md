@@ -271,7 +271,11 @@ Transient failures (5xx, timeouts, network errors) are **not cached**, so subseq
 
 Remote plugin tool definitions are scoped to the authenticated user's selected Unity session. Read `mcpforunity://custom-tools` and call `execute_custom_tool` to use them. Hosted servers do not publish plugin-defined tools as process-global MCP methods or let plugin registration change global tool-group visibility. Re-read the resource after reconnecting or changing the Editor's tool selection; one tenant's changes do not broadcast notifications to other tenants.
 
-Each plugin can register at most 256 tools with 512 KiB of serialized metadata. A socket registers only one session; the server permits at most 32 sessions per user and 256 sessions overall. Reconnecting an existing project replaces its previous session without consuming another quota slot.
+Each plugin can register at most 256 tools with 512 KiB of serialized metadata. A socket registers only one session and must register as its first message within 10 seconds. The server permits at most 32 accepted sockets per user and 256 overall, counting sockets that have not registered yet. Reconnecting an existing project replaces its previous session, but needs an available connection slot during the handshake; close an old connection first if the limit has been reached.
+
+Custom-tool polling is limited to 16 active executions per selected project, 32 per user, and 256 overall. Its server-owned deadline is at most 600 seconds, including initial dispatch, subsequent polling commands, and sleeps. Plugin metadata cannot extend that deadline.
+
+Plugin messages and final MCP responses have independent 32 MiB ceilings. Result depth, node count, and retained data are also bounded. Slow HTTP/SSE delivery continues to consume result capacity until delivery or cancellation finishes; exceeding a budget returns a small error. Use pagination and asset paths for large content instead of returning full files inline. Model downloads and archive extraction retain their separate larger limits.
 
 ### "API key authentication required" error on every tool call
 
