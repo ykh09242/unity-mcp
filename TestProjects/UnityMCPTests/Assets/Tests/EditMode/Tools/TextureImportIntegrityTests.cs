@@ -68,6 +68,59 @@ namespace MCPForUnityTests.EditMode.Tools
             return JObject.FromObject(ManageTexture.HandleCommand(request));
         }
 
+        [TestCase("create", 4097, 1, 1)]
+        [TestCase("create_sprite", 1, 4097, 1)]
+        [TestCase("apply_pattern", 4097, 4097, 1)]
+        [TestCase("apply_gradient", int.MaxValue, int.MaxValue, 1)]
+        [TestCase("apply_noise", 4096, 4096, 3)]
+        [TestCase("apply_noise", 1, 1, int.MaxValue)]
+        public void OverBudgetGenerationDoesNotReplaceExistingTexture(string action, int width, int height, int octaves)
+        {
+            byte[] before = File.ReadAllBytes(Absolute(_path));
+            var response = Send(action, new JObject { ["width"] = width, ["height"] = height, ["octaves"] = octaves });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void OverBudgetPixelRegionDoesNotReplaceExistingTexture()
+        {
+            byte[] before = File.ReadAllBytes(Absolute(_path));
+            var response = Send("modify", new JObject { ["setPixels"] = new JObject {
+                ["width"] = int.MaxValue, ["height"] = int.MaxValue,
+                ["color"] = new JArray(255, 0, 0, 255) } });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("create")]
+        [TestCase("create_sprite")]
+        public void ImageHeaderOverBudgetRejectsBeforeReplacingTexture(string action)
+        {
+            byte[] before = File.ReadAllBytes(Absolute(_path));
+            byte[] image = (byte[])before.Clone();
+            // Change PNG IHDR width to 4097 and repair its CRC so size is the rejection reason.
+            image[16] = 0; image[17] = 0; image[18] = 16; image[19] = 1;
+            uint crc = 0xffffffff;
+            for (int i = 12; i < 29; i++)
+            {
+                crc ^= image[i];
+                for (int bit = 0; bit < 8; bit++)
+                    crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xedb88320u : 0u);
+            }
+            crc ^= 0xffffffff;
+            for (int i = 0; i < 4; i++) image[29 + i] = (byte)(crc >> (24 - 8 * i));
+            string source = _root + "/OverBudget.png";
+            File.WriteAllBytes(Absolute(source), image);
+            var response = Send(action, new JObject { ["imagePath"] = source });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("dimensions exceed max", response.Value<string>("error"));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
         private void AssertRejectedWithoutChanges(string action, JObject options)
         {
             var importer = AssetImporter.GetAtPath(_path) as TextureImporter;

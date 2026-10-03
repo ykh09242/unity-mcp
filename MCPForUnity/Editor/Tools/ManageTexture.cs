@@ -16,9 +16,12 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_texture", AutoRegister = false, Group = "vfx")]
     public static class ManageTexture
     {
-        private const int MaxTextureDimension = 1024;
-        private const int MaxTexturePixels = 1024 * 1024;
-        private const int MaxNoiseWork = 4000000;
+        // Allow 4K assets and typical 2K eight-octave / 4K two-octave noise.
+        private const int MaxTextureDimension = 4096;
+        private const int MaxTexturePixels = 4096 * 4096;
+        private const int MaxNoiseWork = 32 * 1024 * 1024;
+        // An incompressible 4K RGBA PNG needs about 64 MiB before format overhead.
+        private const int MaxEncodedImageBytes = 96 * 1024 * 1024;
         private static readonly List<string> ValidActions = new List<string>
         {
             "create",
@@ -36,10 +39,175 @@ namespace MCPForUnity.Editor.Tools
             if (width <= 0 || height <= 0)
                 return new ErrorResponse($"Invalid dimensions: {width}x{height}. Must be positive.");
             if (width > MaxTextureDimension || height > MaxTextureDimension)
-                warnings.Add($"Dimensions exceed recommended max {MaxTextureDimension} per side (got {width}x{height}).");
+                return new ErrorResponse($"Dimensions exceed max {MaxTextureDimension} per side (got {width}x{height}).");
             long totalPixels = (long)width * height;
             if (totalPixels > MaxTexturePixels)
-                warnings.Add($"Total pixels exceed recommended max {MaxTexturePixels} (got {width}x{height}).");
+                return new ErrorResponse($"Total pixels exceed max {MaxTexturePixels} (got {width}x{height}).");
+            return null;
+        }
+
+        // Bound the actual read, including a file that grows after its length is checked.
+        private static byte[] ReadBoundedImage(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long length = stream.Length;
+            if (length <= 0 || length > MaxEncodedImageBytes)
+                throw new ArgumentException($"Image must contain between 1 and {MaxEncodedImageBytes} encoded bytes.");
+            byte[] bytes = new byte[(int)length];
+            int offset = 0;
+            while (offset < bytes.Length)
+            {
+                int read = stream.Read(bytes, offset, bytes.Length - offset);
+                if (read == 0) throw new ArgumentException("Image changed or was truncated while reading.");
+                offset += read;
+            }
+            if (stream.ReadByte() != -1)
+                throw new ArgumentException("Image grew while reading.");
+            return bytes;
+        }
+
+        private static uint ReadBigEndian(byte[] bytes, int offset)
+        {
+            return ((uint)bytes[offset] << 24) | ((uint)bytes[offset + 1] << 16)
+                | ((uint)bytes[offset + 2] << 8) | bytes[offset + 3];
+        }
+
+        private static uint PngHeaderCrc(byte[] bytes, int offset)
+        {
+            uint crc = 0xffffffff;
+            for (int i = offset; i < offset + 17; i++)
+            {
+                crc ^= bytes[i];
+                for (int bit = 0; bit < 8; bit++)
+                    crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xedb88320u : 0u);
+            }
+            return crc ^ 0xffffffff;
+        }
+
+        // Only documented PNG/JPEG inputs are decoded. Header lengths never drive allocations.
+        private static void ReadImageDimensions(byte[] bytes, out int width, out int height)
+        {
+            width = height = 0;
+            bool png = bytes.Length >= 8 && bytes[0] == 137 && bytes[1] == 80
+                && bytes[2] == 78 && bytes[3] == 71 && bytes[4] == 13 && bytes[5] == 10
+                && bytes[6] == 26 && bytes[7] == 10;
+            if (png)
+            {
+                bool header = false, data = false, end = false;
+                int offset = 8;
+                while (offset <= bytes.Length - 12)
+                {
+                    uint length = ReadBigEndian(bytes, offset);
+                    if (length > (uint)(bytes.Length - offset - 12))
+                        throw new ArgumentException("Truncated PNG chunk.");
+                    uint type = ReadBigEndian(bytes, offset + 4);
+                    if (!header && type != 0x49484452)
+                        throw new ArgumentException("PNG must start with IHDR.");
+                    if (type == 0x49484452)
+                    {
+                        if (header || length != 13) throw new ArgumentException("Invalid or repeated PNG IHDR.");
+                        if (PngHeaderCrc(bytes, offset + 4) != ReadBigEndian(bytes, offset + 21))
+                            throw new ArgumentException("Invalid PNG IHDR checksum.");
+                        uint w = ReadBigEndian(bytes, offset + 8), h = ReadBigEndian(bytes, offset + 12);
+                        if (w == 0 || h == 0 || w > MaxTextureDimension || h > MaxTextureDimension)
+                            throw new ArgumentException($"Image dimensions exceed max {MaxTextureDimension} per side or are invalid.");
+                        width = (int)w; height = (int)h;
+                        int depth = bytes[offset + 16], color = bytes[offset + 17];
+                        bool validDepth = color == 0 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16)
+                            : color == 3 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8)
+                            : (color == 2 || color == 4 || color == 6) && (depth == 8 || depth == 16);
+                        if (!validDepth || bytes[offset + 18] != 0 || bytes[offset + 19] != 0 || bytes[offset + 20] > 1)
+                            throw new ArgumentException("Invalid PNG image header.");
+                        header = true;
+                    }
+                    else if (type == 0x49444154) data = true;
+                    else if (type == 0x6163544c) throw new ArgumentException("Animated PNG inputs are not supported.");
+                    else if (type == 0x49454e44)
+                    {
+                        if (length != 0 || !data || offset + 12 != bytes.Length)
+                            throw new ArgumentException("Invalid PNG end or missing image data.");
+                        end = true;
+                        break;
+                    }
+                    offset += (int)length + 12;
+                }
+                if (!header || !end) throw new ArgumentException("Truncated PNG image.");
+                return;
+            }
+            if (bytes.Length < 4 || bytes[0] != 255 || bytes[1] != 216)
+                throw new ArgumentException("Image input must be PNG or JPEG.");
+            bool frame = false, scan = false, inScan = false;
+            int scanCount = 0;
+            int position = 2;
+            while (position < bytes.Length)
+            {
+                if (bytes[position++] != 255)
+                {
+                    if (inScan) continue;
+                    throw new ArgumentException("Invalid JPEG marker.");
+                }
+                while (position < bytes.Length && bytes[position] == 255) position++;
+                if (position >= bytes.Length) break;
+                int marker = bytes[position++];
+                if (inScan && (marker == 0 || (marker >= 208 && marker <= 215))) continue;
+                inScan = false;
+                if (marker == 217)
+                {
+                    if (!frame || !scan || position != bytes.Length) throw new ArgumentException("Invalid JPEG end.");
+                    return;
+                }
+                if (marker == 0 || marker == 216 || marker == 1 || (marker >= 208 && marker <= 215)
+                    || position > bytes.Length - 2) throw new ArgumentException("Invalid JPEG segment.");
+                if (marker == 220 || marker == 222 || marker == 223)
+                    throw new ArgumentException("JPEG dimension redefinition and hierarchical frames are not supported.");
+                int length = (bytes[position] << 8) | bytes[position + 1];
+                if (length < 2 || length > bytes.Length - position) throw new ArgumentException("Truncated JPEG segment.");
+                bool sizeMarker = marker >= 192 && marker <= 207 && marker != 196 && marker != 200 && marker != 204;
+                if (sizeMarker)
+                {
+                    if (frame || scan || (marker != 192 && marker != 193 && marker != 194) || length < 8)
+                        throw new ArgumentException("Invalid or unsupported JPEG frame.");
+                    int components = bytes[position + 7];
+                    if (bytes[position + 2] != 8 || components < 1 || components > 4 || length != 8 + 3 * components)
+                        throw new ArgumentException("Invalid JPEG frame header.");
+                    for (int component = 0; component < components; component++)
+                    {
+                        int entry = position + 8 + 3 * component;
+                        int sampling = bytes[entry + 1];
+                        if ((sampling >> 4) < 1 || (sampling >> 4) > 4 || (sampling & 15) < 1
+                            || (sampling & 15) > 4 || bytes[entry + 2] > 3)
+                            throw new ArgumentException("Invalid JPEG sampling or quantization table.");
+                        for (int previous = 0; previous < component; previous++)
+                            if (bytes[entry] == bytes[position + 8 + 3 * previous])
+                                throw new ArgumentException("Repeated JPEG component identifier.");
+                    }
+                    height = (bytes[position + 3] << 8) | bytes[position + 4];
+                    width = (bytes[position + 5] << 8) | bytes[position + 6];
+                    var error = ValidateDimensions(width, height, null);
+                    if (error != null) throw new ArgumentException("JPEG dimensions exceed texture limits or are invalid.");
+                    frame = true;
+                }
+                if (marker == 218)
+                {
+                    if (++scanCount > 64) throw new ArgumentException("JPEG contains too many scans.");
+                    if (!frame || length < 6 || length != 6 + 2 * bytes[position + 2]
+                        || bytes[position + 2] < 1 || bytes[position + 2] > 4)
+                        throw new ArgumentException("Invalid JPEG scan header.");
+                    scan = inScan = true;
+                }
+                position += length;
+            }
+            throw new ArgumentException("Truncated JPEG image.");
+        }
+
+        private static ErrorResponse ValidatePixelPayload(JToken pixels, int width, int height)
+        {
+            if (pixels?.Type != JTokenType.String) return null;
+            string encoded = pixels.ToString();
+            int prefix = encoded.StartsWith("base64:", StringComparison.Ordinal) ? 7 : 0;
+            long maxCharacters = (((long)width * height * 4 + 2) / 3) * 4;
+            if (encoded.Length - prefix > maxCharacters)
+                return new ErrorResponse("Encoded pixel data exceeds the region's RGBA byte budget.");
             return null;
         }
 
@@ -128,6 +296,11 @@ namespace MCPForUnity.Editor.Tools
                 var fillColorToken = @params["fillColor"];
                 var patternToken = @params["pattern"];
                 var pixelsToken = @params["pixels"];
+                if (!hasImage)
+                {
+                    var pixelError = ValidatePixelPayload(pixelsToken, width, height);
+                    if (pixelError != null) return pixelError;
+                }
 
                 if (hasImage && (fillColorToken != null || patternToken != null || pixelsToken != null))
                 {
@@ -148,7 +321,8 @@ namespace MCPForUnity.Editor.Tools
                     if (!File.Exists(resolvedImagePath))
                         return new ErrorResponse($"Image file not found at '{imagePath}'.");
 
-                    byte[] imageBytes = File.ReadAllBytes(resolvedImagePath);
+                    byte[] imageBytes = ReadBoundedImage(resolvedImagePath);
+                    ReadImageDimensions(imageBytes, out int imageWidth, out int imageHeight);
                     texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                     if (!texture.LoadImage(imageBytes))
                     {
@@ -162,6 +336,8 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return imageDimensionError;
                     }
+                    if (width != imageWidth || height != imageHeight)
+                        return new ErrorResponse("Decoded image dimensions do not match its header.");
                 }
                 else
                 {
@@ -281,28 +457,33 @@ namespace MCPForUnity.Editor.Tools
                 // Pixel modification path
                 if (setPixelsToken != null)
                 {
-                    Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(fullPath);
-                    if (texture == null)
-                        return new ErrorResponse($"Failed to load texture at path: {fullPath}");
-
-                    string absolutePath = GetAbsolutePath(fullPath);
-                    byte[] fileData = File.ReadAllBytes(absolutePath);
-                    editableTexture = new Texture2D(texture.width, texture.height, TextureFormat.RGBA32, false);
-                    if (!editableTexture.LoadImage(fileData))
-                        return new ErrorResponse($"Failed to decode texture at path: {fullPath}");
-
                     int x = setPixelsToken["x"]?.ToObject<int>() ?? 0;
                     int y = setPixelsToken["y"]?.ToObject<int>() ?? 0;
                     int w = setPixelsToken["width"]?.ToObject<int>() ?? 1;
                     int h = setPixelsToken["height"]?.ToObject<int>() ?? 1;
-
-                    if (w <= 0 || h <= 0)
-                    {
-                        return new ErrorResponse("setPixels width and height must be positive.");
-                    }
-
+                    var regionError = ValidateDimensions(w, h, null);
+                    if (regionError != null) return regionError;
                     var pixelsToken = setPixelsToken["pixels"];
                     var colorToken = setPixelsToken["color"];
+                    var pixelError = ValidatePixelPayload(pixelsToken, w, h);
+                    if (pixelError != null) return pixelError;
+                    // Inspect the file before asking Unity to load a possibly uncached texture.
+                    string absolutePath = GetAbsolutePath(fullPath);
+                    byte[] fileData = ReadBoundedImage(absolutePath);
+                    ReadImageDimensions(fileData, out int imageWidth, out int imageHeight);
+                    Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(fullPath);
+                    if (texture == null)
+                        return new ErrorResponse($"Failed to load texture at path: {fullPath}");
+                    var existingDimensionError = ValidateDimensions(texture.width, texture.height, null);
+                    if (existingDimensionError != null) return existingDimensionError;
+
+                    editableTexture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    if (!editableTexture.LoadImage(fileData))
+                        return new ErrorResponse($"Failed to decode texture at path: {fullPath}");
+                    var decodedDimensionError = ValidateDimensions(editableTexture.width, editableTexture.height, null);
+                    if (decodedDimensionError != null) return decodedDimensionError;
+                    if (editableTexture.width != imageWidth || editableTexture.height != imageHeight)
+                        return new ErrorResponse("Decoded image dimensions do not match its header.");
 
                     if (pixelsToken != null)
                     {
@@ -485,9 +666,9 @@ namespace MCPForUnity.Editor.Tools
             int octaves = @params["octaves"]?.ToObject<int>() ?? 1;
             if (octaves <= 0)
                 return new ErrorResponse("octaves must be greater than 0.");
-            long noiseWork = (long)width * height * octaves;
-            if (noiseWork > MaxNoiseWork)
-                warnings.Add($"Noise workload exceeds recommended max {MaxNoiseWork} (got {width}x{height}x{octaves}).");
+            long totalPixels = (long)width * height;
+            if (octaves > MaxNoiseWork / totalPixels)
+                return new ErrorResponse($"Noise workload exceeds max {MaxNoiseWork} (got {width}x{height}x{octaves}).");
 
             var palette = TextureOps.ParsePalette(@params["palette"] as JArray);
             if (palette == null || palette.Count < 2)

@@ -15,6 +15,27 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
 
+MAX_TEXTURE_DIMENSION = 4096
+MAX_TEXTURE_PIXELS = 4096 * 4096
+MAX_NOISE_WORK = 32 * 1024 * 1024
+
+
+def _validate_dimensions(width: int, height: int) -> str | None:
+    if width <= 0 or height <= 0:
+        return "width and height must be positive integers"
+    if width > MAX_TEXTURE_DIMENSION or height > MAX_TEXTURE_DIMENSION:
+        return f"width and height must not exceed {MAX_TEXTURE_DIMENSION}"
+    if width * height > MAX_TEXTURE_PIXELS:
+        return f"texture must not exceed {MAX_TEXTURE_PIXELS} pixels"
+    return None
+
+
+def _validate_encoded_pixels(value: str, width: int, height: int) -> str | None:
+    prefix = 7 if value.startswith("base64:") else 0
+    if len(value) - prefix > ((width * height * 4 + 2) // 3) * 4:
+        return "encoded pixels exceed the region's RGBA byte budget"
+    return None
+
 
 def _normalize_dimension(value: Any, name: str, default: int = 64) -> tuple[int | None, str | None]:
     if value is None:
@@ -88,14 +109,16 @@ def _normalize_pixels(value: Any, width: int, height: int) -> tuple[list[list[in
     # Base64 string
     if isinstance(value, str):
         if value.startswith("base64:"):
-            return value, None  # Pass through for Unity to decode
+            error = _validate_encoded_pixels(value, width, height)
+            return (None, error) if error else (value, None)
         # Try parsing as JSON array
         parsed = parse_json_payload(value)
         if isinstance(parsed, list):
             value = parsed
         else:
             # Assume it's raw base64
-            return f"base64:{value}", None
+            error = _validate_encoded_pixels(value, width, height)
+            return (None, error) if error else (f"base64:{value}", None)
 
     if isinstance(value, list):
         expected_count = width * height
@@ -416,8 +439,8 @@ async def manage_texture(
                     "Output texture path (e.g., 'Assets/Textures/MyTexture.png')"] | None = None,
 
     # Dimensions (defaults to 64x64)
-    width: Annotated[int, "Texture width in pixels (default: 64)"] | None = None,
-    height: Annotated[int, "Texture height in pixels (default: 64)"] | None = None,
+    width: Annotated[int, "Texture width in pixels (1-4096, default: 64)"] | None = None,
+    height: Annotated[int, "Texture height in pixels (1-4096, default: 64)"] | None = None,
 
     # Solid fill (accepts both 0-255 integers and 0.0-1.0 normalized floats)
     fill_color: Annotated[list[int | float] | dict[str, int | float] | str,
@@ -440,7 +463,7 @@ async def manage_texture(
                       "Pixel data as JSON array of [r,g,b,a] values or base64 string"] | None = None,
 
     image_path: Annotated[str,
-                          "Source image file path for create/create_sprite (PNG/JPG)."] | None = None,
+                          "Source PNG/JPG/JPEG for create/create_sprite (up to 4096 per side and 96 MiB encoded)."] | None = None,
 
     # Gradient settings
     gradient_type: Annotated[Literal["linear", "radial"],
@@ -452,7 +475,7 @@ async def manage_texture(
     noise_scale: Annotated[float,
                            "Noise scale/frequency (default: 0.1)"] | None = None,
     octaves: Annotated[int,
-                       "Number of noise octaves for detail (default: 1)"] | None = None,
+                       "Number of noise octaves (default: 1); width * height * octaves must not exceed 33,554,432 samples."] | None = None,
 
     # Modify action
     set_pixels: Annotated[dict,
@@ -503,6 +526,9 @@ async def manage_texture(
         height, height_error = _normalize_dimension(height, "height")
         if height_error:
             return {"success": False, "message": height_error}
+        dimension_error = _validate_dimensions(width, height)
+        if dimension_error:
+            return {"success": False, "message": dimension_error}
         pattern_size, pattern_error = _normalize_positive_int(pattern_size, "pattern_size")
         if pattern_error:
             return {"success": False, "message": pattern_error}
@@ -510,6 +536,8 @@ async def manage_texture(
         octaves, octaves_error = _normalize_positive_int(octaves, "octaves")
         if octaves_error:
             return {"success": False, "message": octaves_error}
+        if action_lower == "apply_noise" and (octaves or 1) > MAX_NOISE_WORK // (width * height):
+            return {"success": False, "message": f"noise workload must not exceed {MAX_NOISE_WORK} samples"}
     else:
         width = None
         height = None
@@ -543,6 +571,13 @@ async def manage_texture(
             return {"success": False, "message": "set_pixels must be a JSON object"}
 
         set_pixels_normalized = set_pixels.copy()
+        region_width, region_width_error = _normalize_dimension(set_pixels_normalized.get("width"), "set_pixels.width", 1)
+        region_height, region_height_error = _normalize_dimension(set_pixels_normalized.get("height"), "set_pixels.height", 1)
+        region_error = region_width_error or region_height_error
+        if not region_error:
+            region_error = _validate_dimensions(region_width, region_height)
+        if region_error:
+            return {"success": False, "message": region_error}
         if "color" in set_pixels_normalized:
             color, error = _normalize_color_int(set_pixels_normalized["color"])
             if error:
