@@ -109,6 +109,16 @@ def test_reusable_python_validation_includes_hermetic_tool_tests() -> None:
     assert 'python -m pytest "$GITHUB_WORKSPACE/tools/tests/"' in runs
 
 
+@pytest.mark.parametrize("step_name", [
+    "Run tests with coverage",
+    "Run local harness unit tests (hermetic, no Unity)",
+])
+def test_python_validation_treats_warnings_as_errors(step_name: str) -> None:
+    steps = workflow("python-tests.yml")["jobs"]["test"]["steps"]
+    command = next(step["run"] for step in steps if step["name"] == step_name)
+    assert "-W error" in command
+
+
 def test_forks_keep_coverage_artifacts_without_external_uploads() -> None:
     steps = {step["name"]: step for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]}
     assert steps["Upload coverage reports"]["if"] == f"always() && {UPSTREAM_ONLY}"

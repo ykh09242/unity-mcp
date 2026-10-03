@@ -71,12 +71,12 @@ jobs:
       - name: Run tests with coverage
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -v --tb=short --cov --cov-report=xml --cov-report=html --cov-report=term
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -v -W error --tb=short --cov --cov-report=xml --cov-report=html --cov-report=term
 
       - name: Run local harness unit tests (hermetic, no Unity)
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -v --tb=short
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -v -W error --tb=short
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
