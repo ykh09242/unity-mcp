@@ -594,10 +594,6 @@ class PluginHub(WebSocketEndpoint):
         # (e.g. new Claude Code conversations) see the correct tool set.
         self._sync_server_tool_visibility(payload.tools)
 
-        # Notify any already-connected MCP clients (e.g. CC over stdio) that
-        # the tool list has changed so they re-fetch.
-        await cls._notify_mcp_tool_list_changed()
-
         try:
             from services.custom_tool_service import CustomToolService
 
@@ -614,6 +610,9 @@ class PluginHub(WebSocketEndpoint):
                 "custom tools may not be available globally (%s)",
                 type(exc).__name__,
             )
+
+        # Publish custom tools before clients can re-fetch the changed catalog.
+        await cls._notify_mcp_tool_list_changed()
 
     @classmethod
     def _sync_server_tool_visibility(cls, registered_tools: list) -> None:
