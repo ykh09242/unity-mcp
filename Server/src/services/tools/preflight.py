@@ -60,6 +60,12 @@ async def preflight(
     if not isinstance(data, dict):
         return None
 
+    # Tests running: fail fast before issuing an optional refresh.
+    if requires_no_tests:
+        tests = data.get("tests")
+        if isinstance(tests, dict) and tests.get("is_running") is True:
+            return _busy("tests_running", 5000)
+
     # Optional refresh-if-dirty
     if refresh_if_dirty:
         assets = data.get("assets")
@@ -71,16 +77,15 @@ async def preflight(
                 # Best-effort only; fall through to normal tool dispatch.
                 pass
 
-    # Tests running: fail fast for tools that require exclusivity.
-    if requires_no_tests:
-        tests = data.get("tests")
-        if isinstance(tests, dict) and tests.get("is_running") is True:
-            return _busy("tests_running", 5000)
-
     # Compilation: optionally wait for a bounded time.
     if wait_for_no_compile:
         deadline = time.monotonic() + float(max_wait_s)
         while True:
+            # Tests may have started while compilation was being awaited.
+            if requires_no_tests:
+                tests = data.get("tests")
+                if isinstance(tests, dict) and tests.get("is_running") is True:
+                    return _busy("tests_running", 5000)
             compilation = data.get("compilation") if isinstance(
                 data, dict) else None
             is_compiling = isinstance(compilation, dict) and compilation.get(
