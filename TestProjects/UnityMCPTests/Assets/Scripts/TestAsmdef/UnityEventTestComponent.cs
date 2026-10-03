@@ -9,6 +9,8 @@ namespace TestNamespace
         public UnityEvent<float> onFloatEvent;
 
         [SerializeField]
-        private UnityEvent _onPrivateEvent;
+        private UnityEvent _onPrivateEvent = null;
+
+        public UnityEvent PrivateEvent => _onPrivateEvent;
     }
 }

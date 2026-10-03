@@ -175,6 +175,9 @@ namespace MCPForUnityTests.Editor.Tools
             var callsProp = so.FindProperty("_onPrivateEvent.m_PersistentCalls.m_Calls");
             Assert.IsNotNull(callsProp, "Private event m_Calls should exist");
             Assert.AreEqual(1, callsProp.arraySize, "Should have 1 persistent call");
+            Assert.IsNotNull(comp.PrivateEvent, "The serialized event should update the component instance");
+            Assert.AreEqual(1, comp.PrivateEvent.GetPersistentEventCount());
+            Assert.AreEqual(testGo, comp.PrivateEvent.GetPersistentTarget(0));
         }
 
         [Test]
