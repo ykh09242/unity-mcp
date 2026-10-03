@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from core.config import config
+from transport.plugin_hub import PluginHub
+from transport.plugin_registry import PluginRegistry
 import services.tools as tools
 from services.tools.manage_tools import manage_tools
 
@@ -26,6 +28,9 @@ async def test_manage_tools_sync_uses_the_request_selected_editor(monkeypatch):
 async def test_tool_sync_uses_the_configured_unity_transport(monkeypatch, mode):
     monkeypatch.setattr(config, "transport_mode", mode)
     monkeypatch.setattr(config, "http_remote_hosted", False)
+    registry = PluginRegistry()
+    await registry.register("selected", "EditorB", "hash-b", "6000")
+    monkeypatch.setattr(PluginHub, "_registry", registry)
     send = AsyncMock(return_value={"success": True, "data": {"tools": [
         {"name": "read_console", "enabled": True},
     ]}})
@@ -34,10 +39,17 @@ async def test_tool_sync_uses_the_configured_unity_transport(monkeypatch, mode):
     monkeypatch.setattr("transport.legacy.unity_connection.async_send_command_with_retry", legacy)
     sync = Mock()
     monkeypatch.setattr("transport.plugin_hub.PluginHub._sync_server_tool_visibility", sync)
+    refresh = AsyncMock()
+    monkeypatch.setattr("transport.plugin_hub.PluginHub._refresh_server_tool_visibility", refresh)
 
     result = await tools.sync_tool_visibility_from_unity("EditorB@hash-b", notify=False)
 
     assert result["synced"] is True
     send.assert_awaited_once_with(legacy, "EditorB@hash-b", "get_tool_states", {})
     legacy.assert_not_awaited()
-    sync.assert_called_once_with([{"name": "read_console", "enabled": True}])
+    if mode == "http":
+        refresh.assert_awaited_once_with()
+        sync.assert_not_called()
+    else:
+        sync.assert_called_once_with([{"name": "read_console", "enabled": True}])
+        refresh.assert_not_awaited()

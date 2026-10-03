@@ -128,6 +128,11 @@ async def sync_tool_visibility_from_unity(
     from transport.unity_transport import send_with_unity_instance
 
     try:
+        registry = PluginHub._registry
+        session_id = None
+        if config.transport_mode.lower() == "http" and registry is not None:
+            session_id = await PluginHub._resolve_session_id(instance_id, retry_on_reload=False)
+
         response = await send_with_unity_instance(
             async_send_command_with_retry, instance_id, "get_tool_states", {},
         )
@@ -178,7 +183,18 @@ async def sync_tool_visibility_from_unity(
             len(enabled_tools), len(tools),
         )
 
-        PluginHub._sync_server_tool_visibility(enabled_tools)
+        if config.transport_mode.lower() == "http":
+            from models.models import ToolDefinitionModel
+
+            session = await registry.get_session(session_id) if registry is not None and session_id else None
+            if session is not None:
+                parsed_tools = [ToolDefinitionModel.model_validate(tool) for tool in enabled_tools]
+                await registry.register_tools_for_session(session_id, [
+                    session.tools.get(tool.name, tool) for tool in parsed_tools
+                ])
+            await PluginHub._refresh_server_tool_visibility()
+        else:
+            PluginHub._sync_server_tool_visibility(enabled_tools)
 
         # Register custom (non-built-in) tools via CustomToolService.
         # The extended get_tool_states response includes is_built_in,

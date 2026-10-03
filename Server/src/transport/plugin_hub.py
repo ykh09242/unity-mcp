@@ -497,6 +497,10 @@ class PluginHub(WebSocketEndpoint):
                 logger.info(
                     f"Plugin session {session_id} disconnected ({close_code})")
 
+        if session_ids and not config.http_remote_hosted:
+            await cls._refresh_server_tool_visibility()
+            await cls._notify_mcp_tool_list_changed()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -794,6 +798,10 @@ class PluginHub(WebSocketEndpoint):
             if evicted_ws is not None:
                 await cls._close_websocket(evicted_ws)
 
+        if evicted_session_id and not config.http_remote_hosted:
+            await cls._refresh_server_tool_visibility()
+            await cls._notify_mcp_tool_list_changed()
+
         if user_id:
             logger.info("Plugin registered: %r (%r) for user %r", project_name, project_hash, user_id)
         else:
@@ -830,7 +838,7 @@ class PluginHub(WebSocketEndpoint):
 
         # Sync server-level FastMCP visibility so new MCP client sessions
         # (e.g. new Claude Code conversations) see the correct tool set.
-        self._sync_server_tool_visibility(payload.tools)
+        await cls._refresh_server_tool_visibility()
 
         try:
             from services.custom_tool_service import CustomToolService
@@ -851,6 +859,23 @@ class PluginHub(WebSocketEndpoint):
 
         # Publish custom tools before clients can re-fetch the changed catalog.
         await cls._notify_mcp_tool_list_changed()
+
+    @classmethod
+    async def _refresh_server_tool_visibility(cls) -> None:
+        """Keep local server inventory large enough for every registered project."""
+        registry = cls._registry
+        if config.http_remote_hosted or registry is None:
+            return
+        sessions = await registry.list_sessions()
+        if not sessions:
+            mcp = cls._mcp
+            if mcp is not None and cls._unity_transform_start is not None:
+                mcp._transforms = mcp._transforms[:cls._unity_transform_start]
+                cls._unity_transform_start = None
+            return
+        cls._sync_server_tool_visibility([
+            tool for session in sessions.values() for tool in session.tools.values()
+        ])
 
     @classmethod
     def _sync_server_tool_visibility(cls, registered_tools: list) -> None:
@@ -1137,6 +1162,10 @@ class PluginHub(WebSocketEndpoint):
 
         if websocket is not None:
             await cls._close_websocket(websocket)
+
+        if registry is not None and not config.http_remote_hosted:
+            await cls._refresh_server_tool_visibility()
+            await cls._notify_mcp_tool_list_changed()
 
         logger.debug("Evicted plugin session %s (%s)", session_id, reason)
 
