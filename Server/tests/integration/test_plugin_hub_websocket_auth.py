@@ -28,6 +28,8 @@ def _reset_plugin_hub():
     old_pending = PluginHub._pending.copy()
     old_lock = PluginHub._lock
     old_loop = PluginHub._loop
+    old_admitted = PluginHub._admitted
+    PluginHub._admitted = {}
 
     yield
 
@@ -36,6 +38,7 @@ def _reset_plugin_hub():
     PluginHub._pending = old_pending
     PluginHub._lock = old_lock
     PluginHub._loop = old_loop
+    PluginHub._admitted = old_admitted
 
 
 def _make_mock_websocket(headers=None, state_attrs=None):
@@ -51,6 +54,10 @@ def _make_mock_websocket(headers=None, state_attrs=None):
 
 def _make_hub():
     """Create a PluginHub instance with a minimal ASGI scope."""
+    # Admission now requires the same configured registry as the real route.
+    loop = asyncio.get_running_loop()
+    if PluginHub._registry is None or PluginHub._loop is not loop:
+        PluginHub.configure(PluginRegistry(), loop)
     scope = {"type": "websocket"}
     return PluginHub(scope, receive=AsyncMock(), send=AsyncMock())
 

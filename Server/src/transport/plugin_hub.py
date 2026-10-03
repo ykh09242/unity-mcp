@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -17,6 +18,11 @@ from starlette.websockets import WebSocket, WebSocketState
 from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
+from models.response_limits import (
+    MAX_RESPONSE_BYTES, MAX_RESPONSE_DEPTH, MAX_RESPONSE_NODES,
+    MAX_RESPONSE_RETAINED_BYTES, bounded_json_text, response_limit_error, response_size,
+    response_owner,
+)
 from transport.plugin_registry import PluginRegistry
 from services.api_key_service import ApiKeyService
 
@@ -103,7 +109,7 @@ class InstanceSelectionRequiredError(RuntimeError):
 class PluginHub(WebSocketEndpoint):
     """Manages persistent WebSocket connections to Unity plugins."""
 
-    encoding = "json"
+    encoding = None  # Application bounds must precede JSON decoding.
     KEEP_ALIVE_INTERVAL = 15
     SERVER_TIMEOUT = 30
     COMMAND_TIMEOUT = 30
@@ -146,6 +152,79 @@ class PluginHub(WebSocketEndpoint):
     MAX_COMMAND_PAYLOAD_BYTES = 4 * 1024 * 1024
     MAX_COMMAND_PAYLOAD_NODES = 65_536
     MAX_COMMAND_PAYLOAD_DEPTH = 64
+    MAX_RAW_MESSAGE_BYTES = MAX_RESPONSE_BYTES
+    MAX_RESULT_BYTES = MAX_RESPONSE_BYTES
+    MAX_RESULT_DEPTH = MAX_RESPONSE_DEPTH
+    MAX_RESULT_NODES = MAX_RESPONSE_NODES
+    MAX_RESULT_RETAINED_BYTES = MAX_RESPONSE_RETAINED_BYTES
+    MAX_RETAINED_RESULT_BYTES_PER_SESSION = 256 * 1024 * 1024
+    MAX_RETAINED_RESULT_BYTES_PER_USER = 512 * 1024 * 1024
+    MAX_RETAINED_RESULT_BYTES = 1024 * 1024 * 1024
+    REGISTRATION_TIMEOUT = 10.0
+    _admitted: ClassVar[dict[int, tuple[WebSocket, str | None]]] = {}
+    # Independent of routing/pending maps: disconnect must not release a result
+    # still owned by the command coroutine during cancellation-sensitive cleanup.
+    _retained_results: ClassVar[dict[str, dict[str, Any]]] = {}
+
+    async def dispatch(self) -> None:
+        """Own admission through connect failures, registration and disconnect."""
+        websocket = WebSocket(self.scope, receive=self.receive, send=self.send)
+        close_code = 1000
+        try:
+            # Include welcome write in the registration deadline.
+            deadline = asyncio.get_running_loop().time() + self.REGISTRATION_TIMEOUT
+            await asyncio.wait_for(self.on_connect(websocket), self.REGISTRATION_TIMEOUT)
+            while websocket.application_state == WebSocketState.CONNECTED:
+                registered = getattr(websocket.state, "plugin_registered", False)
+                if registered:
+                    message = await websocket.receive()
+                else:
+                    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                    message = await asyncio.wait_for(websocket.receive(), remaining)
+                if message["type"] == "websocket.disconnect":
+                    close_code = int(message.get("code") or 1000)
+                    break
+                if message["type"] == "websocket.receive":
+                    data = await self.decode(websocket, message)
+                    if websocket.application_state == WebSocketState.CONNECTED:
+                        if registered:
+                            await self.on_receive(websocket, data)
+                        else:
+                            remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                            await asyncio.wait_for(self.on_receive(websocket, data), remaining)
+        except asyncio.TimeoutError:
+            close_code = 4408
+            try:
+                await asyncio.wait_for(websocket.close(code=close_code, reason="Plugin registration timeout"),
+                                       self.CLOSE_TIMEOUT)
+            except (asyncio.TimeoutError, RuntimeError):
+                pass
+        finally:
+            # Level cancellation may interrupt every await: release admission
+            # synchronously, then shield the bounded routing cleanup.
+            type(self)._admitted.pop(id(websocket), None)
+            import anyio
+            with anyio.CancelScope(shield=True):
+                await self.on_disconnect(websocket, close_code)
+
+    async def decode(self, websocket: WebSocket, message: dict[str, Any]) -> Any:
+        raw = message.get("text")
+        if raw is None:
+            raw = message.get("bytes")
+        if not isinstance(raw, (str, bytes)):
+            await websocket.close(code=1003, reason="Malformed plugin message")
+            return None
+        text = bounded_json_text(raw, max_bytes=self.MAX_RAW_MESSAGE_BYTES,
+                                 max_depth=self.MAX_RESULT_DEPTH,
+                                 max_nodes=self.MAX_RESULT_NODES)
+        if text is None:
+            await websocket.close(code=1009, reason="Plugin message exceeds supported limits")
+            return None
+        try:
+            return json.loads(text)
+        except (ValueError, RecursionError):
+            await websocket.close(code=1003, reason="Malformed plugin message")
+            return None
 
     @classmethod
     def _command_payload_size(cls, command_type: str, params: dict[str, Any]) -> int | None:
@@ -219,13 +298,16 @@ class PluginHub(WebSocketEndpoint):
             return
         async with lock:
             registry = cls._registry
-            connections = list(cls._connections.values())
+            sockets = {id(ws): ws for ws in cls._connections.values()}
+            sockets.update({key: entry[0] for key, entry in cls._admitted.items()})
+            connections = list(sockets.values())
             ping_tasks = list(cls._ping_tasks.values())
             pending = list(cls._pending.values())
             cls._connections.clear()
             cls._ping_tasks.clear()
             cls._last_pong.clear()
             cls._pending.clear()
+            cls._admitted.clear()
             cls._registry = None
             cls._mcp = None
             cls._loop = None
@@ -244,6 +326,32 @@ class PluginHub(WebSocketEndpoint):
         await asyncio.gather(*(cls._close_websocket(ws) for ws in connections))
 
     async def on_connect(self, websocket: WebSocket) -> None:
+        cls = type(self)
+        lock = cls._lock
+        registry = cls._registry
+        if lock is None or registry is None:
+            await websocket.close(code=1013, reason="Plugin server unavailable")
+            return
+        async with lock:
+            # Include sockets admitted before registration and compatibility
+            # connections inserted directly by an embedding application.
+            sockets = set(cls._admitted) | {id(ws) for ws in cls._connections.values()}
+            accepted = len(sockets) < registry.MAX_SESSIONS
+            if accepted:
+                cls._admitted[id(websocket)] = (websocket, None)
+        if not accepted:
+            await websocket.close(code=4429, reason="Plugin connection limit reached")
+            return
+        try:
+            await self._connect_authenticated(websocket)
+        except BaseException:
+            # Connect sits outside Starlette's normal disconnect finally.
+            cls._admitted.pop(id(websocket), None)
+            raise
+        if websocket.application_state != WebSocketState.CONNECTED:
+            cls._admitted.pop(id(websocket), None)
+
+    async def _connect_authenticated(self, websocket: WebSocket) -> None:
         # Validate API key in remote-hosted mode (fail closed)
         if config.http_remote_hosted:
             if not ApiKeyService.is_initialized():
@@ -293,6 +401,24 @@ class PluginHub(WebSocketEndpoint):
             websocket.state.user_id = result.user_id
             websocket.state.api_key_metadata = result.metadata
 
+        cls = type(self)
+        user_id = getattr(websocket.state, "user_id", None)
+        lock = cls._lock
+        registry = cls._registry
+        if lock is None or registry is None:
+            await websocket.close(code=1013, reason="Plugin server unavailable")
+            return
+        async with lock:
+            # Authentication never changes; only its validated principal owns
+            # per-user capacity. Local sockets share the local principal.
+            user_count = sum(owner == user_id for ws, owner in cls._admitted.values()
+                             if ws is not websocket)
+            accepted = user_count < registry.MAX_SESSIONS_PER_USER
+            if accepted:
+                cls._admitted[id(websocket)] = (websocket, user_id)
+        if not accepted:
+            await websocket.close(code=4429, reason="Plugin user connection limit reached")
+            return
         await websocket.accept()
         msg = WelcomeMessage(
             serverTimeout=self.SERVER_TIMEOUT,
@@ -303,9 +429,13 @@ class PluginHub(WebSocketEndpoint):
     async def on_receive(self, websocket: WebSocket, data: Any) -> None:
         if not isinstance(data, dict):
             logger.warning("Received non-object payload from plugin")
+            await websocket.close(code=4400, reason="Plugin registration required")
             return
 
         message_type = data.get("type")
+        if not getattr(websocket.state, "plugin_registered", False) and message_type != "register":
+            await websocket.close(code=4400, reason="Plugin registration must be first message")
+            return
         try:
             if message_type == "register":
                 await self._handle_register(websocket, RegisterMessage(**data))
@@ -319,9 +449,12 @@ class PluginHub(WebSocketEndpoint):
                 logger.debug("Ignoring unrecognized plugin message")
         except Exception as e:
             logger.error("Error handling plugin message (%s)", type(e).__name__)
+            if not getattr(websocket.state, "plugin_registered", False):
+                await websocket.close(code=4400, reason="Invalid plugin registration")
 
     async def on_disconnect(self, websocket: WebSocket, close_code: int) -> None:
         cls = type(self)
+        cls._admitted.pop(id(websocket), None)
         lock = cls._lock
         if lock is None:
             return
@@ -442,7 +575,8 @@ class PluginHub(WebSocketEndpoint):
             future: asyncio.Future = asyncio.get_running_loop().create_future()
             cls._pending[command_id] = {
                 "future": future, "session_id": session_id,
-                "user_id": user_id, "payload_bytes": payload_bytes}
+                "user_id": user_id, "payload_bytes": payload_bytes,
+                "response_owner": response_owner.get()}
 
         send_task: asyncio.Task | None = None
         try:
@@ -487,10 +621,16 @@ class PluginHub(WebSocketEndpoint):
             elif not future.cancelled():
                 # A disconnect may finish the future while the socket write fails.
                 future.exception()
-            if send_task is not None:
-                if not send_task.done():
-                    send_task.cancel()
-                await asyncio.gather(send_task, return_exceptions=True)
+            try:
+                if send_task is not None:
+                    if not send_task.done():
+                        send_task.cancel()
+                    await asyncio.gather(send_task, return_exceptions=True)
+            finally:
+                # A disconnected or completed future still retains its result
+                # during send-task cleanup. Only its owner returns this capacity.
+                if response_owner.get() is None:
+                    cls._retained_results.pop(command_id, None)
 
     @classmethod
     async def get_sessions(cls, user_id: str | None = None) -> SessionList:
@@ -567,8 +707,9 @@ class PluginHub(WebSocketEndpoint):
             raise RuntimeError("PluginHub not configured")
 
         async with lock:
-            registered = getattr(websocket.state, "plugin_registered", False)
-            websocket.state.plugin_registered = True
+            registered = (getattr(websocket.state, "plugin_registered", False)
+                          or getattr(websocket.state, "plugin_registering", False))
+            websocket.state.plugin_registering = True
         if registered:
             await websocket.close(code=4409, reason="Plugin already registered")
             return
@@ -587,13 +728,20 @@ class PluginHub(WebSocketEndpoint):
         user_id = getattr(websocket.state, "user_id", None)
 
         session_id = str(uuid.uuid4())
-        try:
-            session, evicted_session_id = await registry.register(session_id, project_name, project_hash, unity_version, project_path, user_id=user_id)
-        except ValueError:
-            await websocket.close(code=4429, reason="Plugin session limit reached")
-            return
         evicted_ws = None
         async with lock:
+            # The registry and routing insertion form one transaction. There is
+            # no cancellation point after register mutates its maps and before
+            # this socket becomes discoverable by disconnect cleanup.
+            if cls._registry is not registry:
+                await websocket.close(code=1013, reason="Plugin server unavailable")
+                return
+            try:
+                session, evicted_session_id = await registry.register(
+                    session_id, project_name, project_hash, unity_version, project_path, user_id=user_id)
+            except ValueError:
+                await websocket.close(code=4429, reason="Plugin session limit reached")
+                return
             # Clean up the evicted session's connection, ping loop, and pending commands
             # so they don't linger as orphans after a domain-reload reconnection race.
             if evicted_session_id:
@@ -623,6 +771,7 @@ class PluginHub(WebSocketEndpoint):
                 logger.info(f"Evicted previous session {evicted_session_id} for same instance")
 
             cls._connections[session.session_id] = websocket
+            websocket.state.plugin_registered = True
             # Initialize last pong time and start ping loop for this session
             cls._last_pong[session_id] = time.monotonic()
             # Cancel any existing ping task for this session (shouldn't happen, but be safe)
@@ -812,13 +961,45 @@ class PluginHub(WebSocketEndpoint):
             logger.warning("Command result missing id")
             return
 
+        close_offender = False
         async with lock:
             entry = cls._pending.get(command_id)
             if entry is None or cls._connections.get(entry["session_id"]) is not websocket:
                 return
             future = entry.get("future")
             if future and not future.done():
-                future.set_result(result)
+                charge = response_size(
+                    result, max_bytes=cls.MAX_RESULT_BYTES, max_depth=cls.MAX_RESULT_DEPTH,
+                    max_nodes=cls.MAX_RESULT_NODES, max_retained=cls.MAX_RESULT_RETAINED_BYTES)
+                if charge is None:
+                    future.set_result(response_limit_error("result_payload_limit"))
+                    count = getattr(websocket.state, "result_limit_violations", 0)
+                    count = count if isinstance(count, int) else 0
+                    websocket.state.result_limit_violations = count + 1
+                    close_offender = count >= 1
+                else:
+                    user_id = entry.get("user_id")
+                    total = user_total = session_total = 0
+                    for retained in cls._retained_results.values():
+                        total += retained["bytes"]
+                        if retained["user_id"] == user_id:
+                            user_total += retained["bytes"]
+                        if retained["session_id"] == entry["session_id"]:
+                            session_total += retained["bytes"]
+                    if (total + charge > cls.MAX_RETAINED_RESULT_BYTES
+                            or user_total + charge > cls.MAX_RETAINED_RESULT_BYTES_PER_USER
+                            or session_total + charge > cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION):
+                        future.set_result(response_limit_error("result_capacity"))
+                        return
+                    cls._retained_results[command_id] = {
+                        "bytes": charge, "user_id": user_id, "session_id": entry["session_id"]}
+                    owner = entry.get("response_owner")
+                    if owner is not None:
+                        owner.entries.append((cls._retained_results, command_id))
+                    future.set_result(result)
+        if close_offender:
+            await asyncio.wait_for(websocket.close(code=1009, reason="Repeated plugin result limit violation"),
+                                   cls.CLOSE_TIMEOUT)
 
     async def _handle_pong(self, websocket: WebSocket, payload: PongMessage) -> None:
         cls = type(self)

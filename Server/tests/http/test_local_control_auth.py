@@ -1,5 +1,6 @@
 """Regression tests for browser access to the local Unity control plane."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,6 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 from core.config import config
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
+from transport.plugin_registry import PluginRegistry
 
 
 @pytest.fixture
@@ -17,7 +19,24 @@ def local_client(monkeypatch):
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "local_auth_token", "test-launch-token")
-    return TestClient(create_mcp_server(False).http_app())
+    for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
+        monkeypatch.setattr(PluginHub, name, {})
+    for name in ("_registry", "_lock", "_loop", "_mcp"):
+        monkeypatch.setattr(PluginHub, name, None)
+    app = create_mcp_server(False).http_app()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        # Exercise real admission state without Unity discovery or telemetry.
+        PluginHub.configure(PluginRegistry())
+        try:
+            yield
+        finally:
+            await PluginHub.shutdown()
+
+    app.router.lifespan_context = lifespan
+    with TestClient(app) as client:
+        yield client
 
 
 def test_command_without_token_is_rejected_before_body_parsing(

@@ -43,7 +43,6 @@ class Channel:
         self.close_started = asyncio.Event()
         self.release = asyncio.Event()
         self.ping_stopped = asyncio.Event()
-        self.barrier = asyncio.Event()
         self.close_codes = []
         self.command_id = None
         scope = {"type": "websocket", "path": "/hub/plugin", "headers": []}
@@ -55,8 +54,6 @@ class Channel:
 
     async def next_message(self):
         message = await self.incoming.get()
-        if message["type"] == "websocket.receive" and json.loads(message["text"])["type"] == "owned_barrier":
-            self.barrier.set()
         return message
 
     async def send(self, message):
@@ -164,13 +161,16 @@ async def main():
                 new_command = asyncio.create_task(Hub.send_command_for_instance("ownedhash", "owned_query", {}, retry_on_reload=False))
                 commands.append(new_command)
                 await asyncio.wait_for(replacement.command_started.wait(), 1)
-                # When buffered old-socket messages claim the new session/command.
+                # When already-buffered old-socket messages reach the handler.
+                # Server close has changed the socket application state, so the
+                # dispatcher need not drain a queued test barrier after close.
+                # Await the actual handlers to prove stale sender identity checks
+                # still protect the replacement even if a callback was buffered.
                 before = Hub._last_pong[replacement.session_id]
                 now[0] += .01
-                owner.receive({"type": "pong", "session_id": replacement.session_id})
-                owner.receive({"type": "command_result", "id": replacement.command_id, "result": {"wrong_owner": True}})
-                owner.receive({"type": "owned_barrier"})
-                await asyncio.wait_for(owner.barrier.wait(), 1)
+                await owner.endpoint.on_receive(owner.websocket, {"type": "pong", "session_id": replacement.session_id})
+                await owner.endpoint.on_receive(owner.websocket, {"type": "command_result", "id": replacement.command_id,
+                                                                 "result": {"wrong_owner": True}})
                 assert not new_command.done() and Hub._last_pong[replacement.session_id] == before
                 replacement.receive({"type": "pong", "session_id": replacement.session_id})
                 replacement.receive({"type": "command_result", "id": replacement.command_id, "result": {"success": True}})

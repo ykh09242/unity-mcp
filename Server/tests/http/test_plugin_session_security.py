@@ -79,13 +79,12 @@ def test_websocket_registration_rejects_log_injection(plugin_client, caplog, fie
     with plugin_client.websocket_connect("/hub/plugin") as ws:
         assert ws.receive_json()["type"] == "welcome"
         ws.send_json({"type": "register", "project_hash": "invalid", field: "source" + control + "FORGED_ENTRY"})
-        # A valid message after the rejected one proves registration never mutated
-        # socket or registry state, without waiting for a response to invalid input.
-        ws.send_json({"type": "register", "project_name": "Valid Project", "project_hash": "valid"})
-        assert ws.receive_json()["type"] == "registered"
+        # Failed first registration now closes admission immediately.
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 4400
         sessions = plugin_client.portal.call(PluginHub._registry.list_sessions)
-        assert len(sessions) == 1
-        assert next(iter(sessions.values())).project_hash == "valid"
+        assert sessions == {}
     assert all("FORGED_ENTRY" not in record.getMessage() for record in caplog.records)
 
 

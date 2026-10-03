@@ -1501,11 +1501,11 @@ class TestTransportEdgeCases:
 
         assert instance is None
 
-    def test_plugin_hub_encoding_is_json(self):
+    def test_plugin_hub_bounds_raw_messages_before_json_decoding(self):
         """
-        Current behavior: PluginHub WebSocketEndpoint uses JSON encoding.
+        PluginHub owns raw byte/graph checks before parsing JSON messages.
         """
-        assert PluginHub.encoding == "json"
+        assert PluginHub.encoding is None
 
     def test_plugin_hub_timeout_constants(self):
         """

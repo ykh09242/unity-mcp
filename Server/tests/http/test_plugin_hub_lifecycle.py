@@ -45,10 +45,12 @@ def test_unregistered_pongs_do_not_allocate_heartbeat_entries(wire_client: TestC
         # When arbitrary session IDs are sent before registration.
         for index in range(3):
             ws.send_json({"type": "pong", "session_id": f"unknown-{index}"})
-        ws.send_json({"type": "register", "project_hash": "sender"})
-        registered = ws.receive_json()  # Registration is a processing barrier.
-        # Then only the registered session has heartbeat state.
-        assert set(PluginHub._last_pong) == {registered["session_id"]}
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        # Registration is now mandatory as the first message; unregistered
+        # heartbeat senders cannot allocate state or retain an accepted socket.
+        assert closed.value.code == 4400
+        assert PluginHub._last_pong == {}
 
 
 def test_foreign_result_does_not_complete_owner_command(wire_client: TestClient) -> None:

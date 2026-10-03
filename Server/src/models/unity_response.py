@@ -4,10 +4,12 @@ from __future__ import annotations
 from typing import Any, Type
 
 from models.models import MCPResponse
+from models.response_limits import bound_response
 
 
 def normalize_unity_response(response: Any) -> Any:
     """Normalize Unity's {status,result} payloads into MCPResponse shape."""
+    response = bound_response(response)
     if not isinstance(response, dict):
         return response
 
@@ -56,6 +58,7 @@ def parse_resource_response(response: Any, typed_cls: Type[MCPResponse]) -> MCPR
     with strict ``data`` fields (e.g. ``list[str]``) don't raise Pydantic
     validation errors when ``data`` is ``None``.
     """
+    response = bound_response(response)
     if not isinstance(response, dict):
         return response
 
