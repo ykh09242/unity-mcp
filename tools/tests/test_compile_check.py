@@ -329,6 +329,7 @@ def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: 
         for module in ("AR", "SharedInternals", "Substance", "UnityTestProtocol", "VR")
     }
     assert selected - default == {
+        "DATA/Managed/UnityEngine/UnityEngine.ManagedKernelModule.dll",
         "DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll",
         "DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll",
     }
@@ -336,8 +337,11 @@ def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: 
 
 @pytest.mark.parametrize("version", ["6000.7.0b2", "6000.7.0a6"])
 @pytest.mark.parametrize("name", ["Runtime", "Editor"])
-def test_preview_ui_common_module_is_required_metadata(harness: CompileHarness, version: str, name: str) -> None:
-    entry = "DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll"
+@pytest.mark.parametrize("module", ["UICommon", "ManagedKernel"])
+def test_preview_split_api_module_is_required_metadata(
+    harness: CompileHarness, version: str, name: str, module: str,
+) -> None:
+    entry = f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
     profile = Path("tools/compile-refs/6000.7") / f"{name}.txt"
     assert entry in (ROOT / profile).read_text(encoding="utf-8").splitlines()
     manifest = harness.repo / profile
