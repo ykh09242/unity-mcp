@@ -312,6 +312,7 @@ class CustomToolService:
                 success=False if response.get("_mcp_status") == "error" else response.get("success", True),
                 message=response.get("message"),
                 error=response.get("error"),
+                hint=response.get("hint"),
                 data=response.get("data", response),
             )
 
