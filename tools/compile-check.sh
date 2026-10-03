@@ -26,6 +26,7 @@
 #   REPO           repo root                             (default: this script's parent)
 #   EXTRA_REFS     dir holding Newtonsoft/nunit DLLs     (default $REPO/.compile-refs)
 #   TEST_FRAMEWORK_SOURCE  extracted pinned UPM package   (optional; compiles its TestRunner APIs)
+#   TEST_PROJECT   isolated test project                 (optional; compiles fixture and EditMode tests)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
 #
@@ -37,6 +38,8 @@
 # open TestProjects/UnityMCPTests in that Editor, then re-derive from the generated csprojs.
 # Keep this portable reference set free of removed modules and optional playback SDKs.
 # Every remaining declared reference is required; missing metadata fails before Roslyn.
+# Unity 2021.3/2022.3 use explicit legacy module profiles, with shared Runtime/Editor BCL
+# lists. Keep profile selection tied to the version, never to whichever DLLs happen to exist.
 set -uo pipefail
 
 die() { echo "::error::$*" >&2; exit 2; }
@@ -53,6 +56,15 @@ EXTRA_REFS=${EXTRA_REFS:-"$REPO/.compile-refs"}
 TEST_FRAMEWORK_SOURCE=${TEST_FRAMEWORK_SOURCE:-}
 if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
   TEST_FRAMEWORK_SOURCE=$(winpath "$TEST_FRAMEWORK_SOURCE") || exit 2
+fi
+TEST_PROJECT=${TEST_PROJECT:-}
+if [ -n "$TEST_PROJECT" ]; then
+  TEST_PROJECT=$(winpath "$TEST_PROJECT") || exit 2
+  for entry in Assets/Scripts/TestAsmdef/TestAsmdef.asmdef Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef; do
+    [ -f "$TEST_PROJECT/$entry" ] || die "test assembly definition not found: $entry"
+    source_dir="$TEST_PROJECT/${entry%/*}"
+    [ -n "$(find "$source_dir" -name '*.cs' -type f -print -quit)" ] || die "test assembly sources not found: $source_dir"
+  done
 fi
 PLATFORMS=${PLATFORMS:-"win osx linux"}
 OUT=${OUT:-/tmp/mcp-compile-check}
@@ -81,11 +93,16 @@ fi
 # compiles the wrong #if branches and invents errors that do not exist.
 UNITY_RELEASES="5.3 5.4 5.5 5.6 2017.1 2017.2 2017.3 2017.4 2018.1 2018.2 2018.3 2018.4 \
 2019.1 2019.2 2019.3 2019.4 2020.1 2020.2 2020.3 2021.1 2021.2 2021.3 2022.1 2022.2 2022.3 2023.1 2023.2 \
-6000.0 6000.1 6000.2 6000.3 6000.4 6000.5 6000.6"
+6000.0 6000.1 6000.2 6000.3 6000.4 6000.5 6000.6 6000.7"
 
 ver_major=$(echo "$UNITY_VERSION" | cut -d. -f1)
 ver_minor=$(echo "$UNITY_VERSION" | cut -d. -f2)
 ver_patch=$(echo "$UNITY_VERSION" | cut -d. -f3 | sed 's/[a-z].*//')
+REFS_ROOT="$REPO/tools/compile-refs"
+case "$ver_major.$ver_minor" in
+  2021.3|2022.3) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
+  *) REFS_PROFILE="$REFS_ROOT" ;;
+esac
 
 version_defines() {
   local rel rM rm
@@ -95,6 +112,12 @@ version_defines() {
       echo "UNITY_${rM}_${rm}_OR_NEWER"
     fi
   done
+  # A newly released minor also defines its own OR_NEWER symbol before the static
+  # historical ladder is refreshed (including alpha and beta Editor versions).
+  case " $UNITY_RELEASES " in
+    *" $ver_major.$ver_minor "*) ;;
+    *) echo "UNITY_${ver_major}_${ver_minor}_OR_NEWER" ;;
+  esac
   echo "UNITY_${ver_major}"
   echo "UNITY_${ver_major}_${ver_minor}"
   [ -n "$ver_patch" ] && echo "UNITY_${ver_major}_${ver_minor}_${ver_patch}"
@@ -133,6 +156,14 @@ compile() {
   local dir="$OUT/$platform"; mkdir -p "$dir"
   local rsp="$dir/$name.rsp"
   local missing=0 nrefs=0
+  local bcl="$REFS_ROOT/BCL/Editor.txt"
+  case "$name" in MCPForUnity.Runtime|TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;; esac
+  [ -d "$srcdir" ] && [ -n "$(find "$srcdir" -name '*.cs' -type f -print -quit)" ] || {
+    echo "::error::assembly sources not found: $srcdir" >&2; return 1;
+  }
+  for required in "$bcl" "$manifest"; do
+    [ -f "$required" ] || { echo "::error::reference manifest not found: $required" >&2; return 1; }
+  done
 
   {
     echo "-target:library"
@@ -140,7 +171,7 @@ compile() {
     echo "-nostdlib+"
     echo "-preferreduilang:en-US"
     echo "-nowarn:CS1701,CS1702"      # benign netstandard facade version unification
-    echo "-out:$dir/$name.dll"
+    echo "-out:\"$dir/$name.dll\""
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     # ${var%$'\r'} strips the CR a core.autocrlf checkout appends to every line: a CR inside
     # -define:FOO silently defines the wrong symbol, and inside a LIBCACHE/ name it makes
@@ -148,18 +179,23 @@ compile() {
     while read -r d; do d=${d%$'\r'}; [ -n "$d" ] && echo "-define:$d"; done < "$REPO/tools/compile-defines.txt"
     version_defines            | while read -r d; do echo "-define:$d"; done
     platform_defines "$platform" | while read -r d; do echo "-define:$d"; done
-    while read -r entry; do
-      entry=${entry%$'\r'}
-      [ -n "$entry" ] || continue
-      # Compile the pinned package itself without referencing the template's TestRunner.
-      case "$name:$entry" in
-        UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll) continue ;;
-      esac
-      local p; p=$(resolve_ref "$entry")
-      if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
-      else echo "::error::required reference not found: $entry" >&2; missing=$((missing+1)); fi
-    done < "$manifest"
-    for r in "$@"; do echo "-r:\"$r\""; done
+    for reference_manifest in "$bcl" "$manifest"; do
+      while read -r entry; do
+        entry=${entry%$'\r'}
+        [ -n "$entry" ] || continue
+        # Compile the pinned package itself without referencing the template's TestRunner.
+        case "$name:$entry" in
+          UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll) continue ;;
+        esac
+        local p; p=$(resolve_ref "$entry")
+        if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
+        else echo "::error::required reference not found: $entry" >&2; missing=$((missing+1)); fi
+      done < "$reference_manifest"
+    done
+    for r in "$@"; do
+      if [ -f "$r" ]; then echo "-r:\"$r\""
+      else echo "::error::required assembly reference not found: $r" >&2; missing=$((missing+1)); fi
+    done
     find "$srcdir" -name '*.cs' -type f | sort | while read -r f; do echo "\"$f\""; done
   } > "$rsp"
 
@@ -183,7 +219,7 @@ failed=0
 for platform in $PLATFORMS; do
   if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
     compile UnityEngine.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEngine.TestRunner" "$platform" \
-      "$REPO/tools/compile-refs/Editor.txt" || { failed=1; continue; }
+      "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
     cecil_refs=()
     for dll in Mono.Cecil.dll Mono.Cecil.Pdb.dll Mono.Cecil.Mdb.dll Mono.Cecil.Rocks.dll; do
       ref="$UNITY_DATA/Tools/Compilation/ApiUpdater/$dll"
@@ -191,13 +227,22 @@ for platform in $PLATFORMS; do
       cecil_refs+=("$ref")
     done
     compile UnityEditor.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEditor.TestRunner" "$platform" \
-      "$REPO/tools/compile-refs/Editor.txt" "$OUT/$platform/UnityEngine.TestRunner.dll" \
+      "$REFS_PROFILE/Editor.txt" "$OUT/$platform/UnityEngine.TestRunner.dll" \
       "${cecil_refs[@]}" || { failed=1; continue; }
   fi
   compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
-    "$REPO/tools/compile-refs/Runtime.txt" || { failed=1; continue; }
+    "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
-    "$REPO/tools/compile-refs/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || failed=1
+    "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+  if [ -n "$TEST_PROJECT" ]; then
+    # These names/references mirror the owned asmdefs; the harness contract test
+    # checks their JSON so a changed assembly graph cannot silently lose coverage.
+    compile TestAsmdef "$TEST_PROJECT/Assets/Scripts/TestAsmdef" "$platform" \
+      "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+    compile MCPForUnityTests.EditMode "$TEST_PROJECT/Assets/Tests/EditMode" "$platform" \
+      "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
+      "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/TestAsmdef.dll" || failed=1
+  fi
 done
 
 [ "$failed" -eq 0 ] || { echo "::error::compile check FAILED"; exit 1; }
