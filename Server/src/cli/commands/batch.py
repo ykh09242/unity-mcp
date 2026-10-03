@@ -44,8 +44,11 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
     config = get_config()
 
     try:
-        with open(file, 'r') as f:
+        with open(file, 'r', encoding='utf-8') as f:
             commands = json.load(f)
+    except UnicodeDecodeError as e:
+        print_error(f"JSON file must be UTF-8 encoded: {e}")
+        sys.exit(1)
     except json.JSONDecodeError as e:
         print_error(f"Invalid JSON in file: {e}")
         sys.exit(1)
@@ -166,8 +169,12 @@ def batch_template(output: Optional[str]):
     json_output = json.dumps(template, indent=2)
 
     if output:
-        with open(output, 'w') as f:
-            f.write(json_output)
+        try:
+            with open(output, 'w', encoding='utf-8') as f:
+                f.write(json_output)
+        except OSError as e:
+            print_error(f"Error writing template file: {e}")
+            sys.exit(1)
         print_success(f"Template written to: {output}")
     else:
         click.echo(json_output)
