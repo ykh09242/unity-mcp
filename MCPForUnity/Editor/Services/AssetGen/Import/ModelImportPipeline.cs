@@ -86,7 +86,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 return Fail(job, "Downloaded archive was not found on disk.");
 
             string folderRel = zipRel.Substring(0, zipRel.Length - ".zip".Length);
+            string folderBaseRel = folderRel;
             string folderAbs = AssetGenPaths.ToAbsolute(folderRel);
+            int suffix = 1;
+            while (Directory.Exists(folderAbs) || File.Exists(folderAbs))
+            {
+                folderRel = folderBaseRel + "_" + suffix++;
+                folderAbs = AssetGenPaths.ToAbsolute(folderRel);
+            }
 
             Directory.CreateDirectory(folderAbs);
             // Provider archives are untrusted: only inert model/texture files are written under

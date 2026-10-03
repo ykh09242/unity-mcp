@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Reflection;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Tools.AssetGen;
@@ -111,6 +112,59 @@ namespace MCPForUnityTests.Editor.AssetGen
             StringAssert.StartsWith(TestFolder, assetPath);
             Assert.IsFalse(string.IsNullOrEmpty((string)resp["data"]["asset_guid"]));
             Assert.IsTrue(File.Exists(assetPath), "imported file should exist under Assets");
+        }
+
+        private string WriteArchive(string name, string entryName, string contents)
+        {
+            string path = Path.Combine(_tempDir, name + ".zip");
+            using (var stream = File.Create(path))
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(archive.CreateEntry(entryName).Open()))
+                writer.Write(contents);
+            return path;
+        }
+
+        [Test]
+        public void ArchiveWithoutModel_DoesNotSelectExistingSiblingModel()
+        {
+            string folder = Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder, "bundle");
+            Directory.CreateDirectory(folder);
+            string existing = Path.Combine(folder, "old.obj");
+            string original = File.ReadAllText(WriteCubeObj());
+            File.WriteAllText(existing, original);
+            string source = WriteArchive("textures", "materials.mtl", "newmtl Unused\n");
+            JObject response = Call(new JObject
+            {
+                ["sourcePath"] = source, ["name"] = "bundle", ["outputFolder"] = TestFolder
+            });
+            Assert.AreEqual(false, (bool)response["success"], response.ToString());
+            StringAssert.Contains("no model file", (string)response["error"]);
+            Assert.AreEqual(original, File.ReadAllText(existing));
+            Assert.IsTrue(File.Exists(Path.Combine(folder + "_1", "materials.mtl")));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ArchiveStemCollision_ImportsOnlyNewContentsAndPreservesExisting(bool fileCollision)
+        {
+            string stem = Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder, "bundle");
+            Directory.CreateDirectory(Path.GetDirectoryName(stem));
+            string existing;
+            if (fileCollision) existing = stem;
+            else
+            {
+                Directory.CreateDirectory(stem);
+                existing = Path.Combine(stem, "new.obj");
+            }
+            File.WriteAllText(existing, "existing file must remain intact");
+            string source = WriteArchive("new_model", "new.obj", File.ReadAllText(WriteCubeObj()));
+            JObject response = Call(new JObject
+            {
+                ["sourcePath"] = source, ["name"] = "bundle", ["outputFolder"] = TestFolder
+            });
+            Assert.AreEqual(true, (bool)response["success"], response.ToString());
+            Assert.AreEqual(TestFolder + "/bundle_1/new.obj", (string)response["data"]["asset_path"]);
+            Assert.AreEqual("existing file must remain intact", File.ReadAllText(existing));
         }
 
         [Test]
