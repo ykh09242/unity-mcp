@@ -35,6 +35,8 @@
 # (ExCSS.Unity redefines System.Tuple; cscompmgd.dll redefines Microsoft.CSharp.CompilerError)
 # that Unity deliberately does not reference. Regenerate them when defaultVersion changes:
 # open TestProjects/UnityMCPTests in that Editor, then re-derive from the generated csprojs.
+# Keep this portable reference set free of removed modules and optional playback SDKs.
+# Every remaining declared reference is required; missing metadata fails before Roslyn.
 set -uo pipefail
 
 die() { echo "::error::$*" >&2; exit 2; }
@@ -78,7 +80,7 @@ fi
 # The version ladder must be exact: defining UNITY_2022_1_OR_NEWER on a 2021.3 build
 # compiles the wrong #if branches and invents errors that do not exist.
 UNITY_RELEASES="5.3 5.4 5.5 5.6 2017.1 2017.2 2017.3 2017.4 2018.1 2018.2 2018.3 2018.4 \
-2019.1 2019.2 2019.3 2019.4 2020.1 2020.2 2020.3 2021.1 2021.2 2021.3 2022.1 2022.2 2022.3 \
+2019.1 2019.2 2019.3 2019.4 2020.1 2020.2 2020.3 2021.1 2021.2 2021.3 2022.1 2022.2 2022.3 2023.1 2023.2 \
 6000.0 6000.1 6000.2 6000.3 6000.4 6000.5 6000.6"
 
 ver_major=$(echo "$UNITY_VERSION" | cut -d. -f1)
@@ -155,11 +157,16 @@ compile() {
       esac
       local p; p=$(resolve_ref "$entry")
       if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
-      else echo "::warning::reference not found: $entry" >&2; missing=$((missing+1)); fi
+      else echo "::error::required reference not found: $entry" >&2; missing=$((missing+1)); fi
     done < "$manifest"
     for r in "$@"; do echo "-r:\"$r\""; done
     find "$srcdir" -name '*.cs' -type f | sort | while read -r f; do echo "\"$f\""; done
   } > "$rsp"
+
+  if [ "$missing" -ne 0 ]; then
+    echo "::error::$name [$platform] has $missing missing required references" >&2
+    return 1
+  fi
 
   local nsrc; nsrc=$(find "$srcdir" -name '*.cs' -type f | wc -l)
   echo "--- $name [$platform] : $nsrc sources, $(grep -c '^-r:' "$rsp") refs ---"

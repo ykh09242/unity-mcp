@@ -4,7 +4,6 @@ DATA/Managed/UnityEngine/UnityEditor.DeviceSimulatorModule.dll
 DATA/Managed/UnityEngine/UnityEditor.DiagnosticsModule.dll
 DATA/Managed/UnityEngine/UnityEditor.dll
 DATA/Managed/UnityEngine/UnityEditor.GraphViewModule.dll
-DATA/Managed/UnityEngine/UnityEditor.PackageManagerUIModule.dll
 DATA/Managed/UnityEngine/UnityEditor.QuickSearchModule.dll
 DATA/Managed/UnityEngine/UnityEditor.SceneTemplateModule.dll
 DATA/Managed/UnityEngine/UnityEditor.TextCoreFontEngineModule.dll
@@ -12,7 +11,6 @@ DATA/Managed/UnityEngine/UnityEditor.TextCoreTextEngineModule.dll
 DATA/Managed/UnityEngine/UnityEditor.UIBuilderModule.dll
 DATA/Managed/UnityEngine/UnityEditor.UIElementsModule.dll
 DATA/Managed/UnityEngine/UnityEditor.UIElementsSamplesModule.dll
-DATA/Managed/UnityEngine/UnityEditor.UIServiceModule.dll
 DATA/Managed/UnityEngine/UnityEditor.UnityConnectModule.dll
 DATA/Managed/UnityEngine/UnityEngine.AccessibilityModule.dll
 DATA/Managed/UnityEngine/UnityEngine.AIModule.dll
@@ -43,7 +41,6 @@ DATA/Managed/UnityEngine/UnityEngine.ParticleSystemModule.dll
 DATA/Managed/UnityEngine/UnityEngine.PerformanceReportingModule.dll
 DATA/Managed/UnityEngine/UnityEngine.Physics2DModule.dll
 DATA/Managed/UnityEngine/UnityEngine.PhysicsModule.dll
-DATA/Managed/UnityEngine/UnityEngine.ProfilerModule.dll
 DATA/Managed/UnityEngine/UnityEngine.RuntimeInitializeOnLoadManagerInitializerModule.dll
 DATA/Managed/UnityEngine/UnityEngine.ScreenCaptureModule.dll
 DATA/Managed/UnityEngine/UnityEngine.SharedInternalsModule.dll
@@ -60,10 +57,8 @@ DATA/Managed/UnityEngine/UnityEngine.TextRenderingModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TilemapModule.dll
 DATA/Managed/UnityEngine/UnityEngine.TLSModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UIElementsModule.dll
-DATA/Managed/UnityEngine/UnityEngine.UIElementsNativeModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UIModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UmbraModule.dll
-DATA/Managed/UnityEngine/UnityEngine.UNETModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityAnalyticsCommonModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityAnalyticsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.UnityConnectModule.dll
@@ -203,10 +198,6 @@ DATA/NetStandard/compat/2.1.0/shims/netstandard/System.Xml.XPath.dll
 DATA/NetStandard/compat/2.1.0/shims/netstandard/System.Xml.XPath.XDocument.dll
 DATA/NetStandard/Extensions/2.0.0/System.Runtime.InteropServices.WindowsRuntime.dll
 DATA/NetStandard/ref/2.1.0/netstandard.dll
-DATA/PlaybackEngines/AndroidPlayer/Unity.Android.Gradle.dll
-DATA/PlaybackEngines/AndroidPlayer/Unity.Android.Types.dll
-DATA/PlaybackEngines/AndroidPlayer/UnityEditor.Android.Extensions.dll
-DATA/PlaybackEngines/WindowsStandaloneSupport/UnityEditor.WindowsStandalone.Extensions.dll
 EXTRA/Newtonsoft.Json.dll
 LIBCACHE/UnityEditor.UI.dll
 LIBCACHE/UnityEngine.UI.dll
