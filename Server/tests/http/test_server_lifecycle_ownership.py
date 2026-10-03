@@ -4,6 +4,7 @@ import asyncio  # noqa: ANYIO_OK -- inspect hub-owned task lifetimes.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import anyio
 import pytest
 import pytest_asyncio
 from fastmcp import Client, FastMCP
@@ -154,6 +155,73 @@ async def test_cancelled_replacement_ack_still_closes_evicted_socket(lifecycle_s
         old.close.assert_awaited_once()
     finally:
         await hub.on_disconnect(new, 1001)
+
+
+@pytest.mark.asyncio
+async def test_level_cancelled_replacement_releases_evicted_socket_admission(
+    lifecycle_state, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(PluginHub, "_admitted", {})
+    PluginHub.configure(PluginRegistry())
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    old, new = socket_stub(), socket_stub()
+    await hub._handle_register(old, RegisterMessage(project_hash="same"))
+    PluginHub._admitted[id(old)] = (old, None)
+    old_closed = anyio.Event()
+    ack_started = anyio.Event()
+    cancelled = anyio.Event()
+
+    async def close_old(**kwargs) -> None:
+        await anyio.lowlevel.checkpoint()
+        await hub.on_disconnect(old, 1001)
+        old_closed.set()
+
+    async def blocked_ack(payload) -> None:
+        ack_started.set()
+        await anyio.sleep_forever()
+
+    async def register_replacement() -> None:
+        try:
+            await hub._handle_register(new, RegisterMessage(project_hash="same"))
+        except anyio.get_cancelled_exc_class():
+            cancelled.set()
+            raise
+
+    old.close.side_effect = close_old
+    new.send_json.side_effect = blocked_ack
+    try:
+        with anyio.fail_after(1):
+            async with anyio.create_task_group() as group:
+                group.start_soon(register_replacement)
+                await ack_started.wait()
+                group.cancel_scope.cancel()
+        assert old_closed.is_set(), "Replacement cancellation must finish evicted socket closure"
+        assert id(old) not in PluginHub._admitted
+        assert cancelled.is_set(), "Cleanup must propagate registration cancellation"
+    finally:
+        await hub.on_disconnect(new, 1001)
+
+
+@pytest.mark.asyncio
+async def test_level_cancelled_socket_close_remains_bounded(
+    lifecycle_state, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = socket_stub()
+    stopped = anyio.Event()
+    monkeypatch.setattr(PluginHub, "CLOSE_TIMEOUT", 0.02)
+
+    async def blocked_close(**kwargs) -> None:
+        try:
+            await anyio.sleep_forever()
+        finally:
+            stopped.set()
+
+    ws.close.side_effect = blocked_close
+    with anyio.fail_after(1):
+        with anyio.CancelScope() as scope:
+            scope.cancel()
+            await PluginHub._close_websocket(ws)
+    assert stopped.is_set(), "Shielded close must still cancel blocked I/O at its deadline"
 
 
 @pytest.mark.asyncio

@@ -285,8 +285,12 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def _close_websocket(cls, websocket: WebSocket) -> None:
+        import anyio
+
         try:
-            await asyncio.wait_for(websocket.close(code=1001), timeout=cls.CLOSE_TIMEOUT)
+            # Closure is owned cleanup, including inside a cancelled ASGI scope.
+            with anyio.CancelScope(shield=True):
+                await asyncio.wait_for(websocket.close(code=1001), timeout=cls.CLOSE_TIMEOUT)
         except Exception:
             logger.debug("Failed to close plugin WebSocket", exc_info=True)
 
