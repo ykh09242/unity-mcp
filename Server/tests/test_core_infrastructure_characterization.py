@@ -18,6 +18,7 @@ To run:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -193,7 +194,7 @@ class TestLoggingDecoratorBasics:
             return "async"
 
         # Should be a coroutine function
-        assert asyncio.iscoroutinefunction(is_async)
+        assert inspect.iscoroutinefunction(is_async)
         result = asyncio.run(is_async())
         assert result == "async"
 
