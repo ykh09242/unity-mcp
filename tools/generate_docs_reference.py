@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import filecmp
 import importlib
+import pkgutil
 import inspect
 import json
 import re
@@ -42,7 +43,7 @@ import textwrap
 import typing
 from dataclasses import dataclass
 from pathlib import Path
-from types import GenericAlias, UnionType
+from types import GenericAlias, ModuleType, UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -76,6 +77,23 @@ def _ensure_server_on_path() -> None:
         sys.path.insert(0, str(SERVER_SRC))
 
 
+def _import_public_modules(package: ModuleType) -> None:
+    """Match server discovery's one-level scope, but fail on incomplete imports."""
+    if package.__file__ is None:
+        raise ImportError(f"No source directory for {package.__name__}")
+    base_dir = Path(package.__file__).parent
+    locations = [(base_dir, package.__name__)]
+    locations.extend(
+        (directory, f"{package.__name__}.{directory.name}")
+        for directory in base_dir.iterdir()
+        if directory.is_dir() and not directory.name.startswith(("_", "."))
+    )
+    for directory, prefix in locations:
+        for module in pkgutil.iter_modules([str(directory)]):
+            if not module.name.startswith("_"):
+                importlib.import_module(f"{prefix}.{module.name}")
+
+
 def load_registries() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Import every tool/resource module so the decorators fire, then return
     the populated registries."""
@@ -84,21 +102,15 @@ def load_registries() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from services.registry import (  # noqa: WPS433  (deferred import by design)
         get_registered_tools,
         get_registered_resources,
-        clear_tool_registry,
-        clear_resource_registry,
     )
-    from utils.module_discovery import discover_modules
-
-    clear_tool_registry()
-    clear_resource_registry()
-
     tools_pkg = importlib.import_module("services.tools")
     resources_pkg = importlib.import_module("services.resources")
 
     # Walk both directories and import every module — the @decorator
-    # side-effects populate the registries.
-    list(discover_modules(Path(tools_pkg.__file__).parent, tools_pkg.__name__))
-    list(discover_modules(Path(resources_pkg.__file__).parent, resources_pkg.__name__))
+    # side-effects populate the registries. Keep existing registrations because
+    # cached imports do not re-run decorators on subsequent generation calls.
+    _import_public_modules(tools_pkg)
+    _import_public_modules(resources_pkg)
 
     return get_registered_tools(), get_registered_resources()
 
@@ -474,6 +486,41 @@ def _write(path: Path, content: str) -> bool:
     return True
 
 
+def _prune_obsolete_pages(tools_root: Path, expected_pages: set[Path]) -> None:
+    """Remove only obsolete pages and metadata with the generator's ownership markers."""
+    for page in tools_root.glob("*/*.md"):
+        if page in expected_pages or page.name == "index.md" or page.is_symlink() or page.parent.is_symlink():
+            continue
+        text = page.read_text(encoding="utf-8")
+        if f"# `{page.stem}`\n\n{GENERATED_BANNER}\n" in text:
+            page.unlink()
+
+    for category in tools_root.glob("*/_category_.json"):
+        group_dir = category.parent
+        index = group_dir / "index.md"
+        if index in expected_pages or group_dir.is_symlink() or category.is_symlink() or index.is_symlink():
+            continue
+        group = group_dir.name
+        expected_category = {
+            "label": group,
+            "link": {"type": "doc", "id": f"reference/tools/{group}/index"},
+            "collapsed": True,
+        }
+        try:
+            if json.loads(category.read_text(encoding="utf-8")) != expected_category:
+                continue
+        except json.JSONDecodeError:
+            continue
+        heading = f"# `{group}` tools\n\n"
+        prefix = render_group_index(group, [], "").split(heading, 1)[0] + heading
+        if not index.is_file() or not index.read_text(encoding="utf-8").startswith(prefix):
+            continue
+        index.unlink()
+        category.unlink()
+        if not any(group_dir.iterdir()):
+            group_dir.rmdir()
+
+
 def generate(
     tools_root: Path = TOOLS_OUT,
     resources_root: Path = RESOURCES_OUT,
@@ -497,6 +544,7 @@ def generate(
 
     stats = {"tools": 0, "groups": 0, "resources": 0, "writes": 0}
     examples_root = examples_source if examples_source is not None else tools_root
+    expected_pages = {tools_root / "index.md"}
 
     # Per-tool pages + per-group landing + Docusaurus category metadata.
     for group, group_tools in sorted(tools_by_group.items()):
@@ -505,12 +553,22 @@ def generate(
         for tool in sorted(group_tools, key=lambda t: t["name"]):
             page_path = group_dir / f"{tool['name']}.md"
             examples_path = examples_dir / f"{tool['name']}.md"
+            if not examples_path.exists():
+                # A group move keeps the tool's hand-authored examples.
+                previous = [
+                    path for path in examples_root.glob(f"*/{tool['name']}.md")
+                    if GENERATED_BANNER in path.read_text(encoding="utf-8")
+                ]
+                if len(previous) == 1:
+                    examples_path = previous[0]
             existing_examples = _read_existing_examples(examples_path)
             page_md = render_tool_page(tool, existing_examples)
+            expected_pages.add(page_path)
             if _write(page_path, page_md):
                 stats["writes"] += 1
             stats["tools"] += 1
         index_md = render_group_index(group, group_tools, group_blurbs.get(group, ""))
+        expected_pages.add(group_dir / "index.md")
         if _write(group_dir / "index.md", index_md):
             stats["writes"] += 1
         # _category_.json tells the autogenerated sidebar to wrap this
@@ -545,6 +603,8 @@ def generate(
         stats["writes"] += 1
     stats["resources"] = len(resources)
 
+    _prune_obsolete_pages(tools_root, expected_pages)
+
     return stats
 
 
@@ -569,9 +629,13 @@ def _diff_trees(a: Path, b: Path) -> list[str]:
             diffs.append(f"generated-only: {rel / name}")
         for name in cmp.common_files:
             # Match _write's newline normalization and avoid shallow stat equality.
-            committed = (a / rel / name).read_text(encoding="utf-8")
-            generated = (b / rel / name).read_text(encoding="utf-8")
-            if committed != generated:
+            committed_path, generated_path = a / rel / name, b / rel / name
+            try:
+                differs = committed_path.read_text(encoding="utf-8") != generated_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                # Authored examples can include binary images carried into the check.
+                differs = committed_path.read_bytes() != generated_path.read_bytes()
+            if differs:
                 diffs.append(f"differs: {rel / name}")
         for name in cmp.common_dirs:
             _walk(rel / name)
@@ -600,6 +664,10 @@ def main(argv: list[str] | None = None) -> int:
             tmp_root = Path(tmp)
             tmp_tools = tmp_root / "tools"
             tmp_resources = tmp_root / "resources"
+            # Carry authored files into the check; generation prunes obsolete
+            # owned pages in this copy without touching the committed tree.
+            _copytree_into(TOOLS_OUT, tmp_tools)
+            _copytree_into(RESOURCES_OUT, tmp_resources)
             # Read existing examples from the committed location so
             # preservation is honored in --check too.
             generate(tmp_tools, tmp_resources, examples_source=TOOLS_OUT)
