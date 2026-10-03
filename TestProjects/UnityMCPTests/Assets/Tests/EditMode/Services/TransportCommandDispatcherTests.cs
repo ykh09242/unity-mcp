@@ -98,6 +98,40 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public void ExecuteCommandJsonAsync_LargeAsyncResponseWithLoggingDisabled_PreservesResultAndCleansUp()
+        {
+            const string name = "dispatcher_test_large_async";
+            CommandRegistry.Initialize();
+            var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", StaticPrivate).GetValue(null);
+            var handlerType = typeof(CommandRegistry).Assembly.GetType("MCPForUnity.Editor.Tools.HandlerInfo", true);
+            var loggingType = typeof(CommandRegistry).Assembly.GetType("MCPForUnity.Editor.Helpers.McpLogRecord", true);
+            var enabledField = loggingType.GetField("_isEnabledCached", StaticPrivate);
+            var previousLogging = enabledField.GetValue(null);
+            var previousHandler = handlers[name];
+            string payload = new string('x', 256 * 1024) + "한글😀";
+            Func<JObject, Task<object>> handler = _ => Task.FromResult<object>(new { payload });
+            using var cts = new CancellationTokenSource();
+            try
+            {
+                // Use the cached flag to avoid changing EditorPrefs in this fixture.
+                enabledField.SetValue(null, false);
+                handlers[name] = Activator.CreateInstance(handlerType, new object[] { name, null, handler });
+                var command = Dispatch("{\"type\":\"" + name + "\"}", cts.Token);
+                Assert.IsTrue(command.Wait(TimeSpan.FromSeconds(5)));
+                Assert.AreEqual("{\"status\":\"success\",\"result\":{\"payload\":\"" + payload + "\"}}", command.Result);
+                Assert.IsTrue(SpinWait.SpinUntil(() => !IsPending(command), TimeSpan.FromSeconds(5)),
+                    "Disabling async response logging must still release pending state without an editor frame.");
+            }
+            finally
+            {
+                cts.Cancel();
+                if (previousHandler == null) handlers.Remove(name);
+                else handlers[name] = previousHandler;
+                enabledField.SetValue(null, previousLogging);
+            }
+        }
+
         private static Task<string> Dispatch(string json, CancellationToken token)
             => (Task<string>)Execute.Invoke(null, new object[] { json, token });
 

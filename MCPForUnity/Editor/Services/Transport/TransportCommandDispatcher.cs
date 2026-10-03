@@ -383,28 +383,31 @@ namespace MCPForUnity.Editor.Services.Transport
                     pending.CompletionSource.Task.ContinueWith(t =>
                     {
                         sw?.Stop();
-                        var logStatus = "SUCCESS";
-                        string logError = null;
-                        if (t.IsFaulted)
+                        if (McpLogRecord.IsEnabled)
                         {
-                            logStatus = "ERROR";
-                            logError = t.Exception?.InnerException?.Message;
-                        }
-                        else if (t.IsCompletedSuccessfully && t.Result != null)
-                        {
-                            try
+                            var logStatus = "SUCCESS";
+                            string logError = null;
+                            if (t.IsFaulted)
                             {
-                                var resultObj = JObject.Parse(t.Result);
-                                if (string.Equals(resultObj.Value<string>("status"), "error", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    logStatus = "ERROR";
-                                    logError = resultObj.Value<string>("error");
-                                }
+                                logStatus = "ERROR";
+                                logError = t.Exception?.InnerException?.Message;
                             }
-                            catch { }
+                            else if (t.IsCompletedSuccessfully && t.Result != null)
+                            {
+                                try
+                                {
+                                    var resultObj = JObject.Parse(t.Result);
+                                    if (string.Equals(resultObj.Value<string>("status"), "error", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        logStatus = "ERROR";
+                                        logError = resultObj.Value<string>("error");
+                                    }
+                                }
+                                catch { }
+                            }
+                            McpLogRecord.Log(capturedType, capturedParams, capturedLogType,
+                                logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
                         }
-                        McpLogRecord.Log(capturedType, capturedParams, capturedLogType,
-                            logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
                         RemovePending(id, pending);
                     }, TaskScheduler.Default);
                     return;
