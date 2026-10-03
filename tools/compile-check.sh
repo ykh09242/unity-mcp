@@ -100,7 +100,7 @@ ver_minor=$(echo "$UNITY_VERSION" | cut -d. -f2)
 ver_patch=$(echo "$UNITY_VERSION" | cut -d. -f3 | sed 's/[a-z].*//')
 REFS_ROOT="$REPO/tools/compile-refs"
 case "$ver_major.$ver_minor" in
-  2021.3|2022.3) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
+  2021.3|2022.3|6000.3) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
   *) REFS_PROFILE="$REFS_ROOT" ;;
 esac
 
@@ -223,7 +223,12 @@ for platform in $PLATFORMS; do
     cecil_refs=()
     for dll in Mono.Cecil.dll Mono.Cecil.Pdb.dll Mono.Cecil.Mdb.dll Mono.Cecil.Rocks.dll; do
       ref="$UNITY_DATA/Tools/Compilation/ApiUpdater/$dll"
-      [ -f "$ref" ] || die "Test Framework reference not found: $ref"
+      if [ ! -f "$ref" ]; then
+        echo "available Cecil reference candidates (diagnostic only):" >&2
+        find "$UNITY_DATA/Managed" "$UNITY_DATA/Tools/ScriptUpdater" "$UNITY_DATA/Tools/Compilation/ApiUpdater" \
+          -maxdepth 1 -type f \( -name 'Mono.Cecil*.dll' -o -name 'Unity.Cecil*.dll' \) 2>/dev/null | sort >&2 || true
+        die "Test Framework reference not found: $ref"
+      fi
       cecil_refs+=("$ref")
     done
     compile UnityEditor.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEditor.TestRunner" "$platform" \

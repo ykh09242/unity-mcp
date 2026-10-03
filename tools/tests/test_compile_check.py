@@ -67,7 +67,7 @@ def harness(tmp_path: Path) -> CompileHarness:
     bcl.mkdir()
     for name in ("Runtime", "Editor"):
         (bcl / f"{name}.txt").write_text("", encoding="utf-8")
-    for version in ("2021.3", "2022.3"):
+    for version in ("2021.3", "2022.3", "6000.3"):
         profile = repo / "tools" / "compile-refs" / version
         profile.mkdir()
         for name in ("Runtime", "Editor"):
@@ -95,7 +95,7 @@ done < "$rsp"
     ("6000.0.75f1", ""),
     ("6000.0.84f1", ""),
     ("6000.4.8f1", ""),
-    ("6000.3.25f1", ""),
+    ("6000.3.25f1", "6000.3"),
     ("6000.6.4f1", ""),
     ("6000.7.0b2", ""),
     ("6000.7.0a6", ""),
@@ -151,7 +151,7 @@ def test_shared_bcl_references_are_required(harness: CompileHarness) -> None:
     assert not harness.calls.exists()
 
 
-@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.62f1"])
+@pytest.mark.parametrize("version", ["2021.3.45f2", "2022.3.62f1", "6000.3.25f1"])
 def test_missing_selected_legacy_manifest_does_not_fall_back(harness: CompileHarness, version: str) -> None:
     major, minor, _ = version.split(".")
     (harness.repo / "tools" / "compile-refs" / f"{major}.{minor}" / "Runtime.txt").unlink()
@@ -203,6 +203,15 @@ def test_existing_reference_is_preserved_in_both_compilations(harness: CompileHa
 def test_portable_manifests_do_not_require_removed_or_optional_modules(name: str) -> None:
     references = set((ROOT / "tools" / "compile-refs" / f"{name}.txt").read_text(encoding="utf-8").splitlines())
     assert not references & STALE_REFERENCES
+
+
+@pytest.mark.parametrize("name", ["Runtime", "Editor"])
+def test_unity63_profile_removes_only_confirmed_absent_test_protocol_module(name: str) -> None:
+    root = ROOT / "tools/compile-refs"
+    default = set((root / f"{name}.txt").read_text(encoding="utf-8").splitlines())
+    selected = set((root / "6000.3" / f"{name}.txt").read_text(encoding="utf-8").splitlines())
+    assert default - selected == {"DATA/Managed/UnityEngine/UnityEngine.UnityTestProtocolModule.dll"}
+    assert not selected - default
 
 
 @pytest.fixture
@@ -277,6 +286,23 @@ def test_missing_owned_assembly_does_not_report_editmode_success(
     assert result.returncode != 0
     assert "TestAsmdef failed to compile" in result.stdout
     assert "MCPForUnityTests.EditMode" not in harness.calls.read_text(encoding="utf-8")
+
+
+def test_missing_cecil_reports_bounded_candidates_without_selecting_them(
+    harness: CompileHarness, staged_tests: tuple[Path, Path],
+) -> None:
+    project, framework = staged_tests
+    (harness.data / "Tools/Compilation/ApiUpdater/Mono.Cecil.Mdb.dll").unlink()
+    candidate = harness.data / "Tools/ScriptUpdater/Mono.Cecil.Mdb.dll"
+    candidate.parent.mkdir(parents=True)
+    candidate.touch()
+    (harness.data / "Managed/Unity.Cecil.dll").touch()
+    result = harness.run("6000.0.84f1", test_project=project, framework=framework)
+    assert result.returncode != 0
+    assert "available Cecil reference candidates" in result.stderr
+    assert "Tools/ScriptUpdater/Mono.Cecil.Mdb.dll" in result.stderr
+    assert "Managed/Unity.Cecil.dll" in result.stderr
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 1
 
 
 def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
