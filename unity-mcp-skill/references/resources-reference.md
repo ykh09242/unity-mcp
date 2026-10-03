@@ -290,7 +290,7 @@ mcpforunity://{category}/{resource_path}[?query_params]
 **Parameters:**
 - `instance_id` (int): GameObject instance ID from `find_gameobjects`
 
-**Returns:**
+**Returns (`data`):**
 ```json
 {
   "instanceID": 12345,
@@ -302,14 +302,17 @@ mcpforunity://{category}/{resource_path}[?query_params]
   "activeInHierarchy": true,
   "isStatic": false,
   "transform": {
-    "position": [0, 1, 0],
-    "rotation": [0, 0, 0],
-    "scale": [1, 1, 1]
+    "position": {"x": 0, "y": 1, "z": 0},
+    "localPosition": {"x": 0, "y": 1, "z": 0},
+    "rotation": {"x": 0, "y": 0, "z": 0},
+    "localRotation": {"x": 0, "y": 0, "z": 0},
+    "scale": {"x": 1, "y": 1, "z": 1},
+    "lossyScale": {"x": 1, "y": 1, "z": 1}
   },
-  "parent": {"instanceID": 0},
-  "children": [{"instanceID": 67890}],
+  "parent": null,
+  "children": [67890],
   "componentTypes": ["Transform", "Rigidbody", "PlayerController"],
-  "path": "/Player"
+  "path": "Player"
 }
 ```
 
@@ -323,21 +326,22 @@ mcpforunity://{category}/{resource_path}[?query_params]
 - `cursor` (int): Pagination cursor
 - `include_properties` (bool): Default true, set false for just types
 
-**Returns:**
+**Returns (`data`, example with `?page_size=2`; component properties abbreviated):**
 ```json
 {
   "gameObjectID": 12345,
   "gameObjectName": "Player",
   "components": [
     {
-      "type": "Transform",
-      "properties": {
-        "position": {"x": 0, "y": 1, "z": 0},
-        "rotation": {"x": 0, "y": 0, "z": 0, "w": 1}
-      }
+      "typeName": "UnityEngine.Transform",
+      "instanceID": 12346,
+      "position": {"x": 0, "y": 1, "z": 0},
+      "eulerAngles": {"x": 0, "y": 0, "z": 0},
+      "localScale": {"x": 1, "y": 1, "z": 1}
     },
     {
-      "type": "Rigidbody",
+      "typeName": "UnityEngine.Rigidbody",
+      "instanceID": 12347,
       "properties": {
         "mass": 1.0,
         "useGravity": true
@@ -345,11 +349,15 @@ mcpforunity://{category}/{resource_path}[?query_params]
     }
   ],
   "cursor": 0,
-  "pageSize": 25,
-  "nextCursor": null,
-  "hasMore": false
+  "pageSize": 2,
+  "nextCursor": 2,
+  "totalCount": 3,
+  "hasMore": true,
+  "includeProperties": true
 }
 ```
+
+Transform values are stored directly on the component entry. With `include_properties=false`, each entry contains only `typeName` and `instanceID`.
 
 ### mcpforunity://scene/gameobject/{instance_id}/component/{component_name}
 
@@ -359,17 +367,16 @@ mcpforunity://{category}/{resource_path}[?query_params]
 - `instance_id` (int): GameObject instance ID
 - `component_name` (string): e.g., "Rigidbody", "Camera", "Transform"
 
-**Returns:**
+**Returns (`data`, component properties abbreviated):**
 ```json
 {
   "gameObjectID": 12345,
   "gameObjectName": "Player",
   "component": {
-    "type": "Rigidbody",
+    "typeName": "UnityEngine.Rigidbody",
+    "instanceID": 12347,
     "properties": {
       "mass": 1.0,
-      "drag": 0,
-      "angularDrag": 0.05,
       "useGravity": true,
       "isKinematic": false
     }
