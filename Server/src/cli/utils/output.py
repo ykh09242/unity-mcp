@@ -198,6 +198,6 @@ def print_warning(message: str) -> None:
     click.echo(f"⚠️  {message}")
 
 
-def print_info(message: str) -> None:
+def print_info(message: str, *, err: bool = False) -> None:
     """Print an info message."""
-    click.echo(f"ℹ️  {message}")
+    click.echo(f"ℹ️  {message}", err=err)

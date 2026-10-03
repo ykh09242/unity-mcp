@@ -85,8 +85,8 @@ def parse_json_or_exit(value: str, context: str = "parameter") -> Any:
             return json.loads(fixed)
         except json.JSONDecodeError as e:
             print_error(f"Invalid JSON for {context}: {e}")
-            print_info("Example: --params '{\"key\":\"value\"}'")
-            print_info("Tip: wrap JSON in single quotes to avoid shell escaping issues.")
+            print_info("Example: --params '{\"key\":\"value\"}'", err=True)
+            print_info("Tip: wrap JSON in single quotes to avoid shell escaping issues.", err=True)
             sys.exit(1)
 
 
