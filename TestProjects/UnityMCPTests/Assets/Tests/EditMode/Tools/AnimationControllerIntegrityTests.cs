@@ -8,6 +8,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools
@@ -71,10 +72,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 ["file"] = Convert.ToBase64String(File.ReadAllBytes(
                     Path.Combine(Application.dataPath, _path.Substring("Assets/".Length)))),
                 ["assets"] = new JArray(AssetDatabase.LoadAllAssetsAtPath(_path)
-                    .OrderBy(asset => asset.GetInstanceID())
+                    .OrderBy(asset => asset.GetInstanceIDCompat())
                     .Select(asset => new JObject
                     {
-                        ["id"] = asset.GetInstanceID(),
+                        ["id"] = asset.GetInstanceIDCompat(),
                         ["serialized"] = EditorJsonUtility.ToJson(asset)
                     }))
             }.ToString(Newtonsoft.Json.Formatting.None);

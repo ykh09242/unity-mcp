@@ -26,7 +26,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown()
         {
             // Clean up scene objects
-            foreach (var go in UnityFindObjectsCompat.FindAll<GameObject>().OrderBy(go => go.GetInstanceID()))
+            foreach (var go in UnityFindObjectsCompat.FindAll<GameObject>().OrderBy(go => go.GetInstanceIDCompat()))
             {
                 if (go.name.StartsWith("AnimTest_"))
                 {

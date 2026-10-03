@@ -9,6 +9,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -147,7 +148,7 @@ namespace MCPForUnityTests.Editor.Tools
             var request = new JObject
             {
                 ["action"] = action,
-                ["target"] = mesh.gameObject.GetInstanceID().ToString(),
+                ["target"] = mesh.gameObject.GetInstanceIDCompat().ToString(),
                 ["searchMethod"] = "by_id",
             };
             if (properties != null) request["properties"] = properties;

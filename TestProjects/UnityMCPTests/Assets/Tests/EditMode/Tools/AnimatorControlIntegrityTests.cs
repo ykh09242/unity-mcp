@@ -7,6 +7,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -78,7 +79,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Request(string parameter, string type = null) => new JObject
         {
-            ["action"] = "animator_set_parameter", ["target"] = ownedObject.GetInstanceID(),
+            ["action"] = "animator_set_parameter", ["target"] = ownedObject.GetInstanceIDCompat(),
             ["search_method"] = "by_id", ["parameter_name"] = parameter,
             ["parameter_type"] = type
         };
@@ -191,7 +192,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var request = new JObject
             {
-                ["action"] = "animator_set_parameter", ["target"] = ownedObject.GetInstanceID(),
+                ["action"] = "animator_set_parameter", ["target"] = ownedObject.GetInstanceIDCompat(),
                 ["search_method"] = "by_id",
                 ["properties"] = "{\"parameter_name\":\"Enabled\",\"parameter_type\":\"boolean\",\"value\":true}",
                 ["value"] = false
@@ -209,7 +210,7 @@ namespace MCPForUnityTests.Editor.Tools
             int dirtyCount = EditorUtility.GetDirtyCount(controller);
             var request = new JObject
             {
-                ["action"] = "animator_crossfade", ["target"] = ownedObject.GetInstanceID(),
+                ["action"] = "animator_crossfade", ["target"] = ownedObject.GetInstanceIDCompat(),
                 ["search_method"] = "by_id", ["state_name"] = "Base Layer.Idle",
                 [field] = nullValue ? JValue.CreateNull() : new JValue("bad")
             };

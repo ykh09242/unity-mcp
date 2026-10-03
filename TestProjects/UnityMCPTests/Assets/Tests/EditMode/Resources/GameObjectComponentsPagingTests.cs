@@ -3,6 +3,7 @@ using MCPForUnity.Editor.Resources.Scene;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Resources
 {
@@ -48,7 +49,7 @@ namespace MCPForUnityTests.Editor.Resources
         private JObject ReadPage(int cursor)
             => JObject.FromObject(GameObjectComponentsResource.HandleCommand(new JObject
             {
-                ["instanceID"] = _target.GetInstanceID(),
+                ["instanceID"] = _target.GetInstanceIDCompat(),
                 ["cursor"] = cursor,
                 ["pageSize"] = 1,
                 ["includeProperties"] = false

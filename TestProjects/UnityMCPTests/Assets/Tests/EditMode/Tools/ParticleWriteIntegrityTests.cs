@@ -7,6 +7,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -223,7 +224,7 @@ namespace MCPForUnityTests.Editor.Tools
             return JObject.FromObject(ManageVFX.HandleCommand(new JObject
             {
                 ["action"] = action,
-                ["target"] = root.GetInstanceID(),
+                ["target"] = root.GetInstanceIDCompat(),
                 ["searchMethod"] = "by_id",
                 ["properties"] = properties
             }));
@@ -257,7 +258,7 @@ namespace MCPForUnityTests.Editor.Tools
                 size = new { size.enabled, size.separateAxes, size = CurveSnapshot(size.size), x = CurveSnapshot(size.x), y = CurveSnapshot(size.y), z = CurveSnapshot(size.z) },
                 velocity = new { velocity.enabled, velocity.space, x = CurveSnapshot(velocity.x), y = CurveSnapshot(velocity.y), z = CurveSnapshot(velocity.z), speedModifier = CurveSnapshot(velocity.speedModifier) },
                 noise = new { noise.enabled, strength = CurveSnapshot(noise.strength), noise.frequency, scrollSpeed = CurveSnapshot(noise.scrollSpeed), noise.damping, noise.octaveCount, noise.quality },
-                renderer = new { material = renderer.sharedMaterial != null ? renderer.sharedMaterial.GetInstanceID() : 0, trailMaterial = renderer.trailMaterial != null ? renderer.trailMaterial.GetInstanceID() : 0, renderer.renderMode, renderer.sortMode, renderer.minParticleSize, renderer.maxParticleSize, renderer.lengthScale, renderer.velocityScale, renderer.cameraVelocityScale, renderer.normalDirection, renderer.alignment, pivot = VectorSnapshot(renderer.pivot), flip = VectorSnapshot(renderer.flip), renderer.allowRoll, renderer.shadowBias, renderer.receiveShadows, renderer.shadowCastingMode, renderer.lightProbeUsage, renderer.reflectionProbeUsage, renderer.motionVectorGenerationMode, renderer.sortingOrder, renderer.sortingLayerID, renderer.sortingLayerName, renderer.renderingLayerMask },
+                renderer = new { material = renderer.sharedMaterial != null ? renderer.sharedMaterial.GetInstanceIDCompat() : 0, trailMaterial = renderer.trailMaterial != null ? renderer.trailMaterial.GetInstanceIDCompat() : 0, renderer.renderMode, renderer.sortMode, renderer.minParticleSize, renderer.maxParticleSize, renderer.lengthScale, renderer.velocityScale, renderer.cameraVelocityScale, renderer.normalDirection, renderer.alignment, pivot = VectorSnapshot(renderer.pivot), flip = VectorSnapshot(renderer.flip), renderer.allowRoll, renderer.shadowBias, renderer.receiveShadows, renderer.shadowCastingMode, renderer.lightProbeUsage, renderer.reflectionProbeUsage, renderer.motionVectorGenerationMode, renderer.sortingOrder, renderer.sortingLayerID, renderer.sortingLayerName, renderer.renderingLayerMask },
                 particles.isPlaying,
                 particles.particleCount,
                 childPlaying = child.isPlaying,

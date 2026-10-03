@@ -8,6 +8,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
@@ -32,8 +33,8 @@ namespace MCPForUnityTests.Editor.Tools
             target = Owned("Target", targetScene);
             reference = Owned("Reference", targetScene);
             reference.transform.position = new Vector3(10, 20, 30);
-            Assert.AreSame(target, ManageGameObjectCommon.FindObjectInternal(target.GetInstanceID().ToString(), "by_id"));
-            Assert.AreSame(reference, ManageGameObjectCommon.FindObjectInternal(reference.GetInstanceID().ToString(), "by_id"));
+            Assert.AreSame(target, ManageGameObjectCommon.FindObjectInternal(target.GetInstanceIDCompat().ToString(), "by_id"));
+            Assert.AreSame(reference, ManageGameObjectCommon.FindObjectInternal(reference.GetInstanceIDCompat().ToString(), "by_id"));
             ClearOwnedSceneDirtiness(activeScene);
             ClearOwnedSceneDirtiness(targetScene);
         }
@@ -75,7 +76,7 @@ namespace MCPForUnityTests.Editor.Tools
         private JObject Send(string action, JObject options)
         {
             options["action"] = action;
-            options["target"] = target.GetInstanceID().ToString();
+            options["target"] = target.GetInstanceIDCompat().ToString();
             options["searchMethod"] = "by_id";
             return JObject.FromObject(ManageGameObject.HandleCommand(options));
         }
@@ -85,7 +86,7 @@ namespace MCPForUnityTests.Editor.Tools
             return new JObject
             {
                 ["name"] = target.name,
-                ["parent"] = target.transform.parent == null ? 0 : target.transform.parent.GetInstanceID(),
+                ["parent"] = target.transform.parent == null ? 0 : target.transform.parent.GetInstanceIDCompat(),
                 ["active"] = target.activeSelf,
                 ["tag"] = target.tag,
                 ["layer"] = target.layer,
@@ -108,7 +109,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var options = new JObject { ["isStatic"] = "bad" };
             if (earlierField == "rename") options["name"] = target.name + "Renamed";
-            if (earlierField == "parent") options["parent"] = reference.GetInstanceID();
+            if (earlierField == "parent") options["parent"] = reference.GetInstanceIDCompat();
             if (earlierField == "active") options["setActive"] = false;
             if (earlierField == "transform") options["position"] = new JArray(1, 2, 3);
             var before = Snapshot();
@@ -141,7 +142,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void MissingMovement_PreservesTransformAndDirtiness()
         {
             var before = Snapshot();
-            var response = Send("move_relative", new JObject { ["reference_object"] = reference.GetInstanceID() });
+            var response = Send("move_relative", new JObject { ["reference_object"] = reference.GetInstanceIDCompat() });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
         }
@@ -154,12 +155,12 @@ namespace MCPForUnityTests.Editor.Tools
             SceneManager.SetActiveScene(activeScene);
             string targetPath = "/" + target.name;
             Assert.AreSame(target, ManageGameObjectCommon.FindObjectInternal(targetPath, "by_path"), "The cross-scene target must resolve before mutation.");
-            Assert.AreSame(reference, ManageGameObjectCommon.FindObjectInternal(reference.GetInstanceID(), "by_id_or_name_or_path"), "The movement reference must resolve in the active scene.");
+            Assert.AreSame(reference, ManageGameObjectCommon.FindObjectInternal(reference.GetInstanceIDCompat(), "by_id_or_name_or_path"), "The movement reference must resolve in the active scene.");
             ClearOwnedSceneDirtiness(activeScene);
             ClearOwnedSceneDirtiness(targetScene);
             var options = action == "modify"
                 ? new JObject { ["position"] = new JArray(1, 2, 3) }
-                : new JObject { ["reference_object"] = reference.GetInstanceID(), ["direction"] = "right", ["distance"] = 2 };
+                : new JObject { ["reference_object"] = reference.GetInstanceIDCompat(), ["direction"] = "right", ["distance"] = 2 };
             options["action"] = action;
             options["target"] = targetPath;
             options["searchMethod"] = "by_path";
@@ -189,7 +190,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void LookAt_ExistingNumericNameSelectorTakesPrecedence()
         {
-            string numericName = reference.GetInstanceID().ToString();
+            string numericName = reference.GetInstanceIDCompat().ToString();
             Assert.IsNull(GameObject.Find(numericName), "Numeric-name collision must be owned by this test.");
             var named = Owned("Numeric", targetScene);
             named.name = numericName;
@@ -216,7 +217,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("by_name")]
         public void NumericStringTarget_UsesDocumentedSelector(string method)
         {
-            string id = target.GetInstanceID().ToString();
+            string id = target.GetInstanceIDCompat().ToString();
             Assert.IsNull(GameObject.Find(id), "Numeric-name collision must be owned by this test.");
             var named = Owned("Numeric", targetScene);
             named.name = id;
@@ -232,11 +233,11 @@ namespace MCPForUnityTests.Editor.Tools
         public void MissingNumericId_DoesNotFallBackToNumericName()
         {
             var removed = Owned("Removed", targetScene);
-            int missingId = removed.GetInstanceID();
+            int missingId = removed.GetInstanceIDCompat();
             UnityEngine.Object.DestroyImmediate(removed);
             Assert.IsNull(GameObject.Find(missingId.ToString()), "Numeric-name collision must be owned by this test.");
             var named = Owned("Numeric", targetScene);
-            Assert.AreNotEqual(missingId, named.GetInstanceID(), "The removed ID must not have been reused.");
+            Assert.AreNotEqual(missingId, named.GetInstanceIDCompat(), "The removed ID must not have been reused.");
             named.name = missingId.ToString();
             var response = JObject.FromObject(ManageGameObject.HandleCommand(new JObject
             {

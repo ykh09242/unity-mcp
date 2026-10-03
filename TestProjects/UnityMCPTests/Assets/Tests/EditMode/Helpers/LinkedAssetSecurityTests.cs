@@ -57,7 +57,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 AssetDatabase.CreateAsset(texture, relativePath);
                 var serializer = JsonSerializer.Create();
                 serializer.Converters.Add(new UnityEngineObjectConverter());
-                var reference = new JObject { ["instanceID"] = texture.GetInstanceID() };
+                var reference = new JObject { ["instanceID"] = texture.GetInstanceIDCompat() };
                 Assert.AreSame(texture, reference.ToObject<Texture>(serializer), "Ordinary persistent Assets IDs must remain usable.");
                 File.Move(fullPath, savedPath);
                 Link(fullPath, savedPath, false);

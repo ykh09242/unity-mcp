@@ -9,6 +9,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -189,7 +190,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("Owned_" + Guid.NewGuid().ToString("N"));
             Assert.AreEqual(first, go.scene);
             JObject request = Select("move_to_scene");
-            request["target"] = go.GetInstanceID();
+            request["target"] = go.GetInstanceIDCompat();
             Success(Call(request));
             Assert.AreEqual(second, go.scene);
             Assert.IsTrue(first.isLoaded);
@@ -205,7 +206,7 @@ namespace MCPForUnityTests.Editor.Tools
             Scene[] before = LoadedScenes();
             JObject request = Select(action);
             request["scenePath"] = assetRoot + "/Missing.unity";
-            request["target"] = go.GetInstanceID();
+            request["target"] = go.GetInstanceIDCompat();
             Assert.IsFalse(Call(request).Value<bool>("success"));
             CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());

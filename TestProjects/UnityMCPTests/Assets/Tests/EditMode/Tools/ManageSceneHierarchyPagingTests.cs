@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using System.Reflection;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools;
 
@@ -87,7 +88,7 @@ namespace MCPForUnityTests.Editor.Tools
             var pChildren = new JObject
             {
                 ["action"] = "get_hierarchy",
-                ["parent"] = _root.GetInstanceID(),
+                ["parent"] = _root.GetInstanceIDCompat(),
                 ["pageSize"] = 7,
             };
             var rawChildren = ManageScene.HandleCommand(pChildren);
@@ -118,7 +119,7 @@ namespace MCPForUnityTests.Editor.Tools
             var response = JObject.FromObject(ManageScene.HandleCommand(new JObject
             {
                 ["action"] = "get_hierarchy",
-                ["parent"] = _root.GetInstanceID(),
+                ["parent"] = _root.GetInstanceIDCompat(),
                 ["cursor"] = cursor,
                 ["pageSize"] = pageSize,
                 ["maxNodes"] = maxNodes
@@ -134,7 +135,7 @@ namespace MCPForUnityTests.Editor.Tools
             var items = (JArray)data["items"];
             Assert.AreEqual(expectedCount, items.Count);
             for (int i = 0; i < items.Count; i++)
-                Assert.AreEqual(_root.transform.GetChild(cursor + i).gameObject.GetInstanceID(),
+                Assert.AreEqual(_root.transform.GetChild(cursor + i).gameObject.GetInstanceIDCompat(),
                     items[i].Value<int>("instanceID"));
         }
 

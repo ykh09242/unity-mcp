@@ -9,6 +9,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.EditMode.Tools
@@ -106,10 +107,10 @@ namespace MCPForUnityTests.EditMode.Tools
         };
         private JObject ColorRequest(string mode, int slot) => new JObject
         {
-            ["action"] = "set_renderer_color", ["target"] = _target.GetInstanceID().ToString(),
+            ["action"] = "set_renderer_color", ["target"] = _target.GetInstanceIDCompat().ToString(),
             ["searchMethod"] = "by_id", ["mode"] = mode, ["slot"] = slot, ["color"] = new JArray(0, 0, 0, 0)
         };
-        private string UniquePath(int slot = 0) => _root + "/Materials/Fixture_" + _target.GetInstanceID() +
+        private string UniquePath(int slot = 0) => _root + "/Materials/Fixture_" + _target.GetInstanceIDCompat() +
             (slot == 0 ? "" : "_slot" + slot) + "_mat.mat";
         private Material Persist(string path)
         {
@@ -237,7 +238,7 @@ namespace MCPForUnityTests.EditMode.Tools
         public void InvalidAssignmentLeavesSlotsAndDirtyCountUnchanged(int slot)
         {
             int dirty = EditorUtility.GetDirtyCount(_renderer);
-            Fails(new JObject { ["action"] = "assign_material_to_renderer", ["target"] = _target.GetInstanceID().ToString(),
+            Fails(new JObject { ["action"] = "assign_material_to_renderer", ["target"] = _target.GetInstanceIDCompat().ToString(),
                 ["searchMethod"] = "by_id", ["materialPath"] = _root + "/Fixture.mat", ["slot"] = slot });
             Assert.That(_renderer.sharedMaterials, Is.EqualTo(new[] { _material, _material }));
             Assert.That(EditorUtility.GetDirtyCount(_renderer), Is.EqualTo(dirty));

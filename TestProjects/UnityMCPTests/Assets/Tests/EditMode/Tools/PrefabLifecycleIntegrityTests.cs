@@ -8,6 +8,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
@@ -160,8 +161,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(asset);
             Assert.IsTrue(EditorUtility.IsPersistent(asset));
             Assert.IsFalse(EditorUtility.IsPersistent(source));
-            Assert.AreNotEqual(asset.GetInstanceID(), source.GetInstanceID());
-            Assert.AreEqual(source.GetInstanceID(), (int)response["data"]["instanceId"]);
+            Assert.AreNotEqual(asset.GetInstanceIDCompat(), source.GetInstanceIDCompat());
+            Assert.AreEqual(source.GetInstanceIDCompat(), (int)response["data"]["instanceId"]);
             Assert.AreEqual(source.name, (string)response["data"]["instanceName"]);
             Assert.AreEqual(source.GetComponents<Component>().Length, (int)response["data"]["componentCount"]);
             Assert.AreEqual(1, (int)response["data"]["childCount"]);
@@ -207,7 +208,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreNotEqual(path, resultPath);
                 CollectionAssert.AreEqual(original, Bytes(path));
             }
-            Assert.AreEqual(source.GetInstanceID(), (int)response["data"]["instanceId"]);
+            Assert.AreEqual(source.GetInstanceIDCompat(), (int)response["data"]["instanceId"]);
             Assert.AreSame(source, Selection.activeGameObject);
         }
 

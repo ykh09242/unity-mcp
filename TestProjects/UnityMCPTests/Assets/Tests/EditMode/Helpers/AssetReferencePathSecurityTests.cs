@@ -62,7 +62,7 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 var serializer = JsonSerializer.Create();
                 serializer.Converters.Add(new UnityEngineObjectConverter());
-                Assert.AreSame(texture, new JObject { ["instanceID"] = texture.GetInstanceID() }.ToObject<Texture>(serializer));
+                Assert.AreSame(texture, new JObject { ["instanceID"] = texture.GetInstanceIDCompat() }.ToObject<Texture>(serializer));
             }
             finally { UnityEngine.Object.DestroyImmediate(texture); }
         }

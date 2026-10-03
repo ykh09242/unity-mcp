@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Resources
@@ -56,9 +57,9 @@ namespace MCPForUnityTests.Editor.Resources
 
                 CollectionAssert.AreEqual(new[] { first, second }, renderer.sharedMaterials);
                 Assert.AreSame(mesh, filter.sharedMesh);
-                Assert.AreEqual(first.GetInstanceID(), rendererData["properties"]["material"]["instanceID"].Value<int>());
-                Assert.AreEqual(second.GetInstanceID(), rendererData["properties"]["materials"][1]["instanceID"].Value<int>());
-                Assert.AreEqual(mesh.GetInstanceID(), meshData["properties"]["mesh"]["instanceID"].Value<int>());
+                Assert.AreEqual(first.GetInstanceIDCompat(), rendererData["properties"]["material"]["instanceID"].Value<int>());
+                Assert.AreEqual(second.GetInstanceIDCompat(), rendererData["properties"]["materials"][1]["instanceID"].Value<int>());
+                Assert.AreEqual(mesh.GetInstanceIDCompat(), meshData["properties"]["mesh"]["instanceID"].Value<int>());
 
                 renderer.sharedMaterials = new Material[] { null };
                 filter.sharedMesh = null;

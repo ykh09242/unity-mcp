@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -158,7 +159,7 @@ namespace MCPForUnityTests.Editor.Tools
             return JObject.FromObject(ManageVFX.HandleCommand(new JObject
             {
                 ["action"] = action,
-                ["target"] = root.GetInstanceID(),
+                ["target"] = root.GetInstanceIDCompat(),
                 ["searchMethod"] = "by_id",
                 ["properties"] = properties
             }));

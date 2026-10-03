@@ -7,6 +7,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -101,7 +102,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Request(string action) => new JObject
         {
-            ["action"] = action, ["target"] = target.GetInstanceID(), ["searchMethod"] = "by_id",
+            ["action"] = action, ["target"] = target.GetInstanceIDCompat(), ["searchMethod"] = "by_id",
             ["componentType"] = "BoxCollider", ["property"] = "isTrigger", ["value"] = false
         };
         private static JObject Call(JObject request) => JObject.FromObject(ManageComponents.HandleCommand(request));

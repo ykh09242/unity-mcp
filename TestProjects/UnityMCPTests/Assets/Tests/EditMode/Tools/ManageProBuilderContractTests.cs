@@ -5,6 +5,7 @@ using MCPForUnity.Editor.Tools.ProBuilder;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -60,7 +61,7 @@ namespace MCPForUnityTests.Editor.Tools
             return JObject.FromObject(ManageProBuilder.HandleCommand(new JObject
             {
                 ["action"] = action,
-                ["target"] = target.GetInstanceID().ToString(),
+                ["target"] = target.GetInstanceIDCompat().ToString(),
                 ["searchMethod"] = "by_id",
                 ["properties"] = JObject.Parse(properties),
             }));
@@ -183,7 +184,7 @@ namespace MCPForUnityTests.Editor.Tools
             var response = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject
             {
                 ["action"] = "move_vertices",
-                ["target"] = searchMethod == "by_id" ? target.GetInstanceID().ToString() : target.name,
+                ["target"] = searchMethod == "by_id" ? target.GetInstanceIDCompat().ToString() : target.name,
                 ["searchMethod"] = searchMethod,
                 ["properties"] = JObject.Parse("{\"vertexIndices\":[0],\"offset\":[1,0,0]}"),
             }));

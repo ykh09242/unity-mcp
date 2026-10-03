@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEditorInternal;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Tools.GameObjects;
@@ -69,7 +70,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Modify_ByInstanceID_FindsAndModifiesObject()
         {
-            int instanceID = testObjects[0].GetInstanceID();
+            int instanceID = testObjects[0].GetInstanceIDCompat();
 
             var p = new JObject
             {
@@ -219,7 +220,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void Modify_Name_RenamesObject()
         {
             // Get instanceID first since name will change
-            int instanceID = testObjects[0].GetInstanceID();
+            int instanceID = testObjects[0].GetInstanceIDCompat();
             
             var p = new JObject
             {
@@ -239,7 +240,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Modify_NameToEmpty_HandlesGracefully()
         {
-            int instanceID = testObjects[0].GetInstanceID();
+            int instanceID = testObjects[0].GetInstanceIDCompat();
             
             var p = new JObject
             {
@@ -427,7 +428,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void Modify_MultipleProperties_AppliesAll()
         {
             var parent = CreateTestObject("MultiModifyParent");
-            int instanceID = testObjects[0].GetInstanceID();
+            int instanceID = testObjects[0].GetInstanceIDCompat();
 
             var p = new JObject
             {

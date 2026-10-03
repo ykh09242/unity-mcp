@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.Events;
 using UnityEditor;
 using Newtonsoft.Json.Linq;
@@ -39,7 +40,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void NestedValueKeys_WithUnderscores_ArePreservedThroughBatch()
         {
             testGo.AddComponent<UnityEventTestComponent>();
-            int targetId = testGo.GetInstanceID();
+            int targetId = testGo.GetInstanceIDCompat();
 
             var batchParams = new JObject
             {

@@ -6,6 +6,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Physics;
@@ -28,7 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
         private static JObject Send(GameObject go, string action, JObject options)
         {
             options["action"] = action;
-            options["target"] = go.GetInstanceID().ToString();
+            options["target"] = go.GetInstanceIDCompat().ToString();
             options["search_method"] = "by_id";
             return JObject.FromObject(ManagePhysics.HandleCommand(options));
         }
@@ -178,7 +179,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void DefaultIdTarget_SelectsOwnedBodyDespiteNumericName(string action)
         {
             var go = Body();
-            string id = go.GetInstanceID().ToString();
+            string id = go.GetInstanceIDCompat().ToString();
             if (GameObjectLookup.GetAllSceneObjects(true).Any(other => other.name == id))
                 Assert.Ignore("A numeric-name collision already exists; preserve unowned objects.");
             var collision = Body();
@@ -189,7 +190,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["properties"] = JObject.Parse("{mass:3}")
             }));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            if (action == "get_rigidbody") Assert.AreEqual(go.GetInstanceID(), response["data"].Value<int>("instanceID"));
+            if (action == "get_rigidbody") Assert.AreEqual(go.GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
             else
             {
                 Assert.AreEqual(3f, go.GetComponent<Rigidbody>().mass);
@@ -210,7 +211,7 @@ namespace MCPForUnityTests.Editor.Tools
             go.SetActive(false);
             response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
             {
-                ["action"] = "configure_rigidbody", ["target"] = go.GetInstanceID().ToString(),
+                ["action"] = "configure_rigidbody", ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["properties"] = JObject.Parse("{mass:3}")
             }));
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());

@@ -8,6 +8,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools
@@ -67,7 +68,7 @@ namespace MCPForUnityTests.EditMode.Tools
             var request = new JObject
             {
                 ["action"] = "animator_" + action,
-                ["target"] = _object.GetInstanceID().ToString(CultureInfo.InvariantCulture),
+                ["target"] = _object.GetInstanceIDCompat().ToString(CultureInfo.InvariantCulture),
                 ["search_method"] = "by_id"
             };
             if (parameter != null) request["properties"] = new JObject { ["parameter_name"] = parameter };

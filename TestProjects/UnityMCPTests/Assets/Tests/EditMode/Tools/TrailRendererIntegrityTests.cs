@@ -4,6 +4,7 @@ using MCPForUnity.Editor.Tools.Vfx;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -35,7 +36,7 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             return JObject.FromObject(ManageVFX.HandleCommand(new JObject
             {
-                ["action"] = action, ["target"] = _object.GetInstanceID(),
+                ["action"] = action, ["target"] = _object.GetInstanceIDCompat(),
                 ["search_method"] = "by_id", ["properties"] = properties
             }));
         }

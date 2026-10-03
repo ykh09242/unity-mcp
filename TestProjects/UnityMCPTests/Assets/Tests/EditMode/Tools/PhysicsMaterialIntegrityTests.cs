@@ -7,6 +7,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 #if UNITY_6000_0_OR_NEWER
 using Material3D = UnityEngine.PhysicsMaterial;
@@ -207,9 +208,9 @@ namespace MCPForUnityTests.Editor.Tools
             var material = (Material3D)CreateMaterial("3d");
             var wanted = NewObject("__McpMaterialWanted_" + Guid.NewGuid().ToString("N"));
             var collider = wanted.AddComponent<BoxCollider>();
-            var named = NewObject(wanted.GetInstanceID().ToString());
+            var named = NewObject(wanted.GetInstanceIDCompat().ToString());
             var other = named.AddComponent<BoxCollider>();
-            JToken target = integerTarget ? new JValue(wanted.GetInstanceID()) : new JValue(wanted.GetInstanceID().ToString());
+            JToken target = integerTarget ? new JValue(wanted.GetInstanceIDCompat()) : new JValue(wanted.GetInstanceIDCompat().ToString());
             var result = Call(Assign(material, target));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreSame(material, collider.sharedMaterial);
@@ -222,7 +223,7 @@ namespace MCPForUnityTests.Editor.Tools
             var material = (Material3D)CreateMaterial("3d");
             var byId = NewObject("__McpMaterialById_" + Guid.NewGuid().ToString("N"));
             var original = byId.AddComponent<BoxCollider>();
-            var byName = NewObject(byId.GetInstanceID().ToString());
+            var byName = NewObject(byId.GetInstanceIDCompat().ToString());
             var named = byName.AddComponent<BoxCollider>();
             if (GameObjectLookup.FindByTarget(new JValue(byName.name), "by_name") != byName)
                 Assert.Ignore("Explicit numeric-name control requires no preexisting scene object with the same name.");
@@ -256,8 +257,8 @@ namespace MCPForUnityTests.Editor.Tools
             var inactive = NewObject("__McpMaterialInactive_" + Guid.NewGuid().ToString("N"));
             var first = inactive.AddComponent<BoxCollider>();
             inactive.SetActive(false);
-            var other = NewObject(inactive.GetInstanceID().ToString()).AddComponent<BoxCollider>();
-            var result = Call(Assign(material, inactive.GetInstanceID()));
+            var other = NewObject(inactive.GetInstanceIDCompat().ToString()).AddComponent<BoxCollider>();
+            var result = Call(Assign(material, inactive.GetInstanceIDCompat()));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsNull(first.sharedMaterial);
             Assert.IsNull(other.sharedMaterial);
@@ -270,7 +271,7 @@ namespace MCPForUnityTests.Editor.Tools
             var material = (Material3D)CreateMaterial("3d");
             var gameObject = NewObject("__McpMaterialIndex_" + Guid.NewGuid().ToString("N"));
             var collider = gameObject.AddComponent<BoxCollider>();
-            var result = Call(Assign(material, gameObject.GetInstanceID(), "by_id", index));
+            var result = Call(Assign(material, gameObject.GetInstanceIDCompat(), "by_id", index));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsNull(collider.sharedMaterial);
         }

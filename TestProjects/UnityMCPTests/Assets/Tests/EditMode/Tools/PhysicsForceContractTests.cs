@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Editor.Tools.Physics;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -38,7 +39,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_Rejected", dimension == "2d");
             var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceID().ToString(),
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["dimension"] = dimension, ["force"] = new JArray(1, 2, 3),
                 ["torque"] = JToken.Parse(torque)
             }));
@@ -59,7 +60,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_2D", true);
             var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceID().ToString(),
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["dimension"] = "2d", ["force"] = new JArray(1, 2),
                 ["torque"] = JToken.Parse(torque), ["force_mode"] = "Impulse"
             }));
@@ -74,7 +75,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_3D");
             var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceID().ToString(),
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["force"] = new JArray(1, 2, 3), ["torque"] = new JArray(4, 5, 6),
                 ["position"] = new JArray(0, 1, 0), ["force_mode"] = "Impulse"
             }));
@@ -88,7 +89,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_Dimension");
             var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceID().ToString(),
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["dimension"] = "4d", ["force"] = new JArray(1, 2, 3)
             }));
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
@@ -105,7 +106,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_InvalidInput");
             var parameters = JObject.Parse(input);
             parameters["action"] = "apply_force";
-            parameters["target"] = go.GetInstanceID().ToString();
+            parameters["target"] = go.GetInstanceIDCompat().ToString();
             var response = JObject.FromObject(ManagePhysics.HandleCommand(parameters));
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
 #if UNITY_2022_2_OR_NEWER
@@ -121,7 +122,7 @@ namespace MCPForUnityTests.Editor.Tools
             var go = Body("PhysicsContract_Null", dimension == "2d");
             var parameters = new JObject
             {
-                ["action"] = "apply_force", ["target"] = go.GetInstanceID().ToString(),
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["dimension"] = dimension, ["force"] = JValue.CreateNull(),
                 ["torque"] = dimension == "2d" ? (JToken)new JValue(2f) : new JArray(1, 2, 3)
             };
@@ -143,7 +144,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ForceAndJoint_RespectExplicitSelectorAndPreserveDefaultId(string method)
         {
             var idBody = Body("PhysicsContract_Id");
-            string target = idBody.GetInstanceID().ToString();
+            string target = idBody.GetInstanceIDCompat().ToString();
             var namedBody = Body(target);
             var idJoint = idBody.AddComponent<FixedJoint>();
             var namedJoint = namedBody.AddComponent<FixedJoint>();

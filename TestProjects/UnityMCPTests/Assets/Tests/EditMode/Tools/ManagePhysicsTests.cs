@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Editor.Tools.Physics;
 using static MCPForUnityTests.Editor.TestUtilities;
 
@@ -22,7 +23,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown()
         {
 #if UNITY_2022_2_OR_NEWER
-            foreach (var go in UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+            foreach (var go in UnityFindObjectsCompat.FindAll<GameObject>())
 #else
             foreach (var go in UnityEngine.Object.FindObjectsOfType<GameObject>())
 #endif

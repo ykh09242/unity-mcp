@@ -7,6 +7,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -124,7 +125,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     var hits = (JArray)response["data"]["hits"];
                     Assert.AreEqual(trigger == "Ignore" ? 3 : 4, response["data"].Value<int>("hit_count"));
-                    int[] expected = owned.Skip(trigger == "Ignore" ? 1 : 0).Select(gameObject => gameObject.GetInstanceID()).ToArray();
+                    int[] expected = owned.Skip(trigger == "Ignore" ? 1 : 0).Select(gameObject => gameObject.GetInstanceIDCompat()).ToArray();
                     CollectionAssert.AreEqual(expected, hits.Select(hit => hit.Value<int>("instanceID")).ToArray());
                     float[] distances = hits.Select(hit => hit.Value<float>("distance")).ToArray();
                     CollectionAssert.AreEqual(distances.OrderBy(distance => distance).ToArray(), distances);
@@ -132,7 +133,7 @@ namespace MCPForUnityTests.Editor.Tools
                 else
                 {
                     Assert.IsTrue(response["data"].Value<bool>("hit"));
-                    Assert.AreEqual(owned[trigger == "Ignore" ? 1 : 0].GetInstanceID(), response["data"].Value<int>("instanceID"));
+                    Assert.AreEqual(owned[trigger == "Ignore" ? 1 : 0].GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
                 }
             }
             finally
@@ -158,7 +159,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (trigger != null) parameters["query_trigger_interaction"] = trigger;
                 JObject response = Call(parameters);
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-                Assert.AreEqual(owned[global ? 0 : 1].GetInstanceID(), response["data"].Value<int>("instanceID"));
+                Assert.AreEqual(owned[global ? 0 : 1].GetInstanceIDCompat(), response["data"].Value<int>("instanceID"));
                 Assert.AreEqual(global, Physics2D.queriesHitTriggers);
             }
             finally

@@ -7,6 +7,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -91,12 +92,12 @@ namespace MCPForUnityTests.Editor.Tools
         private JObject Create(string name = null) => new JObject { ["action"] = "create", ["name"] = name ?? prefix + "Created" };
         private JObject Duplicate(GameObject source) => new JObject
         {
-            ["action"] = "duplicate", ["target"] = source.GetInstanceID(), ["searchMethod"] = "by_id"
+            ["action"] = "duplicate", ["target"] = source.GetInstanceIDCompat(), ["searchMethod"] = "by_id"
         };
         private GameObject ResponseObject(JObject response, bool duplicate = false)
         {
             var data = duplicate ? response["data"]["duplicatedObject"] : response["data"];
-            return Objects().Single(go => go.GetInstanceID() == data.Value<int>("instanceID"));
+            return Objects().Single(go => go.GetInstanceIDCompat() == data.Value<int>("instanceID"));
         }
 
         private void CreateAssetRoot()
@@ -115,12 +116,12 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var existing = Owned("Existing");
             Selection.activeGameObject = existing;
-            var before = Objects().Select(go => go.GetInstanceID()).OrderBy(id => id).ToArray();
+            var before = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
             var request = Create();
             request["parent"] = kind == "null" ? JValue.CreateNull() : new JValue(kind == "empty" ? "" : prefix + "Missing");
             var response = Call(request);
             Assert.IsFalse(response.Value<bool>("success"));
-            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceID()).OrderBy(id => id).ToArray());
+            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
             Assert.AreSame(existing, Selection.activeGameObject);
         }
 
@@ -177,7 +178,7 @@ namespace MCPForUnityTests.Editor.Tools
             string path = kind == "rooted" ? System.IO.Path.Combine(projectRoot, relative) : relative;
             var existing = Owned("Existing");
             Selection.activeGameObject = existing;
-            var before = Objects().Select(go => go.GetInstanceID()).OrderBy(id => id).ToArray();
+            var before = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
             string[] tags = UnityEditorInternal.InternalEditorUtility.tags;
             var request = Create();
             request["saveAsPrefab"] = true;
@@ -186,7 +187,7 @@ namespace MCPForUnityTests.Editor.Tools
             var response = Call(request);
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.StartsWith("Invalid prefab path:", response.Value<string>("error"));
-            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceID()).OrderBy(id => id).ToArray());
+            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
             CollectionAssert.AreEqual(tags, UnityEditorInternal.InternalEditorUtility.tags);
             Assert.AreSame(existing, Selection.activeGameObject);
             Assert.IsFalse(System.IO.Directory.Exists(System.IO.Path.Combine(projectRoot, assetRoot, "Rejected")));
@@ -260,7 +261,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(asset);
             Assert.IsTrue(AssetDatabase.Contains(asset));
             Assert.IsFalse(AssetDatabase.Contains(instance));
-            Assert.AreNotEqual(asset.GetInstanceID(), instance.GetInstanceID());
+            Assert.AreNotEqual(asset.GetInstanceIDCompat(), instance.GetInstanceIDCompat());
             Assert.AreEqual(ownedScene, instance.scene);
             Assert.AreSame(instance, Selection.activeGameObject);
             Assert.AreEqual(PrefabInstanceStatus.Connected, PrefabUtility.GetPrefabInstanceStatus(instance));
@@ -372,8 +373,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var idObject = Owned("Other");
             var numericName = Owned("Numeric");
-            Assert.IsNull(GameObject.Find(idObject.GetInstanceID().ToString()), "Numeric-name collision must be created only by this fixture.");
-            numericName.name = idObject.GetInstanceID().ToString();
+            Assert.IsNull(GameObject.Find(idObject.GetInstanceIDCompat().ToString()), "Numeric-name collision must be created only by this fixture.");
+            numericName.name = idObject.GetInstanceIDCompat().ToString();
             var response = Call(new JObject { ["action"] = "delete", ["target"] = numericName.name, ["searchMethod"] = "by_name" });
             Succeeded(response);
             Assert.IsTrue(numericName == null);

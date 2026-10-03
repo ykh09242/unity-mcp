@@ -109,11 +109,11 @@ namespace MCPForUnityTests.Editor.Tools
                 go.AddComponent<Rigidbody>();
                 var type = typeof(ManagePhysics).Assembly.GetType("MCPForUnity.Editor.Tools.Physics.PhysicsSimulationOps");
                 var collect = type.GetMethod("CollectTargetRigidbody", BindingFlags.NonPublic | BindingFlags.Static);
-                var results = (List<object>)collect.Invoke(null, new object[] { go.GetInstanceID().ToString(), null, "3d" });
+                var results = (List<object>)collect.Invoke(null, new object[] { go.GetInstanceIDCompat().ToString(), null, "3d" });
                 Assert.AreEqual(1, results.Count);
-                Assert.AreEqual(go.GetInstanceID(), JObject.FromObject(results[0]).Value<int>("instanceID"));
+                Assert.AreEqual(go.GetInstanceIDCompat(), JObject.FromObject(results[0]).Value<int>("instanceID"));
                 go.SetActive(false);
-                results = (List<object>)collect.Invoke(null, new object[] { go.GetInstanceID().ToString(), null, "3d" });
+                results = (List<object>)collect.Invoke(null, new object[] { go.GetInstanceIDCompat().ToString(), null, "3d" });
                 Assert.IsEmpty(results);
             }
             finally
