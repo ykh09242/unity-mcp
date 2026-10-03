@@ -33,23 +33,35 @@ mcpforunity://{category}/{resource_path}[?query_params]
 
 **Purpose:** Editor readiness snapshot - check before tool operations.
 
-**Returns:**
+**Returns (`data`, selected fields):**
 ```json
 {
-  "unity_version": "2022.3.10f1",
-  "is_compiling": false,
-  "is_domain_reload_pending": false,
-  "play_mode": {
-    "is_playing": false,
-    "is_paused": false
+  "schema_version": "unity-mcp/editor_state@2",
+  "observed_at_unix_ms": 1740000000000,
+  "sequence": 1,
+  "unity": {
+    "unity_version": "2022.3.10f1"
   },
-  "active_scene": {
-    "path": "Assets/Scenes/Main.unity",
-    "name": "Main"
+  "compilation": {
+    "is_compiling": false,
+    "is_domain_reload_pending": false
   },
-  "ready_for_tools": true,
-  "blocking_reasons": [],
-  "recommended_retry_after_ms": null,
+  "editor": {
+    "play_mode": {
+      "is_playing": false,
+      "is_paused": false
+    },
+    "active_scene": {
+      "path": "Assets/Scenes/Main.unity",
+      "name": "Main"
+    }
+  },
+  "advice": {
+    "ready_for_tools": true,
+    "blocking_reasons": [],
+    "recommended_retry_after_ms": 0,
+    "recommended_next_action": "none"
+  },
   "staleness": {
     "age_ms": 150,
     "is_stale": false
@@ -58,10 +70,11 @@ mcpforunity://{category}/{resource_path}[?query_params]
 ```
 
 **Key Fields:**
-- `ready_for_tools`: Only proceed if `true`
-- `is_compiling`: Wait if `true`
-- `blocking_reasons`: Array explaining why tools might fail
-- `recommended_retry_after_ms`: Suggested wait time
+- `data.advice.ready_for_tools`: Only proceed if `true`
+- `data.compilation.is_compiling`: Wait if `true`
+- `data.advice.blocking_reasons`: Array explaining why tools might fail
+- `data.advice.recommended_retry_after_ms`: Suggested wait time
+- `data.observed_at_unix_ms`: Time of the latest editor observation; idle observations refresh it without changing `data.sequence`.
 
 ### mcpforunity://editor/selection
 
@@ -629,7 +642,7 @@ Assets/Prefabs/Player.prefab → Assets%2FPrefabs%2FPlayer.prefab
 ```python
 # Before any complex operation:
 # Read mcpforunity://editor/state
-# Check ready_for_tools == true
+# Check data.advice.ready_for_tools == true
 ```
 
 ### 2. Use Find Then Read Pattern

@@ -29,11 +29,11 @@ Common workflows and patterns for effective Unity-MCP usage.
 # 1. Check editor state
 # Read mcpforunity://editor/state
 
-# 2. Verify ready_for_tools == true
-# If false, wait for recommended_retry_after_ms
+# 2. Verify data.advice.ready_for_tools == true
+# If false, wait for data.advice.recommended_retry_after_ms
 
 # 3. Check active scene
-# Read mcpforunity://editor/state → active_scene
+# Read mcpforunity://editor/state → data.editor.active_scene
 
 # 4. List available instances (multi-instance)
 # Read mcpforunity://instances
@@ -43,14 +43,14 @@ Common workflows and patterns for effective Unity-MCP usage.
 
 ```python
 # Quick readiness check pattern:
-editor_state = read_resource("mcpforunity://editor/state")
+editor_state = read_resource("mcpforunity://editor/state")["data"]
 
-if not editor_state["ready_for_tools"]:
-    # Check blocking_reasons
-    # Wait recommended_retry_after_ms
+if not editor_state["advice"]["ready_for_tools"]:
+    # Check editor_state["advice"]["blocking_reasons"]
+    # Wait editor_state["advice"]["recommended_retry_after_ms"]
     pass
 
-if editor_state["is_compiling"]:
+if editor_state["compilation"]["is_compiling"]:
     # Wait for compilation to complete
     pass
 ```
@@ -118,7 +118,7 @@ manage_script(
     contents="using UnityEngine;\n\npublic class MyScript : MonoBehaviour { ... }"
 )
 # manage_script update auto-triggers import + compile — just wait and check console
-# Read mcpforunity://editor/state → wait until is_compiling == false
+# Read mcpforunity://editor/state → wait until data.compilation.is_compiling == false
 read_console(types=["error"], count=10)
 ```
 
@@ -233,7 +233,7 @@ public class EnemyAI : MonoBehaviour
 )
 
 # 2. Wait for compilation to finish
-# Read mcpforunity://editor/state → wait until is_compiling == false
+# Read mcpforunity://editor/state → wait until data.compilation.is_compiling == false
 
 # 3. Check for errors
 console = read_console(types=["error"], count=10)
@@ -290,7 +290,7 @@ validate_script(
 )
 
 # 5. Wait for compilation (script_apply_edits auto-triggers import + compile)
-# Read mcpforunity://editor/state → wait until is_compiling == false
+# Read mcpforunity://editor/state → wait until data.compilation.is_compiling == false
 
 # 6. Check console
 read_console(types=["error"], count=10)
@@ -519,7 +519,7 @@ public class PlayerTests
 )
 
 # 2. Wait for compilation (create_script auto-triggers import + compile)
-# Read mcpforunity://editor/state → wait until is_compiling == false
+# Read mcpforunity://editor/state → wait until data.compilation.is_compiling == false
 
 # 3. Run test (expect pass for this simple test)
 result = run_tests(mode="EditMode", test_names=["PlayerTests.TestPlayerStartsAtOrigin"])
@@ -2083,8 +2083,8 @@ import time
 max_retries = 5
 for attempt in range(max_retries):
     try:
-        editor_state = read_resource("mcpforunity://editor/state")
-        if editor_state["ready_for_tools"]:
+        editor_state = read_resource("mcpforunity://editor/state")["data"]
+        if editor_state["advice"]["ready_for_tools"]:
             break
     except:
         time.sleep(2 ** attempt)  # Exponential backoff
