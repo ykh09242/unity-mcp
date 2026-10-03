@@ -22,8 +22,8 @@ import services.resources.editor_state as editor_state
 logger = logging.getLogger(__name__)
 
 # Blocking reasons that indicate Unity is actually busy (not just stale status).
-# Must match activityPhase values from EditorStateCache.cs
-_REAL_BLOCKING_REASONS = {"compiling", "domain_reload", "running_tests", "asset_import"}
+# Includes canonical editor_state advice reasons and the legacy asset_import reason.
+_REAL_BLOCKING_REASONS = {"compiling", "domain_reload", "running_tests", "asset_import", "asset_refresh"}
 
 
 def _in_pytest() -> bool:
