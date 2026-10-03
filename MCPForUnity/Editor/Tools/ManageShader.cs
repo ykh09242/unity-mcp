@@ -212,7 +212,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                string contents = File.ReadAllText(fullPath);
+                string contents = ReadShaderContents(fullPath);
 
                 // Return both normal and encoded contents for larger files
                 //TODO: Consider a threshold for large files
@@ -235,6 +235,38 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Failed to read shader '{relativePath}': {e.Message}");
             }
+        }
+
+        private static string ReadShaderContents(string fullPath)
+        {
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            System.Text.Encoding encoding = StrictUtf8;
+            int offset = 0;
+            // Match ReadAllText's Unicode BOM detection, with strict decoding for every encoding.
+            // UTF32 LE must precede UTF16 LE because their BOM prefixes overlap.
+            if (bytes.Length >= 4 && bytes[0] == 0xff && bytes[1] == 0xfe && bytes[2] == 0 && bytes[3] == 0)
+            {
+                encoding = new System.Text.UTF32Encoding(false, false, true);
+                offset = 4;
+            }
+            else if (bytes.Length >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xfe && bytes[3] == 0xff)
+            {
+                encoding = new System.Text.UTF32Encoding(true, false, true);
+                offset = 4;
+            }
+            else if (bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
+                offset = 3;
+            else if (bytes.Length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
+            {
+                encoding = new System.Text.UnicodeEncoding(false, false, true);
+                offset = 2;
+            }
+            else if (bytes.Length >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
+            {
+                encoding = new System.Text.UnicodeEncoding(true, false, true);
+                offset = 2;
+            }
+            return encoding.GetString(bytes, offset, bytes.Length - offset);
         }
 
         private static object UpdateShader(
