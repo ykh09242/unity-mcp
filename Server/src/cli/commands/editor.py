@@ -451,9 +451,13 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
         if status == "succeeded":
             print_success("Tests completed successfully")
         elif status == "failed":
-            summary = data.get("result", {}).get("summary", {})
-            failed = summary.get("failed", 0)
-            print_error(f"Tests failed: {failed} failures")
+            test_result = data.get("result")
+            if test_result is None:
+                print_error(f"Test job failed: {data.get('error') or 'No test results available'}")
+            else:
+                summary = test_result.get("summary", {})
+                failed = summary.get("failed", 0)
+                print_error(f"Tests failed: {failed} failures")
         elif status == "running":
             progress = data.get("progress", {})
             completed = progress.get("completed", 0)
