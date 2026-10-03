@@ -26,8 +26,9 @@ def test_remote_http_authentication_requires_boolean_verdict(monkeypatch: pytest
     def response_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"valid": verdict, "user_id": "fixture-user"})
 
-    def client_factory(*, timeout: float, follow_redirects: bool) -> httpx.AsyncClient:
-        return real_client(transport=httpx.MockTransport(response_handler), timeout=timeout, follow_redirects=follow_redirects)
+    def client_factory(*, timeout: float, follow_redirects: bool, limits: httpx.Limits) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(response_handler), timeout=timeout,
+                           follow_redirects=follow_redirects, limits=limits)
 
     monkeypatch.setattr(httpx, "AsyncClient", client_factory)
 

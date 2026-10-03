@@ -56,6 +56,11 @@ from core.telemetry import (
 # Fixtures
 # =============================================================================
 
+@pytest.fixture(autouse=True)
+def reset_decorator_log_budget(monkeypatch):
+    monkeypatch.setattr("core.telemetry_decorator._decorator_log_count", 0)
+
+
 @pytest.fixture
 def caplog_fixture(caplog):
     """Fixture to capture and configure logging."""

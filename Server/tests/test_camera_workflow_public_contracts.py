@@ -270,9 +270,9 @@ async def main():
                 for value in (True, False):
                     result, sent = await invoke(client, {'action': 'screenshot', field: value})
                     expected = int(value)
-                    if field == 'max_resolution' and not value:
+                    if field in ('max_resolution', 'screenshot_super_size') and not value:
                         check(not sent and result.structured_content['success'] is False,
-                              'existing nonpositive resolution guard ' + mode)
+                              'nonpositive capture size rejected ' + mode + field)
                     else:
                         key = {'screenshot_super_size': 'superSize', 'max_resolution': 'maxResolution',
                                'orbit_angles': 'orbitAngles'}[field]

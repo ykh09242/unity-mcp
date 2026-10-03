@@ -148,7 +148,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             AssetDatabase.LoadAssetAtPath<Texture2D>(_texturePath);
             byte[] original = File.ReadAllBytes(AbsolutePath(_texturePath));
-            var before = new HashSet<Texture2D>(Resources.FindObjectsOfTypeAll<Texture2D>());
+            var before = new HashSet<Texture2D>(UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>());
             string path = modify ? _texturePath : _root + "/Invalid.png";
             JObject parameters = new JObject { ["action"] = modify ? "modify" : "create", ["path"] = path };
             if (modify)
@@ -169,7 +169,7 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 var response = JObject.FromObject(ManageTexture.HandleCommand(parameters));
-                leaked = Resources.FindObjectsOfTypeAll<Texture2D>()
+                leaked = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>()
                     .Where(texture => !before.Contains(texture) && !EditorUtility.IsPersistent(texture)).ToArray();
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.IsEmpty(leaked, "Rejected pixel data must release its editable texture.");

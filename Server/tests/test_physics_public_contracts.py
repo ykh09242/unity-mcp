@@ -146,6 +146,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
         fields = {"dimension":"2d","settings":{"queriesHitTriggers":False,"defaultContactOffset":0},"layer_a":"0","layer_b":"1","collide":False,"name":"Fixture","path":"Assets/Fixture","dynamic_friction":0,"static_friction":0,"bounciness":0,"friction":0,"friction_combine":"Average","bounce_combine":"Maximum","material_path":"Assets/Fixture.physicMaterial","target":"0","collider_type":"BoxCollider","search_method":"by_name","joint_type":"hinge","connected_body":"Root/Body","motor":{"force":0,"freeSpin":False},"limits":{},"spring":{"spring":0},"drive":{"enabled":False},"properties":{"enabled":False,"reference":None,"mass":0},"origin":[0,-1,0],"direction":[0,0,0],"max_distance":0,"layer_mask":"0","query_trigger_interaction":"Ignore","shape":"box","position":[0,0],"size":[0,1],"start":[0,0],"end":[0,0],"point1":[0,0,0],"point2":[0,0,0],"height":0,"capsule_direction":0,"angle":0,"force":[0,0],"force_mode":"Impulse","force_type":"normal","torque":[0],"explosion_position":[0,0,0],"explosion_radius":0,"explosion_force":0,"upwards_modifier":0,"steps":0,"step_size":0,"page_size":0,"cursor":0,"component_index":0}
         async def main():
             global raw
+            fields['page_size'] = 1
             for mode in ("2026-07-28","legacy"):
                 async with Client(server,mode=mode) as client:
                     tools = {tool.name:tool for tool in await client.list_tools()}
@@ -166,6 +167,10 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                                 check(result.structured_content == expected,"native response "+label)
                                 check(len(requests) == before+1 and requests[-1] == ("Project@fixture","manage_physics",wire),"all-field/false-zero-empty wire "+label)
                     raw = {"success":True,"message":"Done"}
+                    before = len(requests)
+                    result = await client.call_tool("manage_physics", {"action":"validate","page_size":0})
+                    check(result.structured_content['success'] is False and len(requests) == before,
+                          "nonpositive page size rejected before transport " + mode)
                     for payload in ({"action":"ping"},{"action":"ping",**dict.fromkeys(fields)}):
                         result = await client.call_tool("manage_physics",payload)
                         check(result.structured_content == raw and requests[-1][2] == {"action":"ping"},"omitted/null parameters "+mode)

@@ -40,7 +40,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("null")]
         public void InvalidPropertiesDoNotCreateDefaultCamera(string properties)
         {
-            var before = Resources.FindObjectsOfTypeAll<GameObject>();
+            var before = UnityEngine.Resources.FindObjectsOfTypeAll<GameObject>();
             LogAssert.Expect(LogType.Error, new Regex("\\[ManageCamera\\].*properties", RegexOptions.Singleline));
             GameObject[] created = null;
             try
@@ -49,7 +49,7 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["action"] = "create_camera", ["properties"] = properties
                 }));
-                created = Resources.FindObjectsOfTypeAll<GameObject>().Except(before).ToArray();
+                created = UnityEngine.Resources.FindObjectsOfTypeAll<GameObject>().Except(before).ToArray();
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("properties", response.ToString());
                 Assert.IsEmpty(created);

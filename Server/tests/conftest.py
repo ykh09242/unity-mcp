@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 import pytest
 
-# The legacy integration suite installs module stubs. Run real ASGI regressions
-# in a subprocess (test_http_security.py) so neither suite pollutes the other.
+# Run real ASGI regressions in a subprocess (test_http_security.py) to isolate
+# their application state from the tool and legacy integration suites.
 collect_ignore = [] if os.environ.get("UNITY_MCP_RUN_HTTP_TESTS") == "1" else ["http"]
 
 logger = logging.getLogger(__name__)

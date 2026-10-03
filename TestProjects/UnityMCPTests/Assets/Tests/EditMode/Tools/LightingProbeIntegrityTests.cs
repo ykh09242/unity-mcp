@@ -102,7 +102,7 @@ namespace MCPForUnityTests.Editor.Tools
             Lightmapping.TryGetLightingSettings(out var before);
             if (before != null)
                 Assert.Ignore("The owned empty scene already has LightingSettings; allocation regression requires none.");
-            LightingSettings[] inventory = Resources.FindObjectsOfTypeAll<LightingSettings>();
+            LightingSettings[] inventory = UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>();
             JObject response;
             try
             {
@@ -118,7 +118,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Lightmapping.TryGetLightingSettings(out var current);
             Assert.AreSame(before, current);
-            CollectionAssert.AreEquivalent(inventory, Resources.FindObjectsOfTypeAll<LightingSettings>());
+            CollectionAssert.AreEquivalent(inventory, UnityEngine.Resources.FindObjectsOfTypeAll<LightingSettings>());
         }
 
         [TestCase(false)]

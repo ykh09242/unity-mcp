@@ -282,16 +282,18 @@ asset_cases = [
      {'action': 'modify', 'path': 'Assets/Fixture.prefab',
       'properties': {'BoxCollider': {'isTrigger': False, 'reference': None}}}),
     ({'action': 'search', 'path': 't:Material', 'asset_type': 'Material',
-      'page_size': '0', 'page_number': 0},
+      'page_size': '1', 'page_number': 1},
      {'action': 'search', 'path': 'Assets', 'assetType': 'Material', 'searchPattern': 't:Material',
-      'filterType': 'Material', 'pageSize': 0, 'pageNumber': 0}),
+      'filterType': 'Material', 'pageSize': 1, 'pageNumber': 1}),
     ({'action': 'search', 'path': 't:Material', 'search_pattern': '*.prefab',
       'asset_type': 'Material', 'filter_type': 'Prefab', 'filter_date_after': ''},
      {'action': 'search', 'path': 't:Material', 'assetType': 'Material',
-      'searchPattern': '*.prefab', 'filterType': 'Prefab', 'filterDateAfter': ''}),
-    ({'action': 'search', 'path': '', 'search_pattern': '', 'page_size': 1.5,
-      'page_number': 'bad', 'destination': ''},
-     {'action': 'search', 'path': '', 'searchPattern': '', 'pageSize': 1, 'destination': ''}),
+      'searchPattern': '*.prefab', 'filterType': 'Prefab', 'filterDateAfter': '',
+      'pageSize': 50, 'pageNumber': 1}),
+    ({'action': 'search', 'path': '', 'search_pattern': '', 'page_size': 1.0,
+      'page_number': '1', 'destination': ''},
+     {'action': 'search', 'path': '', 'searchPattern': '', 'pageSize': 1,
+      'pageNumber': 1, 'destination': ''}),
     ({'action': 'get_info', 'path': 'Assets/Fixture.mat', 'generate_preview': True},
      {'action': 'get_info', 'path': 'Assets/Fixture.mat', 'generatePreview': True}),
     ({'action': 'create_folder', 'path': 'Assets/Owned/Nested'},
@@ -338,7 +340,7 @@ async def main():
                             if not failed and not wrapped:
                                 print('DOMAIN_WIRE', json.dumps({
                                     'surface': 'sdk', 'mode': mode, 'tool': name,
-                                    'input': payload, 'wire': domain[-1][2],
+                                    'input': payload, 'wire': domain[-1][2] if domain else None,
                                 }))
             for action in ('remove', 'set_property'):
                 for value in (True, False):
@@ -365,6 +367,10 @@ async def main():
                 ('manage_components', {'action': 'set_property', 'target': 'Fixture',
                                        'component_type': 'Owned', 'property': 'value', 'value': 'undefined'}),
                 ('manage_asset', {'action': 'modify', 'path': 'Assets/Fixture.mat', 'properties': '[]'}),
+                ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_size': 0}),
+                ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_number': 0}),
+                ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_size': 1.5}),
+                ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_number': 'bad'}),
             ):
                 before = len(requests)
                 result = await client.call_tool(name, payload)

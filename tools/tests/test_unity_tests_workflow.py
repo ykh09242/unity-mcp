@@ -1,4 +1,5 @@
 """The Unity test workflow must not float on game-ci's v4 tag or its CLI's latest release."""
+import json
 from pathlib import Path
 import re
 
@@ -24,3 +25,10 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
         assert re.search(r"^          cliVersion: v\d+\.\d+\.\d+$", step, re.M), step
         # The read-only job cannot create a check run; the local gate reads the XML instead.
         assert re.search(r'^          githubToken: ""$', step, re.M), step
+
+
+def test_unity_test_project_uses_the_packages_test_framework():
+    root = WORKFLOW.parents[2]
+    package = json.loads((root / "MCPForUnity" / "package.json").read_text(encoding="utf-8"))
+    project = json.loads((root / "TestProjects" / "UnityMCPTests" / "Packages" / "manifest.json").read_text(encoding="utf-8"))
+    assert project["dependencies"]["com.unity.test-framework"] == package["dependencies"]["com.unity.test-framework"]
