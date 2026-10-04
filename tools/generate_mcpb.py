@@ -53,12 +53,15 @@ def generate_mcpb(
     Returns:
         Path to the generated .mcpb file
     """
-    if not icon_path.exists():
+    if not icon_path.is_file():
         raise FileNotFoundError(f"Icon not found: {icon_path}")
+    if icon_path.name.casefold() in {"manifest.json", "license", "readme.md"}:
+        raise ValueError(f"Icon filename conflicts with a bundle file: {icon_path.name}")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(dir=output_path.absolute().parent) as tmpdir:
         build_dir = Path(tmpdir) / "mcpb-build"
         build_dir.mkdir()
+        staged_output = Path(tmpdir) / "bundle.mcpb"
 
         # Copy icon
         icon_filename = icon_path.name
@@ -82,7 +85,7 @@ def generate_mcpb(
         # Syntax: mcpb pack [directory] [output]
         try:
             result = subprocess.run(
-                ["npx", "@anthropic-ai/mcpb", "pack", ".", str(output_path.absolute())],
+                ["npx", "@anthropic-ai/mcpb", "pack", ".", str(staged_output)],
                 cwd=build_dir,
                 capture_output=True,
                 text=True,
@@ -99,8 +102,9 @@ def generate_mcpb(
             )
             raise
 
-    if not output_path.exists():
-        raise RuntimeError(f"MCPB file was not created: {output_path}")
+        if not staged_output.is_file() or staged_output.stat().st_size == 0:
+            raise RuntimeError(f"MCPB file was not created: {output_path}")
+        staged_output.replace(output_path)
 
     print(f"Generated: {output_path} ({output_path.stat().st_size:,} bytes)")
     return output_path
