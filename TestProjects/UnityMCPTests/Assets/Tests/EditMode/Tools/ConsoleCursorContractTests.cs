@@ -8,6 +8,23 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ConsoleCursorContractTests
     {
+        [TestCase(0)]
+        [TestCase(-1)]
+        public void Paging_IgnoresNonPositiveCount(int count)
+        {
+            string marker = "ConsoleCursorContract_" + Guid.NewGuid().ToString("N");
+            Debug.Log(marker);
+            var response = JObject.FromObject(ReadConsole.HandleCommand(new JObject
+            {
+                ["action"] = "get", ["types"] = new JArray("all"), ["format"] = "json",
+                ["filterText"] = marker, ["pageSize"] = 1, ["count"] = count
+            }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var items = (JArray)response["data"]["items"];
+            Assert.AreEqual(1, items.Count);
+            StringAssert.Contains(marker, items[0].Value<string>("message"));
+        }
+
         [Test]
         public void CursorAtIntMax_DoesNotOverflowAndValidPageStillReads()
         {

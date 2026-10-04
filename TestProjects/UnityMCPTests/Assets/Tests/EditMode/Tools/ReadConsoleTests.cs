@@ -11,6 +11,19 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ReadConsoleTests
     {
+        [TestCase(0)]
+        [TestCase(-1)]
+        [TestCase(int.MinValue)]
+        public void HandleCommand_Get_RejectsNonPositiveCount(int count)
+        {
+            var result = ToJObject(ReadConsole.HandleCommand(new JObject
+            {
+                ["action"] = "get", ["types"] = new JArray("all"), ["count"] = count
+            }));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("'count' must be greater than zero", result.Value<string>("error"));
+        }
+
         [Test]
         public void HandleCommand_Clear_Works()
         {

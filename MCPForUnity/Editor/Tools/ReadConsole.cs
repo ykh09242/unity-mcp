@@ -361,6 +361,8 @@ namespace MCPForUnity.Editor.Tools
             int retrievedCount = 0;
             int totalMatches = 0;
             bool usePaging = pageSize.HasValue || cursor.HasValue;
+            if (!usePaging && count.HasValue && count.Value <= 0)
+                return new ErrorResponse("'count' must be greater than zero for non-paging console reads.");
             // pageSize defaults to 50 when omitted; count is the overall non-paging limit only
             int resolvedPageSize = Mathf.Clamp(pageSize ?? 50, 1, 500);
             int resolvedCursor = Mathf.Max(0, cursor ?? 0);
