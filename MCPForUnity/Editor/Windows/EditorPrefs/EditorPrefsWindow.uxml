@@ -6,7 +6,7 @@
         <!-- Header -->
         <ui:VisualElement class="header">
             <ui:Label text="EditorPrefs Manager" class="title" />
-            <ui:Label text="Manage MCP for Unity EditorPrefs. Useful for development and testing." class="description" />
+            <ui:Label text="Manage Unity MCP (ykh09242) EditorPrefs. Useful for development and testing." class="description" />
         </ui:VisualElement>
         
         <!-- Add New Row (initially hidden) -->

@@ -61,6 +61,18 @@ def test_bundle_stages_selected_files_and_replaces_output(bundle_fixture, monkey
     assert json.loads((repo / "manifest.json").read_text())["version"] == "0.0.0"
 
 
+def test_bundle_cli_requires_an_explicit_icon(bundle_fixture, monkeypatch):
+    helper, _, icon, _ = bundle_fixture
+    called = []
+    monkeypatch.setattr(helper, "DEFAULT_ICON", icon, raising=False)
+    monkeypatch.setattr(sys, "argv", ["generate_mcpb", "1.2.3"])
+    monkeypatch.setattr(helper, "generate_mcpb", lambda *args: called.append(args))
+    with pytest.raises(SystemExit) as error:
+        helper.main()
+    assert error.value.code == 2
+    assert not called
+
+
 @pytest.mark.parametrize("failure", ["no_output", "empty_output", "pack_error"])
 def test_bundle_failure_preserves_existing_output(bundle_fixture, monkeypatch, failure):
     helper, _, icon, output = bundle_fixture

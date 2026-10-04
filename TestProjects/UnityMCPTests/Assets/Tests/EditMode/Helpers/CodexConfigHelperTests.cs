@@ -14,8 +14,7 @@ namespace MCPForUnityTests.Editor.Helpers
     {
         /// <summary>
         /// Validates that a TOML args array contains the expected uvx structure:
-        /// --from, a mcpforunityserver reference, mcp-for-unity package name,
-        /// and optionally --prerelease/explicit (only for prerelease builds).
+        /// --from, the pinned fork reference, and the stable mcp-for-unity executable name.
         /// </summary>
         private static void AssertValidUvxArgs(TomlArray args)
         {
@@ -24,17 +23,10 @@ namespace MCPForUnityTests.Editor.Helpers
                 argValues.Add((child as TomlString).Value);
 
             Assert.IsTrue(argValues.Contains("--from"), "Args should contain --from");
-            Assert.IsTrue(argValues.Any(a => a.Contains("mcpforunityserver")), "Args should contain PyPI package reference");
+            Assert.IsTrue(argValues.Contains(AssetPathUtility.GetMcpServerPackageSource()), "Args should contain the selected pinned source");
             Assert.IsTrue(argValues.Contains("mcp-for-unity"), "Args should contain package name");
 
-            // Prerelease builds include --prerelease explicit before --from
-            int fromIndex = argValues.IndexOf("--from");
-            int prereleaseIndex = argValues.IndexOf("--prerelease");
-            if (prereleaseIndex >= 0)
-            {
-                Assert.IsTrue(prereleaseIndex < fromIndex, "--prerelease should come before --from");
-                Assert.AreEqual("explicit", argValues[prereleaseIndex + 1], "--prerelease should be followed by explicit");
-            }
+            Assert.IsFalse(argValues.Contains("--prerelease"), "Pinned Git sources do not use a prerelease channel");
         }
 
         /// <summary>

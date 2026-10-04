@@ -1,20 +1,19 @@
 {
   "manifest_version": "0.3",
-  "name": "Unity MCP",
+  "name": "Unity MCP (ykh09242)",
   "version": "10.3.0",
   "description": "AI-powered Unity Editor automation via MCP - manage GameObjects, scripts, materials, scenes, prefabs, VFX, and run tests",
   "author": {
-    "name": "Coplay",
-    "url": "https://www.coplay.dev"
+    "name": "ykh09242",
+    "url": "https://github.com/ykh09242"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/CoplayDev/unity-mcp"
+    "url": "https://github.com/ykh09242/unity-mcp"
   },
-  "homepage": "https://www.coplay.dev",
-  "documentation": "https://github.com/CoplayDev/unity-mcp#readme",
-  "support": "https://github.com/CoplayDev/unity-mcp/issues",
-  "icon": "coplay-logo.png",
+  "homepage": "https://github.com/ykh09242/unity-mcp",
+  "documentation": "https://github.com/ykh09242/unity-mcp/blob/beta/README.md",
+  "support": "https://github.com/ykh09242/unity-mcp/issues",
   "server": {
     "type": "python",
     "entry_point": "Server/src/main.py",
@@ -22,7 +21,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "mcpforunityserver",
+        "git+https://github.com/ykh09242/unity-mcp.git@d290c1a2016ec398472bb88c57f64c778a69f82b#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}

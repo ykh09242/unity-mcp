@@ -60,9 +60,11 @@ def run_switch(repo, manifest, choice=None, *, input=None):
                           text=True, encoding="utf-8")
 
 
-def assert_source(manifest, source):
+def assert_source(manifest, source, package="com.ykh09242.unity-mcp"):
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    assert data["dependencies"][mcp_source.PKG_NAME] == source
+    assert data["dependencies"][package] == source
+    other = "com.coplaydev.unity-mcp" if package == "com.ykh09242.unity-mcp" else "com.ykh09242.unity-mcp"
+    assert other not in data["dependencies"]
     assert data["dependencies"]["com.example.other"] == "1.2.3"
     assert data["testables"] == ["com.example.other"]
 
@@ -101,7 +103,8 @@ def test_nonremote_choices_work_without_git_metadata(repo, manifest, choice, git
         "2": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta",
         "4": f"file:{(repo / 'MCPForUnity').as_posix()}",
     }[choice]
-    assert_source(manifest, expected)
+    package = "com.ykh09242.unity-mcp" if choice == "4" else "com.coplaydev.unity-mcp"
+    assert_source(manifest, expected, package)
 
 
 def test_interactive_local_choice_works_without_origin(repo, manifest):
@@ -141,7 +144,7 @@ def test_local_origin_remote_choice_uses_upstream_fallback(repo, manifest):
     git(repo, "remote", "add", "origin", "file:/local/upstream.git")
     result = run_switch(repo, manifest, "3")
     assert result.returncode == 0, result.stderr
-    assert_source(manifest, "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main")
+    assert_source(manifest, "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main", "com.coplaydev.unity-mcp")
 
 
 def test_detached_head_remote_choice_pins_checked_out_commit(repo, manifest):
@@ -171,3 +174,39 @@ def test_missing_dependency_leaves_manifest_unchanged(repo, manifest):
     assert result.returncode == 1
     assert "not found in manifest dependencies" in result.stderr
     assert manifest.read_bytes() == original
+
+
+@pytest.mark.parametrize("original", ["com.coplaydev.unity-mcp", "com.ykh09242.unity-mcp"])
+@pytest.mark.parametrize("choice,expected", [
+    ("1", "com.coplaydev.unity-mcp"),
+    ("2", "com.coplaydev.unity-mcp"),
+    ("3", "com.ykh09242.unity-mcp"),
+    ("4", "com.ykh09242.unity-mcp"),
+])
+def test_switch_migrates_identity_and_testables_without_changing_other_packages(repo, manifest, original, choice, expected):
+    # Given: an existing original or fork installation with unrelated dependencies.
+    git(repo, "remote", "add", "origin", "https://github.com/ykh09242/unity-mcp.git")
+    manifest.write_text(json.dumps({
+        "dependencies": {original: "old", "com.example.other": "1.2.3"},
+        "testables": [original, "com.example.other"],
+        "scopedRegistries": [{"name": "example", "url": "https://example.invalid", "scopes": ["com.example"]}],
+    }), encoding="utf-8")
+    # When: the real CLI switches between upstream, fork and local sources.
+    result = run_switch(repo, manifest, choice)
+    # Then: the selected identity replaces the old one without enabling duplicate installs.
+    assert result.returncode == 0, result.stderr
+    actual = json.loads(manifest.read_text(encoding="utf-8"))
+    assert set(actual["dependencies"]) == {expected, "com.example.other"}
+    assert actual["dependencies"]["com.example.other"] == "1.2.3"
+    assert actual["testables"] == [expected, "com.example.other"]
+    assert actual["scopedRegistries"] == [{"name": "example", "url": "https://example.invalid", "scopes": ["com.example"]}]
+
+
+def test_remote_upstream_branch_keeps_upstream_package_identity(repo, manifest):
+    # Given: the remote option explicitly names the original repository.
+    git(repo, "remote", "add", "origin", "https://github.com/CoplayDev/unity-mcp.git")
+    # When: selecting its current topic branch.
+    result = run_switch(repo, manifest, "3")
+    # Then: the upstream manifest name is used even outside main/beta.
+    assert result.returncode == 0, result.stderr
+    assert_source(manifest, "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#topic", "com.coplaydev.unity-mcp")

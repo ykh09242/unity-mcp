@@ -20,8 +20,10 @@ import json
 import pathlib
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
-PKG_NAME = "com.coplaydev.unity-mcp"
+PKG_NAME = "com.ykh09242.unity-mcp"
+UPSTREAM_PKG_NAME = "com.coplaydev.unity-mcp"
 BRIDGE_SUBPATH = "MCPForUnity"
 
 
@@ -175,14 +177,24 @@ def main() -> None:
 
     data = read_json(manifest_path)
     deps = data.get("dependencies", {})
-    if PKG_NAME not in deps:
+    package_names = {PKG_NAME, UPSTREAM_PKG_NAME}
+    if not package_names.intersection(deps):
         print(
             f"Error: '{PKG_NAME}' not found in manifest dependencies.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\nUpdating {PKG_NAME} → {chosen}")
-    deps[PKG_NAME] = chosen
+    parsed = urlsplit(chosen)
+    upstream = (parsed.hostname == "github.com"
+                and parsed.path.removesuffix(".git").casefold() == "/coplaydev/unity-mcp")
+    selected_name = UPSTREAM_PKG_NAME if upstream else PKG_NAME
+    print(f"\nUpdating {selected_name} → {chosen}")
+    for name in package_names:
+        deps.pop(name, None)
+    deps[selected_name] = chosen
     data["dependencies"] = deps
+    if "testables" in data:
+        data["testables"] = list(dict.fromkeys(
+            selected_name if name in package_names else name for name in data["testables"]))
     write_json(manifest_path, data)
     print(f"Done. Wrote to: {manifest_path}")
     print("Tip: In Unity, open Package Manager and Refresh to re-resolve packages.")

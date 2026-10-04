@@ -5,12 +5,11 @@ This script creates a Model Context Protocol Bundle (.mcpb) file
 for distribution as a GitHub release artifact.
 
 Usage:
-    python3 tools/generate_mcpb.py VERSION [--output FILE] [--icon PATH]
+    python3 tools/generate_mcpb.py VERSION --icon PATH [--output FILE]
 
 Examples:
-    python3 tools/generate_mcpb.py 9.0.8
-    python3 tools/generate_mcpb.py 9.0.8 --output unity-mcp-9.0.8.mcpb
-    python3 tools/generate_mcpb.py 9.0.8 --icon docs/images/coplay-logo.png
+    python3 tools/generate_mcpb.py 9.0.8 --icon /path/to/your-icon.png
+    python3 tools/generate_mcpb.py 9.0.8 --icon /path/to/your-icon.png --output unity-mcp-9.0.8.mcpb
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ICON = REPO_ROOT / "docs" / "images" / "coplay-logo.png"
 MANIFEST_TEMPLATE = REPO_ROOT / "manifest.json"
 
 
@@ -129,8 +127,8 @@ def main() -> int:
     parser.add_argument(
         "--icon",
         type=Path,
-        default=DEFAULT_ICON,
-        help=f"Path to icon file (default: {DEFAULT_ICON.relative_to(REPO_ROOT)})",
+        required=True,
+        help="Path to an icon you are authorized to use for this distribution",
     )
 
     args = parser.parse_args()

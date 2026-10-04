@@ -10,7 +10,7 @@ namespace MCPForUnity.Editor.Setup
 {
     public class McpForUnitySkillInstaller : EditorWindow
     {
-        private const string RepoUrlKey = "UnityMcpSkillSync.RepoUrl";
+        private const string RepoUrlKey = "UnityMcpSkillSync.RepoUrl.ykh09242";
         private const string BranchKey = "UnityMcpSkillSync.Branch";
         private const string CliKey = "UnityMcpSkillSync.Cli";
         private const string InstallDirKey = "UnityMcpSkillSync.InstallDir";
@@ -36,7 +36,7 @@ namespace MCPForUnity.Editor.Setup
         private void OnEnable()
         {
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            _repoUrl = EditorPrefs.GetString(RepoUrlKey, "https://github.com/CoplayDev/unity-mcp");
+            _repoUrl = EditorPrefs.GetString(RepoUrlKey, "https://github.com/ykh09242/unity-mcp");
             _targetBranch = EditorPrefs.GetString(BranchKey, "beta");
             if (!BranchOptions.Contains(_targetBranch))
             {

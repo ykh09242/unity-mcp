@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Setup
 {
     public static class SkillSyncService
     {
-        private const string DefaultRepoUrl = "https://github.com/CoplayDev/unity-mcp";
+        private const string DefaultRepoUrl = "https://github.com/ykh09242/unity-mcp";
         private const string SkillSubdir = ".claude/skills/unity-mcp-skill";
         private const string SyncOwnershipMarker = ".unity-mcp-skill-sync";
         private const string LastSyncedCommitKeyPrefix = "UnityMcpSkillSync.LastSyncedCommit";

@@ -24,6 +24,7 @@
 .header-left {
     flex-direction: row;
     align-items: center;
+    flex-shrink: 1;
 }
 
 .header-logo {
@@ -36,7 +37,9 @@
 .header-title {
     font-size: 16px;
     -unity-font-style: bold;
-    letter-spacing: 0.5px;
+    letter-spacing: 0;
+    white-space: normal;
+    flex-shrink: 1;
 }
 
 .header-version {

@@ -6,10 +6,10 @@ namespace MCPForUnity.Editor.Helpers
 {
     internal static class McpLog
     {
-        private const string InfoPrefix = "<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>:";
-        private const string DebugPrefix = "<b><color=#6AA84F>MCP-FOR-UNITY</color></b>:";
-        private const string WarnPrefix = "<b><color=#cc7a00>MCP-FOR-UNITY</color></b>:";
-        private const string ErrorPrefix = "<b><color=#cc3333>MCP-FOR-UNITY</color></b>:";
+        private const string InfoPrefix = "<b><color=#2EA3FF>" + ProductInfo.ProductName + "</color></b>:";
+        private const string DebugPrefix = "<b><color=#6AA84F>" + ProductInfo.ProductName + "</color></b>:";
+        private const string WarnPrefix = "<b><color=#cc7a00>" + ProductInfo.ProductName + "</color></b>:";
+        private const string ErrorPrefix = "<b><color=#cc3333>" + ProductInfo.ProductName + "</color></b>:";
 
         private static volatile bool _debugEnabled = ReadDebugPreference();
 

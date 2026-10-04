@@ -18,7 +18,7 @@
                     <ui:VisualElement name="blender-status-dot" class="status-indicator-small" />
                     <ui:Label name="blender-status-label" class="help-text" style="margin-left: 6px; margin-bottom: 0; flex-grow: 1;" />
                 </ui:VisualElement>
-                <ui:Label class="help-text" style="white-space: normal;" text="Talks directly to the BlenderMCP addon socket in a running Blender (N panel &#8594; Connect to MCP server). Powers the blender_bridge tool and Window &#8594; MCP for Unity &#8594; Blender Bridge. No API keys involved." />
+                <ui:Label class="help-text" style="white-space: normal;" text="Talks directly to the BlenderMCP addon socket in a running Blender (N panel &#8594; Connect to MCP server). Powers the blender_bridge tool and Window &#8594; Unity MCP (ykh09242) &#8594; Blender Bridge. No API keys involved." />
                 <ui:VisualElement class="setting-row">
                     <ui:Label text="Addon Socket:" class="setting-label" />
                     <ui:TextField name="blender-host" style="width: 140px;" />

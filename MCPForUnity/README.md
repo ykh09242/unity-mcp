@@ -1,16 +1,18 @@
-# MCP for Unity — Editor Plugin Guide
+# Unity MCP (ykh09242) - Editor Plugin Guide
 
-Use this guide to configure and run MCP for Unity inside the Unity Editor. Installation is covered elsewhere; this document focuses on the Editor window, client configuration, and troubleshooting.
+This Git-only fork is maintained by [ykh09242](https://github.com/ykh09242), based on CoplayDev/unity-mcp. Install `com.ykh09242.unity-mcp` using the [fork quickstart](https://github.com/ykh09242/unity-mcp/blob/beta/README.md#quickstart). The package's `mcpServerSource` pins its Python server to immutable Git source; see the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Open the Editor menu at `Window > Unity MCP (ykh09242)`. CLI executables and MCP protocol identifiers retain their existing names. See the package-local [license and upstream attribution](Documentation~/LICENSE.md).
+
+Use this guide to configure and run Unity MCP (ykh09242) inside the Unity Editor. Installation is covered elsewhere; this document focuses on the Editor window, client configuration, and troubleshooting.
 
 ## Open the window
-- Unity menu: Window > MCP for Unity
+- Unity menu: Window > Unity MCP (ykh09242)
 
 The window has four areas: Server Status, Unity Bridge, MCP Client Configuration, and Script Validation.
 
 ---
 
 ## Quick start
-1. Open Window > MCP for Unity.
+1. Open Window > Unity MCP (ykh09242).
 2. Click “Auto-Setup”.
 3. If prompted:
    - Select the packaged server folder (`Server`) if you want to run the bundled implementation.
@@ -50,7 +52,7 @@ The window has four areas: Server Status, Unity Bridge, MCP Client Configuration
 - Select Client: Choose your target MCP client (e.g., Cursor, VS Code, Windsurf, Claude Code).
 - Per-client actions:
   - Cursor / VS Code / Windsurf:
-    - Auto Configure: Writes/updates your config to launch the server via `uvx` with the current package version:
+    - Auto Configure: Writes/updates your config to launch the server via `uvx` with the package's pinned `mcpServerSource`:
       - Command: uvx (or your overridden path)
       - Args: --from <git-url> mcp-for-unity
     - Manual Setup: Opens a window with a pre-filled JSON snippet to copy/paste into your client config.
@@ -84,14 +86,14 @@ Notes:
 
 ## Troubleshooting
 - Python or `uv` not found:
-  - Help: [Fix MCP for Unity with Cursor, VS Code & Windsurf](https://github.com/CoplayDev/unity-mcp/wiki/1.-Fix-Unity-MCP-and-Cursor,-VSCode-&-Windsurf)
+  - Help: [uv setup](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/guides/uv-setup.md)
 - Claude CLI not found:
-  - Help: [Fix MCP for Unity with Claude Code](https://github.com/CoplayDev/unity-mcp/wiki/2.-Fix-Unity-MCP-and-Claude-Code)
+  - Help: [Client configuration](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/guides/client-configurators.md)
 
 ---
 
 ## Tips
-- Use Cmd+Shift+M (macOS) / Ctrl+Shift+M (Windows, Linux) to toggle the MCP for Unity window.
+- Use Cmd+Shift+M (macOS) / Ctrl+Shift+M (Windows, Linux) to toggle the Unity MCP (ykh09242) window.
 - Enable “Show Debug Logs” in the header for more details in the Console when diagnosing issues.
 
 ---

@@ -418,9 +418,14 @@ namespace MCPForUnity.Editor.Windows
 
             string version = AssetPathUtility.GetPackageVersion();
             versionLabel.text = $"v{version}";
-            versionLabel.tooltip = AssetPathUtility.IsPreReleaseVersion()
-                ? $"{ProductInfo.ProductName} v{version} (pre-release package, using prerelease server channel)"
-                : $"{ProductInfo.ProductName} v{version}";
+            try
+            {
+                versionLabel.tooltip = $"{ProductInfo.ProductName} v{version}\nServer source: {AssetPathUtility.GetMcpServerPackageSource()}";
+            }
+            catch (InvalidOperationException ex)
+            {
+                versionLabel.tooltip = $"{ProductInfo.ProductName} v{version}\n{ex.Message}";
+            }
         }
 
         private void QueueUpdateCheck()

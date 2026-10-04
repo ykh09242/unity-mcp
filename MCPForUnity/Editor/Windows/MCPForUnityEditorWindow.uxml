@@ -3,7 +3,7 @@
         <ui:VisualElement name="header-bar" class="header-bar">
             <ui:VisualElement name="header-left" class="header-left">
                 <!-- OceanMark logo is injected here at index 0 in CreateGUI -->
-                <ui:Label text="MCP for Unity" name="title" class="header-title" />
+                <ui:Label text="Unity MCP (ykh09242)" name="title" class="header-title" />
             </ui:VisualElement>
             <ui:Label text="v9.1.0" name="version-label" class="header-version" />
         </ui:VisualElement>

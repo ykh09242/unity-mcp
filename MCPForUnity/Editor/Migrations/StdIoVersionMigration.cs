@@ -38,12 +38,20 @@ namespace MCPForUnity.Editor.Migrations
                 return;
             }
 
+            string upgradeIdentity;
+            try { upgradeIdentity = GetUpgradeIdentity(currentVersion, AssetPathUtility.GetMcpServerPackageSource()); }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"Cannot refresh stdio configs: {ex.Message}");
+                return;
+            }
+
             string lastUpgradeVersion = string.Empty;
             try { lastUpgradeVersion = EditorPrefs.GetString(LastUpgradeKey, string.Empty); } catch { }
 
-            if (string.Equals(lastUpgradeVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(lastUpgradeVersion, upgradeIdentity, StringComparison.Ordinal))
             {
-                return; // Already refreshed for this package version
+                return; // Already refreshed for this package version and server source.
             }
 
             bool hadFailures = false;
@@ -93,7 +101,7 @@ namespace MCPForUnity.Editor.Migrations
             if (!touchedAny)
             {
                 // Nothing needed refreshing; still record version so we don't rerun every launch
-                try { EditorPrefs.SetString(LastUpgradeKey, currentVersion); } catch { }
+                try { EditorPrefs.SetString(LastUpgradeKey, upgradeIdentity); } catch { }
                 return;
             }
 
@@ -105,12 +113,14 @@ namespace MCPForUnity.Editor.Migrations
 
             try
             {
-                EditorPrefs.SetString(LastUpgradeKey, currentVersion);
+                EditorPrefs.SetString(LastUpgradeKey, upgradeIdentity);
             }
             catch { }
 
             McpLog.Info($"Updated stdio MCP configs to package version {currentVersion}.");
         }
+
+        internal static string GetUpgradeIdentity(string version, string source) => version + "|" + source;
 
         private static bool ConfigUsesStdIo(McpClient client)
         {

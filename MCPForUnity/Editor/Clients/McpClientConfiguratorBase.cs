@@ -112,7 +112,7 @@ namespace MCPForUnity.Editor.Clients
         /// </summary>
         protected static string GetExpectedPackageSourceForValidation()
         {
-            // Includes explicit override, stable pin, or prerelease range depending on package version.
+            // Includes the canonical explicit override or the package's pinned Git source.
             return AssetPathUtility.GetMcpServerPackageSource();
         }
 
@@ -257,25 +257,8 @@ namespace MCPForUnity.Editor.Clients
                         }
                         else
                         {
-                            // Check for beta/stable mismatch
-                            bool configuredIsBeta = IsBetaPackageSource(configuredUvxUrl);
-                            bool expectedIsBeta = IsBetaPackageSource(expectedUvxUrl);
-
-                            if (configuredIsBeta && !expectedIsBeta)
-                            {
-                                hasVersionMismatch = true;
-                                mismatchReason = "Configured for prerelease server, but this package is stable. Re-configure to switch to stable.";
-                            }
-                            else if (!configuredIsBeta && expectedIsBeta)
-                            {
-                                hasVersionMismatch = true;
-                                mismatchReason = "Configured for stable server, but this package is prerelease. Re-configure to switch to prerelease.";
-                            }
-                            else
-                            {
-                                hasVersionMismatch = true;
-                                mismatchReason = "Server version doesn't match the plugin. Re-configure to update.";
-                            }
+                            hasVersionMismatch = true;
+                            mismatchReason = "Configured server source doesn't match the selected source. Re-configure to update.";
                         }
                     }
                 }
@@ -501,25 +484,8 @@ namespace MCPForUnity.Editor.Clients
                             }
                             else
                             {
-                                // Check for beta/stable mismatch
-                                bool configuredIsBeta = IsBetaPackageSource(configured);
-                                bool expectedIsBeta = IsBetaPackageSource(expected);
-
-                                if (configuredIsBeta && !expectedIsBeta)
-                                {
-                                    hasVersionMismatch = true;
-                                    mismatchReason = "Configured for prerelease server, but this package is stable. Re-configure to switch to stable.";
-                                }
-                                else if (!configuredIsBeta && expectedIsBeta)
-                                {
-                                    hasVersionMismatch = true;
-                                    mismatchReason = "Configured for stable server, but this package is prerelease. Re-configure to switch to prerelease.";
-                                }
-                                else
-                                {
-                                    hasVersionMismatch = true;
-                                    mismatchReason = "Server version doesn't match the plugin. Re-configure to update.";
-                                }
+                                hasVersionMismatch = true;
+                                mismatchReason = "Configured server source doesn't match the selected source. Re-configure to update.";
                             }
                         }
                     }
@@ -764,22 +730,7 @@ namespace MCPForUnity.Editor.Clients
                         {
                             hasVersionMismatch = true;
 
-                            // Provide more specific mismatch reason for beta/stable differences
-                            bool configuredIsBeta = IsBetaPackageSource(configuredPackageSource);
-                            bool expectedIsBeta = IsBetaPackageSource(expectedPackageSource);
-
-                            if (configuredIsBeta && !expectedIsBeta)
-                            {
-                                mismatchReason = "Configured for prerelease server, but this package is stable. Re-configure to switch to stable.";
-                            }
-                            else if (!configuredIsBeta && expectedIsBeta)
-                            {
-                                mismatchReason = "Configured for stable server, but this package is prerelease. Re-configure to switch to prerelease.";
-                            }
-                            else
-                            {
-                                mismatchReason = "Server version doesn't match the plugin. Re-configure to update.";
-                            }
+                            mismatchReason = "Configured server source doesn't match the selected source. Re-configure to update.";
                         }
                     }
                 }

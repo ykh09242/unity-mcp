@@ -39,7 +39,16 @@ namespace MCPForUnity.Editor.Services.Server
                 return false;
             }
 
-            var (uvxPath, fromUrl, packageName) = AssetPathUtility.GetUvxCommandParts();
+            string uvxPath, fromUrl, packageName;
+            try
+            {
+                (uvxPath, fromUrl, packageName) = AssetPathUtility.GetUvxCommandParts();
+            }
+            catch (InvalidOperationException ex)
+            {
+                error = ex.Message;
+                return false;
+            }
             if (string.IsNullOrEmpty(uvxPath))
             {
                 error = "uv is not installed or found in PATH. Install it or set an override in Advanced Settings.";
@@ -53,12 +62,10 @@ namespace MCPForUnity.Editor.Services.Server
             );
             string scopedFlag = projectScopedTools ? " --project-scoped-tools" : string.Empty;
 
-            // Use centralized helper for beta server / prerelease args
+            // Use the same source resolver as JSON and TOML client configs.
             string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
 
-            string args = string.IsNullOrEmpty(fromArgs)
-                ? $"{devFlags}{packageName} --transport http --http-url {httpUrl}{scopedFlag}"
-                : $"{devFlags}{fromArgs} {packageName} --transport http --http-url {httpUrl}{scopedFlag}";
+            string args = $"{devFlags}{fromArgs} {packageName} --transport http --http-url {httpUrl}{scopedFlag}";
 
             fileName = uvxPath;
             arguments = args;

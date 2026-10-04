@@ -28,11 +28,8 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [TestCase("garbage", true)]
-        [TestCase("garbage", false)]
         [TestCase(" ", true)]
-        [TestCase(" ", false)]
         [TestCase("10.2.1-beta.2147483648", true)]
-        [TestCase("10.2.1-beta.2147483648", false)]
         public void InvalidFetchedMetadata_FailsInsteadOfReportingNoUpdate(string fetched, bool git)
         {
             var service = new MetadataService { Fetched = fetched };
@@ -46,8 +43,6 @@ namespace MCPForUnityTests.Editor.Services
 
         [TestCase(null, true)]
         [TestCase("", true)]
-        [TestCase(null, false)]
-        [TestCase("", false)]
         public void MissingFetchedMetadata_KeepsOfflineFailureContract(string fetched, bool git)
         {
             var service = new MetadataService { Fetched = fetched };
@@ -60,7 +55,6 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [TestCase(true)]
-        [TestCase(false)]
         public void ValidFetchedVersion_StillReportsAvailableUpdate(bool git)
         {
             var service = new MetadataService { Fetched = "10.2.2" };
@@ -69,6 +63,20 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(result.UpdateAvailable);
             Assert.AreEqual("10.2.2", result.LatestVersion);
             Assert.AreEqual(1, service.Fetches);
+        }
+
+        [TestCase(null)]
+        [TestCase("garbage")]
+        [TestCase("10.2.2")]
+        public void LocalInstallation_DoesNotConsultAnyUpdateProvider(string fetched)
+        {
+            var service = new MetadataService { Fetched = fetched };
+            var result = service.FetchAndCompare("10.2.0", false, "main");
+            Assert.IsFalse(result.CheckSucceeded);
+            Assert.IsFalse(result.UpdateAvailable);
+            Assert.IsNull(result.LatestVersion);
+            StringAssert.Contains("require a Git Package Manager installation", result.Message);
+            Assert.AreEqual(0, service.Fetches);
         }
 
         private sealed class MetadataService : PackageUpdateService

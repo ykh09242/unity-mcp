@@ -10,34 +10,29 @@ using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 namespace MCPForUnity.Editor.Services
 {
     /// <summary>
-    /// Service for checking package updates from GitHub or Asset Store metadata
+    /// Service for checking this fork's Git package updates.
     /// </summary>
     public class PackageUpdateService : IPackageUpdateService
     {
         private const int DefaultRequestTimeoutMs = 3000;
-        private const string LastCheckDateKey = EditorPrefKeys.LastUpdateCheck;
-        private const string CachedVersionKey = EditorPrefKeys.LatestKnownVersion;
-        private const string LastBetaCheckDateKey = EditorPrefKeys.LastUpdateCheck + ".beta";
-        private const string CachedBetaVersionKey = EditorPrefKeys.LatestKnownVersion + ".beta";
-        private const string LastAssetStoreCheckDateKey = EditorPrefKeys.LastAssetStoreUpdateCheck;
-        private const string CachedAssetStoreVersionKey = EditorPrefKeys.LatestKnownAssetStoreVersion;
-        private const string MainPackageJsonUrl = "https://raw.githubusercontent.com/CoplayDev/unity-mcp/main/MCPForUnity/package.json";
-        private const string BetaPackageJsonUrl = "https://raw.githubusercontent.com/CoplayDev/unity-mcp/beta/MCPForUnity/package.json";
-        private const string AssetStoreVersionUrl = "https://gqoqjkkptwfbkwyssmnj.supabase.co/storage/v1/object/public/coplay-images/assetstoreversion.json";
+        private const string LastCheckDateKey = EditorPrefKeys.LastUpdateCheck + ".ykh09242";
+        private const string CachedVersionKey = EditorPrefKeys.LatestKnownVersion + ".ykh09242";
+        private const string LastBetaCheckDateKey = LastCheckDateKey + ".beta";
+        private const string CachedBetaVersionKey = CachedVersionKey + ".beta";
+        private const string LastAssetStoreCheckDateKey = EditorPrefKeys.LastAssetStoreUpdateCheck + ".ykh09242";
+        private const string CachedAssetStoreVersionKey = EditorPrefKeys.LatestKnownAssetStoreVersion + ".ykh09242";
+        private const string MainPackageJsonUrl = "https://raw.githubusercontent.com/ykh09242/unity-mcp/main/MCPForUnity/package.json";
+        private const string BetaPackageJsonUrl = "https://raw.githubusercontent.com/ykh09242/unity-mcp/beta/MCPForUnity/package.json";
 
         /// <inheritdoc/>
         public UpdateCheckResult CheckForUpdate(string currentVersion)
         {
             bool isGitInstallation = IsGitInstallation();
-            string gitBranch = isGitInstallation ? GetGitUpdateBranch(currentVersion) : "main";
-            bool useBetaChannel = isGitInstallation && string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
-
-            string lastCheckKey = isGitInstallation
-                ? (useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey)
-                : LastAssetStoreCheckDateKey;
-            string cachedVersionKey = isGitInstallation
-                ? (useBetaChannel ? CachedBetaVersionKey : CachedVersionKey)
-                : CachedAssetStoreVersionKey;
+            if (!isGitInstallation) return UnsupportedLocalUpdate();
+            string gitBranch = GetGitUpdateBranch(currentVersion);
+            bool useBetaChannel = string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
+            string lastCheckKey = useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey;
+            string cachedVersionKey = useBetaChannel ? CachedBetaVersionKey : CachedVersionKey;
 
             string lastCheckDate = EditorPrefs.GetString(lastCheckKey, "");
             string cachedLatestVersion = EditorPrefs.GetString(cachedVersionKey, "");
@@ -53,9 +48,7 @@ namespace MCPForUnity.Editor.Services
                 };
             }
 
-            string latestVersion = isGitInstallation
-                ? FetchLatestVersionFromGitHub(gitBranch)
-                : FetchLatestVersionFromAssetStoreJson();
+            string latestVersion = FetchLatestVersionFromGitHub(gitBranch);
 
             if (TryParseVersion(latestVersion, out _))
             {
@@ -78,9 +71,7 @@ namespace MCPForUnity.Editor.Services
                 UpdateAvailable = false,
                 Message = !string.IsNullOrEmpty(latestVersion)
                     ? "Failed to check for updates (invalid version metadata)"
-                    : isGitInstallation
-                    ? "Failed to check for updates (network issue or offline)"
-                    : "Failed to check for Asset Store updates (network issue or offline)"
+                    : "Failed to check for updates (network issue or offline)"
             };
         }
 
@@ -88,15 +79,11 @@ namespace MCPForUnity.Editor.Services
         public UpdateCheckResult TryGetCachedResult(string currentVersion)
         {
             bool isGitInstallation = IsGitInstallation();
-            string gitBranch = isGitInstallation ? GetGitUpdateBranch(currentVersion) : "main";
-            bool useBetaChannel = isGitInstallation && string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
-
-            string lastCheckKey = isGitInstallation
-                ? (useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey)
-                : LastAssetStoreCheckDateKey;
-            string cachedVersionKey = isGitInstallation
-                ? (useBetaChannel ? CachedBetaVersionKey : CachedVersionKey)
-                : CachedAssetStoreVersionKey;
+            if (!isGitInstallation) return UnsupportedLocalUpdate();
+            string gitBranch = GetGitUpdateBranch(currentVersion);
+            bool useBetaChannel = string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
+            string lastCheckKey = useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey;
+            string cachedVersionKey = useBetaChannel ? CachedBetaVersionKey : CachedVersionKey;
 
             string lastCheckDate = EditorPrefs.GetString(lastCheckKey, "");
             string cachedLatestVersion = EditorPrefs.GetString(cachedVersionKey, "");
@@ -126,9 +113,8 @@ namespace MCPForUnity.Editor.Services
         /// <inheritdoc/>
         public UpdateCheckResult FetchAndCompare(string currentVersion, bool isGitInstallation, string gitBranch)
         {
-            string latestVersion = isGitInstallation
-                ? FetchLatestVersionFromGitHub(gitBranch)
-                : FetchLatestVersionFromAssetStoreJson();
+            if (!isGitInstallation) return UnsupportedLocalUpdate();
+            string latestVersion = FetchLatestVersionFromGitHub(gitBranch);
 
             if (TryParseVersion(latestVersion, out _))
             {
@@ -147,9 +133,7 @@ namespace MCPForUnity.Editor.Services
                 UpdateAvailable = false,
                 Message = !string.IsNullOrEmpty(latestVersion)
                     ? "Failed to check for updates (invalid version metadata)"
-                    : isGitInstallation
-                    ? "Failed to check for updates (network issue or offline)"
-                    : "Failed to check for Asset Store updates (network issue or offline)"
+                    : "Failed to check for updates (network issue or offline)"
             };
         }
 
@@ -159,15 +143,11 @@ namespace MCPForUnity.Editor.Services
             if (!TryParseVersion(fetchedVersion, out _)) return;
 
             bool isGitInstallation = IsGitInstallation();
-            string gitBranch = isGitInstallation ? GetGitUpdateBranch(currentVersion) : "main";
-            bool useBetaChannel = isGitInstallation && string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
-
-            string lastCheckKey = isGitInstallation
-                ? (useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey)
-                : LastAssetStoreCheckDateKey;
-            string cachedVersionKey = isGitInstallation
-                ? (useBetaChannel ? CachedBetaVersionKey : CachedVersionKey)
-                : CachedAssetStoreVersionKey;
+            if (!isGitInstallation) return;
+            string gitBranch = GetGitUpdateBranch(currentVersion);
+            bool useBetaChannel = string.Equals(gitBranch, "beta", StringComparison.OrdinalIgnoreCase);
+            string lastCheckKey = useBetaChannel ? LastBetaCheckDateKey : LastCheckDateKey;
+            string cachedVersionKey = useBetaChannel ? CachedBetaVersionKey : CachedVersionKey;
 
             EditorPrefs.SetString(lastCheckKey, DateTime.Now.ToString("yyyy-MM-dd"));
             EditorPrefs.SetString(cachedVersionKey, fetchedVersion);
@@ -290,7 +270,7 @@ namespace MCPForUnity.Editor.Services
         }
 
         /// <inheritdoc/>
-        public string GetGitUpdateBranch(string currentVersion)
+        public virtual string GetGitUpdateBranch(string currentVersion)
         {
             try
             {
@@ -320,19 +300,20 @@ namespace MCPForUnity.Editor.Services
         /// <inheritdoc/>
         public virtual bool IsGitInstallation()
         {
-            // Git packages are installed via Package Manager and have a package.json in Packages/
-            // Asset Store packages are in Assets/
-            string packageRoot = AssetPathUtility.GetMcpPackageRootPath();
-
-            if (string.IsNullOrEmpty(packageRoot))
+            try
             {
-                return false;
+                var packageInfo = PackageInfo.FindForAssembly(typeof(PackageUpdateService).Assembly);
+                return packageInfo != null && packageInfo.source == UnityEditor.PackageManager.PackageSource.Git;
             }
-
-            // If the package is in Packages/ it's a PM install (likely Git)
-            // If it's in Assets/ it's an Asset Store install
-            return packageRoot.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase);
+            catch { return false; }
         }
+
+        private static UpdateCheckResult UnsupportedLocalUpdate() => new UpdateCheckResult
+        {
+            CheckSucceeded = false,
+            UpdateAvailable = false,
+            Message = "Automatic updates for Unity MCP (ykh09242) require a Git Package Manager installation. Update local copies manually from https://github.com/ykh09242/unity-mcp."
+        };
 
         /// <inheritdoc/>
         public void ClearCache()
@@ -353,7 +334,7 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 // GitHub API endpoint (Option 1 - has rate limits):
-                // https://api.github.com/repos/CoplayDev/unity-mcp/releases/latest
+                // https://api.github.com/repos/ykh09242/unity-mcp/releases/latest
                 //
                 // We use Option 2 (package.json directly) because:
                 // - No API rate limits (GitHub serves raw files freely)
@@ -394,29 +375,11 @@ namespace MCPForUnity.Editor.Services
         }
 
         /// <summary>
-        /// Fetches the latest Asset Store version from a hosted JSON file.
+        /// Retained for compatibility; this fork has no Asset Store update channel.
         /// </summary>
         protected virtual string FetchLatestVersionFromAssetStoreJson()
         {
-            try
-            {
-                using (var client = CreateWebClient())
-                {
-                    client.Headers.Add("User-Agent", "Unity-MCPForUnity-AssetStoreUpdateChecker");
-                    string jsonContent = client.DownloadString(AssetStoreVersionUrl);
-
-                    var versionJson = JObject.Parse(jsonContent);
-                    string version = versionJson["version"]?.ToString();
-
-                    return string.IsNullOrEmpty(version) ? null : version;
-                }
-            }
-            catch (Exception ex)
-            {
-                // Silent fail - don't interrupt the user if network is unavailable
-                McpLog.Info($"Asset Store update check failed (this is normal if offline): {ex.Message}");
-                return null;
-            }
+            return null;
         }
 
         protected virtual WebClient CreateWebClient()

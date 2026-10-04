@@ -209,7 +209,7 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>
         /// Gets the package source for the MCP server (used with uvx --from).
         /// Checks for EditorPrefs override first (supports git URLs, file:// paths, etc.),
-        /// then falls back to PyPI package reference.
+        /// then uses the immutable fork source declared in package.json.
         /// When the override is a local path, auto-corrects to the "Server" subdirectory
         /// if the path doesn't contain pyproject.toml but Server/pyproject.toml exists.
         /// </summary>
@@ -230,22 +230,35 @@ namespace MCPForUnity.Editor.Helpers
                 return resolved;
             }
 
-            // Default to PyPI package (avoids Windows long path issues with git clone)
-            string version = GetPackageVersion();
-            if (version == "unknown")
-            {
-                // Fall back to latest PyPI version so configs remain valid in test scenarios
-                return "mcpforunityserver";
-            }
+            return GetPinnedServerSource(GetPackageJson());
+        }
 
-            // Package.json uses semver prerelease tags (e.g., 9.4.5-beta.1) that are not valid
-            // PEP 440 pins for uvx. Use the beta prerelease range instead of a pinned prerelease.
-            if (IsSemVerPreRelease(version))
-            {
-                return "mcpforunityserver>=0.0.0a0";
-            }
+        internal static string GetPinnedServerSource(JObject packageJson)
+        {
+            var token = packageJson?["mcpServerSource"];
+            string source = token?.Type == JTokenType.String ? token.Value<string>() : null;
+            return ValidatePinnedServerSource(source);
+        }
 
-            return $"mcpforunityserver=={version}";
+        private static string ValidatePinnedServerSource(string source)
+        {
+            const string prefix = "git+https://github.com/ykh09242/unity-mcp.git@";
+            const string suffix = "#subdirectory=Server";
+            bool valid = source != null && source.StartsWith(prefix, StringComparison.Ordinal)
+                && source.EndsWith(suffix, StringComparison.Ordinal)
+                && source.Length == prefix.Length + 40 + suffix.Length;
+            if (valid)
+            {
+                for (int i = prefix.Length; i < prefix.Length + 40; i++)
+                {
+                    char c = source[i];
+                    if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') && !(c >= 'A' && c <= 'F'))
+                    { valid = false; break; }
+                }
+            }
+            if (!valid)
+                throw new InvalidOperationException("package.json mcpServerSource must pin git+https://github.com/ykh09242/unity-mcp.git@<40-hex-commit>#subdirectory=Server. Reinstall a valid fork package or set an explicit development server source override.");
+            return source;
         }
 
         /// <summary>
@@ -323,14 +336,12 @@ namespace MCPForUnity.Editor.Helpers
 
         /// <summary>
         /// Builds the uvx package source arguments for the MCP server.
-        /// Handles prerelease package mode (prerelease from PyPI) vs stable mode (pinned version or override).
-        /// Centralizes the prerelease logic to avoid duplication between HTTP and stdio transports.
-        /// Priority: explicit fromUrl override > package-version-driven prerelease mode > stable pinned package.
+        /// Uses the pinned fork source or an explicit development override for all transports.
         /// NOTE: This overload reads from EditorPrefs/cache and MUST be called from the main thread.
         /// For background threads, use the overload that accepts pre-captured parameters.
         /// </summary>
         /// <param name="quoteFromPath">Whether to quote the --from path (needed for command-line strings, not for arg lists)</param>
-        /// <returns>The package source arguments (e.g., "--prerelease explicit --from mcpforunityserver>=0.0.0a0")</returns>
+        /// <returns>The --from package source arguments</returns>
         public static string GetBetaServerFromArgs(bool quoteFromPath = false)
         {
             string gitUrlOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
@@ -347,37 +358,14 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="quoteFromPath">Whether to quote the --from path</param>
         public static string GetBetaServerFromArgs(string gitUrlOverride, string packageSource, bool quoteFromPath = false)
         {
-            // Explicit override (local path, git URL, etc.) always wins
-            if (!string.IsNullOrEmpty(gitUrlOverride))
-            {
-                string fromValue = quoteFromPath ? $"\"{gitUrlOverride}\"" : gitUrlOverride;
-                return $"--from {fromValue}";
-            }
-
-            bool usePrereleaseRange = string.Equals(packageSource, "mcpforunityserver>=0.0.0a0", StringComparison.OrdinalIgnoreCase);
-
-            // Prerelease package mode: use prerelease from PyPI.
-            if (usePrereleaseRange)
-            {
-                // Use --prerelease explicit with version specifier to only get prereleases of our package,
-                // not of dependencies (which can be broken on PyPI).
-                string fromValue = quoteFromPath ? "\"mcpforunityserver>=0.0.0a0\"" : "mcpforunityserver>=0.0.0a0";
-                return $"--prerelease explicit --from {fromValue}";
-            }
-
-            // Standard mode: use pinned version from package.json
-            if (!string.IsNullOrEmpty(packageSource))
-            {
-                string fromValue = quoteFromPath ? $"\"{packageSource}\"" : packageSource;
-                return $"--from {fromValue}";
-            }
-
-            return string.Empty;
+            string source = GetEffectiveServerSource(gitUrlOverride, packageSource);
+            string fromValue = quoteFromPath ? $"\"{source}\"" : source;
+            return $"--from {fromValue}";
         }
 
         /// <summary>
         /// Builds the uvx package source arguments as a list (for JSON config builders).
-        /// Priority: explicit fromUrl override > package-version-driven prerelease mode > stable pinned package.
+        /// Priority: explicit development override > pinned fork source.
         /// NOTE: This overload reads from EditorPrefs/cache and MUST be called from the main thread.
         /// For background threads, use the overload that accepts pre-captured parameters.
         /// </summary>
@@ -397,36 +385,15 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="packageSource">Pre-captured value from GetMcpServerPackageSource()</param>
         public static System.Collections.Generic.IList<string> GetBetaServerFromArgsList(string gitUrlOverride, string packageSource)
         {
-            var args = new System.Collections.Generic.List<string>();
+            return new System.Collections.Generic.List<string>
+            { "--from", GetEffectiveServerSource(gitUrlOverride, packageSource) };
+        }
 
-            // Explicit override (local path, git URL, etc.) always wins
-            if (!string.IsNullOrEmpty(gitUrlOverride))
-            {
-                args.Add("--from");
-                args.Add(gitUrlOverride);
-                return args;
-            }
-
-            bool usePrereleaseRange = string.Equals(packageSource, "mcpforunityserver>=0.0.0a0", StringComparison.OrdinalIgnoreCase);
-
-            // Prerelease package mode: use prerelease from PyPI.
-            if (usePrereleaseRange)
-            {
-                args.Add("--prerelease");
-                args.Add("explicit");
-                args.Add("--from");
-                args.Add("mcpforunityserver>=0.0.0a0");
-                return args;
-            }
-
-            // Standard mode: use pinned version from package.json
-            if (!string.IsNullOrEmpty(packageSource))
-            {
-                args.Add("--from");
-                args.Add(packageSource);
-            }
-
-            return args;
+        private static string GetEffectiveServerSource(string sourceOverride, string packageSource)
+        {
+            return !string.IsNullOrEmpty(sourceOverride)
+                ? ResolveLocalServerPath(sourceOverride)
+                : ValidatePinnedServerSource(packageSource);
         }
 
         /// <summary>
@@ -449,6 +416,7 @@ namespace MCPForUnity.Editor.Helpers
 
         private static bool _offlineCacheResult;
         private static double _offlineCacheTimestamp = -999;
+        private static string _offlineCacheSource;
         private const double OfflineCacheTtlSeconds = 30.0;
 
         /// <summary>
@@ -469,15 +437,21 @@ namespace MCPForUnity.Editor.Helpers
 
         private static bool GetCachedOfflineProbeResult()
         {
+            string source = GetMcpServerPackageSource();
             double now = EditorApplication.timeSinceStartup;
-            if (now - _offlineCacheTimestamp < OfflineCacheTtlSeconds)
+            if (IsOfflineProbeCacheValid(source, now))
                 return _offlineCacheResult;
 
             bool result = RunOfflineProbe();
             _offlineCacheResult = result;
             _offlineCacheTimestamp = now;
+            _offlineCacheSource = source;
             return result;
         }
+
+        internal static bool IsOfflineProbeCacheValid(string source, double now) =>
+            string.Equals(source, _offlineCacheSource, StringComparison.Ordinal)
+            && now - _offlineCacheTimestamp < OfflineCacheTtlSeconds;
 
         private static bool RunOfflineProbe()
         {
@@ -487,10 +461,8 @@ namespace MCPForUnity.Editor.Helpers
                 if (string.IsNullOrEmpty(uvxPath))
                     return false;
 
-                string fromArgs = GetBetaServerFromArgs(quoteFromPath: false);
-                string probeArgs = string.IsNullOrEmpty(fromArgs)
-                    ? "--offline mcp-for-unity --help"
-                    : $"--offline {fromArgs} mcp-for-unity --help";
+                string fromArgs = GetBetaServerFromArgs(quoteFromPath: true);
+                string probeArgs = $"--offline {fromArgs} mcp-for-unity --help";
 
                 return ExecPath.TryRun(uvxPath, probeArgs, null, out _, out _, timeoutMs: 3000);
             }
