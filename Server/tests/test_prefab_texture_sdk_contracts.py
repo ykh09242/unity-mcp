@@ -118,14 +118,14 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                     for payload in (
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "target": "0", "allow_overwrite": False, "search_inactive": False, "unlink_if_instance": False},
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "name": "NameAlias"},
-                        {"action": "modify_contents", "prefab_path": "Assets/Fixture.prefab", "target": "Parent/Child", "set_active": False, "position": [0,0,0], "component_properties": {"MyComponent": {"enabled": False,"count": 0,"reference": None}}},
+                        {"action": "modify_contents", "prefab_path": "Assets/Fixture.prefab", "target": "Parent/Child", "set_active": False, "position": [0,0,0], "tag": "", "parent": "", "component_properties": {"MyComponent": {"enabled": False,"count": 0,"reference": None,"asset": {"path": "Assets/Fixture.mat"},"vector": [0,1,2],"text": "","numeric_text": "0"}}},
                     ):
                         result = await client.call_tool("manage_prefabs", payload)
                         check(result.structured_content == reply, "prefab response false/zero/null")
                         wire = sent[-1][1]
                         if "allow_overwrite" in payload: check(wire["target"] == "0" and wire["allowOverwrite"] is wire["searchInactive"] is wire["unlinkIfInstance"] is False, "prefab numeric name/false flags")
                         elif "name" in payload: check(wire["target"] == "NameAlias", "prefab name compatibility")
-                        else: check(wire["target"] == "Parent/Child" and wire["setActive"] is False and wire["position"] == [0.0,0.0,0.0] and wire["componentProperties"] == payload["component_properties"], "prefab path/false/zero/null")
+                        else: check(wire["target"] == "Parent/Child" and wire["setActive"] is False and wire["position"] == [0.0,0.0,0.0] and wire["tag"] == wire["parent"] == "" and wire["componentProperties"] == payload["component_properties"], "prefab path/false/zero/null/empty/JSON")
                     reply = {"success": False, "error": "Native operation failed", "data": {"modified": False,"count": 0,"reference": None}}
                     for tool, payload in (("manage_texture", {"action": "delete", "path": "Assets/Fixture.png"}), ("manage_prefabs", {"action": "close_prefab_stage"})):
                         result = await client.call_tool(tool, payload)

@@ -296,9 +296,9 @@ def modify(
         params["rotation"] = list(rotation)
     if scale:
         params["scale"] = list(scale)
-    if parent:
+    if parent is not None:
         params["parent"] = parent
-    if tag:
+    if tag is not None:
         params["tag"] = tag
     if layer:
         params["layer"] = layer

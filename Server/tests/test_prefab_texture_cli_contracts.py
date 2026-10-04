@@ -88,6 +88,54 @@ def test_prefab_modification_keeps_numeric_name_false_and_zero(domain_transport)
     assert requests[0]["params"] == {"action": "modify_contents", "prefabPath": PREFAB, "target": "0", "setActive": False, "position": [0.0, 0.0, 0.0], "componentProperties": {"MyComponent": {"enabled": False, "count": 0}}}
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("null", None),
+    ('{"path":"Assets/Fixture.mat"}', {"path": "Assets/Fixture.mat"}),
+    ("[0,1,2]", [0, 1, 2]),
+    ('"0"', "0"),
+    ('""', ""),
+    ("1e3", 1000.0),
+    ("FALSE", False),
+    ("plain text", "plain text"),
+])
+def test_prefab_component_property_preserves_json_values_on_wire(domain_transport, raw, expected):
+    # Given a prefab target and a component property value supplied through the CLI.
+    response, requests = domain_transport
+    # When one headless modification is sent through the actual HTTP adapter.
+    result = CliRunner().invoke(cli, [
+        "--instance", "Project@fixture", "--format", "json", "prefab", "modify", PREFAB,
+        "--target", "Parent/Child", "--set-property", f"MyComponent.reference={raw}",
+    ])
+    # Then JSON values retain their types and the targeted operation remains one call.
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == response
+    assert len(requests) == 1
+    assert requests[0]["unity_instance"] == "Project@fixture"
+    assert requests[0]["params"]["target"] == "Parent/Child"
+    assert requests[0]["params"]["componentProperties"] == {"MyComponent": {"reference": expected}}
+
+
+@pytest.mark.parametrize("option,field", [("--tag", "tag"), ("--parent", "parent")])
+@pytest.mark.parametrize("surface", ["prefab", "gameobject"])
+def test_empty_reset_is_preserved_on_wire(domain_transport, option, field, surface):
+    # Given the native empty-string reset for an object's tag or parent.
+    response, requests = domain_transport
+    command = (["prefab", "modify", PREFAB, "--target", "Parent/Child"]
+               if surface == "prefab" else ["gameobject", "modify", "Parent/Child"])
+    # When the reset is explicitly requested through the CLI.
+    result = CliRunner().invoke(cli, [
+        "--format", "json", *command, option, "",
+    ])
+    # Then omission and an explicit reset remain different native requests.
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == response
+    assert len(requests) == 1
+    expected = {"action": "modify", "target": "Parent/Child", field: ""}
+    if surface == "prefab":
+        expected.update(action="modify_contents", prefabPath=PREFAB)
+    assert requests[0]["params"] == expected
+
+
 def test_texture_region_and_import_flags_preserve_clipping_inputs_and_false(domain_transport):
     _, requests = domain_transport
     result = CliRunner().invoke(cli, ["texture", "modify", TEXTURE, "--set-pixels", '{"x":-1,"y":0,"width":2,"height":1,"color":[0,0,0,0]}', "--no-mipmaps", "--linear", "--no-readable"])

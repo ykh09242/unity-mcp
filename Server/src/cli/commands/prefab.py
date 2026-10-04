@@ -8,6 +8,7 @@ from typing import Optional, Any
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors
+from cli.utils.parsers import parse_value_safe
 
 
 @click.group()
@@ -270,17 +271,8 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
         parsed_value: Any = True
     elif val_str.lower() == "false":
         parsed_value = False
-    # Parse numbers
-    elif "." in val_str:
-        try:
-            parsed_value = float(val_str)
-        except ValueError:
-            parsed_value = val_str
     else:
-        try:
-            parsed_value = int(val_str)
-        except ValueError:
-            parsed_value = val_str
+        parsed_value = parse_value_safe(val_str)
     
     return component.strip(), prop.strip(), parsed_value
 
@@ -333,13 +325,13 @@ def modify(path: str, target: Optional[str], position: Optional[str], rotation: 
         params["scale"] = _parse_vector3(scale)
     if name:
         params["name"] = name
-    if tag:
+    if tag is not None:
         params["tag"] = tag
     if layer:
         params["layer"] = layer
     if active is not None:
         params["setActive"] = active
-    if parent:
+    if parent is not None:
         params["parent"] = parent
     if add_component:
         params["componentsToAdd"] = list(add_component)
