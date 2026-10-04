@@ -344,6 +344,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var extType = CameraHelpers.ResolveComponentType(extTypeName);
             if (extType == null)
                 return new ErrorResponse($"Extension type '{extTypeName}' not found.");
+            if (!IsConcreteCinemachineType(extType, "CinemachineExtension"))
+                return new ErrorResponse($"Type '{extTypeName}' is not a concrete CinemachineExtension.");
 
             var go = cmCamera.gameObject;
             var existing = go.GetComponent(extType);
@@ -377,6 +379,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var extType = CameraHelpers.ResolveComponentType(extTypeName);
             if (extType == null)
                 return new ErrorResponse($"Extension type '{extTypeName}' not found.");
+            if (!IsConcreteCinemachineType(extType, "CinemachineExtension"))
+                return new ErrorResponse($"Type '{extTypeName}' is not a concrete CinemachineExtension.");
 
             var go = cmCamera.gameObject;
             var ext = go.GetComponent(extType);
@@ -410,7 +414,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
         private static Component SwapPipelineComponent(GameObject go, string stage, string newTypeName)
         {
             var newType = CameraHelpers.ResolveComponentType(newTypeName);
-            if (newType == null) return null;
+            if (newType == null || !IsConcreteCinemachineType(newType, "CinemachineComponentBase")) return null;
 
             // Remove existing component of same pipeline stage
             var cmCamera = go.GetComponent(CameraHelpers.CinemachineCameraType);
@@ -427,6 +431,13 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 comp = Undo.AddComponent(go, newType);
 
             return comp;
+        }
+
+        private static bool IsConcreteCinemachineType(Type type, string baseTypeName)
+        {
+            var baseType = CameraHelpers.CinemachineCameraType?.Assembly.GetType("Unity.Cinemachine." + baseTypeName);
+            return baseType != null && baseType.IsAssignableFrom(type)
+                && !type.IsAbstract && !type.ContainsGenericParameters;
         }
 
         private static ErrorResponse SetComponentProperties(Component component, JObject props, string[] skipKeys)

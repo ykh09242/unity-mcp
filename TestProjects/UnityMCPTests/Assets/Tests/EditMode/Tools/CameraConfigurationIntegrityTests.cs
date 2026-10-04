@@ -222,6 +222,107 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(before, EditorUtility.GetDirtyCount(basic));
         }
 
+        [TestCase("add_extension", "Camera")]
+        [TestCase("add_extension", "Transform")]
+        [TestCase("add_extension", "CinemachineCamera")]
+        [TestCase("add_extension", "CinemachineExtension")]
+        [TestCase("remove_extension", "Camera")]
+        [TestCase("remove_extension", "Transform")]
+        [TestCase("remove_extension", "CinemachineCamera")]
+        [TestCase("remove_extension", "CinemachineExtension")]
+        public void ExtensionOperationsRejectNonExtensionAndAbstractTypesWithoutMutation(string action, string typeName)
+        {
+            if (typeName == "Camera") target.AddComponent<Camera>().enabled = false;
+            if (action == "remove_extension" && typeName == "CinemachineExtension")
+            {
+                var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");
+                Assert.IsNotNull(extensionType);
+                target.AddComponent(extensionType);
+            }
+            var components = target.GetComponents<Component>();
+            int objectDirty = EditorUtility.GetDirtyCount(target);
+            int componentDirty = EditorUtility.GetDirtyCount(camera);
+
+            var response = Send(action, new JObject { ["extensionType"] = typeName });
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(typeName, response.ToString());
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
+            Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(camera));
+        }
+
+        [TestCase("set_body", "Body", "bodyType", "Camera")]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineCamera")]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineRecomposer")]
+        [TestCase("set_body", "Body", "bodyType", "CinemachineComponentBase")]
+        [TestCase("set_aim", "Aim", "aimType", "Camera")]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineCamera")]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineRecomposer")]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineComponentBase")]
+        public void PipelineReplacementRejectsNonPipelineAndAbstractTypesWithoutMutation(string action, string stage, string typeKey, string typeName)
+        {
+            var existingType = CameraHelpers.ResolveComponentType(stage == "Body" ? "CinemachineFollow" : "CinemachineRotationComposer");
+            Assert.IsNotNull(existingType);
+            var existing = target.AddComponent(existingType);
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            var components = target.GetComponents<Component>();
+            int objectDirty = EditorUtility.GetDirtyCount(target);
+            int componentDirty = EditorUtility.GetDirtyCount(existing);
+
+            var response = Send(action, new JObject { [typeKey] = typeName });
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(typeName, response.ToString());
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
+            Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
+        }
+
+        [Test]
+        public void ConcreteExtensionCanBeAdded()
+        {
+            var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");
+            Assert.IsNotNull(extensionType);
+
+            var response = Send("add_extension", new JObject { ["extensionType"] = extensionType.FullName });
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(target.GetComponent(extensionType));
+        }
+
+        [Test]
+        public void ConcreteExtensionCanBeRemoved()
+        {
+            var extensionType = CameraHelpers.ResolveComponentType("CinemachineRecomposer");
+            Assert.IsNotNull(extensionType);
+            target.AddComponent(extensionType);
+
+            var response = Send("remove_extension", new JObject { ["extensionType"] = extensionType.FullName });
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNull(target.GetComponent(extensionType));
+            Assert.IsNotNull(camera);
+        }
+
+        [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachineThirdPersonFollow")]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineRotationComposer", "CinemachineHardLookAt")]
+        public void ConcretePipelineComponentCanReplaceItsStage(string action, string stage, string typeKey, string oldTypeName, string newTypeName)
+        {
+            var oldType = CameraHelpers.ResolveComponentType(oldTypeName);
+            var newType = CameraHelpers.ResolveComponentType(newTypeName);
+            Assert.IsNotNull(oldType);
+            Assert.IsNotNull(newType);
+            target.AddComponent(oldType);
+
+            var response = Send(action, new JObject { [typeKey] = newType.FullName });
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNull(target.GetComponent(oldType));
+            Assert.AreEqual(newType, CameraHelpers.GetPipelineComponent(camera, stage)?.GetType());
+        }
+
         [Test]
         public void OverrideReleaseClearsTheRecordedOwnerAndId()
         {
