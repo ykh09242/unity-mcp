@@ -34,7 +34,7 @@ namespace MCPForUnity.Editor.Helpers
                     return i;
 
                 if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    return (int)d;
+                    return checked((int)d);
             }
             catch
             {
@@ -64,8 +64,9 @@ namespace MCPForUnity.Editor.Helpers
                 if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l))
                     return l;
 
-                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    return (long)d;
+                // A double can round an out-of-range integer back into the long range.
+                if (decimal.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                    return checked((long)d);
             }
             catch
             {
@@ -99,7 +100,7 @@ namespace MCPForUnity.Editor.Helpers
                     return i;
 
                 if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    return (int)d;
+                    return checked((int)d);
             }
             catch
             {

@@ -66,9 +66,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public float? GetFloat(string key, float? defaultValue = null)
         {
-            var str = GetString(key);
-            if (string.IsNullOrEmpty(str)) return defaultValue;
-            return float.TryParse(str, out var result) ? result : defaultValue;
+            return ParamCoercion.CoerceFloatNullable(GetToken(key)) ?? defaultValue;
         }
 
         /// <summary>
