@@ -1,4 +1,8 @@
+from unittest.mock import AsyncMock
+
 import pytest
+
+from models.models import MCPResponse
 
 from .test_helpers import DummyContext
 
@@ -198,3 +202,34 @@ async def test_get_test_job_forwards_job_id(monkeypatch):
     assert resp.success is True
     assert resp.data is not None
     assert resp.data.job_id == "job-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["start", "clear", "poll", "wait"])
+async def test_test_tools_preserve_structured_stdio_reload_errors(monkeypatch, operation):
+    import services.tools.run_tests as mod
+    from core.config import config
+
+    # Given: the real stdio transport forwards a structured reload failure.
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    failure = MCPResponse(
+        success=False,
+        error="Unity is reloading; please retry",
+        hint="retry",
+        data={"reason": "reloading", "retry_after_ms": 250},
+    )
+    sender = AsyncMock(return_value=failure)
+    monkeypatch.setattr(mod, "async_send_command_with_retry", sender)
+    monkeypatch.setattr(mod, "preflight", AsyncMock(return_value=None))
+
+    # When: a test tool receives the transport failure.
+    if operation in ("start", "clear"):
+        response = await mod.run_tests(DummyContext(), clear_stuck=operation == "clear")
+    else:
+        response = await mod.get_test_job(
+            DummyContext(), "job-1", wait_timeout=1 if operation == "wait" else None,
+        )
+
+    # Then: callers retain the actionable error, hint, and retry delay.
+    assert response.model_dump() == failure.model_dump()
+    sender.assert_awaited_once()

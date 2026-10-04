@@ -366,6 +366,8 @@ async def run_tests(
             "run_tests",
             {"clear_stuck": True},
         )
+        if isinstance(response, MCPResponse):
+            return response
         if isinstance(response, dict):
             return MCPResponse(**response)
         return MCPResponse(success=False, error=str(response))
@@ -410,6 +412,8 @@ async def run_tests(
         params,
     )
 
+    if isinstance(response, MCPResponse):
+        return response
     if isinstance(response, dict):
         if not response.get("success", True):
             return MCPResponse(**response)
@@ -478,6 +482,8 @@ async def get_test_job(
                     return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
                 return GetTestJobResponse(**response)
 
+            if isinstance(response, MCPResponse):
+                return response
             if not isinstance(response, dict):
                 return MCPResponse(success=False, error=str(response))
 
@@ -510,6 +516,8 @@ async def get_test_job(
     
     # No wait_timeout - return immediately (original behavior)
     response, observation_order = await _fetch_status()
+    if isinstance(response, MCPResponse):
+        return response
     if not isinstance(response, dict):
         return MCPResponse(success=False, error=str(response))
     if not response.get("success", True):
