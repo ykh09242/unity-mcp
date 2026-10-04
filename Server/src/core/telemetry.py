@@ -35,7 +35,7 @@ except ImportError:
     HAS_HTTPX = False
 
 logger = logging.getLogger("unity-mcp-telemetry")
-PACKAGE_NAME = "mcpforunityserver"
+PACKAGE_NAME = "ykh09242-unity-mcp-server"
 
 
 def _version_from_local_pyproject() -> str:
@@ -61,7 +61,7 @@ def _version_from_local_pyproject() -> str:
         version = project_table.get("version") or poetry_table.get("version")
         if version:
             return version
-    raise FileNotFoundError("pyproject.toml not found for mcpforunityserver")
+    raise FileNotFoundError(f"pyproject.toml not found for {PACKAGE_NAME}")
 
 
 def get_package_version() -> str:
@@ -220,20 +220,18 @@ class TelemetryConfig:
         # Determine enabled flag: config -> env DISABLE_* opt-out
         cfg_enabled = True if server_config is None else bool(
             getattr(server_config, "telemetry_enabled", True))
-        self.enabled = cfg_enabled and not self._is_disabled()
-
-        # Telemetry endpoint (Cloud Run default; override via env)
+        # No default destination: only explicit config or environment endpoints opt in.
         cfg_default = None if server_config is None else getattr(
             server_config, "telemetry_endpoint", None)
-        default_ep = cfg_default or "https://api-prod.coplay.dev/telemetry/events"
+        default_ep = self._validated_endpoint(cfg_default, "") if cfg_default else ""
         self.default_endpoint = default_ep
         # Prefer config default; allow explicit env override only when set
         env_ep = os.environ.get("UNITY_MCP_TELEMETRY_ENDPOINT")
         if env_ep is not None and env_ep != "":
             self.endpoint = self._validated_endpoint(env_ep, default_ep)
         else:
-            # Validate config-provided default as well to enforce scheme/host rules
-            self.endpoint = self._validated_endpoint(default_ep, default_ep)
+            self.endpoint = default_ep
+        self.enabled = cfg_enabled and bool(self.endpoint) and not self._is_disabled()
         try:
             logger.info(
                 f"Telemetry configured: endpoint={self.endpoint} (default={default_ep}), timeout_env={os.environ.get('UNITY_MCP_TELEMETRY_TIMEOUT') or '<unset>'}")

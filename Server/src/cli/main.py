@@ -103,7 +103,7 @@ click.Group.resolve_command = _resolve_command_with_suggestions  # type: ignore[
 )
 @pass_context
 def cli(ctx: Context, host: str, port: int, timeout: int, format: str, instance: Optional[str], verbose: bool):
-    """Unity MCP Command Line Interface.
+    """Unity MCP (ykh09242) Command Line Interface.
 
     Control Unity Editor directly from the command line using the Model Context Protocol.
 

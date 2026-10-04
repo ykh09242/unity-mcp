@@ -1,14 +1,16 @@
 [project]
-name = "mcpforunityserver"
+name = "ykh09242-unity-mcp-server"
 version = "10.3.0"
-description = "MCP for Unity Server: A Unity package for Unity Editor integration via the Model Context Protocol (MCP)."
+description = "Unity MCP (ykh09242): Unity Editor integration via the Model Context Protocol (MCP)."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Marcus Sanatan", email = "msanatan@gmail.com"},
     {name = "David Sarno", email = "david.sarno@gmail.com"},
     {name = "Wu Shutong", email = "martinwfire@gmail.com"}
 ]
+maintainers = [{name = "ykh09242"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -48,11 +50,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://coplaydev.github.io/unity-mcp/"
-Documentation = "https://coplaydev.github.io/unity-mcp/"
-Repository = "https://github.com/CoplayDev/unity-mcp.git"
-Issues = "https://github.com/CoplayDev/unity-mcp/issues"
-Changelog = "https://github.com/CoplayDev/unity-mcp/releases"
+Homepage = "https://github.com/ykh09242/unity-mcp"
+Documentation = "https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md"
+Repository = "https://github.com/ykh09242/unity-mcp.git"
+Issues = "https://github.com/ykh09242/unity-mcp/issues"
+Changelog = "https://github.com/ykh09242/unity-mcp/releases"
 
 [project.scripts]
 mcp-for-unity = "main:main"

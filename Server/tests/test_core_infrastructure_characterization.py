@@ -746,7 +746,7 @@ class TestServerConfigDefaults:
         config = ServerConfig()
 
         assert config.telemetry_enabled is True
-        assert config.telemetry_endpoint == "https://api-prod.coplay.dev/telemetry/events"
+        assert config.telemetry_endpoint == ""
 
     def test_config_is_dataclass(self):
         """Verify ServerConfig is a dataclass."""
@@ -839,12 +839,13 @@ class TestServerConfigLogging:
         assert config.log_level == "DEBUG"
 
 
+@pytest.mark.usefixtures("fresh_telemetry")
 class TestTelemetryConfigPrecedence:
 
     @pytest.fixture(autouse=True)
-    def setup(self, fresh_telemetry):
-        """Reset telemetry before each test in this class."""
-        pass
+    def setup(self, tmp_path, monkeypatch):
+        """Keep telemetry configuration tests inside their temporary storage."""
+        monkeypatch.setattr(TelemetryConfig, "_get_data_directory", lambda self: tmp_path)
 
     """Tests for TelemetryConfig configuration precedence.
 
@@ -923,8 +924,9 @@ class TestTelemetryConfigPrecedence:
                 with patch.dict(os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "invalid://localhost/path"}):
                     config = TelemetryConfig()
 
-                    # Should use default since localhost is rejected
-                    assert "api-prod.coplay.dev" in config.endpoint
+                    # No configured destination means the invalid override stays inert.
+                    assert config.endpoint == ""
+                    assert config.enabled is False
 
     def test_telemetry_config_rejects_localhost(self):
         """Verify telemetry rejects localhost endpoints for security."""
@@ -933,9 +935,8 @@ class TestTelemetryConfigPrecedence:
                 with patch.dict(os.environ, {"UNITY_MCP_TELEMETRY_ENDPOINT": "http://localhost:8000/telemetry"}):
                     config = TelemetryConfig()
 
-                    # Should reject localhost and use default
-                    assert "localhost" not in config.endpoint
-                    assert "api-prod.coplay.dev" in config.endpoint
+                    assert config.endpoint == ""
+                    assert config.enabled is False
 
 
 # =============================================================================

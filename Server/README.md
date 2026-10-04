@@ -1,11 +1,8 @@
-# MCP for Unity Server
+# Unity MCP (ykh09242) Server
 
 [![MCP](https://badge.mcpx.dev?status=on 'MCP Enabled')](https://modelcontextprotocol.io/introduction)
 [![python](https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
 [![License](https://img.shields.io/badge/License-MIT-red.svg 'MIT License')](https://opensource.org/licenses/MIT)
-[![Discord](https://img.shields.io/badge/discord-join-red.svg?logo=discord&logoColor=white)](https://discord.gg/y4p8KfzrN4)
-[![PyPI version](https://img.shields.io/pypi/v/mcpforunityserver?label=PyPI)](https://pypi.org/project/mcpforunityserver/)
-[![Downloads](https://static.pepy.tech/badge/mcpforunityserver)](https://pepy.tech/project/mcpforunityserver)
 
 Model Context Protocol server for Unity Editor integration. Control Unity through natural language using AI assistants like Claude, Cursor, and more.
 
@@ -43,24 +40,22 @@ The equivalent MCP `resources/read` request parameters are:
 These selectors apply only to the current request. Clients that cannot attach resource
 metadata can use a stateful protocol and `set_active_instance` for a persistent default.
 
-**Maintained by [Coplay](https://www.coplay.dev/?ref=unity-mcp)** - This project is not affiliated with Unity Technologies.
+**Fork maintained by [ykh09242](https://github.com/ykh09242)**, based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original MIT copyright and authorship are retained. This project is not affiliated with Unity Technologies.
 
-💬 **Join our community:** [Discord Server](https://discord.gg/y4p8KfzrN4)
-
-**Required:** Install the [Unity MCP Plugin](https://github.com/CoplayDev/unity-mcp?tab=readme-ov-file#-step-1-install-the-unity-package) to connect Unity Editor with this MCP server. You also need `uvx` (requires [uv](https://docs.astral.sh/uv/)) to run the server.
+**Required:** Install the [Unity MCP Plugin](../README.md#quickstart) to connect Unity Editor with this MCP server. You also need `uvx` (requires [uv](https://docs.astral.sh/uv/)) to run the server.
 
 ---
 
 ## Installation
 
-### Option 1: PyPI
+### Option 1: Immutable Git source
 
-Install and run directly from PyPI using `uvx`.
+This Git-only fork uses the distribution name `ykh09242-unity-mcp-server`. It is not advertised on PyPI. Use the immutable Git URL in `mcpServerSource` from [`MCPForUnity/package.json`](../MCPForUnity/package.json), so the server matches the Unity package. The commands and JSON below use `<mcpServerSource>` as a value to replace with that exact URL; do not pass the placeholder literally. Executables and MCP protocol identifiers retain their original names.
 
 **Run Server (HTTP):**
 
 ```bash
-uvx --from mcpforunityserver mcp-for-unity --transport http --http-url http://localhost:8080
+uvx --from "<mcpServerSource>" mcp-for-unity --transport http --http-url http://localhost:8080
 ```
 
 **MCP Client Configuration (HTTP):**
@@ -85,7 +80,7 @@ uvx --from mcpforunityserver mcp-for-unity --transport http --http-url http://lo
       "command": "uvx",
       "args": [
         "--from",
-        "mcpforunityserver",
+        "<mcpServerSource>",
         "mcp-for-unity",
         "--transport",
         "stdio"
@@ -95,36 +90,9 @@ uvx --from mcpforunityserver mcp-for-unity --transport http --http-url http://lo
 }
 ```
 
-### Option 2: From GitHub Source
+### Option 2: Local Docker build
 
-Use this to run the latest released version from the repository. Change the version to `main` to run the latest unreleased changes from the repository.
-
-```json
-{
-  "mcpServers": {
-    "UnityMCP": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/CoplayDev/unity-mcp@v10.3.0#subdirectory=Server",
-        "mcp-for-unity",
-        "--transport",
-        "stdio"
-      ]
-    }
-  }
-}
-```
-
-### Option 3: Docker
-
-**Use Pre-built Image:**
-
-```bash
-docker run -p 8080:8080 msanatan/mcp-for-unity-server:latest --transport http --http-url http://0.0.0.0:8080
-```
-
-**Build Locally:**
+Build from this checkout's `Server/` directory. No pre-built fork image is advertised.
 
 ```bash
 docker build -t unity-mcp-server .
@@ -133,13 +101,13 @@ docker run -p 8080:8080 unity-mcp-server --transport http --http-url http://0.0.
 
 Configure your MCP client with `"url": "http://localhost:8080/mcp"`.
 
-### Option 4: Local Development
+### Option 3: Local Development
 
 For contributing or modifying the server code:
 
 ```bash
 # Clone the repository
-git clone https://github.com/CoplayDev/unity-mcp.git
+git clone --branch beta https://github.com/ykh09242/unity-mcp.git
 cd unity-mcp/Server
 
 # Run with uv
@@ -231,6 +199,8 @@ API key authentication (remote-hosted mode):
 
 Telemetry:
 
+The fork has no destination by default. Telemetry requires a validated explicit `UNITY_MCP_TELEMETRY_ENDPOINT` and the existing enabled gate; without a configured endpoint it starts no worker or persistence. See [telemetry](../website/docs/architecture/telemetry.md).
+
 - `DISABLE_TELEMETRY=1` - Disable anonymous telemetry (opt-out)
 - `UNITY_MCP_DISABLE_TELEMETRY=1` - Same as `DISABLE_TELEMETRY`
 - `MCP_DISABLE_TELEMETRY=1` - Same as `DISABLE_TELEMETRY`
@@ -242,13 +212,13 @@ Telemetry:
 **Stdio (default):**
 
 ```bash
-uvx --from mcpforunityserver mcp-for-unity --transport stdio
+uvx --from "<mcpServerSource>" mcp-for-unity --transport stdio
 ```
 
 **HTTP (local):**
 
 ```bash
-uvx --from mcpforunityserver mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --from "<mcpServerSource>" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 **Remote HTTPS (private backend behind a TLS proxy, with API key auth):**
@@ -256,7 +226,7 @@ uvx --from mcpforunityserver mcp-for-unity --transport http --http-host 127.0.0.
 Configure the proxy first using the [HTTPS deployment guide](../website/docs/guides/remote-server-auth.md#https-deployment). Bind the Python backend to loopback when the proxy is on the same host:
 
 ```bash
-uvx --from mcpforunityserver mcp-for-unity \
+uvx --from "<mcpServerSource>" mcp-for-unity \
   --transport http \
   --http-host 127.0.0.1 \
   --http-port 8080 \
@@ -269,14 +239,14 @@ uvx --from mcpforunityserver mcp-for-unity \
 **Disable telemetry:**
 
 ```bash
-DISABLE_TELEMETRY=1 uvx --from mcpforunityserver mcp-for-unity --transport stdio
+DISABLE_TELEMETRY=1 uvx --from "<mcpServerSource>" mcp-for-unity --transport stdio
 ```
 
 ---
 
 ## Remote-Hosted Mode
 
-When deploying the server as a shared remote service (e.g. for a team or Asset Store users), enable `--http-remote-hosted` to activate API key authentication and per-user session isolation.
+When deploying the server as a shared remote service for a team, enable `--http-remote-hosted` to activate API key authentication and per-user session isolation.
 
 **Requirements:**
 
@@ -348,7 +318,7 @@ Once connected, try these commands in your AI assistant:
 
 For complete documentation, troubleshooting, and advanced usage:
 
-📖 **[Full Documentation](https://coplaydev.github.io/unity-mcp/)**
+📖 **[Full Documentation](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/getting-started/index.md)**
 
 ---
 
@@ -362,4 +332,4 @@ For complete documentation, troubleshooting, and advanced usage:
 
 ## License
 
-MIT License - See [LICENSE](https://github.com/CoplayDev/unity-mcp/blob/main/LICENSE)
+MIT License - See [LICENSE](https://github.com/ykh09242/unity-mcp/blob/beta/LICENSE)

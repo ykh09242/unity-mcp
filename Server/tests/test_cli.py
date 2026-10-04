@@ -247,7 +247,8 @@ class TestCLICommands:
         """Test CLI help command."""
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        assert "Unity MCP Command Line Interface" in result.output
+        assert all(option in result.output for option in ("--host", "--port", "--format", "--instance"))
+        assert all(command in result.output.split() for command in ("status", "instances", "raw"))
 
     def test_cli_version(self, runner):
         """Test CLI version command."""

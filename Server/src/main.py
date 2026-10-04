@@ -161,7 +161,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     global _unity_connection_pool, _server_version
     _server_version = get_package_version()
     api_key_service = ApiKeyService.get_instance() if ApiKeyService.is_initialized() else None
-    logger.info(f"MCP for Unity Server v{_server_version} starting up")
+    logger.info("Unity MCP (ykh09242) v%s starting up", _server_version)
 
     # Register custom tool management endpoints with FastMCP
     # Routes are declared globally below after FastMCP initialization
@@ -313,7 +313,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 finally:
                     _plugin_registry = None
                     _unity_connection_pool = None
-        logger.info("MCP for Unity Server shut down")
+        logger.info("Unity MCP (ykh09242) shut down")
 
 
 def _build_instructions(project_scoped_tools: bool) -> str:
@@ -497,7 +497,7 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
             "status": "healthy",
             "timestamp": time.time(),
             "version": _server_version or "unknown",
-            "message": "MCP for Unity server is running"
+            "message": "Unity MCP (ykh09242) server is running"
         })
 
     @mcp.custom_route("/api/auth/login-url", methods=["GET"])
@@ -749,7 +749,7 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
 def main():
     """Entry point for uvx and console scripts."""
     parser = argparse.ArgumentParser(
-        description="MCP for Unity Server",
+        description="Unity MCP (ykh09242)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Environment Variables:

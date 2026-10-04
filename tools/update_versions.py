@@ -149,7 +149,7 @@ def update_pyproject_toml(new_version: str, dry_run: bool = False) -> bool:
 # the only place the project's version appears, so a targeted rewrite is equivalent to
 # `uv lock` here without requiring uv on the release runner.
 _UV_LOCK_SELF_VERSION = re.compile(
-    r'(^\[\[package\]\]\s*\nname = "mcpforunityserver"\s*\nversion = ")([^"]+)(")',
+    r'(^\[\[package\]\]\s*\nname = "ykh09242-unity-mcp-server"\s*\nversion = ")([^"]+)(")',
     re.MULTILINE,
 )
 
@@ -163,7 +163,7 @@ def _display(path: Path) -> str:
 
 
 def update_uv_lock(new_version: str, dry_run: bool = False) -> bool:
-    """Update the mcpforunityserver entry in Server/uv.lock."""
+    """Update the fork distribution entry in Server/uv.lock."""
     if not UV_LOCK.exists():
         print(f"Warning: {_display(UV_LOCK)} not found")
         return False
@@ -172,7 +172,7 @@ def update_uv_lock(new_version: str, dry_run: bool = False) -> bool:
     content = UV_LOCK.read_bytes().decode("utf-8")
     match = _UV_LOCK_SELF_VERSION.search(content)
     if not match:
-        print(f"Warning: Could not find the mcpforunityserver entry in {_display(UV_LOCK)}")
+        print(f"Warning: Could not find the fork distribution entry in {_display(UV_LOCK)}")
         return False
 
     current_version = match.group(2)

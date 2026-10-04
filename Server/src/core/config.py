@@ -95,8 +95,8 @@ class ServerConfig:
 
     # Telemetry settings
     telemetry_enabled: bool = True
-    # Align with telemetry.py default Cloud Run endpoint
-    telemetry_endpoint: str = "https://api-prod.coplay.dev/telemetry/events"
+    # Collection requires an explicit endpoint; this fork has no telemetry service.
+    telemetry_endpoint: str = ""
 
 
 # Create a global config instance

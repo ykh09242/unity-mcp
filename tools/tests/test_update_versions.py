@@ -32,7 +32,7 @@ SAMPLE_LOCK = (
     'source = { registry = "https://pypi.org/simple" }\n'
     '\n'
     '[[package]]\n'
-    'name = "mcpforunityserver"\n'
+    'name = "ykh09242-unity-mcp-server"\n'
     'version = "10.1.0"\n'
     'source = { editable = "." }\n'
     'dependencies = [\n'
@@ -57,7 +57,7 @@ def lock_file(tmp_path, monkeypatch):
 def test_update_uv_lock_rewrites_only_the_project_entry(lock_file):
     assert update_versions.update_uv_lock("10.2.0") is True
     updated = lock_file.read_bytes().decode("utf-8")
-    assert 'name = "mcpforunityserver"\nversion = "10.2.0"' in updated
+    assert 'name = "ykh09242-unity-mcp-server"\nversion = "10.2.0"' in updated
     assert 'name = "click"\nversion = "8.3.1"' in updated
     assert 'name = "mcp"\nversion = "1.26.0"' in updated
     assert updated.count('version = "10.2.0"') == 1
@@ -84,7 +84,7 @@ def test_update_uv_lock_preserves_crlf_line_endings(tmp_path, monkeypatch):
     raw = path.read_bytes()
     assert b"\r\n" in raw
     assert b"\n" not in raw.replace(b"\r\n", b"")
-    assert b'name = "mcpforunityserver"\r\nversion = "10.2.0"' in raw
+    assert b'name = "ykh09242-unity-mcp-server"\r\nversion = "10.2.0"' in raw
 
 
 def test_update_uv_lock_missing_entry_is_reported_not_raised(tmp_path, monkeypatch):
@@ -107,7 +107,7 @@ def test_update_uv_lock_matches_the_checked_in_lock_format(tmp_path, monkeypatch
     monkeypatch.setattr(update_versions, "UV_LOCK", path)
     assert update_versions.update_uv_lock("0.0.0.dev0") is True
     assert re.search(
-        r'^\[\[package\]\]\s*\nname = "mcpforunityserver"\s*\nversion = "0\.0\.0\.dev0"',
+        r'^\[\[package\]\]\s*\nname = "ykh09242-unity-mcp-server"\s*\nversion = "0\.0\.0\.dev0"',
         path.read_bytes().decode("utf-8"),
         re.MULTILINE,
     )
@@ -122,3 +122,24 @@ def test_checked_in_lock_agrees_with_pyproject_version():
         REAL_LOCK.read_bytes().decode("utf-8")
     ).group(2)
     assert lock_version == pyproject_version
+
+
+def test_readme_version_update_preserves_immutable_server_references(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given fork and upstream server references pinned to an immutable commit.
+    commit = "910fce0e" + "a" * 32
+    references = [
+        f"git+https://github.com/{owner}/unity-mcp@{commit}#subdirectory=Server"
+        for owner in ("ykh09242", "CoplayDev")
+    ]
+    path = tmp_path / "README.md"
+    path.write_text("\n".join(references) + "\ngit+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n", encoding="utf-8")
+    monkeypatch.setattr(update_versions, "SERVER_README", path)
+
+    # When existing tag examples receive a version bump.
+    changed = update_versions.update_server_readme("10.4.0")
+
+    # Then commit references keep the immutable source selected by the maintainer.
+    assert changed
+    updated = path.read_text(encoding="utf-8")
+    assert all(reference in updated for reference in references)
+    assert "@v10.4.0#subdirectory=Server" in updated

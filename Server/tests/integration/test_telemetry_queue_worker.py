@@ -14,6 +14,7 @@ def test_telemetry_queue_backpressure_and_single_worker(tmp_path, monkeypatch, c
     for key in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(core.config.config, "telemetry_enabled", True)
+    monkeypatch.setattr(core.config.config, "telemetry_endpoint", "https://owned.example/events")
     entered = threading.Event()
     release = threading.Event()
 

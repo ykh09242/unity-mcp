@@ -5,7 +5,7 @@ Unity Editor so a Blender → Unity handoff is a single call.
 Thin pass-through: the C# side (Editor/Tools/Blender/BlenderBridgeTool.cs) opens the addon
 socket itself, exports/imports through the shared model pipeline, and places the result in the
 open scene. No API keys and no file bytes cross the MCP bridge. Socket host/port and the
-blender-mcp checkout path are configured in Window > MCP for Unity > Generative > Blender Bridge.
+blender-mcp checkout path are configured in Window > Unity MCP (ykh09242) > Generative > Blender Bridge.
 """
 from typing import Annotated, Any, Literal
 
@@ -22,7 +22,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
     group="asset_gen",
     description=(
         "Bridge to a running Blender that has the BlenderMCP addon connected (socket, default "
-        "127.0.0.1:9876; configured in Window > MCP for Unity > Generative > Blender Bridge). "
+        "127.0.0.1:9876; configured in Window > Unity MCP (ykh09242) > Generative > Blender Bridge). "
         "Unity talks to the addon directly, so no BlenderMCP client is needed.\n\n"
         "Actions:\n"
         "- status: is Blender reachable, is the checkout configured, does the installed addon match it.\n"
