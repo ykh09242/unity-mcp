@@ -14,6 +14,30 @@ internal static class LifecycleRegressionHarness
     {
         Application.temporaryCachePath = args[0];
         Application.dataPath = args[0];
+        foreach (var method in new[] { "OnEnable", "OnGUI" })
+            Check(method + " adopts exact ordered inactive helper among multiple objects", () =>
+            {
+                var later = UserHelper(); later.LookupOrder = 30;
+                var inactive = UserHelper(false); inactive.LookupOrder = 10;
+                var active = UserHelper(); active.LookupOrder = 20;
+                var window = new RoslynRuntimeCompilerWindow(); Call(window, method);
+                Require(Helper(window) == inactive, "Window did not preserve ordered inactive selection");
+                Require(Object.LastFindType == typeof(RoslynRuntimeCompiler) && Object.LastFindInactive,
+                    "Window lookup did not forward exact Type and Include flag");
+                Call(window, "OnDestroy");
+                Require(Object.DestroyedObjects.Count == 0, "Adopted helper was treated as owned");
+            });
+        Check("static helper preserves ordered active-only compiler selection", () =>
+        {
+            var later = UserHelper(); later.LookupOrder = 30;
+            var inactive = UserHelper(false); inactive.LookupOrder = 10;
+            var active = UserHelper(); active.LookupOrder = 20;
+            typeof(RoslynMCPHelper).GetField("_compiler", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+            var selected = typeof(RoslynMCPHelper).GetMethod("GetOrCreateCompiler", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            Require(ReferenceEquals(selected, active), "Static helper changed active-only ordered selection");
+            Require(Object.LastFindType == typeof(RoslynRuntimeCompiler) && !Object.LastFindInactive,
+                "Static helper did not forward exact Type and Exclude flag");
+        });
         foreach (bool active in new[] { true, false })
             Check("adopted " + (active ? "active" : "inactive") + " helper preserves user object and children", () =>
             {
@@ -301,6 +325,9 @@ namespace UnityEngine
     public class Object
     {
         public bool Destroyed;
+        public long LookupOrder;
+        public static Type LastFindType;
+        public static bool LastFindInactive;
         public static readonly List<Object> DestroyedObjects = new List<Object>();
         public static bool operator ==(Object left, Object right)
         {
@@ -311,9 +338,37 @@ namespace UnityEngine
         public static bool operator !=(Object left, Object right) => !(left == right);
         public override bool Equals(object value) => ReferenceEquals(this, value);
         public override int GetHashCode() => base.GetHashCode();
+#if UNITY_2022_3_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+        [Obsolete("Ordered first-object lookup is deprecated in Unity 6.5")]
+#endif
         public static T FindFirstObjectByType<T>(FindObjectsInactive inactive = FindObjectsInactive.Exclude) where T : Object =>
             GameObject.All.Where(go => !go.Destroyed && (go.Active || inactive == FindObjectsInactive.Include))
                 .SelectMany(go => go.Components).OfType<T>().FirstOrDefault(value => !value.Destroyed);
+#endif
+#if UNITY_2022_3_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+        [Obsolete("Ordered first-object lookup is deprecated in Unity 6.5", true)]
+#endif
+        public static Object FindFirstObjectByType(Type type, FindObjectsInactive inactive) => SelectFirst(type, inactive);
+#endif
+        private static Object SelectFirst(Type type, FindObjectsInactive inactive)
+        {
+            LastFindType = type; LastFindInactive = inactive == FindObjectsInactive.Include;
+            return FindObjectsByType(type, inactive).OrderBy(value => value.LookupOrder).FirstOrDefault();
+        }
+        public static Object FindObjectOfType(Type type) => SelectFirst(type, FindObjectsInactive.Exclude);
+        public static Object FindObjectOfType(Type type, bool inactive) => SelectFirst(type, inactive ? FindObjectsInactive.Include : FindObjectsInactive.Exclude);
+        public static Object FindAnyObjectByType(Type type) => SelectFirst(type, FindObjectsInactive.Exclude);
+        public static Object[] FindObjectsOfType(Type type) => FindObjectsByType(type, FindObjectsInactive.Exclude);
+        public static Object[] FindObjectsOfType(Type type, bool inactive) => FindObjectsByType(type, inactive ? FindObjectsInactive.Include : FindObjectsInactive.Exclude);
+        public static T[] FindObjectsByType<T>() where T : Object => FindObjectsByType(typeof(T), FindObjectsInactive.Exclude).Cast<T>().ToArray();
+        public static T[] FindObjectsByType<T>(FindObjectsSortMode mode) where T : Object => FindObjectsByType<T>();
+        public static Object[] FindObjectsByType(Type type, FindObjectsSortMode mode) => FindObjectsByType(type, FindObjectsInactive.Exclude);
+        public static Object[] FindObjectsByType(Type type, FindObjectsInactive inactive, FindObjectsSortMode mode) => FindObjectsByType(type, inactive);
+        public static Object[] FindObjectsByType(Type type, FindObjectsInactive inactive) => GameObject.All
+            .Where(go => !go.Destroyed && (go.Active || inactive == FindObjectsInactive.Include))
+            .SelectMany(go => go.Components).Where(value => !value.Destroyed && type.IsInstanceOfType(value)).ToArray();
         public static void Destroy(Object value) => DestroyImmediate(value);
         public static void DestroyImmediate(Object value)
         {
@@ -366,6 +421,7 @@ namespace UnityEngine
     }
     public sealed class Transform : Component { public readonly List<Transform> Children = new List<Transform>(); }
     public enum FindObjectsInactive { Exclude, Include }
+    public enum FindObjectsSortMode { None }
     public enum HideFlags { None, HideAndDontSave }
     public sealed class SerializeField : Attribute { }
     public sealed class TextAreaAttribute : Attribute { public TextAreaAttribute(int min, int max) { } }

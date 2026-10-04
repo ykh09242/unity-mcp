@@ -1,7 +1,8 @@
 # Custom Roslyn hierarchy regression
 
 This Windows managed harness compiles the actual `ManageRuntimeCompilation.cs`
-source with `USE_ROSLYN`; it does not extract or reproduce the lookup helper.
+source and shared `UnityFindObjectsCompat.cs` with `USE_ROSLYN`; it does not
+extract or reproduce the lookup helper.
 It uses installed Unity Mono .NET Framework references/Roslyn and the installed
 .NET SDK's Newtonsoft.Json and concrete System.Numerics.Vectors implementation,
 without downloading packages or launching Unity. Executable-local binding
@@ -15,6 +16,9 @@ pwsh -File tools/tests/fixtures/custom_roslyn/RunPathRegression.ps1 `
 
 Pass `-SourcePath <baseline-file>` to run the same tests against a saved baseline.
 The runner prints its source SHA-256 and removes its own temporary binaries.
+`-WorkPath <directory>` retains binaries in an explicit disposable output directory.
+`-UnityDefines <symbols>` selects the compatibility branch; it defaults to
+`UNITY_2022_3_OR_NEWER`. Add `-WarningsAsErrors` for strict diagnostics.
 Exit 0 means all assertions passed; exit 1 means a regression assertion failed.
 
 Add `-CompanionProbe` to compile the complete `RoslynRuntimeCompiler.cs` instead
@@ -40,6 +44,16 @@ selected `targetGameObject` and history entry at that boundary, not successful
 static method execution. Missing explicit targets must return before compilation
 or history changes. The Editor-only compiled assembly/type/method caches start
 at null explicitly, so this branch does not emit unassigned-field warnings.
+
+`RunFindFirstRegression.ps1` accepts `UnityData`, `SdkPath`, and `WorkPath` like
+the lifecycle runner. It compiles the complete production shim against narrow
+legacy, supported, deprecated, and two missing-ordered-API surfaces, then executes
+each result. Obsolete APIs are marked errors where reflection is required. Tests
+check exact ordered identity against deliberately different enumeration order,
+inactive flag roundtrips, runtime Type forwarding, no match, cached overload
+selection, observable engine failure, and independent FindAll/FindAny calls.
+Missing ordered APIs must throw rather than returning null or selecting any object.
+These managed seams do not establish native Unity ordering or runtime behavior.
 
 API references (Context7 manual lookup followed by exact official API fallback):
 [GameObject.Find](https://docs.unity3d.com/ScriptReference/GameObject.Find.html)

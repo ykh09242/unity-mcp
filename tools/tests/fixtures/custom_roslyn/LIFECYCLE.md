@@ -1,7 +1,7 @@
 # Custom Roslyn compiler lifecycle regression
 
 This Windows harness compiles the complete production `RoslynRuntimeCompiler.cs`
-with `UNITY_EDITOR`. It executes the actual compiler and window methods, including
+and shared `UnityFindObjectsCompat.cs` with `UNITY_EDITOR`. It executes the actual compiler and window methods, including
 real installed Roslyn parse/emit and `Assembly.Load`. There is no source extraction
 or rewritten implementation. Installed Unity Mono framework/Roslyn and .NET SDK
 assemblies are used without downloading dependencies or starting the Editor.
@@ -17,7 +17,11 @@ pwsh -File tools/tests/fixtures/custom_roslyn/RunLifecycleRegression.ps1 `
 source. The runner prints source and harness SHA-256 and returns 0 only when every
 assertion passes. `WorkPath` is an explicit disposable output directory: binaries,
 copied dependencies and executable-local binding redirects remain for inspection.
-The existing hierarchy and companion runner remains independent and unchanged.
+The hierarchy and companion runner also compiles the same production shim.
+Use `-UnityDefines UNITY_2021_3_OR_NEWER` for the legacy branch or
+`-UnityDefines 'UNITY_2022_3_OR_NEWER,UNITY_6000_5_OR_NEWER'` for the deprecated
+branch. The default is the supported 2022.3+ branch. `-WarningsAsErrors` rejects
+any diagnostic; the deprecated non-generic ordered seam is an obsolete error.
 
 The scene seam tracks exact component identities, inactive helper lookup, children,
 object destruction, injected AddComponent null/exception failures and coroutine
@@ -25,6 +29,8 @@ start calls. Inert IMGUI seams permit execution of actual `OnGUI`; a named butto
 can be selected once. No test writes a scene, asset or history export.
 
 Coverage includes adopted user helper preservation; owned hidden helper cleanup;
+exact ordered selection among multiple active/inactive helpers for both window
+lookup paths, and active-only ordered selection for the static helper;
 repeated enables and fallback adoption/creation; serialized-field restoration
 model; state synchronization; stale coroutine methods and failed entry resolution;
 fresh-Type replacement across target/class interleaving; failed-add preservation;

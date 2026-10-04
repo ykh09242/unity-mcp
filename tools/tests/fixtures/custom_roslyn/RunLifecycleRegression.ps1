@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$SdkPath,
     [Parameter(Mandatory = $true)][string]$WorkPath,
     [string]$SourcePath,
+    [string]$UnityDefines = 'UNITY_2022_3_OR_NEWER',
+    [switch]$WarningsAsErrors,
     [string]$DotnetPath = 'dotnet'
 )
 $ErrorActionPreference = 'Stop'
@@ -39,11 +41,15 @@ foreach ($name in $dependencies) {
 }
 $executable = Join-Path $WorkPath 'LifecycleRegression.exe'
 $configuration.Save($executable + '.config')
-$arguments = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:exe', '/define:UNITY_EDITOR', ('/out:' + $executable))
+$arguments = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:exe', ('/define:UNITY_EDITOR,' + $UnityDefines), ('/out:' + $executable))
+if ($WarningsAsErrors) { $arguments += '/warnaserror+' }
 $arguments += $references | ForEach-Object { '/reference:' + $_ }
-$arguments += @($source, (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs'))
+$shim = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/UnityFindObjectsCompat.cs')).Path
+$arguments += @($source, $shim, (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs'))
 Write-Output ('SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)
 Write-Output ('HARNESS_SHA256: ' + (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'LifecycleRegressionHarness.cs') -Algorithm SHA256).Hash)
+Write-Output ('SHIM_SHA256: ' + (Get-FileHash -LiteralPath $shim -Algorithm SHA256).Hash)
+Write-Output ('UNITY_DEFINES: ' + $UnityDefines)
 & $DotnetPath @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Harness compilation failed' }
 & $executable $WorkPath

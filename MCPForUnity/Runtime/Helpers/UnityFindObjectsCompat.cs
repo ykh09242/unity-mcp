@@ -21,9 +21,51 @@ namespace MCPForUnity.Runtime.Helpers
     ///     reflection rather than direct calls. This keeps the file CS0618-clean across all
     ///     SDKs we compile against and lets the package keep working if Unity ever fully
     ///     removes the legacy methods (CS0619).
+    ///   - Ordered first-object selection has no replacement in 6.5+. FindFirst retains
+    ///     the exact deprecated overload via cached reflection and fails if it disappears.
     /// </summary>
     public static class UnityFindObjectsCompat
     {
+        /// <summary>
+        /// Find the first object using Unity's ordered lookup, optionally including inactive objects.
+        /// Throws if the ordered API is unavailable; an unordered lookup cannot preserve selection.
+        /// </summary>
+        public static T FindFirst<T>(bool includeInactive = false) where T : UObject
+        {
+#if UNITY_2022_3_OR_NEWER && !UNITY_6000_5_OR_NEWER
+            return (T)UObject.FindFirstObjectByType(typeof(T),
+                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
+#else
+            if (!_findFirstProbed)
+            {
+#if UNITY_6000_5_OR_NEWER
+                _findFirst = typeof(UObject).GetMethod("FindFirstObjectByType",
+                    BindingFlags.Public | BindingFlags.Static, null,
+                    new[] { typeof(Type), typeof(UnityEngine.FindObjectsInactive) }, null);
+#else
+                _findFirst = typeof(UObject).GetMethod("FindObjectOfType",
+                    BindingFlags.Public | BindingFlags.Static, null,
+                    new[] { typeof(Type), typeof(bool) }, null);
+#endif
+                _findFirstProbed = true;
+            }
+            if (_findFirst == null)
+                throw new MissingMethodException("Unity's ordered object lookup API is unavailable.");
+#if UNITY_6000_5_OR_NEWER
+            return (T)_findFirst.Invoke(null, new object[] { typeof(T),
+                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude });
+#else
+            return (T)_findFirst.Invoke(null, new object[] { typeof(T), includeInactive });
+#endif
+#endif
+        }
+
+#if UNITY_6000_5_OR_NEWER || !UNITY_2022_3_OR_NEWER
+        // Probe only when ordered lookup is requested so other lookup methods remain independent.
+        private static MethodInfo _findFirst;
+        private static bool _findFirstProbed;
+#endif
+
         /// <summary>Find all active objects of type T.</summary>
         public static T[] FindAll<T>() where T : UObject
         {

@@ -8,6 +8,7 @@ using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEditor;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 
 #if USE_ROSLYN
 using Microsoft.CodeAnalysis;
@@ -511,7 +512,7 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static RoslynRuntimeCompiler GetOrCreateRoslynCompiler()
         {
-            var existing = UnityEngine.Object.FindFirstObjectByType<RoslynRuntimeCompiler>();
+            var existing = UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>();
             if (existing != null)
             {
                 return existing;

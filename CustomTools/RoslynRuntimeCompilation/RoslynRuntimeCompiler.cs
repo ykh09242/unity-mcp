@@ -11,6 +11,7 @@
 // 1) Add Microsoft.CodeAnalysis.CSharp.dll and Microsoft.CodeAnalysis.dll to your Unity project
 //    (place under Assets/Plugins or Packages and target the Editor). These come from the Roslyn nuget package.
 // 2) This tool is designed to run in the Unity Editor (Play Mode or Edit Mode). It uses Assembly.Load(byte[]).
+//    MCP for Unity must be installed for the shared object-lookup compatibility helper.
 // 3) Generated code should expose a public type and a public static entry method matching one of the supported signatures:
 //    - public static void Run(UnityEngine.GameObject host)
 //    - public static void Run(UnityEngine.MonoBehaviour host)
@@ -35,6 +36,7 @@ using System.Linq;
 using System.Reflection;
 using System.Collections.Generic;
 using UnityEngine;
+using MCPForUnity.Runtime.Helpers;
 
 #if UNITY_EDITOR
 using Microsoft.CodeAnalysis;
@@ -691,7 +693,7 @@ public static class RoslynMCPHelper
     {
         if (_compiler == null || _compiler.gameObject == null)
         {
-            var existing = UnityEngine.Object.FindFirstObjectByType<RoslynRuntimeCompiler>();
+            var existing = UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>();
             if (existing != null)
             {
                 _compiler = existing;
@@ -872,7 +874,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         if (helperInScene == null || helperInScene.gameObject == null)
             helperInScene = ownedHelper != null && ownedHelper.gameObject != null
                 ? ownedHelper
-                : FindFirstObjectByType<RoslynRuntimeCompiler>(FindObjectsInactive.Include);
+                : UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>(includeInactive: true);
         if (helperInScene == null)
         {
             var go = new GameObject("RoslynRuntimeHelper");
@@ -922,7 +924,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
         if (helperInScene == null || helperInScene.gameObject == null)
         {
             // Try to find existing helper first
-            helperInScene = FindFirstObjectByType<RoslynRuntimeCompiler>(FindObjectsInactive.Include);
+            helperInScene = UnityFindObjectsCompat.FindFirst<RoslynRuntimeCompiler>(includeInactive: true);
             
             // If still not found, create a new one
             if (helperInScene == null)

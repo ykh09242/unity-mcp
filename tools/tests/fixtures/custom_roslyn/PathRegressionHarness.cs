@@ -151,15 +151,44 @@ namespace UnityEngine
 {
     public class Object
     {
+#if UNITY_2022_3_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+        [Obsolete("Ordered first-object lookup is deprecated in Unity 6.5")]
+#endif
         public static T FindFirstObjectByType<T>() where T : class =>
 #if COMPANION_PROBE
             CompanionRegressionHarness.Compiler as T;
 #else
             MCPForUnity.Editor.Tools.RoslynRuntimeCompiler.Instance as T;
 #endif
+#endif
+#if UNITY_2022_3_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+        [Obsolete("Ordered first-object lookup is deprecated in Unity 6.5", true)]
+#endif
+        public static Object FindFirstObjectByType(Type type, FindObjectsInactive inactive) => SelectFirst(type, inactive);
+#endif
+        private static Object SelectFirst(Type type, FindObjectsInactive inactive) =>
+#if COMPANION_PROBE
+            type.IsInstanceOfType(CompanionRegressionHarness.Compiler) ? CompanionRegressionHarness.Compiler : null;
+#else
+            type.IsInstanceOfType(MCPForUnity.Editor.Tools.RoslynRuntimeCompiler.Instance) ? MCPForUnity.Editor.Tools.RoslynRuntimeCompiler.Instance : null;
+#endif
+        public static Object FindObjectOfType(Type type) => SelectFirst(type, FindObjectsInactive.Exclude);
+        public static Object FindObjectOfType(Type type, bool inactive) => SelectFirst(type, inactive ? FindObjectsInactive.Include : FindObjectsInactive.Exclude);
+        public static Object FindAnyObjectByType(Type type) => SelectFirst(type, FindObjectsInactive.Exclude);
+        public static Object[] FindObjectsOfType(Type type) => new Object[0];
+        public static Object[] FindObjectsOfType(Type type, bool inactive) => new Object[0];
+        public static T[] FindObjectsByType<T>() where T : Object => new T[0];
+        public static T[] FindObjectsByType<T>(FindObjectsSortMode mode) where T : Object => new T[0];
+        public static Object[] FindObjectsByType(Type type, FindObjectsSortMode mode) => new Object[0];
+        public static Object[] FindObjectsByType(Type type, FindObjectsInactive inactive) => new Object[0];
+        public static Object[] FindObjectsByType(Type type, FindObjectsInactive inactive, FindObjectsSortMode mode) => new Object[0];
         public static void Destroy(Object value) { }
         public static void DestroyImmediate(Object value) { }
     }
+    public enum FindObjectsInactive { Exclude, Include }
+    public enum FindObjectsSortMode { None }
     public class Component : Object { public GameObject gameObject; public string name => gameObject.name; }
     public class MonoBehaviour : Component { public void StartCoroutine(System.Collections.IEnumerator value) { } }
     public sealed class TextAreaAttribute : Attribute { public TextAreaAttribute(int min, int max) { } }

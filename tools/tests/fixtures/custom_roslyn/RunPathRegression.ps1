@@ -4,6 +4,9 @@ param(
     [Parameter(Mandatory = $true)][string]$SdkPath,
     [string]$SourcePath,
     [switch]$CompanionProbe,
+    [string]$UnityDefines = 'UNITY_2022_3_OR_NEWER',
+    [string]$WorkPath,
+    [switch]$WarningsAsErrors,
     [string]$DotnetPath = 'dotnet'
 )
 $ErrorActionPreference = 'Stop'
@@ -17,8 +20,8 @@ $roslyn = Join-Path $mono '4.5'
 $framework = Join-Path $mono '4.8-api'
 $json = Join-Path $SdkPath 'Sdks/Microsoft.NET.Sdk/tools/net472/Newtonsoft.Json.dll'
 $compiler = Join-Path $SdkPath 'Roslyn/bincore/csc.dll'
-$work = Join-Path ([IO.Path]::GetTempPath()) ('custom-roslyn-path-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $work | Out-Null
+$work = if ($WorkPath) { [IO.Path]::GetFullPath($WorkPath) } else { Join-Path ([IO.Path]::GetTempPath()) ('custom-roslyn-path-' + [Guid]::NewGuid().ToString('N')) }
+New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $references = @('mscorlib.dll', 'System.dll', 'System.Core.dll') | ForEach-Object { Join-Path $framework $_ }
     $references += Join-Path $framework 'Facades/netstandard.dll'
@@ -51,22 +54,28 @@ try {
         $binding.AppendChild($dependent) | Out-Null
     }
     $configuration.Save((Join-Path $work 'PathRegression.exe.config'))
-    $arguments = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:exe', '/define:USE_ROSLYN',
+    $arguments = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:exe', ('/define:USE_ROSLYN,' + $UnityDefines),
         ('/out:' + (Join-Path $work 'PathRegression.exe')))
     if ($CompanionProbe) { $arguments += '/define:COMPANION_PROBE' }
+    if ($WarningsAsErrors) { $arguments += '/warnaserror+' }
     $arguments += $references | ForEach-Object { '/reference:' + $_ }
-    $arguments += @($source, (Join-Path $PSScriptRoot 'PathRegressionHarness.cs'))
+    $shim = (Resolve-Path (Join-Path $PSScriptRoot '../../../../MCPForUnity/Runtime/Helpers/UnityFindObjectsCompat.cs')).Path
+    $arguments += @($source, $shim, (Join-Path $PSScriptRoot 'PathRegressionHarness.cs'))
     Write-Output ('SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)
+    Write-Output ('SHIM_SHA256: ' + (Get-FileHash -LiteralPath $shim -Algorithm SHA256).Hash)
+    Write-Output ('UNITY_DEFINES: ' + $UnityDefines)
     & $DotnetPath @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Harness compilation failed' }
     & (Join-Path $work 'PathRegression.exe') $work
     $result = $LASTEXITCODE
 } finally {
-    $resolved = [IO.Path]::GetFullPath($work)
-    $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
-    if (!$resolved.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase) -or !(Split-Path -Leaf $resolved).StartsWith('custom-roslyn-path-')) {
-        throw 'Refusing cleanup outside the owned temporary test directory'
+    if (!$WorkPath) {
+        $resolved = [IO.Path]::GetFullPath($work)
+        $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (!$resolved.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase) -or !(Split-Path -Leaf $resolved).StartsWith('custom-roslyn-path-')) {
+            throw 'Refusing cleanup outside the owned temporary test directory'
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
     }
-    Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 exit $result
