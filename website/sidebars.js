@@ -29,6 +29,7 @@ const sidebars = {
         'guides/client-configurators',
         'guides/multi-instance',
         'guides/tool-groups',
+        'guides/ugui',
         'guides/cli',
         'guides/cli-examples',
         'guides/custom-tools',

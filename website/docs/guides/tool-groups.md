@@ -16,6 +16,8 @@ Ask for `manage_tools(action="list_groups")`. It reports actual visible inventor
 
 Groups include `core`, `animation`, `ui`, `vfx`, `scripting_ext`, `testing`, `probuilder`, `profiling`, `docs`, and `asset_gen`. Local defaults begin with `core`; optional tools may also depend on Unity packages, provider setup, or explicit consent.
 
+The `ui` group contains [`manage_ui`](../reference/tools/ui/manage_ui.md) for UI Toolkit and [`manage_ugui`](../reference/tools/ui/manage_ugui.md) for Canvas-based UI. The [uGUI guide](./ugui.md) covers creation, layout editing and screen-size diagnostics.
+
 ## Local sessionless clients
 
 Use the Editor's tool controls to enable the needed tools. Local clients can request `manage_tools(action="sync")` to refresh defaults from the selected Unity transport; include the intended `unity_instance` when necessary. Refresh/reconnect the MCP client if it does not process tool-list notifications.
