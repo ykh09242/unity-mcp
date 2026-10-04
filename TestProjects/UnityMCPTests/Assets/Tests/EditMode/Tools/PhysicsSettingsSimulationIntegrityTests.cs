@@ -100,6 +100,61 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(JToken.DeepEquals(before2, Send("get_settings", "2d", new JObject())["data"]));
         }
 
+        [TestCase("2d", "0")]
+        [TestCase("2d", "-0.02")]
+        [TestCase("2d", "'NaN'")]
+        [TestCase("2d", "'Infinity'")]
+        [TestCase("2d", "'-Infinity'")]
+        [TestCase("2d", "'bad'")]
+        [TestCase("2d", "''")]
+        [TestCase("2d", "[1]")]
+        [TestCase("3d", "0")]
+        [TestCase("3d", "-0.02")]
+        [TestCase("3d", "'NaN'")]
+        [TestCase("3d", "'Infinity'")]
+        [TestCase("3d", "'-Infinity'")]
+        [TestCase("3d", "'bad'")]
+        [TestCase("3d", "''")]
+        [TestCase("3d", "[1]")]
+        public void InvalidSimulationStepSize_DoesNotMoveBodiesOrChangeModes(string dimension, string value)
+        {
+            var go = new GameObject("PhysicsInvalidStep_" + Guid.NewGuid().ToString("N"));
+            var beforeMode3 = UnityPhysicsCompat.GetPhysicsSimulationMode();
+            var beforeMode2 = Physics2D.simulationMode;
+            try
+            {
+                if (dimension == "2d")
+                {
+                    var rb = go.AddComponent<Rigidbody2D>();
+#if UNITY_6000_0_OR_NEWER
+                    rb.linearVelocity = new Vector2(10f, 0f);
+#else
+                    rb.velocity = new Vector2(10f, 0f);
+#endif
+                }
+                else
+                {
+                    var rb = go.AddComponent<Rigidbody>();
+#if UNITY_6000_0_OR_NEWER
+                    rb.linearVelocity = new Vector3(10f, 0f, 0f);
+#else
+                    rb.velocity = new Vector3(10f, 0f, 0f);
+#endif
+                }
+                var beforePosition = go.transform.position;
+                var response = Send("simulate_step", dimension, new JObject { ["step_size"] = JToken.Parse(value) });
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("step_size", response.Value<string>("error"));
+                Assert.AreEqual(beforePosition, go.transform.position);
+                Assert.AreEqual(beforeMode3, UnityPhysicsCompat.GetPhysicsSimulationMode());
+                Assert.AreEqual(beforeMode2, Physics2D.simulationMode);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [Test]
         public void ResultCollection_DefaultIdTargetsExactOwnedBodyWithoutSimulating()
         {

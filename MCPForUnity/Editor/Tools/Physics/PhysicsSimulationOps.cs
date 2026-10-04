@@ -14,12 +14,19 @@ namespace MCPForUnity.Editor.Tools.Physics
             var p = new ToolParams(@params);
             string dimension = (p.Get("dimension") ?? "3d").ToLowerInvariant();
             int steps = Mathf.Clamp(p.GetInt("steps") ?? 1, 1, 100);
-            float stepSize = p.GetFloat("step_size") ?? Time.fixedDeltaTime;
+            var stepSizeToken = p.GetRaw("step_size");
+            float? requestedStepSize = p.GetFloat("step_size");
+            if (stepSizeToken != null && stepSizeToken.Type != JTokenType.Null && !requestedStepSize.HasValue)
+                return new ErrorResponse("'step_size' must be a positive finite float.");
+            float stepSize = requestedStepSize ?? Time.fixedDeltaTime;
             string targetStr = p.Get("target");
             string searchMethod = p.Get("search_method");
 
             if (dimension != "3d" && dimension != "2d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
+
+            if (stepSize <= 0f || float.IsNaN(stepSize) || float.IsInfinity(stepSize))
+                return new ErrorResponse("'step_size' must be a positive finite float.");
 
             int stepsExecuted = 0;
             if (dimension == "2d")

@@ -115,6 +115,51 @@ namespace MCPForUnityTests.Editor.Tools
 #endif
         }
 
+        [TestCase("{explosion_force:'NaN'}")]
+        [TestCase("{explosion_radius:'Infinity'}")]
+        [TestCase("{explosion_position:[0,'NaN',0]}")]
+        [TestCase("{upwards_modifier:'NaN'}")]
+        [TestCase("{upwards_modifier:'bad'}")]
+        [TestCase("{force_mode:'99'}")]
+        [TestCase("{explosion_force:true}")]
+        [TestCase("{explosion_radius:true}")]
+        [TestCase("{upwards_modifier:true}")]
+        public void InvalidExplosionInputs_DoNotQueueForce(string input)
+        {
+            var go = Body("PhysicsContract_InvalidExplosion");
+            var parameters = new JObject
+            {
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
+                ["force_type"] = "explosion", ["explosion_force"] = 10f,
+                ["explosion_radius"] = 2f, ["explosion_position"] = new JArray(0, 1, 0)
+            };
+            foreach (var property in JObject.Parse(input).Properties())
+                parameters[property.Name] = property.Value;
+            var response = JObject.FromObject(ManagePhysics.HandleCommand(parameters));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+#if UNITY_2022_2_OR_NEWER
+            Assert.AreEqual(Vector3.zero, go.GetComponent<Rigidbody>().GetAccumulatedForce());
+            Assert.AreEqual(Vector3.zero, go.GetComponent<Rigidbody>().GetAccumulatedTorque());
+#endif
+        }
+
+        [Test]
+        public void ExplosionOptionalNullUpwardsAndZeroRadius_PreservePayload()
+        {
+            var go = Body("PhysicsContract_ExplosionDefaults");
+            var response = JObject.FromObject(ManagePhysics.HandleCommand(new JObject
+            {
+                ["action"] = "apply_force", ["target"] = go.GetInstanceIDCompat().ToString(),
+                ["force_type"] = "explosion", ["explosion_force"] = 10f,
+                ["explosion_radius"] = 0f, ["explosion_position"] = new JArray(0, 1, 0),
+                ["upwards_modifier"] = JValue.CreateNull(), ["force_mode"] = "Impulse"
+            }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(0f, response["data"].Value<float>("upwards_modifier"));
+            Assert.AreEqual(0f, response["data"].Value<float>("explosion_radius"));
+            Assert.AreEqual("Impulse", response["data"].Value<string>("force_mode"));
+        }
+
         [TestCase("2d")]
         [TestCase("3d")]
         public void OptionalNullForceAndPosition_PreserveAbsentBehavior(string dimension)

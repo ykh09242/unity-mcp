@@ -242,31 +242,34 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("Explosion force is only available for 3D physics.");
 
             float? explosionForce = p.GetFloat("explosion_force");
-            if (explosionForce == null)
-                return new ErrorResponse("'explosion_force' is required for explosion force type.");
+            if (!explosionForce.HasValue || float.IsNaN(explosionForce.Value) || float.IsInfinity(explosionForce.Value))
+                return new ErrorResponse("'explosion_force' must be a finite float for explosion force type.");
 
-            var explosionPosToken = p.GetRaw("explosion_position") as JArray;
-            if (explosionPosToken == null || explosionPosToken.Count < 3)
-                return new ErrorResponse("'explosion_position' array (3 floats) is required for explosion force type.");
+            if (!TryReadVector(p.GetRaw("explosion_position"), 3, out float[] explosionPosition))
+                return new ErrorResponse("'explosion_position' must contain at least 3 finite floats for explosion force type.");
 
             float? explosionRadius = p.GetFloat("explosion_radius");
-            if (explosionRadius == null)
-                return new ErrorResponse("'explosion_radius' is required for explosion force type.");
+            if (!explosionRadius.HasValue || float.IsNaN(explosionRadius.Value) || float.IsInfinity(explosionRadius.Value))
+                return new ErrorResponse("'explosion_radius' must be a finite float for explosion force type.");
 
-            float upwardsModifier = p.GetFloat("upwards_modifier") ?? 0f;
+            float? requestedUpwardsModifier = p.GetFloat("upwards_modifier");
+            var upwardsToken = p.GetRaw("upwards_modifier");
+            if (upwardsToken != null && upwardsToken.Type != JTokenType.Null && !requestedUpwardsModifier.HasValue)
+                return new ErrorResponse("'upwards_modifier' must be a finite float.");
+            float upwardsModifier = requestedUpwardsModifier ?? 0f;
+            if (float.IsNaN(upwardsModifier) || float.IsInfinity(upwardsModifier))
+                return new ErrorResponse("'upwards_modifier' must be a finite float.");
 
             string modeStr = p.Get("force_mode");
             ForceMode mode = ForceMode.Force;
             if (!string.IsNullOrEmpty(modeStr))
             {
-                if (!Enum.TryParse<ForceMode>(modeStr, true, out mode))
+                if (!Enum.TryParse<ForceMode>(modeStr, true, out mode) || !Enum.IsDefined(typeof(ForceMode), mode))
                     return new ErrorResponse($"Invalid ForceMode: '{modeStr}'. Valid values: Force, Impulse, Acceleration, VelocityChange.");
             }
 
             var explosionPos = new Vector3(
-                explosionPosToken[0].Value<float>(),
-                explosionPosToken[1].Value<float>(),
-                explosionPosToken[2].Value<float>());
+                explosionPosition[0], explosionPosition[1], explosionPosition[2]);
 
             var rb = go.GetComponent<Rigidbody>();
             rb.AddExplosionForce(explosionForce.Value, explosionPos, explosionRadius.Value, upwardsModifier, mode);
