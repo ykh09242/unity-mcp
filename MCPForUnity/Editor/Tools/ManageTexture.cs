@@ -775,9 +775,9 @@ namespace MCPForUnity.Editor.Tools
                     break;
 
                 case "dots":
-                    int cx = (x % (size * 2)) - size;
-                    int cy = (y % (size * 2)) - size;
-                    bool inDot = (cx * cx + cy * cy) < (size * size / 4);
+                    long cx = (x % ((long)size * 2)) - size;
+                    long cy = (y % ((long)size * 2)) - size;
+                    bool inDot = (cx * cx + cy * cy) < ((long)size * size / 4);
                     colorIndex = inDot ? 1 : 0;
                     break;
 

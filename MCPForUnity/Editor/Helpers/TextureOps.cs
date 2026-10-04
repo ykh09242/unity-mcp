@@ -135,6 +135,11 @@ namespace MCPForUnity.Editor.Helpers
             int startY = Math.Max(0, offsetY);
             int endX = (int)Math.Min((long)offsetX + regionWidth, texture.width);
             int endY = (int)Math.Min((long)offsetY + regionHeight, texture.height);
+            if (startX >= endX || startY >= endY)
+                return;
+            int clippedWidth = endX - startX;
+            int clippedHeight = endY - startY;
+            var colors = new Color32[clippedWidth * clippedHeight];
             // Iterate only the intersection; source indices still address the requested region.
             for (int py = startY; py < endY; py++)
             {
@@ -149,9 +154,10 @@ namespace MCPForUnity.Editor.Helpers
                         int byteIndex = index * 4;
                         color = new Color32(rawData[byteIndex], rawData[byteIndex + 1], rawData[byteIndex + 2], rawData[byteIndex + 3]);
                     }
-                    texture.SetPixel(px, py, color);
+                    colors[(py - startY) * clippedWidth + px - startX] = color;
                 }
             }
+            texture.SetPixels32(startX, startY, clippedWidth, clippedHeight, colors);
         }
     }
 }
