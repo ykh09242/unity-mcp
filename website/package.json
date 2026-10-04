@@ -6,9 +6,9 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "prebuild": "node --test scripts/dependency-contracts.test.mjs",
+    "prebuild": "node --test scripts/dependency-contracts.test.mjs scripts/braces-contracts.test.mjs",
     "build": "docusaurus build",
-    "test:dependencies": "node --test scripts/dependency-contracts.test.mjs",
+    "test:dependencies": "node --test scripts/dependency-contracts.test.mjs scripts/braces-contracts.test.mjs",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
@@ -31,10 +31,12 @@
   "devDependencies": {
     "@docusaurus/module-type-aliases": "^3.10.2",
     "@docusaurus/types": "^3.10.2",
+    "braces": "https://codeload.github.com/FSDevelop/braces/tar.gz/28d440b5dd449dbf1fe6f3506cf94ecca4d02660",
     "docusaurus-plugin-goatcounter": "^4.0.0",
     "sharp": "^0.35.5"
   },
   "overrides": {
+    "braces": "$braces",
     "copy-webpack-plugin": "^14.0.0",
     "css-minimizer-webpack-plugin": "^8.0.0",
     "update-notifier": "^7.3.1",
