@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Reflection;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -12,6 +13,59 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [UnityTest]
+        public IEnumerator HandleCommand_BatchNormalizedWaitForReady_WaitsForEditorUpdate()
+        {
+            if (TestRunStatus.IsRunning)
+                Assert.Ignore("Refresh is intentionally blocked during bridge-managed test runs.");
+
+            var parameters = (JObject)typeof(BatchExecute)
+                .GetMethod("NormalizeParameterKeys", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { new JObject {
+                    ["scope"] = "scripts", ["compile"] = "none", ["wait_for_ready"] = true
+                } });
+            var task = RefreshUnity.HandleCommand(parameters);
+
+            Assert.IsFalse(task.IsCompleted, "Batch normalization must preserve the readiness wait.");
+            double deadline = EditorApplication.timeSinceStartup + 5.0;
+            while (!task.IsCompleted)
+            {
+                if (EditorApplication.timeSinceStartup > deadline)
+                    Assert.Fail("Readiness wait did not finish in an idle editor.");
+                yield return null;
+            }
+            Assert.IsTrue(ToJObject(task.Result).Value<bool>("success"));
+        }
+
+        [TestCase(null)]
+        [TestCase("waitForReady")]
+        [TestCase("wait_for_ready")]
+        public void HandleCommand_DefaultOrFalseWait_CompletesSynchronously(string waitKey)
+        {
+            if (TestRunStatus.IsRunning)
+                Assert.Ignore("Refresh is intentionally blocked during bridge-managed test runs.");
+
+            var parameters = new JObject { ["scope"] = "scripts", ["compile"] = "none" };
+            if (waitKey != null) parameters[waitKey] = false;
+            var task = RefreshUnity.HandleCommand(parameters);
+            Assert.IsTrue(task.IsCompleted, "The default and false values must not wait.");
+            Assert.IsTrue(ToJObject(task.Result).Value<bool>("success"));
+        }
+
+        [Test]
+        public void HandleCommand_SnakeCaseWaitTakesPrecedenceOverCamelCase()
+        {
+            if (TestRunStatus.IsRunning)
+                Assert.Ignore("Refresh is intentionally blocked during bridge-managed test runs.");
+
+            var task = RefreshUnity.HandleCommand(new JObject {
+                ["scope"] = "scripts", ["compile"] = "none",
+                ["wait_for_ready"] = false, ["waitForReady"] = true
+            });
+            Assert.IsTrue(task.IsCompleted, "The established snake_case parameter must take precedence.");
+            Assert.IsTrue(ToJObject(task.Result).Value<bool>("success"));
+        }
+
         [Test]
         public void HandleCommand_CompileNone_NoWait_CompletesSynchronously()
         {

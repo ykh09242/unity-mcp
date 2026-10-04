@@ -35,7 +35,7 @@ namespace MCPForUnity.Editor.Tools
             string mode = @params?["mode"]?.ToString() ?? "if_dirty";
             string scope = @params?["scope"]?.ToString() ?? "all";
             string compile = @params?["compile"]?.ToString() ?? "none";
-            bool waitForReady = ParamCoercion.CoerceBool(@params?["wait_for_ready"], false);
+            bool waitForReady = ParamCoercion.CoerceBool(@params?["wait_for_ready"] ?? @params?["waitForReady"], false);
 
             if (TestRunStatus.IsRunning)
             {
