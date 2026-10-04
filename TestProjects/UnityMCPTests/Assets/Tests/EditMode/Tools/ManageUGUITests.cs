@@ -19,12 +19,17 @@ namespace MCPForUnityTests.EditMode.Tools
         private string prefix;
 
         [SetUp]
-        public void SetUp() { prefix = "UGUI_" + Guid.NewGuid().ToString("N"); }
+        public void SetUp()
+        {
+            prefix = "UGUI_" + Guid.NewGuid().ToString("N");
+        }
 
         [TearDown]
         public void TearDown()
         {
-            foreach (var root in roots) if (root != null) UnityEngine.Object.DestroyImmediate(root);
+            foreach (var root in roots)
+                if (root != null)
+                    UnityEngine.Object.DestroyImmediate(root);
             roots.Clear();
             Undo.ClearAll();
         }
@@ -32,20 +37,27 @@ namespace MCPForUnityTests.EditMode.Tools
         private GameObject Root(bool canvas = false)
         {
             var go = new GameObject(prefix, typeof(RectTransform));
-            if (canvas) go.AddComponent<Canvas>();
+            if (canvas)
+                go.AddComponent<Canvas>();
             roots.Add(go);
             return go;
         }
 
         private static JObject Call(string action, GameObject go = null, JObject properties = null)
         {
-            var p = new JObject { ["action"] = action };
-            if (go != null) p["target"] = go.GetInstanceIDCompat();
-            if (properties != null) p["properties"] = properties;
+            var p = new JObject
+            {
+                ["action"] = action
+            };
+            if (go != null)
+                p["target"] = go.GetInstanceIDCompat();
+            if (properties != null)
+                p["properties"] = properties;
             return JObject.FromObject(ManageUGUI.HandleCommand(p));
         }
 
         private static void Success(JObject response) => Assert.That(response["success"]?.Value<bool>(), Is.True, response.ToString());
+
         private static void Failure(JObject response) => Assert.That(response["success"]?.Value<bool>(), Is.False, response.ToString());
 
         [Test]
@@ -61,9 +73,15 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void MissingUguiPackageRejectsCreateAndLayoutWithoutPartialChanges()
         {
-            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") != null) Assert.Ignore("This case verifies absent uGUI.");
+            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") != null)
+                Assert.Ignore("This case verifies absent uGUI.");
             var root = Root(true);
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "create", ["element_type"] = "image", ["parent"] = root.GetInstanceIDCompat() }));
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "image",
+                ["parent"] = root.GetInstanceIDCompat()
+            }));
             Failure(r);
             StringAssert.Contains("optional component", r["error"].ToString());
             Assert.That(root.transform.childCount, Is.EqualTo(0));
@@ -75,7 +93,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void ExistingLegacyTextCanBeEditedAndInvalidPayloadIsAtomic()
         {
             var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Text");
-            if (type == null) Assert.Ignore("uGUI is not installed.");
+            if (type == null)
+                Assert.Ignore("uGUI is not installed.");
             var root = Root(true);
             var text = root.AddComponent(type);
             Success(Call("set_text", root, new JObject { ["text"] = "Updated label", ["fontSize"] = 30 }));
@@ -88,7 +107,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void MissingTargetAndAmbiguousNameAreRejected()
         {
             Failure(Call("set_rect", properties: new JObject { ["sizeDelta"] = new JArray(100, 100) }));
-            Root(); Root();
+            Root();
+            Root();
             var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "get_hierarchy", ["target"] = prefix }));
             Failure(r);
             StringAssert.Contains("ambiguous", r["error"].ToString());
@@ -102,8 +122,12 @@ namespace MCPForUnityTests.EditMode.Tools
             go.name = invalidId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var rect = (RectTransform)go.transform;
             Vector2 before = rect.sizeDelta;
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "set_rect", ["target"] = invalidId,
-                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) } }));
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "set_rect",
+                ["target"] = invalidId,
+                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) }
+            }));
             Failure(r);
             Assert.That(rect.sizeDelta, Is.EqualTo(before), "An invalid numeric identity must not edit an object sharing its textual representation.");
         }
@@ -115,8 +139,12 @@ namespace MCPForUnityTests.EditMode.Tools
             var go = Root();
             go.name = "0";
             Vector2 before = ((RectTransform)go.transform).sizeDelta;
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "set_rect", ["target"] = 0,
-                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) } }));
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "set_rect",
+                ["target"] = 0,
+                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) }
+            }));
             Failure(r);
             Assert.That(((RectTransform)go.transform).sizeDelta, Is.EqualTo(before));
         }
@@ -131,12 +159,19 @@ namespace MCPForUnityTests.EditMode.Tools
             try
             {
                 CultureInfo.CurrentCulture = custom;
-                var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "set_canvas", ["target"] = go.name,
-                    ["properties"] = new JObject { ["sortingOrder"] = -15 } }));
+                var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+                {
+                    ["action"] = "set_canvas",
+                    ["target"] = go.name,
+                    ["properties"] = new JObject { ["sortingOrder"] = -15 }
+                }));
                 Success(r);
                 Assert.That(go.GetComponent<Canvas>().sortingOrder, Is.EqualTo(-15));
             }
-            finally { CultureInfo.CurrentCulture = previous; }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+            }
         }
 
         [Test]
@@ -144,7 +179,8 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var go = Root();
             int id = go.GetInstanceIDCompat();
-            if (id >= 0) Assert.Ignore("This case needs a negative runtime instance ID to distinguish editor/protocol notation.");
+            if (id >= 0)
+                Assert.Ignore("This case needs a negative runtime instance ID to distinguish editor/protocol notation.");
             CultureInfo previous = CultureInfo.CurrentCulture;
             var custom = (CultureInfo)CultureInfo.InvariantCulture.Clone();
             custom.NumberFormat.NegativeSign = "~";
@@ -154,7 +190,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 Success(Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
                 Assert.That(((RectTransform)go.transform).sizeDelta, Is.EqualTo(new Vector2(240, 90)));
             }
-            finally { CultureInfo.CurrentCulture = previous; }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+            }
         }
 
         [Test]
@@ -162,7 +201,8 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.VerticalLayoutGroup");
             var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
-            if (groupType == null || elementType == null) Assert.Ignore("uGUI is not installed.");
+            if (groupType == null || elementType == null)
+                Assert.Ignore("uGUI is not installed.");
             var root = Root();
             var group = root.AddComponent(groupType);
             var child = new GameObject("Child", typeof(RectTransform));
@@ -170,7 +210,8 @@ namespace MCPForUnityTests.EditMode.Tools
             elementType.GetProperty("ignoreLayout").SetValue(child.AddComponent(elementType), true);
             elementType.GetProperty("ignoreLayout").SetValue(child.AddComponent(elementType), false);
             groupType.GetMethod("CalculateLayoutInputHorizontal").Invoke(group, null);
-            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(group);
+            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(group);
             Assert.That(children.Count, Is.EqualTo(1), "Installed uGUI includes a child if any ILayoutIgnorer returns false.");
             var r = Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(240, 90) });
             Failure(r);
@@ -182,7 +223,8 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.VerticalLayoutGroup");
             var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
-            if (groupType == null || elementType == null) Assert.Ignore("uGUI is not installed.");
+            if (groupType == null || elementType == null)
+                Assert.Ignore("uGUI is not installed.");
             var root = Root();
             var group = root.AddComponent(groupType);
             var child = new GameObject("Child", typeof(RectTransform));
@@ -191,7 +233,8 @@ namespace MCPForUnityTests.EditMode.Tools
             elementType.GetProperty("ignoreLayout").SetValue(element, true);
             ((Behaviour)element).enabled = false;
             groupType.GetMethod("CalculateLayoutInputHorizontal").Invoke(group, null);
-            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(group);
+            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(group);
             Assert.That(children.Count, Is.EqualTo(0), "Installed uGUI evaluates ignoreLayout even on disabled components.");
             Success(Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
             Assert.That(((RectTransform)child.transform).sizeDelta, Is.EqualTo(new Vector2(240, 90)));
@@ -239,10 +282,16 @@ namespace MCPForUnityTests.EditMode.Tools
                 var instance = (GameObject)PrefabUtility.InstantiatePrefab(asset);
                 roots.Add(instance);
                 var rect = (RectTransform)instance.transform;
-                Success(Call("set_rect", instance, new JObject { ["sizeDelta"] = new JArray(240, 90), ["localScale"] = new JArray(2, 2, 2) }));
+                Success(Call("set_rect", instance, new JObject
+                {
+                    ["sizeDelta"] = new JArray(240, 90),
+                    ["localScale"] = new JArray(2, 2, 2)
+                }));
                 var modifications = PrefabUtility.GetPropertyModifications(instance);
                 Assert.That(modifications, Is.Not.Null);
-                Assert.That(modifications.Any(m => m.target == asset.transform && m.propertyPath == "m_LocalScale.x" && m.value == "2"), Is.True,
+                Assert.That(
+                    modifications.Any(m => m.target == asset.transform && m.propertyPath == "m_LocalScale.x" && m.value == "2"),
+                    Is.True,
                     "Record the changed property as a prefab-instance override.");
                 Assert.That(asset.transform.localScale, Is.EqualTo(Vector3.one));
                 Assert.That(((RectTransform)asset.transform).sizeDelta, Is.EqualTo(beforeSize));
@@ -254,7 +303,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 Failure(Call("set_rect", asset, new JObject { ["localScale"] = new JArray(3, 3, 3) }));
                 Assert.That(asset.transform.localScale, Is.EqualTo(Vector3.one));
             }
-            finally { AssetDatabase.DeleteAsset(path); }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
         }
 
         [Test]
@@ -278,8 +330,11 @@ namespace MCPForUnityTests.EditMode.Tools
             var rect = (RectTransform)go.transform;
             Vector2 beforeSize = rect.sizeDelta;
             Vector2 beforePosition = rect.anchoredPosition;
-            var r = Call("set_rect", go, new JObject { ["offsetMin"] = new JArray(-float.MaxValue, -float.MaxValue),
-                ["offsetMax"] = new JArray(float.MaxValue, float.MaxValue) });
+            var r = Call("set_rect", go, new JObject
+            {
+                ["offsetMin"] = new JArray(-float.MaxValue, -float.MaxValue),
+                ["offsetMax"] = new JArray(float.MaxValue, float.MaxValue)
+            });
             Failure(r);
             Assert.That(rect.sizeDelta, Is.EqualTo(beforeSize));
             Assert.That(rect.anchoredPosition, Is.EqualTo(beforePosition));
@@ -289,9 +344,15 @@ namespace MCPForUnityTests.EditMode.Tools
         public void HierarchyCapAndInactiveFilteringAreDeterministic()
         {
             var go = Root();
-            for (int i = 0; i < 5; i++) new GameObject("Child" + i, typeof(RectTransform)).transform.SetParent(go.transform, false);
+            for (int i = 0; i < 5; i++)
+                new GameObject("Child" + i, typeof(RectTransform)).transform.SetParent(go.transform, false);
             go.transform.GetChild(0).gameObject.SetActive(false);
-            var p = new JObject { ["action"] = "get_hierarchy", ["target"] = go.GetInstanceIDCompat(), ["maxNodes"] = 2 };
+            var p = new JObject
+            {
+                ["action"] = "get_hierarchy",
+                ["target"] = go.GetInstanceIDCompat(),
+                ["maxNodes"] = 2
+            };
             var r = JObject.FromObject(ManageUGUI.HandleCommand(p));
             Success(r);
             Assert.That(((JArray)r["data"]["nodes"]).Count, Is.EqualTo(2));
@@ -307,8 +368,14 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void CanvasCreationProvidesScalerAndRaycasterAndCanBeUndone()
         {
-            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler") == null) Assert.Ignore("uGUI is not installed.");
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "create", ["elementType"] = "canvas", ["name"] = prefix }));
+            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler") == null)
+                Assert.Ignore("uGUI is not installed.");
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["elementType"] = "canvas",
+                ["name"] = prefix
+            }));
             Success(r);
             var go = GameObjectLookup.FindById(r["data"]["instance_id"].Value<int>());
             roots.Add(go);
@@ -322,11 +389,18 @@ namespace MCPForUnityTests.EditMode.Tools
         [Test]
         public void PanelCreationRequiresCanvasParentAndPreservesExistingChildren()
         {
-            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") == null) Assert.Ignore("uGUI is not installed.");
+            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") == null)
+                Assert.Ignore("uGUI is not installed.");
             var root = Root(true);
             var existing = new GameObject("Existing", typeof(RectTransform));
             existing.transform.SetParent(root.transform, false);
-            var p = new JObject { ["action"] = "create", ["element_type"] = "panel", ["parent"] = root.GetInstanceIDCompat(), ["name"] = "NewPanel" };
+            var p = new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "panel",
+                ["parent"] = root.GetInstanceIDCompat(),
+                ["name"] = "NewPanel"
+            };
             var r = JObject.FromObject(ManageUGUI.HandleCommand(p));
             Success(r);
             Assert.That(root.transform.childCount, Is.EqualTo(2));
@@ -334,7 +408,11 @@ namespace MCPForUnityTests.EditMode.Tools
             var panel = GameObjectLookup.FindById(r["data"]["instance_id"].Value<int>());
             Assert.That(((RectTransform)panel.transform).anchorMax, Is.EqualTo(Vector2.one));
             Assert.That(((RectTransform)panel.transform).offsetMax, Is.EqualTo(Vector2.zero));
-            p["properties"] = new JObject { ["sizeDelta"] = new JArray(100, 100), ["unknown"] = 1 };
+            p["properties"] = new JObject
+            {
+                ["sizeDelta"] = new JArray(100, 100),
+                ["unknown"] = 1
+            };
             Failure(JObject.FromObject(ManageUGUI.HandleCommand(p)));
             Assert.That(root.transform.childCount, Is.EqualTo(2));
             p.Remove("parent");
@@ -345,7 +423,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void InvalidLayoutDoesNotAddComponentAndDrivenChildrenRejectRectEdits()
         {
             var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.VerticalLayoutGroup");
-            if (type == null) Assert.Ignore("uGUI is not installed.");
+            if (type == null)
+                Assert.Ignore("uGUI is not installed.");
             var root = Root();
             Failure(Call("set_layout", root, new JObject { ["type"] = "vertical", ["spacing"] = 10, ["childControlWidth"] = "invalid" }));
             Assert.That(root.GetComponent(type), Is.Null);
@@ -361,10 +440,16 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("anchorMax", .25f)]
         public void PanelCreationValidatesSingleAnchorAgainstStretchDefaults(string key, float value)
         {
-            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") == null) Assert.Ignore("uGUI is not installed.");
+            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") == null)
+                Assert.Ignore("uGUI is not installed.");
             var root = Root(true);
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "create", ["element_type"] = "panel", ["parent"] = root.GetInstanceIDCompat(),
-                ["properties"] = new JObject { [key] = new JArray(value, value) } }));
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "panel",
+                ["parent"] = root.GetInstanceIDCompat(),
+                ["properties"] = new JObject { [key] = new JArray(value, value) }
+            }));
             Success(r);
             var panel = GameObjectLookup.FindById(r["data"]["instance_id"].Value<int>());
             var rect = (RectTransform)panel.transform;
@@ -379,7 +464,16 @@ namespace MCPForUnityTests.EditMode.Tools
             var canvas = go.GetComponent<Canvas>();
             Failure(Call("set_canvas", go, new JObject { ["sortingOrder"] = 15, ["renderMode"] = "Unknown" }));
             Assert.That(canvas.sortingOrder, Is.EqualTo(0));
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "diagnose", ["target"] = go.GetInstanceIDCompat(), ["resolutions"] = new JArray(new JObject { ["width"] = 0, ["height"] = 1080 }) }));
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "diagnose",
+                ["target"] = go.GetInstanceIDCompat(),
+                ["resolutions"] = new JArray(new JObject
+                {
+                    ["width"] = 0,
+                    ["height"] = 1080
+                })
+            }));
             Failure(r);
         }
 
@@ -387,7 +481,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void CanvasScaleEditsPersistInEnabledScalerAndUndoTogether()
         {
             var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
-            if (type == null) Assert.Ignore("uGUI is not installed.");
+            if (type == null)
+                Assert.Ignore("uGUI is not installed.");
             var go = Root(true);
             var canvas = go.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -395,7 +490,8 @@ namespace MCPForUnityTests.EditMode.Tools
             type.GetProperty("uiScaleMode").SetValue(scaler, Enum.Parse(type.GetProperty("uiScaleMode").PropertyType, "ConstantPixelSize"));
             var handle = type.GetMethod("Handle", BindingFlags.Instance | BindingFlags.NonPublic);
             Success(Call("set_canvas", go, new JObject { ["scaleFactor"] = 2, ["referencePixelsPerUnit"] = 200 }));
-            Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(2f), "Persist the value in the component that controls the Canvas.");
+            Assert.That(type.GetProperty("scaleFactor")
+                .GetValue(scaler), Is.EqualTo(2f), "Persist the value in the component that controls the Canvas.");
             Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(200f));
             handle.Invoke(scaler, null);
             Assert.That(canvas.scaleFactor, Is.EqualTo(2f));
@@ -412,7 +508,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void CanvasScaleEditsUseCanvasWhenScalerIsDisabled()
         {
             var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
-            if (type == null) Assert.Ignore("uGUI is not installed.");
+            if (type == null)
+                Assert.Ignore("uGUI is not installed.");
             var go = Root(true);
             var canvas = go.GetComponent<Canvas>();
             var scaler = go.AddComponent(type);
@@ -430,19 +527,40 @@ namespace MCPForUnityTests.EditMode.Tools
             var textType = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
             var settings = UnityTypeResolver.ResolveAny("TMPro.TMP_Settings");
             UnityEngine.Object font = null;
-            try { font = settings?.GetProperty("defaultFontAsset")?.GetValue(null) as UnityEngine.Object; }
-            catch (TargetInvocationException e) when (e.InnerException is NullReferenceException) { /* TMP settings resource is absent. */ }
-            if (textType == null || font == null) Assert.Ignore("TMP/default font must be configured for the positive text case.");
+            try
+            {
+                font = settings?.GetProperty("defaultFontAsset")?.GetValue(null) as UnityEngine.Object;
+            }
+            catch (TargetInvocationException e)when (e.InnerException is NullReferenceException)
+            { /* TMP settings resource is absent. */
+            }
+
+            if (textType == null || font == null)
+                Assert.Ignore("TMP/default font must be configured for the positive text case.");
             var root = Root(true);
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "create", ["element_type"] = "text", ["parent"] = root.GetInstanceIDCompat(),
-                ["properties"] = new JObject { ["text"] = "Created label", ["fontSize"] = 32 } }));
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "text",
+                ["parent"] = root.GetInstanceIDCompat(),
+                ["properties"] = new JObject
+                {
+                    ["text"] = "Created label",
+                    ["fontSize"] = 32
+                }
+            }));
             Success(r);
             var go = GameObjectLookup.FindById(r["data"]["instance_id"].Value<int>());
             var text = go.GetComponent(textType);
             Assert.That(textType.GetProperty("font").GetValue(text), Is.SameAs(font));
             Assert.That(textType.GetProperty("text").GetValue(text), Is.EqualTo("Created label"));
             Assert.That(textType.GetProperty("fontSize").GetValue(text), Is.EqualTo(32f));
-            Success(Call("set_text", go, new JObject { ["text"] = "Edited label", ["fontSize"] = 36, ["color"] = new JArray(1, .8, .6, 1) }));
+            Success(Call("set_text", go, new JObject
+            {
+                ["text"] = "Edited label",
+                ["fontSize"] = 36,
+                ["color"] = new JArray(1, .8, .6, 1)
+            }));
             Assert.That(textType.GetProperty("text").GetValue(text), Is.EqualTo("Edited label"));
             Undo.PerformUndo();
             Assert.That(textType.GetProperty("text").GetValue(text), Is.EqualTo("Created label"));
@@ -456,10 +574,22 @@ namespace MCPForUnityTests.EditMode.Tools
             var textType = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
             var settings = UnityTypeResolver.ResolveAny("TMPro.TMP_Settings");
             UnityEngine.Object font = null;
-            try { font = settings?.GetProperty("defaultFontAsset")?.GetValue(null) as UnityEngine.Object; }
-            catch (TargetInvocationException e) when (e.InnerException is NullReferenceException) { /* TMP settings resource is absent. */ }
-            if (textType != null && font != null) Assert.Ignore("TMP default font is configured; this case verifies dependency failure.");
-            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "create", ["element_type"] = "text", ["parent"] = root.GetInstanceIDCompat() }));
+            try
+            {
+                font = settings?.GetProperty("defaultFontAsset")?.GetValue(null) as UnityEngine.Object;
+            }
+            catch (TargetInvocationException e)when (e.InnerException is NullReferenceException)
+            { /* TMP settings resource is absent. */
+            }
+
+            if (textType != null && font != null)
+                Assert.Ignore("TMP default font is configured; this case verifies dependency failure.");
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "text",
+                ["parent"] = root.GetInstanceIDCompat()
+            }));
             Failure(r);
             StringAssert.Contains("TMP", r["error"].ToString());
             Assert.That(root.transform.childCount, Is.EqualTo(0));

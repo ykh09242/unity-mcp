@@ -19,12 +19,16 @@ namespace MCPForUnity.Editor.Tools
         private const int PairLimit = 20000;
         private static readonly HashSet<string> PreviewTypes = new HashSet<string>(StringComparer.Ordinal)
         {
-            "UnityEngine.UI.HorizontalLayoutGroup", "UnityEngine.UI.VerticalLayoutGroup",
-            "UnityEngine.UI.GridLayoutGroup", "UnityEngine.UI.LayoutElement",
-            "UnityEngine.UI.ContentSizeFitter", "UnityEngine.UI.AspectRatioFitter",
-            "UnityEngine.UI.Text", "UnityEngine.UI.Image", "UnityEngine.UI.RawImage"
+            "UnityEngine.UI.HorizontalLayoutGroup",
+            "UnityEngine.UI.VerticalLayoutGroup",
+            "UnityEngine.UI.GridLayoutGroup",
+            "UnityEngine.UI.LayoutElement",
+            "UnityEngine.UI.ContentSizeFitter",
+            "UnityEngine.UI.AspectRatioFitter",
+            "UnityEngine.UI.Text",
+            "UnityEngine.UI.Image",
+            "UnityEngine.UI.RawImage"
         };
-
         private sealed class Node
         {
             public RectTransform Source;
@@ -66,8 +70,10 @@ namespace MCPForUnity.Editor.Tools
                     sizes.Add(new Vector2(width, height));
                 }
             }
+
             var canvasRect = canvas.transform as RectTransform;
-            if (canvasRect == null) return new ErrorResponse("invalid_canvas", new { message = "Canvas has no RectTransform." });
+            if (canvasRect == null)
+                return new ErrorResponse("invalid_canvas", new { message = "Canvas has no RectTransform." });
             var scaler = ComponentNamed(canvas.gameObject, "UnityEngine.UI.CanvasScaler");
             if (Enabled(scaler) && EnumValue(scaler, "uiScaleMode") == 2)
                 return new ErrorResponse("unsupported_physical_scaling", new { message = "Constant Physical Size depends on actual device DPI, which a resolution alone does not supply." });
@@ -88,7 +94,8 @@ namespace MCPForUnity.Editor.Tools
                 "Animations, custom scripts/layout controllers, camera/world-space projection and runtime event handlers are not simulated.",
                 "TextMeshPro uses a conservative character/font-size estimate without executing TMP callbacks or changing its font atlas; rich-text shaping, wrapping, autosizing and TMP layout contribution are not simulated."
             };
-            if (current) limitations.Add("No explicit resolutions supplied: evaluated the current Canvas size (reference resolution fallback if unavailable), not a future Game View resize.");
+            if (current)
+                limitations.Add("No explicit resolutions supplied: evaluated the current Canvas size (reference resolution fallback if unavailable), not a future Game View resize.");
             var findings = new JArray();
             var geometry = new JArray();
             var summaries = new JArray();
@@ -112,7 +119,8 @@ namespace MCPForUnity.Editor.Tools
                     scanned++;
                     Transform source = entry.Key;
                     GameObject clone;
-                    if (source == canvasRect) clone = previewRoot;
+                    if (source == canvasRect)
+                        clone = previewRoot;
                     else
                     {
                         clone = new GameObject(source.name, source is RectTransform ? typeof(RectTransform) : typeof(Transform));
@@ -123,24 +131,38 @@ namespace MCPForUnity.Editor.Tools
                         clone.transform.localRotation = source.localRotation;
                         clone.transform.localScale = source.localScale;
                     }
+
                     if (source is RectTransform rect)
                     {
                         var preview = (RectTransform)clone.transform;
-                        if (source != canvasRect) CopyRect(rect, preview);
-                        var node = new Node { Source = rect, Preview = preview, Path = Path(source), Order = scanned };
+                        if (source != canvasRect)
+                            CopyRect(rect, preview);
+                        var node = new Node
+                        {
+                            Source = rect,
+                            Preview = preview,
+                            Path = Path(source),
+                            Order = scanned
+                        };
                         bySource.Add(rect, node);
                         foreach (var component in source.GetComponents<Component>())
                         {
-                            if (component == null) continue;
+                            if (component == null)
+                                continue;
                             string name = component.GetType().FullName;
                             if (PreviewTypes.Contains(name))
                             {
                                 // A root screen-space Canvas makes AspectRatioFitter inert. The preview
                                 // deliberately uses WorldSpace, so preserve the source's eligibility.
-                                if (name == "UnityEngine.UI.AspectRatioFitter" && !AspectEligible(component)) continue;
+                                if (name == "UnityEngine.UI.AspectRatioFitter" && !AspectEligible(component))
+                                    continue;
                                 var copy = clone.AddComponent(component.GetType());
                                 EditorUtility.CopySerialized(component, copy);
-                                if (name == "UnityEngine.UI.Text") { node.Text = component; node.PreviewText = copy; }
+                                if (name == "UnityEngine.UI.Text")
+                                {
+                                    node.Text = component;
+                                    node.PreviewText = copy;
+                                }
                             }
                             else if (component is Canvas sourceCanvas)
                             {
@@ -161,25 +183,31 @@ namespace MCPForUnity.Editor.Tools
                             else if (component is MonoBehaviour && HasLayoutInterface(component.GetType()))
                                 limitations.Add("Custom layout controllers/elements were omitted from the preview; affected geometry may differ at runtime.");
                         }
+
                         if ((source == root.transform || source.IsChildOf(root.transform)) && (includeInactive || source.gameObject.activeInHierarchy))
                         {
-                            if (nodes.Count < maxNodes) nodes.Add(node);
-                            else truncated = true;
+                            if (nodes.Count < maxNodes)
+                                nodes.Add(node);
+                            else
+                                truncated = true;
                         }
                     }
+
                     // Keep inactive objects inactive so the normal layout exclusion rules still apply.
-                    if (source != canvasRect) clone.SetActive(source.gameObject.activeSelf);
+                    if (source != canvasRect)
+                        clone.SetActive(source.gameObject.activeSelf);
                     for (int i = source.childCount - 1; i >= 0; i--)
                         stack.Push(new KeyValuePair<Transform, Transform>(source.GetChild(i), clone.transform));
                 }
+
                 if (stack.Count > 0)
                 {
                     truncated = true;
                     limitations.Add("Preview context exceeded 1000 transforms; omitted siblings/children can change layout. Rerun on a smaller Canvas.");
                 }
+
                 if (!bySource.ContainsKey((RectTransform)root.transform))
                     return new ErrorResponse("preview_limit_exceeded", new { message = "Target was outside the bounded Canvas preview. Diagnose a smaller Canvas hierarchy." });
-
                 var previewCanvas = (RectTransform)previewRoot.transform;
                 previewCanvas.pivot = new Vector2(0.5f, 0.5f);
                 previewCanvas.localScale = Vector3.one;
@@ -198,18 +226,42 @@ namespace MCPForUnity.Editor.Tools
                     hasInteractions |= node.PointerActive && node.Interactive && node.Raycast;
                     LayoutFindings(node, findings, ref truncated);
                 }
+
                 if (hasInteractions)
                 {
                     Type eventType = UnityTypeResolver.ResolveComponent("UnityEngine.EventSystems.EventSystem");
                     bool eventSystem = eventType != null && UnityEngine.Resources.FindObjectsOfTypeAll(eventType)
-                        .OfType<Component>().Any(c => c.gameObject.scene.IsValid() && !EditorSceneManager.IsPreviewScene(c.gameObject.scene) && c.gameObject.activeInHierarchy && Enabled(c));
-                    if (!eventSystem) Add(findings, "missing_event_system", "warning", bySource[canvasRect], "No enabled EventSystem was found in loaded scenes. Add an EventSystem and the appropriate input module; prefab assets may receive these from the host scene.", null, null, ref truncated);
+                        .OfType<Component>()
+                        .Any(c => c.gameObject.scene.IsValid()
+                            && !EditorSceneManager.IsPreviewScene(c.gameObject.scene)
+                            && c.gameObject.activeInHierarchy
+                            && Enabled(c));
+                    if (!eventSystem)
+                        Add(
+                            findings,
+                            "missing_event_system",
+                            "warning",
+                            bySource[canvasRect],
+                            "No enabled EventSystem was found in loaded scenes. Add an EventSystem and the appropriate input module; prefab assets may receive these from the host scene.",
+                            null,
+                            null,
+                            ref truncated
+                        );
                     var reportedCanvases = new HashSet<Canvas>();
                     foreach (var node in nodes.Where(n => n.PointerActive && n.Interactive && n.Raycast))
                     {
                         var ownCanvas = FindActiveCanvas(node.Source);
                         if (ownCanvas != null && reportedCanvases.Add(ownCanvas) && !Enabled(ComponentNamed(ownCanvas.gameObject, "UnityEngine.UI.GraphicRaycaster")))
-                            Add(findings, "missing_graphic_raycaster", "warning", node, "The nearest Canvas has no enabled GraphicRaycaster. Add one to that Canvas so its interactive Graphics receive pointer events.", bySource.TryGetValue(ownCanvas.transform as RectTransform, out Node relatedCanvas) ? relatedCanvas : null, null, ref truncated);
+                            Add(
+                                findings,
+                                "missing_graphic_raycaster",
+                                "warning",
+                                node,
+                                "The nearest Canvas has no enabled GraphicRaycaster. Add one to that Canvas so its interactive Graphics receive pointer events.",
+                                bySource.TryGetValue(ownCanvas.transform as RectTransform, out Node relatedCanvas) ? relatedCanvas : null,
+                                null,
+                                ref truncated
+                            );
                     }
                 }
 
@@ -219,7 +271,13 @@ namespace MCPForUnity.Editor.Tools
                     previewRoot.GetComponent<Canvas>().scaleFactor = scale;
                     previewCanvas.sizeDelta = size / scale;
                     Rebuild(previewRects);
-                    var resolution = new JObject { ["width"] = size.x, ["height"] = size.y, ["scaleFactor"] = scale, ["mode"] = current ? "current" : "preview" };
+                    var resolution = new JObject
+                    {
+                        ["width"] = size.x,
+                        ["height"] = size.y,
+                        ["scaleFactor"] = scale,
+                        ["mode"] = current ? "current" : "preview"
+                    };
                     Rect canvasBounds = new Rect(Vector2.zero, size);
                     int before = findings.Count;
                     foreach (var node in nodes)
@@ -228,7 +286,9 @@ namespace MCPForUnity.Editor.Tools
                         node.HitBounds = Intersect(node.Bounds, canvasBounds);
                         var maskableGraphic = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.MaskableGraphic");
                         var ownCanvas = node.Source.GetComponent<Canvas>();
-                        var ancestors = Read(maskableGraphic, "maskable", true) && !(ownCanvas != null && ownCanvas.overrideSorting) ? node.Source.parent : null;
+                        var ancestors = Read(maskableGraphic, "maskable", true) && !(ownCanvas != null && ownCanvas.overrideSorting)
+                            ? node.Source.parent
+                            : null;
                         while (ancestors != null)
                         {
                             if (ancestors is RectTransform maskRect && bySource.TryGetValue(maskRect, out Node maskNode) && ActiveMask(ancestors.gameObject))
@@ -238,49 +298,138 @@ namespace MCPForUnity.Editor.Tools
                                 if (Enabled(rectMask))
                                 {
                                     Vector4 padding = Read(rectMask, "padding", Vector4.zero) * scale;
-                                    maskBounds = new Rect(maskBounds.xMin + padding.x, maskBounds.yMin + padding.y,
-                                        Mathf.Max(0, maskBounds.width - padding.x - padding.z), Mathf.Max(0, maskBounds.height - padding.y - padding.w));
+                                    maskBounds = new Rect(
+                                        maskBounds.xMin + padding.x,
+                                        maskBounds.yMin + padding.y,
+                                        Mathf.Max(0, maskBounds.width - padding.x - padding.z),
+                                        Mathf.Max(0, maskBounds.height - padding.y - padding.w)
+                                    );
                                 }
+
                                 node.HitBounds = Intersect(node.HitBounds, maskBounds);
                                 if (node.Visible && !Contains(maskBounds, node.Bounds))
-                                    Add(findings, "clipped_by_mask", "candidate", node, "Bounds extend beyond an enabled ancestor Mask/RectMask2D. Review scrolling and intentional clipping; stencil masks are approximated by their rectangle.", maskNode, resolution, ref truncated);
+                                    Add(
+                                        findings,
+                                        "clipped_by_mask",
+                                        "candidate",
+                                        node,
+                                        "Bounds extend beyond an enabled ancestor Mask/RectMask2D. Review scrolling and intentional clipping; stencil masks are approximated by their rectangle.",
+                                        maskNode,
+                                        resolution,
+                                        ref truncated
+                                    );
                             }
+
                             var boundary = ancestors.GetComponent<Canvas>();
                             ancestors = boundary != null && boundary.overrideSorting ? null : ancestors.parent;
                         }
-                        geometry.Add(new JObject { ["path"] = node.Path, ["instanceID"] = node.Source.gameObject.GetInstanceID(), ["resolution"] = resolution.DeepClone(), ["rect"] = RectJson(node.Bounds), ["visibleRect"] = RectJson(node.HitBounds), ["active"] = node.Source.gameObject.activeInHierarchy, ["visible"] = node.Visible });
-                        if (!node.Visible) continue;
+
+                        geometry.Add(new JObject
+                        {
+                            ["path"] = node.Path,
+                            ["instanceID"] = node.Source.gameObject.GetInstanceID(),
+                            ["resolution"] = resolution.DeepClone(),
+                            ["rect"] = RectJson(node.Bounds),
+                            ["visibleRect"] = RectJson(node.HitBounds),
+                            ["active"] = node.Source.gameObject.activeInHierarchy,
+                            ["visible"] = node.Visible
+                        });
+                        if (!node.Visible)
+                            continue;
                         if (node.Preview.rect.width <= 0.01f || node.Preview.rect.height <= 0.01f)
-                            Add(findings, "zero_size", "warning", node, "The evaluated rectangle has zero width or height. Check sizeDelta, anchors and layout size providers.", null, resolution, ref truncated);
+                            Add(
+                                findings,
+                                "zero_size",
+                                "warning",
+                                node,
+                                "The evaluated rectangle has zero width or height. Check sizeDelta, anchors and layout size providers.",
+                                null,
+                                resolution,
+                                ref truncated
+                            );
                         else if (!Contains(canvasBounds, node.Bounds))
-                            Add(findings, "off_canvas", "candidate", node, "Bounds extend outside the Canvas. Review anchors, offsets and intentionally off-screen content.", null, resolution, ref truncated);
+                            Add(
+                                findings,
+                                "off_canvas",
+                                "candidate",
+                                node,
+                                "Bounds extend outside the Canvas. Review anchors, offsets and intentionally off-screen content.",
+                                null,
+                                resolution,
+                                ref truncated
+                            );
                         TextFindings(node, resolution, findings, ref truncated);
                     }
+
                     int pairs = 0;
                     for (int i = 0; i < nodes.Count && pairs < PairLimit; i++)
                     {
                         Node first = nodes[i];
-                        if (!first.PointerActive || !first.Interactive || !first.Raycast) continue;
+                        if (!first.PointerActive || !first.Interactive || !first.Raycast)
+                            continue;
                         for (int j = 0; j < nodes.Count && pairs < PairLimit; j++)
                         {
                             Node second = nodes[j];
-                            if (i == j || !second.PointerActive || !second.Raycast) continue;
+                            if (i == j || !second.PointerActive || !second.Raycast)
+                                continue;
                             pairs++;
-                            if ((first.Receiver != null && first.Receiver == second.Receiver) || first.Source.IsChildOf(second.Source) || second.Source.IsChildOf(first.Source) || !Overlaps(first.HitBounds, second.HitBounds)) continue;
+                            if ((first.Receiver != null && first.Receiver == second.Receiver) || first.Source.IsChildOf(second.Source) || second.Source.IsChildOf(first.Source) || !Overlaps(first.HitBounds, second.HitBounds))
+                                continue;
                             if (second.Interactive && j > i)
-                                Add(findings, "interactive_overlap", "candidate", first, "Interactive rectangles overlap. Check intentional stacking and pointer navigation at this resolution.", second, resolution, ref truncated);
+                                Add(
+                                    findings,
+                                    "interactive_overlap",
+                                    "candidate",
+                                    first,
+                                    "Interactive rectangles overlap. Check intentional stacking and pointer navigation at this resolution.",
+                                    second,
+                                    resolution,
+                                    ref truncated
+                                );
                             else if (!second.Interactive && second.Order > first.Order)
-                                Add(findings, "raycast_blocker", "candidate", first, "A later non-interactive Graphic with raycastTarget enabled overlaps this interactive rectangle. Review draw order, custom filters and whether raycastTarget can be disabled.", second, resolution, ref truncated);
+                                Add(
+                                    findings,
+                                    "raycast_blocker",
+                                    "candidate",
+                                    first,
+                                    "A later non-interactive Graphic with raycastTarget enabled overlaps this interactive rectangle. Review draw order, custom filters and whether raycastTarget can be disabled.",
+                                    second,
+                                    resolution,
+                                    ref truncated
+                                );
                         }
                     }
-                    if (pairs >= PairLimit) { truncated = true; limitations.Add("Interaction comparisons are capped at 20000 pairs per resolution; candidates may be omitted."); }
-                    summaries.Add(new JObject { ["resolution"] = resolution, ["nodesEvaluated"] = nodes.Count, ["findingsReturned"] = findings.Count - before, ["interactionPairsChecked"] = pairs });
+
+                    if (pairs >= PairLimit)
+                    {
+                        truncated = true;
+                        limitations.Add("Interaction comparisons are capped at 20000 pairs per resolution; candidates may be omitted.");
+                    }
+
+                    summaries.Add(new JObject
+                    {
+                        ["resolution"] = resolution,
+                        ["nodesEvaluated"] = nodes.Count,
+                        ["findingsReturned"] = findings.Count - before,
+                        ["interactionPairsChecked"] = pairs
+                    });
                 }
+
                 return new SuccessResponse("uGUI diagnostics complete.", new
                 {
-                    findings, rects = geometry, resolutions = summaries,
-                    counts = new { nodes = nodes.Count, findings = findings.Count, warnings = findings.Count(f => (string)f["severity"] == "warning"), candidates = findings.Count(f => (string)f["severity"] == "candidate") },
-                    truncated, limitations = limitations.OrderBy(x => x).ToArray(), evaluation = "sanitized_layout_preview"
+                    findings,
+                    rects = geometry,
+                    resolutions = summaries,
+                    counts = new
+                    {
+                        nodes = nodes.Count,
+                        findings = findings.Count,
+                        warnings = findings.Count(f => (string)f["severity"] == "warning"),
+                        candidates = findings.Count(f => (string)f["severity"] == "candidate")
+                    },
+                    truncated,
+                    limitations = limitations.OrderBy(x => x).ToArray(),
+                    evaluation = "sanitized_layout_preview"
                 });
             }
             catch (Exception ex)
@@ -289,7 +438,8 @@ namespace MCPForUnity.Editor.Tools
             }
             finally
             {
-                if (scene.IsValid()) EditorSceneManager.ClosePreviewScene(scene);
+                if (scene.IsValid())
+                    EditorSceneManager.ClosePreviewScene(scene);
             }
         }
 
@@ -301,8 +451,10 @@ namespace MCPForUnity.Editor.Tools
 
         private static void CopyRect(RectTransform source, RectTransform target)
         {
-            target.anchorMin = source.anchorMin; target.anchorMax = source.anchorMax;
-            target.pivot = source.pivot; target.sizeDelta = source.sizeDelta;
+            target.anchorMin = source.anchorMin;
+            target.anchorMax = source.anchorMax;
+            target.pivot = source.pivot;
+            target.sizeDelta = source.sizeDelta;
             target.anchoredPosition3D = source.anchoredPosition3D;
         }
 
@@ -314,28 +466,33 @@ namespace MCPForUnity.Editor.Tools
 
         private static T Read<T>(object target, string name, T fallback)
         {
-            if (target == null) return fallback;
+            if (target == null)
+                return fallback;
             var property = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
-            if (property == null || !property.CanRead) return fallback;
+            if (property == null || !property.CanRead)
+                return fallback;
             object value = property.GetValue(target);
             return value is T typed ? typed : fallback;
         }
 
         private static bool Enabled(Component component) => component != null && (!(component is Behaviour behaviour) || behaviour.enabled);
         private static bool HasLayoutInterface(Type type) => type.GetInterfaces().Any(t => t.FullName == "UnityEngine.UI.ILayoutController" || t.FullName == "UnityEngine.UI.ILayoutElement");
-
         private static float Scale(Component scaler, float fallback, Vector2 size)
         {
-            if (!Enabled(scaler)) return Mathf.Max(0.0001f, fallback);
+            if (!Enabled(scaler))
+                return Mathf.Max(0.0001f, fallback);
             object modeValue = scaler.GetType().GetProperty("uiScaleMode")?.GetValue(scaler);
             int mode = modeValue == null ? 0 : Convert.ToInt32(modeValue);
-            if (mode == 0) return Mathf.Max(0.0001f, Read(scaler, "scaleFactor", 1f));
+            if (mode == 0)
+                return Mathf.Max(0.0001f, Read(scaler, "scaleFactor", 1f));
             Vector2 reference = Read(scaler, "referenceResolution", new Vector2(800, 600));
             float x = size.x / Mathf.Max(1, reference.x), y = size.y / Mathf.Max(1, reference.y);
             object matchValue = scaler.GetType().GetProperty("screenMatchMode")?.GetValue(scaler);
             int match = matchValue == null ? 0 : Convert.ToInt32(matchValue);
-            if (match == 1) return Mathf.Min(x, y);
-            if (match == 2) return Mathf.Max(x, y);
+            if (match == 1)
+                return Mathf.Min(x, y);
+            if (match == 2)
+                return Mathf.Max(x, y);
             return Mathf.Pow(2, Mathf.Lerp(Mathf.Log(x, 2), Mathf.Log(y, 2), Read(scaler, "matchWidthOrHeight", 0f)));
         }
 
@@ -345,38 +502,47 @@ namespace MCPForUnity.Editor.Tools
             var method = type?.GetMethod("ForceRebuildLayoutImmediate", BindingFlags.Public | BindingFlags.Static);
             var controllerType = UnityTypeResolver.ResolveAny("UnityEngine.UI.ILayoutController");
             var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutGroup");
-            if (method == null || controllerType == null || groupType == null) return;
-
+            if (method == null || controllerType == null || groupType == null)
+                return;
             var roots = new List<RectTransform>();
             foreach (var rect in rects)
             {
-                if (!rect.gameObject.activeInHierarchy) continue;
-                if (rect.parent != null && Enabled(rect.parent.GetComponent(groupType))) continue;
-                if (rect.GetComponents(controllerType).Any(Enabled)) roots.Add(rect);
+                if (!rect.gameObject.activeInHierarchy)
+                    continue;
+                if (rect.parent != null && Enabled(rect.parent.GetComponent(groupType)))
+                    continue;
+                if (rect.GetComponents(controllerType).Any(Enabled))
+                    roots.Add(rect);
             }
 
             // An enabled parent LayoutGroup already rebuilds its child controllers.
             // Keep separate roots behind plain/disabled parents, resolving preferred sizes
             // bottom-up before the final top-down placement without repeating every subtree.
-            for (int i = roots.Count - 1; i >= 0; i--) method.Invoke(null, new object[] { roots[i] });
-            for (int i = 0; i < roots.Count; i++) method.Invoke(null, new object[] { roots[i] });
+            for (int i = roots.Count - 1; i >= 0; i--)
+                method.Invoke(null, new object[] { roots[i] });
+            for (int i = 0; i < roots.Count; i++)
+                method.Invoke(null, new object[] { roots[i] });
         }
 
         private static Rect Bounds(RectTransform rect, RectTransform canvas, float scale, Vector2 size)
         {
-            var corners = new Vector3[4]; rect.GetWorldCorners(corners);
+            var corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
             Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity), max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
             foreach (var corner in corners)
             {
                 Vector2 point = (Vector2)canvas.InverseTransformPoint(corner) * scale + size * 0.5f;
-                min = Vector2.Min(min, point); max = Vector2.Max(max, point);
+                min = Vector2.Min(min, point);
+                max = Vector2.Max(max, point);
             }
+
             return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
         }
 
         private static bool IsActiveForCanvas(RectTransform rect)
         {
-            if (!rect.gameObject.activeInHierarchy || FindActiveCanvas(rect) == null) return false;
+            if (!rect.gameObject.activeInHierarchy || FindActiveCanvas(rect) == null)
+                return false;
             var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic");
             return graphic == null || Enabled(graphic);
         }
@@ -387,19 +553,24 @@ namespace MCPForUnity.Editor.Tools
             for (Transform t = source; t != null; t = t.parent)
             {
                 var canvas = t.GetComponent<Canvas>();
-                if (canvas != null && canvas.isActiveAndEnabled) return canvas;
+                if (canvas != null && canvas.isActiveAndEnabled)
+                    return canvas;
             }
+
             return null;
         }
 
         private static bool IsVisible(RectTransform rect)
         {
-            if (!IsActiveForCanvas(rect)) return false;
+            if (!IsActiveForCanvas(rect))
+                return false;
             for (Transform t = rect; t != null; t = t.parent)
             {
                 foreach (var group in t.GetComponents<CanvasGroup>())
-                    if (group.enabled && group.alpha <= 0.001f) return false;
+                    if (group.enabled && group.alpha <= 0.001f)
+                        return false;
             }
+
             var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic");
             return graphic == null || (Enabled(graphic) && Read(graphic, "color", Color.white).a > 0.001f);
         }
@@ -412,23 +583,31 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (interactive)
                     {
-                        if (group.enabled && !group.interactable) return false;
+                        if (group.enabled && !group.interactable)
+                            return false;
                         // Selectable checks this boundary even on a disabled CanvasGroup.
-                        if (group.ignoreParentGroups) return true;
+                        if (group.ignoreParentGroups)
+                            return true;
                     }
                     else
                     {
-                        if (!group.enabled) continue;
-                        if (!group.blocksRaycasts) return false;
-                        if (group.ignoreParentGroups) return true;
+                        if (!group.enabled)
+                            continue;
+                        if (!group.blocksRaycasts)
+                            return false;
+                        if (group.ignoreParentGroups)
+                            return true;
                     }
                 }
+
                 if (!interactive)
                 {
                     var canvas = t.GetComponent<Canvas>();
-                    if (canvas != null && canvas.overrideSorting) break;
+                    if (canvas != null && canvas.overrideSorting)
+                        break;
                 }
             }
+
             return true;
         }
 
@@ -438,9 +617,11 @@ namespace MCPForUnity.Editor.Tools
             for (Transform t = source; t != null; t = t.parent)
             {
                 var selectable = ComponentNamed(t.gameObject, "UnityEngine.UI.Selectable");
-                if (selectable == null) continue;
+                if (selectable == null)
+                    continue;
                 return Enabled(selectable) && t.gameObject.activeInHierarchy && Read(selectable, "interactable", true) ? t : null;
             }
+
             return null;
         }
 
@@ -450,12 +631,11 @@ namespace MCPForUnity.Editor.Tools
             return Enabled(graphic) && Read(graphic, "raycastTarget", false);
         }
 
-        private static bool ActiveMask(GameObject go) => go.activeInHierarchy &&
-            (Enabled(ComponentNamed(go, "UnityEngine.UI.RectMask2D")) || Enabled(ComponentNamed(go, "UnityEngine.UI.Mask")));
-
+        private static bool ActiveMask(GameObject go) => go.activeInHierarchy && (Enabled(ComponentNamed(go, "UnityEngine.UI.RectMask2D")) || Enabled(ComponentNamed(go, "UnityEngine.UI.Mask")));
         private static void LayoutFindings(Node node, JArray findings, ref bool truncated)
         {
-            if (!node.Source.gameObject.activeInHierarchy) return;
+            if (!node.Source.gameObject.activeInHierarchy)
+                return;
             var fitter = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.ContentSizeFitter");
             var aspect = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.AspectRatioFitter");
             bool fitsX = Fit(fitter, "horizontalFit"), fitsY = Fit(fitter, "verticalFit");
@@ -463,25 +643,47 @@ namespace MCPForUnity.Editor.Tools
             bool aspectX = aspectMode == 2 || aspectMode == 3 || aspectMode == 4;
             bool aspectY = aspectMode == 1 || aspectMode == 3 || aspectMode == 4;
             if ((fitsX && aspectX) || (fitsY && aspectY))
-                Add(findings, "layout_driver_conflict", "warning", node, "ContentSizeFitter and AspectRatioFitter both drive this rectangle. Assign one size controller per axis.", null, null, ref truncated);
-            if (node.Source.parent == null) return;
-            if (IgnoredByParentLayout(node.Source)) return;
+                Add(
+                    findings,
+                    "layout_driver_conflict",
+                    "warning",
+                    node,
+                    "ContentSizeFitter and AspectRatioFitter both drive this rectangle. Assign one size controller per axis.",
+                    null,
+                    null,
+                    ref truncated
+                );
+            if (node.Source.parent == null)
+                return;
+            if (IgnoredByParentLayout(node.Source))
+                return;
             var parent = node.Source.parent.gameObject;
             var grid = ComponentNamed(parent, "UnityEngine.UI.GridLayoutGroup");
             var group = ComponentNamed(parent, "UnityEngine.UI.HorizontalOrVerticalLayoutGroup");
             bool parentX = Enabled(grid) || (Enabled(group) && Read(group, "childControlWidth", false));
             bool parentY = Enabled(grid) || (Enabled(group) && Read(group, "childControlHeight", false));
             if (((fitsX || aspectX) && parentX) || ((fitsY || aspectY) && parentY))
-                Add(findings, "layout_driver_conflict", "warning", node, "A parent LayoutGroup and this child's ContentSizeFitter/AspectRatioFitter drive the same size axis. Disable parent childControlWidth/Height or remove the conflicting fitter axis.", null, null, ref truncated);
+                Add(
+                    findings,
+                    "layout_driver_conflict",
+                    "warning",
+                    node,
+                    "A parent LayoutGroup and this child's ContentSizeFitter/AspectRatioFitter drive the same size axis. Disable parent childControlWidth/Height or remove the conflicting fitter axis.",
+                    null,
+                    null,
+                    ref truncated
+                );
         }
 
         private static bool IgnoredByParentLayout(RectTransform rect)
         {
             var type = UnityTypeResolver.ResolveAny("UnityEngine.UI.ILayoutIgnorer");
             var property = type?.GetProperty("ignoreLayout");
-            if (property == null) return false;
+            if (property == null)
+                return false;
             var ignorers = rect.GetComponents(type);
-            if (ignorers.Length == 0) return false;
+            if (ignorers.Length == 0)
+                return false;
             // LayoutGroup does not filter disabled ignorers and includes a child if any one opts in.
             return ignorers.All(component => (bool)property.GetValue(component));
         }
@@ -491,11 +693,12 @@ namespace MCPForUnity.Editor.Tools
             object value = component?.GetType().GetProperty(property)?.GetValue(component);
             return value == null ? 0 : Convert.ToInt32(value);
         }
-        private static bool Fit(Component component, string property) => Enabled(component) && EnumValue(component, property) != 0;
 
+        private static bool Fit(Component component, string property) => Enabled(component) && EnumValue(component, property) != 0;
         private static bool AspectEligible(Component component)
         {
-            if (component == null) return false;
+            if (component == null)
+                return false;
             // Invoke only the exact built-in type, never a user subclass's hidden method.
             var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.AspectRatioFitter");
             var method = type?.GetMethod("IsComponentValidOnObject", BindingFlags.Public | BindingFlags.Instance);
@@ -507,7 +710,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static void TextFindings(Node node, JObject resolution, JArray findings, ref bool truncated)
         {
-            if (!Enabled(node.Text) || string.IsNullOrEmpty(Read(node.Text, "text", ""))) return;
+            if (!Enabled(node.Text) || string.IsNullOrEmpty(Read(node.Text, "text", "")))
+                return;
             bool tmp = node.Text.GetType().FullName == "TMPro.TextMeshProUGUI";
             // Query only the legacy Text clone. TMP getters can rebuild the original text or font atlas.
             float preferredWidth, preferredHeight;
@@ -524,38 +728,78 @@ namespace MCPForUnity.Editor.Tools
                 preferredWidth = Read(node.PreviewText, "preferredWidth", 0f);
                 preferredHeight = Read(node.PreviewText, "preferredHeight", 0f);
             }
+
             Vector2 available = node.Preview.rect.size;
             bool wraps = tmp ? Read(node.Text, "enableWordWrapping", true) : EnumValue(node.Text, "horizontalOverflow") == 0;
             bool autoSize = tmp ? Read(node.Text, "enableAutoSizing", false) : Read(node.Text, "resizeTextForBestFit", false);
-            if (autoSize) return;
+            if (autoSize)
+                return;
             bool overflow = preferredHeight > available.y + 0.5f || (!wraps && preferredWidth > available.x + 0.5f);
             if (tmp && wraps && preferredWidth > available.x && available.x > 0)
                 overflow |= preferredHeight * Mathf.Ceil(preferredWidth / available.x) > available.y + 0.5f;
             if (overflow)
-                Add(findings, "text_overflow", tmp ? "candidate" : "warning", node, tmp
-                    ? "Estimated TMP text content exceeds the rectangle. Verify wrapping/autosizing with the installed font in Game View; this estimate uses character count and font size without invoking TMP rebuilds."
-                    : "Text preferred size exceeds its evaluated rectangle. Increase available size or adjust wrapping, font size and layout constraints.", null, resolution, ref truncated);
+                Add(
+                    findings,
+                    "text_overflow",
+                    tmp ? "candidate" : "warning",
+                    node,
+                    tmp
+                        ? "Estimated TMP text content exceeds the rectangle. Verify wrapping/autosizing with the installed font in Game View; this estimate uses character count and font size without invoking TMP rebuilds."
+                        : "Text preferred size exceeds its evaluated rectangle. Increase available size or adjust wrapping, font size and layout constraints.",
+                    null,
+                    resolution,
+                    ref truncated
+                );
         }
 
         private static string Path(Transform transform)
         {
             var parts = new List<string>();
-            for (var t = transform; t != null; t = t.parent) parts.Add(t.name);
-            parts.Reverse(); return string.Join("/", parts);
+            for (var t = transform; t != null; t = t.parent)
+                parts.Add(t.name);
+            parts.Reverse();
+            return string.Join("/", parts);
         }
-        private static JObject RectJson(Rect rect) => new JObject { ["x"] = rect.x, ["y"] = rect.y, ["width"] = rect.width, ["height"] = rect.height };
-        private static bool Contains(Rect outer, Rect inner) => inner.xMin >= outer.xMin - 0.5f && inner.xMax <= outer.xMax + 0.5f && inner.yMin >= outer.yMin - 0.5f && inner.yMax <= outer.yMax + 0.5f;
-        private static bool Overlaps(Rect a, Rect b) => a.width > 0 && a.height > 0 && b.width > 0 && b.height > 0 && a.Overlaps(b);
-        private static Rect Intersect(Rect a, Rect b) => new Rect(Mathf.Max(a.xMin, b.xMin), Mathf.Max(a.yMin, b.yMin), Mathf.Max(0, Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.xMin, b.xMin)), Mathf.Max(0, Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.yMin, b.yMin)));
 
+        private static JObject RectJson(Rect rect) => new JObject
+        {
+            ["x"] = rect.x,
+            ["y"] = rect.y,
+            ["width"] = rect.width,
+            ["height"] = rect.height
+        };
+        private static bool Contains(Rect outer, Rect inner) => inner.xMin >= outer.xMin - 0.5f
+            && inner.xMax <= outer.xMax + 0.5f
+            && inner.yMin >= outer.yMin - 0.5f
+            && inner.yMax <= outer.yMax + 0.5f;
+        private static bool Overlaps(Rect a, Rect b) => a.width > 0 && a.height > 0 && b.width > 0 && b.height > 0 && a.Overlaps(b);
+        private static Rect Intersect(Rect a, Rect b) => new Rect(
+            Mathf.Max(a.xMin, b.xMin),
+            Mathf.Max(a.yMin, b.yMin),
+            Mathf.Max(0, Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.xMin, b.xMin)),
+            Mathf.Max(0, Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.yMin, b.yMin))
+        );
         private static void Add(JArray findings, string code, string severity, Node node, string description, Node related, JObject resolution, ref bool truncated)
         {
-            if (findings.Count >= FindingLimit) { truncated = true; return; }
+            if (findings.Count >= FindingLimit)
+            {
+                truncated = true;
+                return;
+            }
+
             findings.Add(new JObject
             {
-                ["code"] = code, ["severity"] = severity, ["status"] = severity == "candidate" ? "candidate" : "observed",
-                ["path"] = node.Path, ["instanceID"] = node.Source.gameObject.GetInstanceID(), ["description"] = description,
-                ["relatedTarget"] = related == null ? null : new JObject { ["path"] = related.Path, ["instanceID"] = related.Source.gameObject.GetInstanceID() },
+                ["code"] = code,
+                ["severity"] = severity,
+                ["status"] = severity == "candidate" ? "candidate" : "observed",
+                ["path"] = node.Path,
+                ["instanceID"] = node.Source.gameObject.GetInstanceID(),
+                ["description"] = description,
+                ["relatedTarget"] = related == null ? null : new JObject
+                {
+                    ["path"] = related.Path,
+                    ["instanceID"] = related.Source.gameObject.GetInstanceID()
+                },
                 ["resolution"] = resolution?.DeepClone()
             });
         }

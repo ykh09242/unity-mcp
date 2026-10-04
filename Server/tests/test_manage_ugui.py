@@ -44,17 +44,33 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> Boundary:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action,options,mutation", [
-    ("ping", {}, False),
-    ("get_hierarchy", {"target": "Canvas"}, False),
-    ("diagnose", {"target": "Canvas"}, False),
-    ("create", {"parent": 123, "element_type": "panel", "name": "Menu"}, True),
-    ("set_rect", {"target": -321, "properties": {"sizeDelta": [100, 200]}}, True),
-    ("set_layout", {"target": "Canvas/Menu", "properties": {"type": "vertical", "spacing": 4}}, True),
-    ("set_text", {"target": "Label", "properties": {"text": "Hello", "fontSize": 24}}, True),
-    ("set_canvas", {"target": "Canvas", "properties": {"sortingOrder": 2}}, True),
-])
-async def test_routes_actions_when_valid(boundary: Boundary, action: str, options: dict[str, JsonValue], mutation: bool) -> None:
+@pytest.mark.parametrize(
+    "action,options,mutation",
+    [
+        ("ping", {}, False),
+        ("get_hierarchy", {"target": "Canvas"}, False),
+        ("diagnose", {"target": "Canvas"}, False),
+        ("create", {"parent": 123, "element_type": "panel", "name": "Menu"}, True),
+        ("set_rect", {"target": -321, "properties": {"sizeDelta": [100, 200]}}, True),
+        (
+            "set_layout",
+            {"target": "Canvas/Menu", "properties": {"type": "vertical", "spacing": 4}},
+            True,
+        ),
+        (
+            "set_text",
+            {"target": "Label", "properties": {"text": "Hello", "fontSize": 24}},
+            True,
+        ),
+        ("set_canvas", {"target": "Canvas", "properties": {"sortingOrder": 2}}, True),
+    ],
+)
+async def test_routes_actions_when_valid(
+    boundary: Boundary,
+    action: str,
+    options: dict[str, JsonValue],
+    mutation: bool,
+) -> None:
     # Given: separate transport seams expose accidental mutation of a read action.
     sender = boundary.mutate if mutation else boundary.read
     # When
@@ -63,12 +79,23 @@ async def test_routes_actions_when_valid(boundary: Boundary, action: str, option
     assert result["success"] is True
     args = sender.await_args.args
     assert args[1:3] == ("UGUI@fixture", "manage_ugui")
-    assert args[3] == {"action": action, "include_inactive": False, "max_nodes": 200, **options}
-    assert (boundary.read.await_count, boundary.mutate.await_count) == ((0, 1) if mutation else (1, 0))
+    assert args[3] == {
+        "action": action,
+        "include_inactive": False,
+        "max_nodes": 200,
+        **options,
+    }
+    assert (boundary.read.await_count, boundary.mutate.await_count) == (
+        (0, 1) if mutation else (1, 0)
+    )
     if action == "ping":
         boundary.preflight.assert_not_awaited()
     else:
-        boundary.preflight.assert_awaited_once_with(SimpleNamespace(), requires_no_tests=mutation, wait_for_no_compile=True)
+        boundary.preflight.assert_awaited_once_with(
+            SimpleNamespace(),
+            requires_no_tests=mutation,
+            wait_for_no_compile=True,
+        )
 
 
 @pytest.mark.asyncio
@@ -77,37 +104,78 @@ async def test_normalizes_json_when_client_supplies_strings(boundary: Boundary) 
     properties = '{"anchorMin":[0,0],"anchorMax":[1,1]}'
     resolutions = '[{"width":64,"height":8192},{"width":8192,"height":64}]'
     # When
-    await manage_ugui(SimpleNamespace(), action=" DIAGNOSE ", target="Canvas", properties=properties,
-                      resolutions=resolutions, max_nodes=1000, include_inactive=True)
+    await manage_ugui(
+        SimpleNamespace(),
+        action=" DIAGNOSE ",
+        target="Canvas",
+        properties=properties,
+        resolutions=resolutions,
+        max_nodes=1000,
+        include_inactive=True,
+    )
     # Then
     assert boundary.read.await_args.args[3] == {
-        "action": "diagnose", "target": "Canvas", "properties": {"anchorMin": [0, 0], "anchorMax": [1, 1]},
+        "action": "diagnose",
+        "target": "Canvas",
+        "properties": {"anchorMin": [0, 0], "anchorMax": [1, 1]},
         "resolutions": [{"width": 64, "height": 8192}, {"width": 8192, "height": 64}],
-        "max_nodes": 1000, "include_inactive": True,
+        "max_nodes": 1000,
+        "include_inactive": True,
     }
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("options", [
-    {"action": "delete"}, {"action": ""},
-    {"action": "create"}, {"action": "create", "element_type": "slider"},
-    {"action": "create", "element_type": "panel"},
-    *[{"action": action, "properties": {}} for action in ("set_rect", "set_layout", "set_text", "set_canvas")],
-    {"action": "set_rect", "target": "Canvas"}, {"action": "diagnose", "target": None}, {"target": None},
-    {"action": "set_rect", "target": "Canvas", "properties": {}},
-    {"target": True}, {"target": " "}, {"parent": False}, {"parent": ""}, {"name": " "}, {"name": "Menu/Title"},
-    {"include_inactive": "false"},
-    *[{"max_nodes": value} for value in (0, 1001, True, 2.5, "200")],
-    *[{"properties": value} for value in ('{"bad":', "[]", "null", "[object Object]", "", 42)],
-    *[{"resolutions": value} for value in (
-        "not-json", "{}", [], [{"width": 100, "height": 100}] * 9,
-        [{"width": 63, "height": 100}], [{"width": 100, "height": 8193}],
-        [{"width": True, "height": 100}], [{"width": 100.5, "height": 100}],
-        [{"width": "100", "height": 100}], [{"width": 100}],
-        [{"width": 100, "height": 100, "scale": 2}], 42,
-    )],
-])
-async def test_rejects_payload_when_invalid_before_editor_access(boundary: Boundary, options: dict[str, JsonValue]) -> None:
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"action": "delete"},
+        {"action": ""},
+        {"action": "create"},
+        {"action": "create", "element_type": "slider"},
+        {"action": "create", "element_type": "panel"},
+        *[
+            {"action": action, "properties": {}}
+            for action in ("set_rect", "set_layout", "set_text", "set_canvas")
+        ],
+        {"action": "set_rect", "target": "Canvas"},
+        {"action": "diagnose", "target": None},
+        {"target": None},
+        {"action": "set_rect", "target": "Canvas", "properties": {}},
+        {"target": True},
+        {"target": " "},
+        {"parent": False},
+        {"parent": ""},
+        {"name": " "},
+        {"name": "Menu/Title"},
+        {"include_inactive": "false"},
+        *[{"max_nodes": value} for value in (0, 1001, True, 2.5, "200")],
+        *[
+            {"properties": value}
+            for value in ('{"bad":', "[]", "null", "[object Object]", "", 42)
+        ],
+        *[
+            {"resolutions": value}
+            for value in (
+                "not-json",
+                "{}",
+                [],
+                [{"width": 100, "height": 100}] * 9,
+                [{"width": 63, "height": 100}],
+                [{"width": 100, "height": 8193}],
+                [{"width": True, "height": 100}],
+                [{"width": 100.5, "height": 100}],
+                [{"width": "100", "height": 100}],
+                [{"width": 100}],
+                [{"width": 100, "height": 100, "scale": 2}],
+                42,
+            )
+        ],
+    ],
+)
+async def test_rejects_payload_when_invalid_before_editor_access(
+    boundary: Boundary,
+    options: dict[str, JsonValue],
+) -> None:
     # Given
     request = {"action": "get_hierarchy", "target": "Canvas", **options}
     # When
@@ -120,12 +188,26 @@ async def test_rejects_payload_when_invalid_before_editor_access(boundary: Bound
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response", [
-    {"success": False, "message": "uGUI package unavailable", "data": {"requiredPackage": "com.unity.ugui"}},
-    {"success": False, "message": "TMP unavailable", "data": {"requiredType": "TMPro.TextMeshProUGUI"}},
-    {"success": True, "data": {"capabilities": {"ugui": False, "tmp": False}}},
-])
-async def test_preserves_dependency_report_when_editor_returns_it(boundary: Boundary, response: dict[str, JsonValue]) -> None:
+@pytest.mark.parametrize(
+    "response",
+    [
+        {
+            "success": False,
+            "message": "uGUI package unavailable",
+            "data": {"requiredPackage": "com.unity.ugui"},
+        },
+        {
+            "success": False,
+            "message": "TMP unavailable",
+            "data": {"requiredType": "TMPro.TextMeshProUGUI"},
+        },
+        {"success": True, "data": {"capabilities": {"ugui": False, "tmp": False}}},
+    ],
+)
+async def test_preserves_dependency_report_when_editor_returns_it(
+    boundary: Boundary,
+    response: dict[str, JsonValue],
+) -> None:
     # Given
     boundary.read.return_value = response
     # When
@@ -137,7 +219,12 @@ async def test_preserves_dependency_report_when_editor_returns_it(boundary: Boun
 @pytest.mark.asyncio
 async def test_returns_busy_when_preflight_blocks_mutation(boundary: Boundary) -> None:
     # Given
-    blocked = MCPResponse(success=False, error="busy", hint="retry", data={"reason": "tests_running"})
+    blocked = MCPResponse(
+        success=False,
+        error="busy",
+        hint="retry",
+        data={"reason": "tests_running"},
+    )
     boundary.preflight.return_value = blocked
     # When
     result = await manage_ugui(SimpleNamespace(), action="create", element_type="canvas")
@@ -162,11 +249,22 @@ async def test_exposes_schema_and_ui_group_when_registered(boundary: Boundary) -
     # Given: production decorator metadata is used by the real MCP SDK.
     metadata = next(item for item in get_registered_tools() if item["name"] == "manage_ugui")
     server = FastMCP("ugui-schema")
-    server.tool(name=metadata["name"], description=metadata["description"], **metadata["kwargs"])(manage_ugui)
+    server.tool(
+        name=metadata["name"],
+        description=metadata["description"],
+        **metadata["kwargs"],
+    )(manage_ugui)
     # When
     async with Client(server) as client:
         tools = await client.list_tools()
-        result = await client.call_tool("manage_ugui", {"action": "diagnose", "target": "Canvas", "resolutions": '[{"width":64,"height":8192}]'})
+        result = await client.call_tool(
+            "manage_ugui",
+            {
+                "action": "diagnose",
+                "target": "Canvas",
+                "resolutions": '[{"width":64,"height":8192}]',
+            },
+        )
     # Then
     tool = next(item for item in tools if item.name == "manage_ugui")
     assert tool.annotations.read_only_hint is False
@@ -179,14 +277,22 @@ async def test_exposes_schema_and_ui_group_when_registered(boundary: Boundary) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("options", [
-    *[{"max_nodes": value} for value in (True, 1.5, "200", 0, 1001)],
-    {"target": True}, {"parent": False}, {"include_inactive": "false"},
-    {"resolutions": [{"width": True, "height": 100}]},
-    {"resolutions": [{"width": 100.0, "height": 100}]},
-    {"resolutions": [{"width": "100", "height": 100}]},
-])
-async def test_rejects_coercion_when_called_through_sdk(boundary: Boundary, options: dict[str, JsonValue]) -> None:
+@pytest.mark.parametrize(
+    "options",
+    [
+        *[{"max_nodes": value} for value in (True, 1.5, "200", 0, 1001)],
+        {"target": True},
+        {"parent": False},
+        {"include_inactive": "false"},
+        {"resolutions": [{"width": True, "height": 100}]},
+        {"resolutions": [{"width": 100.0, "height": 100}]},
+        {"resolutions": [{"width": "100", "height": 100}]},
+    ],
+)
+async def test_rejects_coercion_when_called_through_sdk(
+    boundary: Boundary,
+    options: dict[str, JsonValue],
+) -> None:
     # Given
     server = FastMCP("ugui-validation")
     server.tool()(manage_ugui)
@@ -202,26 +308,50 @@ async def test_accepts_full_resolution_budget_when_at_bounds(boundary: Boundary)
     # Given
     resolutions = [{"width": 64, "height": 8192}] * 8
     # When
-    result = await manage_ugui(SimpleNamespace(), action="diagnose", target="Canvas", max_nodes=1, resolutions=resolutions)
+    result = await manage_ugui(
+        SimpleNamespace(),
+        action="diagnose",
+        target="Canvas",
+        max_nodes=1,
+        resolutions=resolutions,
+    )
     # Then
     assert result["success"] is True
     assert boundary.read.await_args.args[3]["resolutions"] == resolutions
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("options", [{"action": "ping"}, {"action": "create", "element_type": "canvas"}])
+@pytest.mark.parametrize(
+    "options",
+    [{"action": "ping"}, {"action": "create", "element_type": "canvas"}],
+)
 async def test_preserves_retry_details_when_legacy_transport_returns_response_model(
-    boundary: Boundary, monkeypatch: pytest.MonkeyPatch, options: dict[str, JsonValue],
+    boundary: Boundary,
+    monkeypatch: pytest.MonkeyPatch,
+    options: dict[str, JsonValue],
 ) -> None:
     # Given: stdio transport really returns MCPResponse when the retry wrapper fails.
-    response = MCPResponse(success=False, error="Unity connection unavailable", hint="retry",
-                           data={"reason": "reloading", "retry_after_ms": 500})
+    response = MCPResponse(
+        success=False,
+        error="Unity connection unavailable",
+        hint="retry",
+        data={"reason": "reloading", "retry_after_ms": 500},
+    )
     legacy_send = AsyncMock(return_value=response)
     monkeypatch.setattr(config, "transport_mode", "stdio")
-    monkeypatch.setattr("services.tools.manage_ugui.send_with_unity_instance", send_with_unity_instance)
+    monkeypatch.setattr(
+        "services.tools.manage_ugui.send_with_unity_instance",
+        send_with_unity_instance,
+    )
     monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
-    monkeypatch.setattr("services.tools.manage_ugui.async_send_command_with_retry", legacy_send)
-    monkeypatch.setattr("transport.legacy.unity_connection.async_send_command_with_retry", legacy_send)
+    monkeypatch.setattr(
+        "services.tools.manage_ugui.async_send_command_with_retry",
+        legacy_send,
+    )
+    monkeypatch.setattr(
+        "transport.legacy.unity_connection.async_send_command_with_retry",
+        legacy_send,
+    )
     server = FastMCP("ugui-legacy-response")
     server.tool()(manage_ugui)
     # When: exercise the real MCP serialization and both production routing helpers.
@@ -233,14 +363,19 @@ async def test_preserves_retry_details_when_legacy_transport_returns_response_mo
 
 
 @pytest.mark.asyncio
-async def test_rejects_nested_json_when_properties_exceed_decoder_depth(boundary: Boundary) -> None:
+async def test_rejects_nested_json_when_properties_exceed_decoder_depth(
+    boundary: Boundary,
+) -> None:
     # Given: JSON supplied inside a string bypasses the MCP envelope's depth bound.
     properties = '{"anchorMin":' + '[' * 2000 + '0' + ']' * 2000 + '}'
     server = FastMCP("ugui-json-depth")
     server.tool()(manage_ugui)
     # When
     async with Client(server) as client:
-        response = await client.call_tool("manage_ugui", {"action": "set_rect", "target": "Canvas", "properties": properties})
+        response = await client.call_tool(
+            "manage_ugui",
+            {"action": "set_rect", "target": "Canvas", "properties": properties},
+        )
     result = response.structured_content
     # Then: invalid structure produces a regular error without reaching Unity.
     assert result["success"] is False
@@ -252,12 +387,17 @@ async def test_rejects_nested_json_when_properties_exceed_decoder_depth(boundary
 async def test_bounds_error_when_resolution_keys_are_invalid(boundary: Boundary) -> None:
     # Given: each key's value is only a small scalar, but validation repeats its name.
     unknown = "unexpected_" + "x" * 2000
-    resolutions = [{"width": 64, "height": 64, **{f"{unknown}{n}": 64 + n for n in range(20)}}]
+    resolutions = [
+        {"width": 64, "height": 64, **{f"{unknown}{n}": 64 + n for n in range(20)}}
+    ]
     server = FastMCP("ugui-json-validation-budget")
     server.tool()(manage_ugui)
     # When
     async with Client(server) as client:
-        response = await client.call_tool("manage_ugui", {"action": "diagnose", "target": "Canvas", "resolutions": resolutions})
+        response = await client.call_tool(
+            "manage_ugui",
+            {"action": "diagnose", "target": "Canvas", "resolutions": resolutions},
+        )
     result = response.structured_content
     # Then: reject without retaining/echoing an unbounded validation transcript.
     assert result["success"] is False
