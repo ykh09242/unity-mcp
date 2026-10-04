@@ -20,7 +20,7 @@ TOOL_GROUPS: dict[str, str] = {
     "docs": "Unity API reflection and documentation lookup",
     "vfx": "Visual effects – VFX Graph, shaders, procedural textures",
     "animation": "Animator control & AnimationClip creation",
-    "ui": "UI Toolkit (UXML, USS, UIDocument)",
+    "ui": "UI Toolkit (UXML, USS, UIDocument) and Canvas-based uGUI editing and diagnostics",
     "scripting_ext": "ScriptableObject management",
     "testing": "Test runner & async test jobs",
     "probuilder": "ProBuilder 3D modeling – requires com.unity.probuilder package",

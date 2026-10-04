@@ -82,8 +82,9 @@ Test runner & async test jobs
 - **[`get_test_job`](./testing/get_test_job.md)** — Polls an async Unity test job by job_id.
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
 
-## `ui` &nbsp; (1 tool)
-UI Toolkit (UXML, USS, UIDocument)
+## `ui` &nbsp; (2 tools)
+UI Toolkit (UXML, USS, UIDocument) and Canvas-based uGUI editing and diagnostics
+- **[`manage_ugui`](./ui/manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings.
 - **[`manage_ui`](./ui/manage_ui.md)** — Manages Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components).
 
 ## `vfx` &nbsp; (3 tools)

@@ -161,6 +161,10 @@
       "description": "Manage which tool groups are visible in this session"
     },
     {
+      "name": "manage_ugui",
+      "description": "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and scaling; diagnose screen-size layout candidates (group: ui)"
+    },
+    {
       "name": "manage_ui",
       "description": "Manage Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components)"
     },
