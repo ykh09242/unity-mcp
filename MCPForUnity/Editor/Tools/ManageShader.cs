@@ -93,10 +93,10 @@ namespace MCPForUnity.Editor.Tools
                     relativeDir = relativeDir.Substring("Assets/".Length);
                 }
             }
-            // Handle empty string case explicitly after processing
-            if (string.IsNullOrEmpty(relativeDir))
+            // Only omitted or empty input selects the default; explicit Assets/ denotes the root.
+            if (string.IsNullOrEmpty(relativeDir) && string.IsNullOrEmpty(path))
             {
-                relativeDir = "Shaders"; // Ensure default if path was provided as "" or only "/" or "Assets/"
+                relativeDir = "Shaders";
             }
 
             // Construct paths

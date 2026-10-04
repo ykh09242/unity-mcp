@@ -13,6 +13,7 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private string assetRoot;
         private string shaderName;
+        private bool shadersDirectoryWasMissing;
 
         [SetUp]
         public void SetUp()
@@ -21,6 +22,10 @@ namespace MCPForUnityTests.Editor.Tools
             assetRoot = "Assets/__McpShaderIntegrity_" + suffix;
             shaderName = "ShaderIntegrity_" + suffix;
             Assert.IsFalse(Directory.Exists(FullAssetRoot));
+            Assert.IsFalse(File.Exists(RootShaderPath));
+            Assert.IsFalse(File.Exists(SiblingShaderPath));
+            string shadersDirectory = Path.GetDirectoryName(SiblingShaderPath);
+            shadersDirectoryWasMissing = !Directory.Exists(shadersDirectory) && !File.Exists(shadersDirectory + ".meta");
         }
 
         [TearDown]
@@ -35,6 +40,19 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 AssetDatabase.DeleteAsset(assetRoot);
                 if (Directory.Exists(resolved)) Directory.Delete(resolved, true);
+            }
+            foreach (string relativePath in new[] { "Assets/" + shaderName + ".shader", "Assets/Shaders/" + shaderName + ".shader" })
+            {
+                string full = Path.Combine(Application.dataPath, relativePath.Substring("Assets/".Length));
+                if (!File.Exists(full)) continue;
+                AssetDatabase.DeleteAsset(relativePath);
+                if (File.Exists(full)) File.Delete(full);
+            }
+            string shadersDirectory = Path.GetDirectoryName(SiblingShaderPath);
+            if (shadersDirectoryWasMissing && Directory.Exists(shadersDirectory) && Directory.GetFileSystemEntries(shadersDirectory).Length == 0)
+            {
+                AssetDatabase.DeleteAsset("Assets/Shaders");
+                if (Directory.Exists(shadersDirectory)) Directory.Delete(shadersDirectory);
             }
         }
 
@@ -185,6 +203,64 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(original, File.ReadAllBytes(ShaderPath));
         }
 
+        [TestCase("create", "Assets")]
+        [TestCase("read", "Assets")]
+        [TestCase("update", "Assets")]
+        [TestCase("delete", "Assets")]
+        [TestCase("create", "Assets/")]
+        [TestCase("read", "Assets/")]
+        [TestCase("update", "Assets/")]
+        [TestCase("delete", "Assets/")]
+        [TestCase("create", "Assets\\")]
+        [TestCase("read", "Assets\\")]
+        [TestCase("update", "Assets\\")]
+        [TestCase("delete", "Assets\\")]
+        public void ExplicitAssetsRootNeverTargetsSameNameShadersSibling(string action, string path)
+        {
+            string original = "Shader \"" + shaderName + "_Root\" { SubShader { Pass {} } }";
+            string sibling = "Shader \"" + shaderName + "_Sibling\" { SubShader { Pass {} } }";
+            string replacement = "Shader \"" + shaderName + "_Changed\" { SubShader { Pass {} } }";
+            Directory.CreateDirectory(Path.GetDirectoryName(SiblingShaderPath));
+            File.WriteAllText(SiblingShaderPath, sibling, new UTF8Encoding(false));
+            AssetDatabase.ImportAsset("Assets/Shaders/" + shaderName + ".shader");
+            if (action != "create")
+            {
+                File.WriteAllText(RootShaderPath, original, new UTF8Encoding(false));
+                AssetDatabase.ImportAsset("Assets/" + shaderName + ".shader");
+            }
+            var request = Request(action);
+            request["path"] = path;
+            request["contents"] = replacement;
+
+            var response = JObject.FromObject(ManageShader.HandleCommand(request));
+
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.AreEqual(sibling, File.ReadAllText(SiblingShaderPath));
+            if (action == "delete") Assert.IsFalse(File.Exists(RootShaderPath));
+            else if (action == "read") Assert.AreEqual(original, (string)response["data"]["contents"]);
+            else Assert.AreEqual(replacement, File.ReadAllText(RootShaderPath));
+            if (action != "delete") Assert.AreEqual("Assets/" + shaderName + ".shader", (string)response["data"]["path"]);
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        public void OmittedOrEmptyPathKeepsShadersDefault(string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SiblingShaderPath));
+            File.WriteAllText(SiblingShaderPath, "// default shader", new UTF8Encoding(false));
+            var request = Request("read");
+            if (path == null) request.Remove("path");
+            else request["path"] = path;
+
+            var response = JObject.FromObject(ManageShader.HandleCommand(request));
+
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.AreEqual("Assets/Shaders/" + shaderName + ".shader", (string)response["data"]["path"]);
+            Assert.AreEqual("// default shader", (string)response["data"]["contents"]);
+        }
+
+        private string RootShaderPath => Path.Combine(Application.dataPath, shaderName + ".shader");
+        private string SiblingShaderPath => Path.Combine(Application.dataPath, "Shaders", shaderName + ".shader");
         private string FullAssetRoot => Path.Combine(Application.dataPath, assetRoot.Substring("Assets/".Length));
         private string ShaderPath => Path.Combine(FullAssetRoot, shaderName + ".shader");
 
