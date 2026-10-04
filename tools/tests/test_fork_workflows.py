@@ -22,6 +22,24 @@ def test_beta_release_side_effects_are_upstream_only(job: str) -> None:
     assert condition == f"{UPSTREAM_ONLY} && github.actor != 'github-actions[bot]'"
 
 
+@pytest.mark.parametrize("name,job", [
+    ("release.yml", "bump"),
+    ("release.yml", "sync_beta"),
+    ("release.yml", "publish_docker"),
+    ("release.yml", "publish_pypi"),
+    ("release.yml", "publish_mcpb"),
+    ("sync-releases.yml", "sync"),
+    ("stats.yml", "stats"),
+])
+def test_legacy_publication_and_adoption_jobs_exclude_forks(name: str, job: str) -> None:
+    # Given: inherited automation owns upstream release identities and metrics.
+    definition = workflow(name)["jobs"][job]
+    # When: its GitHub job-level authorization is evaluated.
+    condition = definition.get("if")
+    # Then: a fork cannot publish, rewrite release history or claim upstream adoption.
+    assert condition == UPSTREAM_ONLY
+
+
 def test_forks_keep_python_and_unity_validation() -> None:
     jobs = workflow("beta-release.yml")["jobs"]
     for name in ("python_tests", "unity_tests"):

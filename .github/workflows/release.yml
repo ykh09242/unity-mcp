@@ -1,4 +1,4 @@
-name: Release
+name: Release (upstream only)
 
 concurrency:
   group: release-main
@@ -40,6 +40,7 @@ jobs:
       ref: beta
 
   bump:
+    if: github.repository == 'CoplayDev/unity-mcp'
     name: Bump version, tag, and create release
     runs-on: ubuntu-latest
     needs: [unity_tests, python_tests]
@@ -324,6 +325,7 @@ jobs:
           generate_release_notes: true
 
   sync_beta:
+    if: github.repository == 'CoplayDev/unity-mcp'
     name: Merge main back into beta via PR
     needs:
       - bump
@@ -466,6 +468,7 @@ jobs:
           exit 1
 
   publish_docker:
+    if: github.repository == 'CoplayDev/unity-mcp'
     name: Publish Docker image
     needs:
       - bump
@@ -493,6 +496,7 @@ jobs:
           platforms: linux/amd64
 
   publish_pypi:
+    if: github.repository == 'CoplayDev/unity-mcp'
     name: Publish Python distribution to PyPI
     needs:
       - bump
@@ -530,6 +534,7 @@ jobs:
           packages-dir: Server/dist/
 
   publish_mcpb:
+    if: github.repository == 'CoplayDev/unity-mcp'
     name: Generate and publish MCPB bundle
     needs:
       - bump

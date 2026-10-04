@@ -39,6 +39,7 @@ concurrency:
 
 jobs:
   sync:
+    if: github.repository == 'CoplayDev/unity-mcp'
     name: Sync release notes
     runs-on: ubuntu-latest
     permissions:
