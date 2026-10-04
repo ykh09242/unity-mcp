@@ -69,6 +69,18 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("line_set_width", "{width:3,startWidth:'NaN'}")]
         [TestCase("line_set_width", "{width:3,endWidth:'-Infinity'}")]
         [TestCase("line_set_width", "{width:3,widthMultiplier:'Infinity'}")]
+        [TestCase("line_create_circle", "{segments:0}")]
+        [TestCase("line_create_circle", "{segments:-1}")]
+        [TestCase("line_create_arc", "{segments:0}")]
+        [TestCase("line_create_arc", "{segments:-1}")]
+        [TestCase("line_create_arc", "{segments:2147483647}")]
+        [TestCase("line_create_bezier", "{segments:0}")]
+        [TestCase("line_create_bezier", "{segments:-1}")]
+        [TestCase("line_create_bezier", "{segments:2147483647}")]
+        [TestCase("line_create_line", "{start:[7,8,9],end:[10,11,12],width:3,endWidth:'bad'}")]
+        [TestCase("line_create_circle", "{segments:4,width:3,endWidth:'bad'}")]
+        [TestCase("line_create_arc", "{segments:4,width:3,endWidth:'bad'}")]
+        [TestCase("line_create_bezier", "{segments:4,width:3,endWidth:'bad'}")]
         public void InvalidWritePreservesPositionsAndDoesNotAssignMaterial(string action, string properties)
         {
             int dirtyCount = EditorUtility.GetDirtyCount(line);
@@ -152,6 +164,34 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Call("line_clear", JObject.Parse("{component_index:9}")).Value<bool>("success"));
             CollectionAssert.AreEqual(originalPositions, Positions(line));
             Assert.IsNull(line.sharedMaterial);
+        }
+
+        [TestCase("line_create_line", 2)]
+        [TestCase("line_create_circle", 1)]
+        [TestCase("line_create_arc", 2)]
+        [TestCase("line_create_bezier", 2)]
+        public void ValidShapeCreationPreservesOneSegmentAndAppearanceOverrides(string action, int count)
+        {
+            AssignUsableMaterial();
+            var response = Call(action, JObject.Parse("{start:[7,8,9],end:[10,11,12],controlPoint1:[1,2,3],segments:1,width:3,startWidth:0,endWidth:'-2',color:[1,0,0,1],endColor:[0,1,0,0]}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(count, line.positionCount);
+            Assert.AreEqual(0f, line.startWidth);
+            Assert.AreEqual(-2f, line.endWidth);
+            Assert.AreEqual(Color.red, line.startColor);
+            Assert.AreEqual(new Color(0, 1, 0, 0), line.endColor);
+            Assert.AreSame(material, line.sharedMaterial);
+            foreach (Vector3 point in Positions(line))
+            {
+                Assert.IsFalse(float.IsNaN(point.x) || float.IsInfinity(point.x));
+                Assert.IsFalse(float.IsNaN(point.y) || float.IsInfinity(point.y));
+                Assert.IsFalse(float.IsNaN(point.z) || float.IsInfinity(point.z));
+            }
+            if (action == "line_create_bezier")
+            {
+                Assert.AreEqual(new Vector3(7, 8, 9), line.GetPosition(0));
+                Assert.AreEqual(new Vector3(10, 11, 12), line.GetPosition(1));
+            }
         }
 
         private JObject Call(string action, JObject properties)

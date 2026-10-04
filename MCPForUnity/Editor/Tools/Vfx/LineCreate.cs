@@ -1,3 +1,4 @@
+using System;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -14,6 +15,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             Vector3 start = ManageVfxCommon.ParseVector3(@params["start"]);
             Vector3 end = ManageVfxCommon.ParseVector3(@params["end"]);
+            var applyAppearance = PrepareAppearance(@params, lr);
 
             Undo.RecordObject(lr, "Create Line");
             lr.positionCount = 2;
@@ -22,25 +24,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             RendererHelpers.EnsureMaterial(lr);
 
-            // Apply optional width
-            if (@params["width"] != null)
-            {
-                float w = @params["width"].ToObject<float>();
-                lr.startWidth = w;
-                lr.endWidth = w;
-            }
-            if (@params["startWidth"] != null) lr.startWidth = @params["startWidth"].ToObject<float>();
-            if (@params["endWidth"] != null) lr.endWidth = @params["endWidth"].ToObject<float>();
-
-            // Apply optional color
-            if (@params["color"] != null)
-            {
-                Color c = ManageVfxCommon.ParseColor(@params["color"]);
-                lr.startColor = c;
-                lr.endColor = c;
-            }
-            if (@params["startColor"] != null) lr.startColor = ManageVfxCommon.ParseColor(@params["startColor"]);
-            if (@params["endColor"] != null) lr.endColor = ManageVfxCommon.ParseColor(@params["endColor"]);
+            applyAppearance();
 
             EditorUtility.SetDirty(lr);
 
@@ -55,12 +39,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
             float radius = @params["radius"]?.ToObject<float>() ?? 1f;
             int segments = @params["segments"]?.ToObject<int>() ?? 32;
+            if (segments < 1) return new { success = false, message = "segments must be positive" };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
             Vector3 right = Vector3.Cross(normal, Vector3.forward);
             if (right.sqrMagnitude < 0.001f) right = Vector3.Cross(normal, Vector3.up);
             right = right.normalized;
             Vector3 forward = Vector3.Cross(right, normal).normalized;
+            var applyAppearance = PrepareAppearance(@params, lr);
 
             Undo.RecordObject(lr, "Create Circle");
             lr.positionCount = segments;
@@ -75,25 +61,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             RendererHelpers.EnsureMaterial(lr);
 
-            // Apply optional width
-            if (@params["width"] != null)
-            {
-                float w = @params["width"].ToObject<float>();
-                lr.startWidth = w;
-                lr.endWidth = w;
-            }
-            if (@params["startWidth"] != null) lr.startWidth = @params["startWidth"].ToObject<float>();
-            if (@params["endWidth"] != null) lr.endWidth = @params["endWidth"].ToObject<float>();
-
-            // Apply optional color
-            if (@params["color"] != null)
-            {
-                Color c = ManageVfxCommon.ParseColor(@params["color"]);
-                lr.startColor = c;
-                lr.endColor = c;
-            }
-            if (@params["startColor"] != null) lr.startColor = ManageVfxCommon.ParseColor(@params["startColor"]);
-            if (@params["endColor"] != null) lr.endColor = ManageVfxCommon.ParseColor(@params["endColor"]);
+            applyAppearance();
 
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Created circle with {segments} segments" };
@@ -109,12 +77,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
             float startAngle = (@params["startAngle"]?.ToObject<float>() ?? 0f) * Mathf.Deg2Rad;
             float endAngle = (@params["endAngle"]?.ToObject<float>() ?? 180f) * Mathf.Deg2Rad;
             int segments = @params["segments"]?.ToObject<int>() ?? 16;
+            if (segments < 1 || segments == int.MaxValue)
+                return new { success = false, message = "segments must be positive and leave room for the final position" };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
             Vector3 right = Vector3.Cross(normal, Vector3.forward);
             if (right.sqrMagnitude < 0.001f) right = Vector3.Cross(normal, Vector3.up);
             right = right.normalized;
             Vector3 forward = Vector3.Cross(right, normal).normalized;
+            var applyAppearance = PrepareAppearance(@params, lr);
 
             Undo.RecordObject(lr, "Create Arc");
             lr.positionCount = segments + 1;
@@ -130,25 +101,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             RendererHelpers.EnsureMaterial(lr);
 
-            // Apply optional width
-            if (@params["width"] != null)
-            {
-                float w = @params["width"].ToObject<float>();
-                lr.startWidth = w;
-                lr.endWidth = w;
-            }
-            if (@params["startWidth"] != null) lr.startWidth = @params["startWidth"].ToObject<float>();
-            if (@params["endWidth"] != null) lr.endWidth = @params["endWidth"].ToObject<float>();
-
-            // Apply optional color
-            if (@params["color"] != null)
-            {
-                Color c = ManageVfxCommon.ParseColor(@params["color"]);
-                lr.startColor = c;
-                lr.endColor = c;
-            }
-            if (@params["startColor"] != null) lr.startColor = ManageVfxCommon.ParseColor(@params["startColor"]);
-            if (@params["endColor"] != null) lr.endColor = ManageVfxCommon.ParseColor(@params["endColor"]);
+            applyAppearance();
 
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Created arc with {segments} segments" };
@@ -166,7 +119,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 ? ManageVfxCommon.ParseVector3(@params["controlPoint2"] ?? @params["control2"])
                 : cp1;
             int segments = @params["segments"]?.ToObject<int>() ?? 32;
+            if (segments < 1 || segments == int.MaxValue)
+                return new { success = false, message = "segments must be positive and leave room for the final position" };
             bool isQuadratic = @params["controlPoint2"] == null && @params["control2"] == null;
+            var applyAppearance = PrepareAppearance(@params, lr);
 
             Undo.RecordObject(lr, "Create Bezier");
             lr.positionCount = segments + 1;
@@ -193,28 +149,30 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             RendererHelpers.EnsureMaterial(lr);
 
-            // Apply optional width
-            if (@params["width"] != null)
-            {
-                float w = @params["width"].ToObject<float>();
-                lr.startWidth = w;
-                lr.endWidth = w;
-            }
-            if (@params["startWidth"] != null) lr.startWidth = @params["startWidth"].ToObject<float>();
-            if (@params["endWidth"] != null) lr.endWidth = @params["endWidth"].ToObject<float>();
-
-            // Apply optional color
-            if (@params["color"] != null)
-            {
-                Color c = ManageVfxCommon.ParseColor(@params["color"]);
-                lr.startColor = c;
-                lr.endColor = c;
-            }
-            if (@params["startColor"] != null) lr.startColor = ManageVfxCommon.ParseColor(@params["startColor"]);
-            if (@params["endColor"] != null) lr.endColor = ManageVfxCommon.ParseColor(@params["endColor"]);
+            applyAppearance();
 
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Created {(isQuadratic ? "quadratic" : "cubic")} Bezier" };
+        }
+
+        private static Action PrepareAppearance(JObject @params, LineRenderer lr)
+        {
+            float? width = @params["width"]?.ToObject<float>();
+            float? startWidth = @params["startWidth"]?.ToObject<float>();
+            float? endWidth = @params["endWidth"]?.ToObject<float>();
+            Color? color = @params["color"] != null ? ManageVfxCommon.ParseColor(@params["color"]) : (Color?)null;
+            Color? startColor = @params["startColor"] != null ? ManageVfxCommon.ParseColor(@params["startColor"]) : (Color?)null;
+            Color? endColor = @params["endColor"] != null ? ManageVfxCommon.ParseColor(@params["endColor"]) : (Color?)null;
+
+            return () =>
+            {
+                if (width.HasValue) { lr.startWidth = width.Value; lr.endWidth = width.Value; }
+                if (startWidth.HasValue) lr.startWidth = startWidth.Value;
+                if (endWidth.HasValue) lr.endWidth = endWidth.Value;
+                if (color.HasValue) { lr.startColor = color.Value; lr.endColor = color.Value; }
+                if (startColor.HasValue) lr.startColor = startColor.Value;
+                if (endColor.HasValue) lr.endColor = endColor.Value;
+            };
         }
     }
 }
