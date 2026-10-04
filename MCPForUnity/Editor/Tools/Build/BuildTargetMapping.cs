@@ -63,9 +63,12 @@ namespace MCPForUnity.Editor.Tools.Build
             }
         }
 
-        public static NamedBuildTarget GetNamedBuildTarget(BuildTarget target)
+        public static NamedBuildTarget GetNamedBuildTarget(BuildTarget target,
+            StandaloneBuildSubtarget subtarget = StandaloneBuildSubtarget.Player)
         {
-            return NamedBuildTarget.FromBuildTargetGroup(GetTargetGroup(target));
+            var group = GetTargetGroup(target);
+            return group == BuildTargetGroup.Standalone && subtarget == StandaloneBuildSubtarget.Server
+                ? NamedBuildTarget.Server : NamedBuildTarget.FromBuildTargetGroup(group);
         }
 
         public static string TryResolveNamedBuildTarget(string name, out NamedBuildTarget namedTarget)

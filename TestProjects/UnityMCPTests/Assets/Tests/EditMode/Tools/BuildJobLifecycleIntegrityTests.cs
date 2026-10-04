@@ -118,6 +118,52 @@ namespace MCPForUnityTests.EditMode.Tools
             return new BuildJob(id, BuildTarget.StandaloneWindows64, "unused-output");
         }
 
+        [TestCase(BuildJobState.Pending)]
+        [TestCase(BuildJobState.Building)]
+        public void StatusWithoutIdFindsActiveBuildBeforeAnyCompletion(BuildJobState state)
+        {
+            BuildJob active = Child();
+            active.State = state;
+            BuildJobStore.AddBuildJob(active);
+            AssertStatus(new JObject { ["action"] = "status" }, active.JobId, true);
+        }
+
+        [Test]
+        public void StatusWithoutIdPrefersActiveBuildAndPreservesExplicitId()
+        {
+            BuildJob completed = Child();
+            completed.State = BuildJobState.Succeeded;
+            BuildJobStore.AddBuildJob(completed);
+            BuildJobStore.SetLastCompleted(completed);
+            BuildJob active = Child();
+            BuildJobStore.AddBuildJob(active);
+            AssertStatus(new JObject { ["action"] = "status" }, active.JobId, true);
+            AssertStatus(new JObject { ["action"] = "status", ["job_id"] = completed.JobId }, completed.JobId, false);
+            active.State = BuildJobState.Failed;
+            AssertStatus(new JObject { ["action"] = "status" }, completed.JobId, false);
+        }
+
+        [TestCase(BuildJobState.Pending)]
+        [TestCase(BuildJobState.Building)]
+        public void StatusWithoutIdPrefersActiveBatchOverItsChild(BuildJobState state)
+        {
+            BuildJob child = Child();
+            BuildJobStore.AddBuildJob(child);
+            var batch = new BatchJob("local-active-batch") { State = state };
+            batch.Children.Add(child);
+            BuildJobStore.AddBatchJob(batch);
+            AssertStatus(new JObject { ["action"] = "status" }, batch.JobId, true);
+            AssertStatus(new JObject { ["action"] = "status", ["job_id"] = child.JobId }, child.JobId, true);
+        }
+
+        private static void AssertStatus(JObject request, string jobId, bool pending)
+        {
+            JObject response = JObject.FromObject(MCPForUnity.Editor.Tools.ManageBuild.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(jobId, response["data"].Value<string>("job_id"));
+            Assert.AreEqual(pending ? "pending" : null, response.Value<string>("_mcp_status"));
+        }
+
         [Test]
         public void CreatorExceptionFailsChildAndCompletesWithoutBuildCallbacks()
         {

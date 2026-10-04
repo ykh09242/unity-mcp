@@ -145,6 +145,21 @@ namespace MCPForUnity.Editor.Tools.Build
 
         public static BuildJob LastCompletedJob => _lastCompletedJob;
 
+        public static string ActiveJobId
+        {
+            get
+            {
+                // Prefer the batch so polling spans all children, including preparation gaps.
+                foreach (var batch in _batchJobs.Values)
+                    if (batch.State == BuildJobState.Pending || batch.State == BuildJobState.Building)
+                        return batch.JobId;
+                foreach (var job in _buildJobs.Values)
+                    if (job.State == BuildJobState.Pending || job.State == BuildJobState.Building)
+                        return job.JobId;
+                return null;
+            }
+        }
+
         public static void SetLastCompleted(BuildJob job)
         {
             _lastCompletedJob = job;

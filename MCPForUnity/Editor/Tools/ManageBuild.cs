@@ -112,7 +112,8 @@ namespace MCPForUnity.Editor.Tools
 
             if (scriptingImplementation.HasValue)
                 PlayerSettings.SetScriptingBackend(
-                    BuildTargetMapping.GetNamedBuildTarget(target), scriptingImplementation.Value);
+                    BuildTargetMapping.GetNamedBuildTarget(target, (StandaloneBuildSubtarget)subtarget),
+                    scriptingImplementation.Value);
 
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
@@ -181,20 +182,12 @@ namespace MCPForUnity.Editor.Tools
         private static object HandleStatus(ToolParams p)
         {
             string jobId = p.Get("job_id");
+            if (string.IsNullOrEmpty(jobId))
+                jobId = BuildJobStore.ActiveJobId;
 
             if (string.IsNullOrEmpty(jobId))
             {
-                // Prefer active (pending/building) job — needed for polling middleware
                 var last = BuildJobStore.LastCompletedJob;
-                if (last != null && (last.State == BuildJobState.Building || last.State == BuildJobState.Pending))
-                {
-                    return new PendingResponse(
-                        $"Build {last.State.ToString().ToLowerInvariant()}...",
-                        pollIntervalSeconds: 5.0,
-                        data: last.ToStatusResponse()
-                    );
-                }
-
                 if (last != null)
                     return new SuccessResponse("Last completed build.", last.ToStatusResponse());
 

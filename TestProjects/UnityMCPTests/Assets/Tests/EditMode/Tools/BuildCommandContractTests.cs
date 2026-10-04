@@ -12,6 +12,28 @@ namespace MCPForUnityTests.EditMode.Tools
 {
     public class BuildCommandContractTests
     {
+        [TestCase(BuildTarget.StandaloneWindows)]
+        [TestCase(BuildTarget.StandaloneWindows64)]
+        [TestCase(BuildTarget.StandaloneOSX)]
+        [TestCase(BuildTarget.StandaloneLinux64)]
+        public void StandaloneServerBackendTargetsDedicatedServerSettings(BuildTarget target)
+        {
+            Assert.AreEqual(NamedBuildTarget.Server,
+                BuildTargetMapping.GetNamedBuildTarget(target, StandaloneBuildSubtarget.Server));
+            var player = NamedBuildTarget.FromBuildTargetGroup(BuildTargetGroup.Standalone);
+            Assert.AreEqual(player, BuildTargetMapping.GetNamedBuildTarget(target, StandaloneBuildSubtarget.Player));
+            Assert.AreEqual(player, BuildTargetMapping.GetNamedBuildTarget(target));
+        }
+
+        [TestCase(BuildTarget.Android, BuildTargetGroup.Android)]
+        [TestCase(BuildTarget.iOS, BuildTargetGroup.iOS)]
+        [TestCase(BuildTarget.WebGL, BuildTargetGroup.WebGL)]
+        public void NonStandaloneBackendIgnoresStandaloneSubtarget(BuildTarget target, BuildTargetGroup group)
+        {
+            Assert.AreEqual(NamedBuildTarget.FromBuildTargetGroup(group),
+                BuildTargetMapping.GetNamedBuildTarget(target, StandaloneBuildSubtarget.Server));
+        }
+
         [Test]
         public void PollingMetadataFitsServerRegistrationBudget()
         {
