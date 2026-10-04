@@ -175,6 +175,32 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(mesh.Refreshes, Is.Zero);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FaceUVSettingsWritePropertiesOnSelectedFaces(bool jsonProperties)
+        {
+            var properties = JObject.Parse("{\"faceIndices\":[0],\"scale\":[2,3],\"offset\":[4,5],\"rotation\":45,\"flip_u\":true,\"flip_v\":true}");
+            var response = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject
+            {
+                ["action"] = "set_face_uvs",
+                ["target"] = target.GetInstanceIDCompat().ToString(),
+                ["searchMethod"] = "by_id",
+                ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
+            }));
+            Assert.That(response["success"].Value<bool>(), Is.True, response.ToString());
+            Assert.That(mesh.faces[0].uv.scale, Is.EqualTo(new Vector2(2, 3)));
+            Assert.That(mesh.faces[0].uv.offset, Is.EqualTo(new Vector2(4, 5)));
+            Assert.That(mesh.faces[0].uv.rotation, Is.EqualTo(45));
+            Assert.That(mesh.faces[0].uv.flipU, Is.True);
+            Assert.That(mesh.faces[0].uv.flipV, Is.True);
+            Assert.That(mesh.faces[1].uv.scale, Is.EqualTo(Vector2.zero));
+            Assert.That(mesh.faces[1].uv.offset, Is.EqualTo(Vector2.zero));
+            Assert.That(mesh.faces[1].uv.rotation, Is.Zero);
+            Assert.That(mesh.faces[1].uv.flipU, Is.False);
+            Assert.That(mesh.faces[1].uv.flipV, Is.False);
+            Assert.That(mesh.Refreshes, Is.EqualTo(1));
+        }
+
         [TestCase("by_id")]
         [TestCase("by_name")]
         [TestCase("by_path")]
@@ -223,6 +249,15 @@ namespace MCPForUnityTests.Editor.Tools
     {
         public ProBuilderContractEdge[] edges { get; set; } = new[] { new ProBuilderContractEdge(0, 1) };
         public int smoothingGroup { get; set; }
+        public ProBuilderContractUVSettings uv { get; set; }
+    }
+    public struct ProBuilderContractUVSettings
+    {
+        public Vector2 scale { get; set; }
+        public Vector2 offset { get; set; }
+        public float rotation { get; set; }
+        public bool flipU { get; set; }
+        public bool flipV { get; set; }
     }
     public static class ProBuilderContractExtrude
     {

@@ -366,6 +366,45 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetFaceUVs_WritesNativeSettingsAndPreservesOtherFaces(bool jsonProperties)
+        {
+            if (!_proBuilderInstalled)
+                Assert.Ignore("ProBuilder is required for native UV verification.");
+
+            var created = ToJObject(ManageProBuilder.HandleCommand(new JObject
+            {
+                ["action"] = "create_shape",
+                ["properties"] = new JObject { ["shapeType"] = "Cube", ["name"] = "PBTestUVSettings" },
+            }));
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            var go = GameObject.Find("PBTestUVSettings");
+            Assert.IsNotNull(go);
+            _createdObjects.Add(go);
+            var meshType = Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder");
+            var mesh = go.GetComponent(meshType);
+            var faces = (System.Collections.IList)meshType.GetProperty("faces").GetValue(mesh);
+            var uvProperty = faces[0].GetType().GetProperty("uv");
+            var untouched = uvProperty.GetValue(faces[1]);
+            var properties = JObject.Parse("{\"faceIndices\":[0],\"scale\":[2,3],\"offset\":[4,5],\"rotation\":45,\"flipU\":true,\"flipV\":true}");
+            var result = ToJObject(ManageProBuilder.HandleCommand(new JObject
+            {
+                ["action"] = "set_face_uvs",
+                ["target"] = go.name,
+                ["properties"] = jsonProperties ? (JToken)new JValue(properties.ToString()) : properties,
+            }));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var uv = uvProperty.GetValue(faces[0]);
+            var settingsType = uv.GetType();
+            Assert.AreEqual(new Vector2(2, 3), settingsType.GetProperty("scale").GetValue(uv));
+            Assert.AreEqual(new Vector2(4, 5), settingsType.GetProperty("offset").GetValue(uv));
+            Assert.AreEqual(45f, settingsType.GetProperty("rotation").GetValue(uv));
+            Assert.AreEqual(true, settingsType.GetProperty("flipU").GetValue(uv));
+            Assert.AreEqual(true, settingsType.GetProperty("flipV").GetValue(uv));
+            Assert.AreEqual(untouched, uvProperty.GetValue(faces[1]));
+        }
+
         [Test]
         public void FlipNormals_SucceedsOnValidMesh()
         {

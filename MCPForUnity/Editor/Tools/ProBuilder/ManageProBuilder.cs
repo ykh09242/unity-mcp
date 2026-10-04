@@ -2318,10 +2318,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             // Resolve reflection members once outside the loop
             var scaleField = autoUnwrapType.GetField("scale") ?? (MemberInfo)autoUnwrapType.GetProperty("scale");
-            var offsetField = autoUnwrapType.GetField("offset");
-            var rotField = autoUnwrapType.GetField("rotation");
-            var flipUField = autoUnwrapType.GetField("flipU");
-            var flipVField = autoUnwrapType.GetField("flipV");
+            var offsetField = autoUnwrapType.GetField("offset") ?? (MemberInfo)autoUnwrapType.GetProperty("offset");
+            var rotField = autoUnwrapType.GetField("rotation") ?? (MemberInfo)autoUnwrapType.GetProperty("rotation");
+            var flipUField = autoUnwrapType.GetField("flipU") ?? (MemberInfo)autoUnwrapType.GetProperty("flipU");
+            var flipVField = autoUnwrapType.GetField("flipV") ?? (MemberInfo)autoUnwrapType.GetProperty("flipV");
 
             var scaleToken = props["scale"];
             var offsetToken = props["offset"];
@@ -2333,26 +2333,26 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             {
                 var uvSettings = uvProperty.GetValue(face);
 
-                if (scaleToken != null && scaleField is FieldInfo scaleFi)
+                if (scaleToken != null && scaleField != null)
                 {
                     var scaleArr = scaleToken.ToObject<float[]>();
-                    scaleFi.SetValue(uvSettings, new Vector2(scaleArr[0], scaleArr.Length > 1 ? scaleArr[1] : scaleArr[0]));
+                    SetUVSetting(scaleField, uvSettings, new Vector2(scaleArr[0], scaleArr.Length > 1 ? scaleArr[1] : scaleArr[0]));
                 }
 
                 if (offsetToken != null && offsetField != null)
                 {
                     var offsetArr = offsetToken.ToObject<float[]>();
-                    offsetField.SetValue(uvSettings, new Vector2(offsetArr[0], offsetArr.Length > 1 ? offsetArr[1] : 0f));
+                    SetUVSetting(offsetField, uvSettings, new Vector2(offsetArr[0], offsetArr.Length > 1 ? offsetArr[1] : 0f));
                 }
 
                 if (rotationToken != null && rotField != null)
-                    rotField.SetValue(uvSettings, rotationToken.Value<float>());
+                    SetUVSetting(rotField, uvSettings, rotationToken.Value<float>());
 
                 if (flipUToken != null && flipUField != null)
-                    flipUField.SetValue(uvSettings, flipUToken.Value<bool>());
+                    SetUVSetting(flipUField, uvSettings, flipUToken.Value<bool>());
 
                 if (flipVToken != null && flipVField != null)
-                    flipVField.SetValue(uvSettings, flipVToken.Value<bool>());
+                    SetUVSetting(flipVField, uvSettings, flipVToken.Value<bool>());
 
                 uvProperty.SetValue(face, uvSettings);
             }
@@ -2371,6 +2371,14 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             {
                 facesModified = faces.Length,
             });
+        }
+
+        private static void SetUVSetting(MemberInfo member, object settings, object value)
+        {
+            if (member is FieldInfo field)
+                field.SetValue(settings, value);
+            else if (member is PropertyInfo property)
+                property.SetValue(settings, value);
         }
 
         // =====================================================================
