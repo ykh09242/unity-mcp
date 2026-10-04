@@ -18,6 +18,8 @@ Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp. Install the Unit
 
 ## Git URL
 
+If the original `com.coplaydev.unity-mcp` package is already installed, remove it in Package Manager before adding this fork. Both packages retain the same assembly names and asset GUIDs and must not coexist. Reconfigure your MCP clients after installation so they use the fork's pinned server source.
+
 This path needs `git` on your PATH (the Package Manager runs it). If it reports `Error when executing git command`, see [troubleshooting](../guides/troubleshooting.md#package-manager-error-when-executing-git-command--not-in-a-git-directory).
 
 In Unity, open **Window → Package Manager**, click the **`+`** button, choose **Add package from git URL...**, and paste:

@@ -50,6 +50,8 @@
 
 ## 快速开始
 
+**从上游迁移：** 添加此 fork 前，请先在 Package Manager 中移除原来的 `com.coplaydev.unity-mcp`。两者保留相同的程序集名称和资源 GUID，不能同时安装。安装后重新配置 MCP 客户端，以使用 fork 固定的服务器来源。
+
 **环境要求：** Unity **2021.3 LTS → 6.x** · Python **3.10+**（用 [`uv`](https://docs.astral.sh/uv/) 管理）。兼容**任意 MCP 客户端**——Claude Desktop 与 Claude Code、Cursor、VS Code、Windsurf、Cline、Gemini CLI 等等。
 
 1. **安装** —— 在 Unity 里打开 Package Manager，从 git URL 添加：
