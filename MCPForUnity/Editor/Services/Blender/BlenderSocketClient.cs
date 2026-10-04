@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -36,16 +38,24 @@ namespace MCPForUnity.Editor.Services.Blender
     public static class BlenderSocketClient
     {
         private const int ConnectTimeoutSeconds = 3;
+        internal const int MaxResponseBytes = 16 * 1024 * 1024;
 
         /// <summary>Sends one command and blocks until the addon answers or the timeout elapses.</summary>
-        public static JToken Send(BlenderEndpoint endpoint, string type, JObject @params = null, int timeoutSeconds = 60)
+        public static JToken Send(BlenderEndpoint endpoint, string type, JObject @params = null, int timeoutSeconds = 60,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            timeoutSeconds = Math.Max(1, Math.Min(3600, timeoutSeconds));
             var request = new JObject { ["type"] = type, ["params"] = @params ?? new JObject() };
             byte[] payload = Encoding.UTF8.GetBytes(request.ToString(Formatting.None));
 
             using var client = new TcpClient();
+            using var cancellation = cancellationToken.Register(() => client.Close());
             IAsyncResult connect = client.BeginConnect(endpoint.Host, endpoint.Port, null, null);
-            if (!connect.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(ConnectTimeoutSeconds)) || !client.Connected)
+            using var connectWait = connect.AsyncWaitHandle;
+            bool connected = connectWait.WaitOne(TimeSpan.FromSeconds(ConnectTimeoutSeconds));
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!connected || !client.Connected)
             {
                 throw new BlenderUnavailableException(
                     $"Blender addon not reachable at {endpoint}. Start Blender and press " +
@@ -54,16 +64,27 @@ namespace MCPForUnity.Editor.Services.Blender
             client.EndConnect(connect);
 
             using NetworkStream stream = client.GetStream();
-            stream.ReadTimeout = Math.Max(1, timeoutSeconds) * 1000;
+            var elapsed = Stopwatch.StartNew();
+            stream.WriteTimeout = timeoutSeconds * 1000;
             stream.Write(payload, 0, payload.Length);
             stream.Flush();
+            return ReadResponse(stream, type, timeoutSeconds, cancellationToken, elapsed);
+        }
 
-            var buffer = new MemoryStream();
+        internal static JToken ReadResponse(Stream stream, string type, int timeoutSeconds,
+            CancellationToken cancellationToken = default, Stopwatch elapsedClock = null)
+        {
+            using var buffer = new MemoryStream();
             var chunk = new byte[65536];
-            DateTime deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+            var elapsed = elapsedClock ?? Stopwatch.StartNew();
 
             while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                int remainingMs = timeoutSeconds * 1000 - (int)elapsed.ElapsedMilliseconds;
+                if (remainingMs <= 0)
+                    throw new TimeoutException($"Timed out after {timeoutSeconds}s waiting for Blender to answer '{type}'.");
+                stream.ReadTimeout = remainingMs;
                 int n;
                 try
                 {
@@ -71,16 +92,24 @@ namespace MCPForUnity.Editor.Services.Blender
                 }
                 catch (IOException e)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!(e.InnerException is SocketException socket) || socket.SocketErrorCode != SocketError.TimedOut)
+                        throw;
                     throw new TimeoutException(
                         $"Timed out after {timeoutSeconds}s waiting for Blender to answer '{type}'.", e);
                 }
+                catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    throw;
+                }
 
                 if (n <= 0) break;
+                if (buffer.Length + n > MaxResponseBytes)
+                    throw new InvalidDataException($"Blender response exceeds the {MaxResponseBytes}-byte limit.");
                 buffer.Write(chunk, 0, n);
 
                 if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject parsed)) return Unwrap(parsed, type);
-                if (DateTime.UtcNow > deadline)
-                    throw new TimeoutException($"Timed out after {timeoutSeconds}s waiting for Blender to answer '{type}'.");
             }
 
             if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject final)) return Unwrap(final, type);
@@ -88,9 +117,10 @@ namespace MCPForUnity.Editor.Services.Blender
         }
 
         /// <summary>Runs <see cref="Send"/> on the thread pool so the editor stays responsive.</summary>
-        public static Task<JToken> SendAsync(BlenderEndpoint endpoint, string type, JObject @params = null, int timeoutSeconds = 60)
+        public static Task<JToken> SendAsync(BlenderEndpoint endpoint, string type, JObject @params = null, int timeoutSeconds = 60,
+            CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => Send(endpoint, type, @params, timeoutSeconds));
+            return Task.Run(() => Send(endpoint, type, @params, timeoutSeconds, cancellationToken), cancellationToken);
         }
 
         /// <summary>Runs Python inside Blender (blocking) and returns its captured stdout.</summary>
@@ -150,7 +180,11 @@ namespace MCPForUnity.Editor.Services.Blender
         {
             string status = (string)response?["status"];
             if (string.Equals(status, "success", StringComparison.OrdinalIgnoreCase))
+            {
+                if (response.Property("result") == null)
+                    throw new InvalidDataException($"Blender omitted the result for '{type}'.");
                 return response["result"];
+            }
             if (string.Equals(status, "error", StringComparison.OrdinalIgnoreCase))
                 throw new BlenderCommandException($"Blender '{type}' failed: {(string)response["message"] ?? "unknown error"}");
             throw new InvalidDataException($"Blender returned an invalid status '{status ?? "(none)"}' for '{type}'.");

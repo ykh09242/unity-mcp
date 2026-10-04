@@ -104,13 +104,15 @@ namespace MCPForUnity.Editor.Tools.Blender
             string forkPath = BlenderBridgePrefs.ForkPath;
             bool blenderInstalled = BlenderDetection.IsInstalled();
 
-            var (reachable, error) = await BlenderSocketClient.ProbeAsync(endpoint);
+            bool reachable = false;
+            string error = null;
             JToken scene = null;
-            if (reachable)
+            try
             {
-                try { scene = await BlenderSocketClient.SendAsync(endpoint, "get_scene_info", null, 10); }
-                catch (Exception e) { error = e.Message; }
+                scene = await BlenderSocketClient.SendAsync(endpoint, "get_scene_info", null, 10);
+                reachable = true;
             }
+            catch (Exception e) { error = SecretRedactor.Scrub(e.Message); }
 
             string forkMd5 = forkAddon != null && File.Exists(forkAddon) ? FileMd5(forkAddon) : null;
             string installedMd5 = installedAddon != null && File.Exists(installedAddon) ? FileMd5(installedAddon) : null;
@@ -196,6 +198,8 @@ namespace MCPForUnity.Editor.Tools.Blender
             bool place = p.GetBool("place_in_scene", true);
             float target = Mathf.Max(0f, p.GetFloat("target_size", 0f) ?? 0f);
             string outputFolder = p.Get("output_folder");
+            if (!AssetGenPaths.NormalizeOutputFolder(outputFolder, out outputFolder, out string folderError))
+                return new ErrorResponse(folderError);
             string animationType = p.Get("animation_type");
             bool autoAnimate = p.GetBool("auto_animate", true);
             bool savePrefab = p.GetBool("save_prefab", false);
@@ -227,7 +231,20 @@ namespace MCPForUnity.Editor.Tools.Blender
             if (!string.IsNullOrWhiteSpace(outputFolder)) importParams["outputFolder"] = outputFolder;
             if (!string.IsNullOrWhiteSpace(animationType)) importParams["animationType"] = animationType;
 
-            JObject importResult = JObject.FromObject(ImportModelFile.HandleCommand(importParams));
+            // The public importer only accepts Assets-contained sources. Stage this bridge's
+            // own export there without broadening that boundary to arbitrary local files.
+            string stagedExport = StageExportForImport(exportPath);
+            JObject importResult;
+            try
+            {
+                importParams["sourcePath"] = stagedExport;
+                importResult = JObject.FromObject(ImportModelFile.HandleCommand(importParams));
+            }
+            finally
+            {
+                File.Delete(stagedExport);
+                Directory.Delete(Path.GetDirectoryName(stagedExport));
+            }
             if (!(importResult.Value<bool?>("success") ?? false))
                 return new ErrorResponse($"Import failed: {importResult["error"] ?? importResult["message"]}");
 
@@ -286,11 +303,8 @@ namespace MCPForUnity.Editor.Tools.Blender
             }
 
             // 4. Optional finishing touches: play imported clips, keep a prefab, make emission glow.
-            if (autoAnimate)
-            {
-                JObject animation = SetupAnimation(go, assetPath, name);
-                if (animation != null) data["animation"] = animation;
-            }
+            JObject animation = SetupAnimation(go, assetPath, name, autoAnimate);
+            if (animation != null) data["animation"] = animation;
             if (savePrefab) data["prefab_path"] = SavePrefab(go, assetPath, name);
             if (ensureBloom && HasEmissiveMaterial(go)) data["bloom"] = await SetupBloomAsync();
 
@@ -403,22 +417,57 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter importer)) return;
             ModelImporterClipAnimation[] clips = importer.clipAnimations.Length > 0 ? importer.clipAnimations : importer.defaultClipAnimations;
             if (clips.Length == 0) return;
-            foreach (ModelImporterClipAnimation clip in clips) clip.loopTime = true;
+            foreach (ModelImporterClipAnimation clip in clips)
+            {
+                clip.loopTime = true;
+                if (importer.animationType == ModelImporterAnimationType.Legacy) clip.wrapMode = WrapMode.Loop;
+            }
             importer.clipAnimations = clips;
             importer.SaveAndReimport();
         }
 
         /// <summary>
-        /// An imported clip does nothing until an AnimatorController drives it, so the placed model looks frozen.
-        /// Creates a controller next to the asset with one looping state per clip and assigns it to the instance.
+        /// Configures looping playback with the animation system used by the imported clips.
         /// </summary>
-        private static JObject SetupAnimation(GameObject go, string assetPath, string name)
+        internal static JObject SetupAnimation(GameObject go, string assetPath, string name, bool autoAnimate,
+            AnimationClip[] clips = null)
         {
-            AnimationClip[] clips = AssetDatabase.LoadAllAssetRepresentationsAtPath(assetPath)
-                .OfType<AnimationClip>()
-                .Where(c => !c.name.StartsWith("__preview__", StringComparison.Ordinal))
+            if (!autoAnimate) return null;
+            clips = (clips ?? AssetDatabase.LoadAllAssetRepresentationsAtPath(assetPath)
+                .OfType<AnimationClip>().ToArray())
+                .Where(c => c != null && !c.name.StartsWith("__preview__", StringComparison.Ordinal))
                 .ToArray();
             if (clips.Length == 0) return null;
+            bool legacy = clips[0].legacy;
+            if (clips.Any(c => c.legacy != legacy))
+                throw new InvalidOperationException("Imported clips mix Legacy and Mecanim animation types.");
+
+            if (legacy)
+            {
+                UnityEngine.Animation animation = go.GetComponentInChildren<UnityEngine.Animation>(true)
+                    ?? go.AddComponent<UnityEngine.Animation>();
+                AnimationClip defaultClip = clips.Contains(animation.clip) ? animation.clip : clips[0];
+                foreach (AnimationClip clip in clips)
+                {
+                    clip.wrapMode = WrapMode.Loop;
+                    animation.AddClip(clip, clip.name);
+                    EditorUtility.SetDirty(clip);
+                }
+                animation.clip = defaultClip;
+                animation.wrapMode = WrapMode.Loop;
+                animation.playAutomatically = true;
+                animation.enabled = true;
+                EditorUtility.SetDirty(animation);
+                AssetDatabase.SaveAssets();
+                return new JObject
+                {
+                    ["system"] = "legacy",
+                    ["clips"] = new JArray(clips.Select(c => c.name).Cast<object>().ToArray()),
+                    ["default_clip"] = defaultClip.name,
+                    ["animation_on"] = animation.gameObject.name,
+                    ["loops"] = true,
+                };
+            }
 
             Animator animator = go.GetComponentInChildren<Animator>(true) ?? go.AddComponent<Animator>();
             string controllerPath = AssetDatabase.GenerateUniqueAssetPath(
@@ -443,6 +492,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             AssetDatabase.SaveAssets();
             return new JObject
             {
+                ["system"] = "mecanim",
                 ["clips"] = new JArray(clips.Select(c => c.name).Cast<object>().ToArray()),
                 ["controller_path"] = controllerPath,
                 ["animator_on"] = animator.gameObject.name,
@@ -622,10 +672,12 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Scales both images to the smaller height and writes them side by side. Returns the output size.</summary>
         internal static (int Width, int Height) CompositeSideBySide(string leftPng, string rightPng, string outPath)
         {
-            Texture2D left = LoadPng(leftPng), right = LoadPng(rightPng);
+            Texture2D left = null, right = null;
             Texture2D l = null, r = null, outTex = null;
             try
             {
+                left = LoadPng(leftPng);
+                right = LoadPng(rightPng);
                 int h = Math.Min(left.height, right.height);
                 l = ScaleToHeight(left, h);
                 r = ScaleToHeight(right, h);
@@ -647,12 +699,17 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         private static Texture2D LoadPng(string path)
         {
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            if (!ImageConversion.LoadImage(tex, File.ReadAllBytes(path)))
+            try
+            {
+                if (!ImageConversion.LoadImage(tex, File.ReadAllBytes(path)))
+                    throw new IOException($"Could not decode PNG: {path}");
+                return tex;
+            }
+            catch
             {
                 UnityEngine.Object.DestroyImmediate(tex);
-                throw new IOException($"Could not decode PNG: {path}");
+                throw;
             }
-            return tex;
         }
 
         /// <summary>Bilinear resample to a target height, keeping the aspect ratio. Returns the source when already right.</summary>
@@ -679,8 +736,9 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             string fork = BlenderBridgePrefs.ForkPath;
             string forkAddon = BlenderBridgePrefs.ForkAddonPath;
             string installedAddon = BlenderBridgePrefs.InstalledAddonPath;
-            if (!Directory.Exists(Path.Combine(fork, ".git")))
-                return new ErrorResponse($"'{fork}' is not a git checkout (no .git folder); check_updates needs one.");
+            string gitPath = Path.Combine(fork, ".git");
+            if (!Directory.Exists(gitPath) && !File.Exists(gitPath))
+                return new ErrorResponse($"'{fork}' is not a git checkout (no .git entry); check_updates needs one.");
 
             return await Task.Run(() => CheckUpdatesBlocking(fork, forkAddon, installedAddon));
         }
@@ -702,22 +760,23 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             foreach (string remote in remotes.OrderBy(r => r == "upstream" ? 0 : r == "origin" ? 1 : 2))
             {
                 var entry = new JObject { ["remote"] = remote };
-                TryGit(fork, $"remote get-url {remote}", out string url, out _);
+                TryGit(fork, $"remote get-url -- {QuoteGitArgument(remote)}", out string url, out _);
                 entry["url"] = RedactRemoteUrl(url.Trim());
 
-                bool fetched = TryGit(fork, $"fetch --quiet {remote}", out _, out string fetchErr, 90000);
+                bool fetched = TryGit(fork, $"fetch --quiet -- {QuoteGitArgument(remote)}", out _, out string fetchErr, 90000);
                 entry["fetched"] = fetched;
                 if (!fetched) entry["fetch_error"] = Truncate(fetchErr, 300);
 
                 string branch = "main";
-                if (TryGit(fork, $"symbolic-ref --short refs/remotes/{remote}/HEAD", out string sym, out _) && sym.Trim().Contains('/'))
-                    branch = sym.Trim().Substring(sym.Trim().IndexOf('/') + 1);
-                else if (!TryGit(fork, $"rev-parse --verify --quiet refs/remotes/{remote}/main", out _, out _)
-                         && TryGit(fork, $"rev-parse --verify --quiet refs/remotes/{remote}/master", out _, out _))
+                if (TryGit(fork, $"symbolic-ref --short {QuoteGitArgument("refs/remotes/" + remote + "/HEAD")}", out string sym, out _)
+                    && sym.Trim().StartsWith(remote + "/", StringComparison.Ordinal))
+                    branch = sym.Trim().Substring(remote.Length + 1);
+                else if (!TryGit(fork, $"rev-parse --verify --quiet {QuoteGitArgument("refs/remotes/" + remote + "/main")}", out _, out _)
+                         && TryGit(fork, $"rev-parse --verify --quiet {QuoteGitArgument("refs/remotes/" + remote + "/master")}", out _, out _))
                     branch = "master";
                 entry["branch"] = branch;
 
-                if (TryGit(fork, $"rev-list --left-right --count HEAD...{remote}/{branch}", out string counts, out string cErr))
+                if (TryGit(fork, $"rev-list --left-right --count {QuoteGitArgument("HEAD...refs/remotes/" + remote + "/" + branch)}", out string counts, out string cErr))
                 {
                     var parts = counts.Trim().Split('\t', ' ');
                     int ahead = parts.Length > 0 && int.TryParse(parts[0], out int a) ? a : 0;
@@ -726,7 +785,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                     entry["behind"] = behind;
                     if (remote == "upstream" || remotes.Count == 1) totalBehind += behind;
 
-                    TryGit(fork, $"log --format=%h%x20%ad%x20%s --date=short -n 20 HEAD..{remote}/{branch}", out string log, out _);
+                    TryGit(fork, $"log --format=%h%x20%ad%x20%s --date=short -n 20 {QuoteGitArgument("HEAD..refs/remotes/" + remote + "/" + branch)}", out string log, out _);
                     entry["new_commits"] = new JArray(log.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries));
                 }
                 else
@@ -796,6 +855,30 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
 
         // ------------------------------------------------------------------ helpers
 
+        internal static string StageExportForImport(string exportPath)
+        {
+            string relative = "Assets/.BlenderBridge/" + Guid.NewGuid().ToString("N") + "/" + Path.GetFileName(exportPath);
+            string staged = AssetGenPaths.ToAbsolute(relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(staged));
+            File.Copy(exportPath, staged);
+            return staged;
+        }
+
+        internal static string QuoteGitArgument(string value)
+        {
+            var quoted = new StringBuilder("\"");
+            int slashes = 0;
+            foreach (char c in value)
+            {
+                if (c == '\\') { slashes++; continue; }
+                quoted.Append('\\', c == '"' ? slashes * 2 + 1 : slashes);
+                quoted.Append(c);
+                slashes = 0;
+            }
+            quoted.Append('\\', slashes * 2);
+            return quoted.Append('"').ToString();
+        }
+
         /// <summary>Runs one git command with no prompts; false on non-zero exit, timeout, or missing git.</summary>
         private static bool TryGit(string workingDir, string args, out string stdout, out string stderr, int timeoutMs = 30000)
         {
@@ -803,6 +886,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             stderr = string.Empty;
             try
             {
+                var elapsed = Stopwatch.StartNew();
                 var psi = new ProcessStartInfo("git", args)
                 {
                     WorkingDirectory = workingDir,
@@ -822,6 +906,12 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 {
                     try { proc.Kill(); } catch { /* already gone */ }
                     stderr = $"git timed out after {timeoutMs} ms";
+                    return false;
+                }
+                int remainingMs = Math.Max(0, timeoutMs - (int)elapsed.ElapsedMilliseconds);
+                if (!Task.WaitAll(new Task[] { outTask, errTask }, remainingMs))
+                {
+                    stderr = $"git output timed out after {timeoutMs} ms";
                     return false;
                 }
                 // Git diagnostics may echo credential-bearing URLs (including redirects),

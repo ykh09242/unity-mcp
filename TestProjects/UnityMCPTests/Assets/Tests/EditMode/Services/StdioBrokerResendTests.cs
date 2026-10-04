@@ -23,6 +23,22 @@ namespace MCPForUnityTests.Editor.Services
         private const int ConnectTimeoutMs = 5000;
         private const int ReadTimeoutMs = 10000;
 
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":900}}", 300000, 930000)]
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeoutSeconds\":900}}", 300000, 930000)]
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":999999}}", 300000, 3630000)]
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":900}}", 1200000, 1200000)]
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":1}}", 1000, 35000)]
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":2147483648}}", 1000, 210000)]
+        [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":900.5}}", 1000, 210000)]
+        [TestCase("{\"type\":\"blender_bridge\"}", 1000, 210000)]
+        [TestCase("{\"type\":\"manage_scene\",\"params\":{\"timeout_seconds\":900}}", 300000, 300000)]
+        [TestCase("invalid json", 300000, 300000)]
+        [TestCase("{\"type\":[]}", 300000, 300000)]
+        public void CommandTimeout_UsesBoundedBlenderBudgetOnly(string payload, int baseline, int expected)
+        {
+            Assert.AreEqual(expected, StdioBridgeHost.ResolveCommandTimeoutMs(payload, baseline));
+        }
+
         [Test]
         public void IsBrokerResend_SamePayloadFromAnotherConnection_IsAResend()
         {

@@ -7,6 +7,8 @@ using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Blender
 {
@@ -67,6 +69,46 @@ namespace MCPForUnityTests.Editor.Blender
             JObject resp = Call(new JObject { ["action"] = "screenshot", ["output_folder"] = "Assets/../../outside" });
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("Assets", (string)resp["error"]);
+        }
+
+        [Test]
+        public void ImportModel_RejectsOutputFolderBeforeContactingBlender()
+        {
+            JObject resp = Call(new JObject { ["action"] = "import_model", ["format"] = "fbx", ["output_folder"] = "Assets/../../outside" });
+            Assert.AreEqual(false, (bool)resp["success"]);
+            StringAssert.Contains("Assets", (string)resp["error"]);
+        }
+
+        [TestCase("origin", "\"origin\"")]
+        [TestCase("quote\"remote", "\"quote\\\"remote\"")]
+        [TestCase("trailing\\", "\"trailing\\\\\"")]
+        public void QuoteGitArgument_PreservesOneLiteralArgument(string value, string expected)
+        {
+            Assert.AreEqual(expected, BlenderBridgeTool.QuoteGitArgument(value));
+        }
+
+        [Test]
+        public void StageExportForImport_ProducesAssetsContainedCopy()
+        {
+            string source = Path.Combine(Path.GetTempPath(), "blender-stage-" + Guid.NewGuid().ToString("N") + ".fbx");
+            string staged = null;
+            try
+            {
+                File.WriteAllBytes(source, new byte[] { 1, 2, 3 });
+                staged = BlenderBridgeTool.StageExportForImport(source);
+                Assert.IsTrue(MCPForUnity.Editor.Helpers.AssetGenPaths.TryGetAssetsRelativePath(staged, out string relative));
+                StringAssert.StartsWith("Assets/.BlenderBridge/", relative);
+                CollectionAssert.AreEqual(File.ReadAllBytes(source), File.ReadAllBytes(staged));
+            }
+            finally
+            {
+                File.Delete(source);
+                if (staged != null)
+                {
+                    File.Delete(staged);
+                    Directory.Delete(Path.GetDirectoryName(staged));
+                }
+            }
         }
 
         [Test]
@@ -154,6 +196,126 @@ namespace MCPForUnityTests.Editor.Blender
             Assert.AreEqual(0, ((JArray)cfg["names"]).Count);
             Assert.AreEqual(true, (bool)cfg["selection_only"]);
             Assert.AreEqual(false, (bool)cfg["apply_modifiers"]);
+        }
+    }
+
+    public class BlenderBridgeAnimationTests
+    {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LegacyClips_UseLoopingAnimationAndPreserveValidDefault(bool existingDefault)
+        {
+            var go = new GameObject("Model");
+            var walk = new AnimationClip { name = "Walk", legacy = true, wrapMode = WrapMode.Once };
+            var idle = new AnimationClip { name = "Idle", legacy = true, wrapMode = WrapMode.Once };
+            try
+            {
+                UnityEngine.Animation existing = null;
+                if (existingDefault)
+                {
+                    var rig = new GameObject("Rig");
+                    rig.transform.SetParent(go.transform, false);
+                    existing = rig.AddComponent<UnityEngine.Animation>();
+                    existing.AddClip(idle, idle.name);
+                    existing.clip = idle;
+                }
+                JObject report = BlenderBridgeTool.SetupAnimation(go, "Assets/unused.fbx", "Model", true, new[] { walk, idle });
+                var animation = go.GetComponentInChildren<UnityEngine.Animation>(true);
+                Assert.NotNull(animation);
+                if (existingDefault) Assert.AreSame(existing, animation);
+                Assert.IsNull(go.GetComponentInChildren<Animator>(true));
+                Assert.AreSame(existingDefault ? idle : walk, animation.clip);
+                Assert.AreSame(walk, animation.GetClip("Walk"));
+                Assert.AreSame(idle, animation.GetClip("Idle"));
+                Assert.AreEqual(WrapMode.Loop, walk.wrapMode);
+                Assert.AreEqual(WrapMode.Loop, idle.wrapMode);
+                Assert.AreEqual(WrapMode.Loop, animation.wrapMode);
+                Assert.IsTrue(animation.playAutomatically);
+                Assert.IsTrue(animation.enabled);
+                Assert.AreEqual("legacy", (string)report["system"]);
+                Assert.AreEqual(animation.clip.name, (string)report["default_clip"]);
+                Assert.AreEqual(animation.gameObject.name, (string)report["animation_on"]);
+                Assert.IsNull(report["controller_path"]);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                UnityEngine.Object.DestroyImmediate(walk);
+                UnityEngine.Object.DestroyImmediate(idle);
+            }
+        }
+
+        [Test]
+        public void MecanimClips_KeepLoopingControllerWithFirstClipAsDefault()
+        {
+            string folder = "Assets/BlenderAnimationTest_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            var go = new GameObject("Model");
+            var walk = new AnimationClip { name = "Walk" };
+            var idle = new AnimationClip { name = "Idle" };
+            try
+            {
+                AssetDatabase.CreateAsset(walk, folder + "/Walk.anim");
+                AssetDatabase.CreateAsset(idle, folder + "/Idle.anim");
+                JObject report = BlenderBridgeTool.SetupAnimation(go, folder + "/model.fbx", "Model", true, new[] { walk, idle });
+                Animator animator = go.GetComponentInChildren<Animator>(true);
+                Assert.NotNull(animator);
+                Assert.IsNull(go.GetComponentInChildren<UnityEngine.Animation>(true));
+                var controller = animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController;
+                Assert.NotNull(controller);
+                Assert.AreEqual(2, controller.layers[0].stateMachine.states.Length);
+                Assert.AreSame(walk, controller.layers[0].stateMachine.defaultState.motion);
+                Assert.IsTrue(AnimationUtility.GetAnimationClipSettings(walk).loopTime);
+                Assert.IsTrue(AnimationUtility.GetAnimationClipSettings(idle).loopTime);
+                Assert.AreEqual("mecanim", (string)report["system"]);
+                StringAssert.StartsWith(folder + "/", (string)report["controller_path"]);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AutoAnimateFalse_LeavesEitherClipKindUnconfigured(bool legacy)
+        {
+            var go = new GameObject("Model");
+            var clip = new AnimationClip { name = "Walk", legacy = legacy, wrapMode = WrapMode.Once };
+            try
+            {
+                Assert.IsNull(BlenderBridgeTool.SetupAnimation(go, "invalid asset path", "Model", false, new[] { clip }));
+                Assert.IsNull(go.GetComponentInChildren<Animator>(true));
+                Assert.IsNull(go.GetComponentInChildren<UnityEngine.Animation>(true));
+                Assert.AreEqual(WrapMode.Once, clip.wrapMode);
+                Assert.AreEqual(legacy, clip.legacy);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                UnityEngine.Object.DestroyImmediate(clip);
+            }
+        }
+
+        [Test]
+        public void MixedClipKinds_AreRejectedBeforeAddingPlaybackComponents()
+        {
+            var go = new GameObject("Model");
+            var legacy = new AnimationClip { name = "Legacy", legacy = true };
+            var mecanim = new AnimationClip { name = "Mecanim" };
+            try
+            {
+                Assert.Throws<InvalidOperationException>(() => BlenderBridgeTool.SetupAnimation(go, "Assets/unused.fbx", "Model", true, new[] { legacy, mecanim }));
+                Assert.IsNull(go.GetComponentInChildren<Animator>(true));
+                Assert.IsNull(go.GetComponentInChildren<UnityEngine.Animation>(true));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                UnityEngine.Object.DestroyImmediate(legacy);
+                UnityEngine.Object.DestroyImmediate(mecanim);
+            }
         }
     }
 

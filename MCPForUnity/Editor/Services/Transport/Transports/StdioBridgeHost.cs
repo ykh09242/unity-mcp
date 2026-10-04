@@ -27,6 +27,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public TaskCompletionSource<string> Tcs;
         public bool IsExecuting;
         public long EnqueuedAtMs;
+        public int TimeoutMs;
 
         /// <summary>
         /// Connection that queued this command, used to tell a broker resend apart from a
@@ -89,6 +90,21 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             catch { /* fall through to default */ }
             return DefaultFrameIOTimeoutMs;
+        }
+
+        internal static int ResolveCommandTimeoutMs(string payload, int defaultTimeoutMs)
+        {
+            try
+            {
+                JObject command = JObject.Parse(payload);
+                if (command["type"]?.Type != JTokenType.String
+                    || !string.Equals((string)command["type"], "blender_bridge", StringComparison.Ordinal))
+                    return defaultTimeoutMs;
+                var parameters = new ToolParams(command["params"] as JObject ?? new JObject());
+                int seconds = Math.Max(5, Math.Min(3600, parameters.GetInt("timeout_seconds", 180) ?? 180));
+                return Math.Max(defaultTimeoutMs, seconds * 1000 + 30000);
+            }
+            catch (JsonException) { return defaultTimeoutMs; }
         }
 
         private static void IoInfo(string s) { McpLog.Info(s, always: false); }
@@ -651,6 +667,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             // second time would duplicate side effects (issue #1130), so attach
                             // to the original instead of queueing a copy.
                             TaskCompletionSource<string> pending = tcs;
+                            int commandTimeoutMs = ResolveCommandTimeoutMs(commandText, FrameIOTimeoutMs);
                             lock (lockObj)
                             {
                                 QueuedCommand inFlight = FindBrokerResendTarget(commandText, client);
@@ -668,6 +685,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                         Tcs = tcs,
                                         IsExecuting = false,
                                         EnqueuedAtMs = _uptime.ElapsedMilliseconds,
+                                        TimeoutMs = commandTimeoutMs,
                                         Owner = client
                                     };
                                 }
@@ -681,8 +699,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             string response;
                             try
                             {
-                                using var respCts = new CancellationTokenSource(FrameIOTimeoutMs);
-                                var completed = await Task.WhenAny(pending.Task, Task.Delay(FrameIOTimeoutMs, respCts.Token)).ConfigureAwait(false);
+                                using var respCts = new CancellationTokenSource(commandTimeoutMs);
+                                var completed = await Task.WhenAny(pending.Task, Task.Delay(commandTimeoutMs, respCts.Token)).ConfigureAwait(false);
                                 if (completed == pending.Task)
                                 {
                                     respCts.Cancel();
@@ -696,7 +714,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                     var timeoutResponse = new
                                     {
                                         status = "error",
-                                        error = $"Command processing timed out after {FrameIOTimeoutMs} ms",
+                                        error = $"Command processing timed out after {commandTimeoutMs} ms",
                                     };
                                     response = JsonConvert.SerializeObject(timeoutResponse);
                                 }
@@ -911,10 +929,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                     // Evict commands stuck with IsExecuting=true for too long (e.g. from pre-reload state).
                     long nowMs = _uptime.ElapsedMilliseconds;
-                    long staleThresholdMs = 2L * FrameIOTimeoutMs; // 2x the command timeout
                     List<string> staleIds = null;
                     foreach (var kvp in commandQueue)
                     {
+                        long staleThresholdMs = 2L * Math.Max(FrameIOTimeoutMs, kvp.Value.TimeoutMs);
                         if (kvp.Value.IsExecuting && (nowMs - kvp.Value.EnqueuedAtMs) > staleThresholdMs)
                         {
                             staleIds ??= new List<string>();
@@ -1001,11 +1019,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static void ExecuteQueuedCommand(string commandId, string payload, TaskCompletionSource<string> completionSource)
         {
+            int commandTimeoutMs = ResolveCommandTimeoutMs(payload, FrameIOTimeoutMs);
             async void Runner()
             {
                 try
                 {
-                    using var cts = new CancellationTokenSource(FrameIOTimeoutMs);
+                    using var cts = new CancellationTokenSource(commandTimeoutMs);
                     string response = await TransportCommandDispatcher.ExecuteCommandJsonAsync(payload, cts.Token).ConfigureAwait(true);
                     completionSource.TrySetResult(response);
                 }
@@ -1014,7 +1033,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     var timeoutResponse = new
                     {
                         status = "error",
-                        error = $"Command processing timed out after {FrameIOTimeoutMs} ms",
+                        error = $"Command processing timed out after {commandTimeoutMs} ms",
                     };
                     completionSource.TrySetResult(JsonConvert.SerializeObject(timeoutResponse));
                 }

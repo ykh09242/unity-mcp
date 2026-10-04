@@ -1,5 +1,7 @@
+using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Services.Blender;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -72,6 +74,58 @@ namespace MCPForUnityTests.Editor.Blender
         public void BlenderEndpoint_FormatsAsHostPort()
         {
             Assert.AreEqual("127.0.0.1:9876", new BlenderEndpoint("127.0.0.1", 9876).ToString());
+        }
+
+        [Test]
+        public void Unwrap_RejectsSuccessWithoutResult()
+        {
+            Assert.Throws<InvalidDataException>(() => BlenderSocketClient.Unwrap(JObject.Parse("{\"status\":\"success\"}"), "get_scene_info"));
+        }
+
+        [Test]
+        public void ReadResponse_RejectsUnboundedIncompleteJson()
+        {
+            using var stream = new TestStream(new byte[BlenderSocketClient.MaxResponseBytes + 1]);
+            Assert.Throws<InvalidDataException>(() => BlenderSocketClient.ReadResponse(stream, "get_scene_info", 10));
+        }
+
+        [Test]
+        public void ReadResponse_UsesRemainingDeadlineForEachRead()
+        {
+            using var stream = new TestStream(Bytes("{\"status\":\"success\",\"result\":1}"), split: true);
+            Assert.AreEqual(1, (int)BlenderSocketClient.ReadResponse(stream, "get_scene_info", 1));
+            Assert.Less(stream.LastTimeout, stream.FirstTimeout);
+        }
+
+        [Test]
+        public void Send_WithCancelledToken_DoesNotConnect()
+        {
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            Assert.Throws<OperationCanceledException>(() => BlenderSocketClient.Send(new BlenderEndpoint("invalid", 0), "get_scene_info", cancellationToken: cancellation.Token));
+        }
+
+        private sealed class TestStream : MemoryStream
+        {
+            private readonly bool split;
+            private int reads;
+            public int FirstTimeout { get; private set; }
+            public int LastTimeout { get; private set; }
+            public override int ReadTimeout
+            {
+                get => LastTimeout;
+                set { if (FirstTimeout == 0) FirstTimeout = value; LastTimeout = value; }
+            }
+            public TestStream(byte[] bytes, bool split = false) : base(bytes) { this.split = split; }
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (split && reads++ == 0)
+                {
+                    Thread.Sleep(30);
+                    count = 1;
+                }
+                return base.Read(buffer, offset, count);
+            }
         }
     }
 }

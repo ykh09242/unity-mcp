@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from models.models import MCPResponse, UnityInstanceInfo
+from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from transport.legacy.stdio_port_registry import stdio_port_registry
 
 
@@ -324,9 +325,13 @@ class UnityConnection:
         attempts = max(config.max_retries,
                        5) if max_attempts is None else max_attempts
         base_backoff = max(0.5, config.retry_delay)
+        blender_timeout = blender_command_timeout(params) if command_type == "blender_bridge" else None
+        command_sent = False
 
         # Cap total time across all retries so a wedged socket can't block unbounded.
         total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
+        if blender_timeout is not None:
+            total_timeout = blender_timeout + SERVER_RESPONSE_GRACE
         if deadline is None and total_timeout > 0:
             deadline = time.monotonic() + total_timeout
 
@@ -382,6 +387,7 @@ class UnityConnection:
                     success=False,
                     error="Unity is reloading; please retry",
                     hint="retry",
+                    data={"reason": "reloading"},
                 )
         except Exception as exc:
             logger.debug(f"Preflight status check failed: {exc}")
@@ -421,6 +427,8 @@ class UnityConnection:
                             f"send {len(payload)} bytes; mode={mode}; head={payload[:32].decode('utf-8', 'ignore')}")
                     restore_timeout = self.sock.gettimeout()
                     try:
+                        if blender_timeout is not None:
+                            self.sock.settimeout(blender_timeout)
                         t_send_start = time.time()
                         if self.use_framing:
                             header = struct.pack('>Q', len(payload))
@@ -428,11 +436,12 @@ class UnityConnection:
                             self.sock.sendall(header)
                             self._check_deadline(deadline)
                         self._set_socket_deadline(self.sock, deadline)
+                        command_sent = True
                         self.sock.sendall(payload)
                         self._check_deadline(deadline)
                         logger.info("[TIMING-STDIO] sendall took %.3fs command=%s", time.time() - t_send_start, command_type)
 
-                        recv_timeout = 1.0 if attempt > 0 else restore_timeout
+                        recv_timeout = blender_timeout if blender_timeout is not None else (1.0 if attempt > 0 else restore_timeout)
                         if deadline is not None:
                             recv_timeout = self._cap_to_deadline(
                                 recv_timeout or config.connection_timeout, deadline)
@@ -468,6 +477,11 @@ class UnityConnection:
                         self.sock.close()
                 finally:
                     self.sock = None
+
+                # Blender may still be executing Python/export after a lost reply.
+                # Once sending begins, a reconnect must not dispatch it again.
+                if blender_timeout is not None and command_sent:
+                    raise
 
                 # Re-discover the port for this specific instance
                 try:
@@ -838,12 +852,17 @@ def _extract_response_reason(resp: object) -> str | None:
     return None
 
 
-def _is_reloading_response(resp: object) -> bool:
+def _is_reloading_response(resp: object, *, require_preflight: bool = False) -> bool:
     """Return True if the Unity response indicates the editor is reloading.
 
     Supports both raw dict payloads from Unity and MCPResponse objects returned
     by preflight checks or transport helpers.
     """
+    if require_preflight:
+        # Only the local preflight returns this model; on-wire tool results are
+        # dictionaries and can mention reload after already changing Blender.
+        return (isinstance(resp, MCPResponse) and isinstance(resp.data, dict)
+                and resp.data.get("reason") == "reloading")
     return _extract_response_reason(resp) == "reloading"
 
 
@@ -905,6 +924,8 @@ def send_command_with_retry(
     max_wait_s = max(0.0, min(max_wait_s, 20.0))
 
     total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
+    if command_type == "blender_bridge":
+        total_timeout = blender_command_timeout(params) + SERVER_RESPONSE_GRACE
     deadline = time.monotonic() + total_timeout if total_timeout > 0 else None
 
     # If retry_on_reload=False, disable connection-level retries too (issue #577)
@@ -916,7 +937,8 @@ def send_command_with_retry(
     retries = 0
     wait_started = None
     reason = _extract_response_reason(response)
-    while retry_on_reload and _is_reloading_response(response) and retries < max_retries and (deadline is None or time.monotonic() < deadline):
+    require_preflight = command_type == "blender_bridge"
+    while retry_on_reload and _is_reloading_response(response, require_preflight=require_preflight) and retries < max_retries and (deadline is None or time.monotonic() < deadline):
         if wait_started is None:
             wait_started = time.monotonic()
             logger.debug(
@@ -962,7 +984,7 @@ def send_command_with_retry(
 
     if wait_started is not None:
         waited = time.monotonic() - wait_started
-        if _is_reloading_response(response):
+        if _is_reloading_response(response, require_preflight=require_preflight):
             logger.debug(
                 "Unity reload wait exceeded budget: command=%s instance=%s waited_s=%.3f",
                 command_type,

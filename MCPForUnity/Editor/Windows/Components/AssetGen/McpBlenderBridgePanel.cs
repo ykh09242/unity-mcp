@@ -263,6 +263,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                     BlenderEndpoint endpoint = BlenderBridgePrefs.Endpoint;
                     SetConnectionStatus(null, $"Checking Blender at {endpoint}…");
                     var (ok, error) = await BlenderSocketClient.ProbeAsync(endpoint);
+                    error = MCPForUnity.Editor.Security.SecretRedactor.Scrub(error);
                     if (probeQueued) continue;
                     if (ok) SetConnectionStatus(true, $"Blender reachable at {endpoint}");
                     // The actionable socket error leads; detection can miss portable installs, so it is only a hint.
