@@ -29,7 +29,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Reference object '{referenceToken}' not found.");
             }
 
-            string direction = @params["direction"]?.ToString()?.ToLower();
+            string direction = @params["direction"]?.ToString()?.ToLowerInvariant();
             float distance = @params["distance"]?.ToObject<float>() ?? 1f;
             Vector3? customOffset = VectorParsing.ParseVector3(@params["offset"]);
             bool useWorldSpace = @params["world_space"]?.ToObject<bool>() ?? true;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.GameObjects;
@@ -210,6 +211,80 @@ namespace MCPForUnityTests.Editor.Tools
             var response = Send("look_at", new JObject { ["look_at_target"] = "Missing_" + Guid.NewGuid().ToString("N") });
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
+        }
+
+        [TestCase("tr-TR", "action", true)]
+        [TestCase("tr-TR", "selector", true)]
+        [TestCase("tr-TR", "direction", true)]
+        [TestCase("tr-TR", "direction", false)]
+        [TestCase("tr-TR", "lowercase", true)]
+        [TestCase("az-Latn-AZ", "action", true)]
+        [TestCase("az-Latn-AZ", "selector", true)]
+        [TestCase("az-Latn-AZ", "direction", true)]
+        [TestCase("az-Latn-AZ", "direction", false)]
+        [TestCase("az-Latn-AZ", "lowercase", true)]
+        [TestCase("", "direction", true)]
+        public void ProtocolIdentifiers_AreIndependentOfCurrentCulture(string culture, string identifier, bool worldSpace)
+        {
+            var originalCulture = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                reference.transform.rotation = Quaternion.Euler(0, 90, 0);
+                var response = JObject.FromObject(ManageGameObject.HandleCommand(new JObject
+                {
+                    ["action"] = identifier == "action" ? "MOVE_RELATIVE" : "move_relative",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = identifier == "selector" ? "BY_ID" : "by_id",
+                    ["reference_object"] = reference.GetInstanceIDCompat(),
+                    ["direction"] = identifier == "direction" ? "RIGHT" : "right",
+                    ["distance"] = 2,
+                    ["world_space"] = worldSpace
+                }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var axis = worldSpace ? Vector3.right : reference.transform.right;
+                Assert.AreEqual(reference.transform.position + axis * 2, target.transform.position);
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = originalCulture;
+            }
+        }
+
+        [TestCase("first", 1)]
+        [TestCase("all", 3)]
+        [TestCase("empty", 0)]
+        public void MatchCollection_EnumeratesOnlyRequestedMatches(string mode, int expectedVisits)
+        {
+            var candidates = mode == "empty" ? new GameObject[0] : new[] { target, target, reference };
+            int visited = 0;
+            IEnumerable<GameObject> CountedMatches()
+            {
+                foreach (var candidate in candidates)
+                {
+                    visited++;
+                    yield return candidate;
+                }
+            }
+            var results = new List<GameObject>();
+            ManageGameObjectCommon.AddMatches(results, CountedMatches(), mode == "all");
+            Assert.AreEqual(expectedVisits, visited);
+            var expected = mode == "first" ? new[] { target } : candidates;
+            CollectionAssert.AreEqual(expected, results);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void NameLookup_PreservesFirstAllAndInactiveSelection(bool findAll, bool inactiveFirst)
+        {
+            reference.name = target.name;
+            target.transform.SetSiblingIndex(0);
+            reference.transform.SetSiblingIndex(1);
+            target.SetActive(!inactiveFirst);
+            var results = ManageGameObjectCommon.FindObjectsInternal(target.name, "by_name", findAll);
+            var expected = findAll ? new[] { target, reference } : new[] { inactiveFirst ? reference : target };
+            CollectionAssert.AreEqual(expected, results);
         }
 
         [TestCase(null)]

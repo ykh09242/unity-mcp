@@ -25,7 +25,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse("Parameters cannot be null.");
             }
 
-            string action = @params["action"]?.ToString().ToLower();
+            string action = @params["action"]?.ToString().ToLowerInvariant();
             if (string.IsNullOrEmpty(action))
             {
                 return new ErrorResponse("Action parameter is required.");
@@ -47,7 +47,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
             // -------------------------------------------------------------------------------
 
-            string searchMethod = @params["searchMethod"]?.ToString().ToLower();
+            string searchMethod = @params["searchMethod"]?.ToString().ToLowerInvariant();
             string tag = @params["tag"]?.ToString();
             string layer = @params["layer"]?.ToString();
             JToken parentToken = @params["parent"];

@@ -81,7 +81,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                             .GetComponentsInChildren<Transform>(searchInactive)
                             .Select(t => t.gameObject)
                         : GetAllSceneObjects(searchInactive);
-                    results.AddRange(searchPoolName.Where(go => go.name == searchTerm));
+                    AddMatches(results, searchPoolName.Where(go => go.name == searchTerm), findAll);
                     break;
 
                 case "by_path":
@@ -121,7 +121,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                             .GetComponentsInChildren<Transform>(searchInactive)
                             .Select(t => t.gameObject)
                         : GetAllSceneObjects(searchInactive);
-                    results.AddRange(searchPoolTag.Where(go => go.CompareTag(searchTerm)));
+                    AddMatches(results, searchPoolTag.Where(go => go.CompareTag(searchTerm)), findAll);
                     break;
 
                 case "by_layer":
@@ -132,13 +132,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         : GetAllSceneObjects(searchInactive);
                     if (int.TryParse(searchTerm, out int layerIndex))
                     {
-                        results.AddRange(searchPoolLayer.Where(go => go.layer == layerIndex));
+                        AddMatches(results, searchPoolLayer.Where(go => go.layer == layerIndex), findAll);
                     }
                     else
                     {
                         int namedLayer = LayerMask.NameToLayer(searchTerm);
                         if (namedLayer != -1)
-                            results.AddRange(searchPoolLayer.Where(go => go.layer == namedLayer));
+                            AddMatches(results, searchPoolLayer.Where(go => go.layer == namedLayer), findAll);
                     }
                     break;
 
@@ -159,7 +159,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                                 .Cast<Component>()
                                 .Select(c => c.gameObject);
                         }
-                        results.AddRange(searchPoolComp.Where(go => go != null));
+                        AddMatches(results, searchPoolComp.Where(go => go != null), findAll);
                     }
                     else
                     {
@@ -206,6 +206,11 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             return results.Distinct().ToList();
+        }
+
+        internal static void AddMatches(List<GameObject> results, IEnumerable<GameObject> matches, bool findAll)
+        {
+            results.AddRange(findAll ? matches : matches.Take(1));
         }
 
         private static IEnumerable<GameObject> GetAllSceneObjects(bool includeInactive)
