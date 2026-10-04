@@ -16,6 +16,7 @@ const sidebars = {
         'getting-started/install',
         'getting-started/first-prompt',
         'getting-started/clients',
+        'getting-started/migrate',
       ],
     },
     {
@@ -32,6 +33,7 @@ const sidebars = {
         'guides/cli-examples',
         'guides/custom-tools',
         'guides/remote-server-auth',
+        'guides/security',
         'guides/roslyn',
         'guides/troubleshooting',
       ],

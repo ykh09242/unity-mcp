@@ -1,12 +1,16 @@
 .copy {
   display: inline-flex;
+  justify-content: center;
+  min-width: 6.5rem;
+  min-height: 2.75rem;
+  flex-shrink: 0;
   align-items: center;
   gap: 0.35rem;
   padding: 0.3rem 0.6rem;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.7rem;
   font-weight: 500;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ifm-color-emphasis-700);
   background: transparent;
@@ -23,12 +27,21 @@
 }
 
 .copied {
-  color: #10b981;
-  border-color: #10b981;
+  color: var(--ifm-color-emphasis-900);
+  background: var(--ifm-color-emphasis-200);
 }
 .copied:hover {
-  color: #10b981;
-  border-color: #10b981;
+  color: var(--ifm-color-emphasis-900);
+}
+.failed { color: var(--ifm-color-danger-dark); }
+.feedback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .icon {

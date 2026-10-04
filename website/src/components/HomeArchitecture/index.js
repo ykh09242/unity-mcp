@@ -9,10 +9,9 @@ export default function HomeArchitecture() {
           <span className={styles.eyebrow}>// ARCHITECTURE</span>
           <h2 className={styles.title}>How it works</h2>
           <p className={styles.lede}>
-            Three layers, two transports, one Unity Editor. Your MCP
-            client never talks to Unity directly — the Python server
-            in the middle handles routing, session isolation, and the
-            chatter with the C# Editor plugin.
+            Your MCP client connects to the Python server over stdio or HTTP.
+            The server routes each request to the selected Unity Editor
+            through the C# plugin.
           </p>
         </div>
 
@@ -33,7 +32,7 @@ export default function HomeArchitecture() {
             kicker="LAYER 02"
             title="Python Server"
             sub="FastMCP + WebSocket hub"
-            body="Auto-discovers @mcp_for_unity_tool registrations. Routes per-session via client_id and active instance. Hot-reloadable."
+            body="Registers Python tools and routes request-scoped Editor targets. Optional session defaults require a stateful legacy connection."
             tone="filled"
           />
           <Edge label="WebSocket  ·  /hub/plugin" />
@@ -49,7 +48,7 @@ export default function HomeArchitecture() {
         <div className={styles.legend}>
           <span className={styles.legendItem}>
             <span className={`${styles.legendSwatch} ${styles.swatchFilled}`} />
-            Runs on your machine
+            Client and server processes
           </span>
           <span className={styles.legendItem}>
             <span className={`${styles.legendSwatch} ${styles.swatchOutlined}`} />

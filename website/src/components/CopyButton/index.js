@@ -1,14 +1,17 @@
 import React, { useState, useRef, useEffect, useTransition } from 'react';
+import IconCopy from '@theme/Icon/Copy';
+import IconSuccess from '@theme/Icon/Success';
+import { copyText } from './copyText.mjs';
 import styles from './styles.module.css';
 
 /**
  * Minimal "copy to clipboard" button. Shows a 1.5s confirmation state
- * after a successful copy. Falls back silently when the Clipboard API
- * isn't available (older browsers, insecure contexts) — the user can
- * still select-and-copy manually.
+ * after a successful copy. Legacy clipboard access restores keyboard focus;
+ * denied access leaves selectable text and an explicit failure state.
  */
-export default function CopyButton({ text, label = 'Copy', className }) {
-  const [copied, setCopied] = useState(false);
+export default function CopyButton({ text, label = 'text', className }) {
+  const [status, setStatus] = useState('idle');
+  const copied = status === 'copied';
   const [isPending, startTransition] = useTransition();
   // Timer ref so rapid repeated clicks don't stack pending resets and
   // an unmount mid-cooldown doesn't fire setCopied on a dead component.
@@ -24,63 +27,35 @@ export default function CopyButton({ text, label = 'Copy', className }) {
   }, []);
 
   const onClick = () => startTransition(async () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setStatus('idle');
     try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // Legacy fallback
-        const ta = document.createElement('textarea');
-        const activeElement = document.activeElement;
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'absolute';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        try {
-          ta.select();
-          if (!document.execCommand('copy')) return;
-        } finally {
-          ta.remove();
-          activeElement?.focus();
-        }
-      }
+      await copyText(text, { navigator, document });
       if (!mountedRef.current) return;
-      startTransition(() => setCopied(true));
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setCopied(false), 1500);
+      startTransition(() => setStatus('copied'));
+      timerRef.current = setTimeout(() => setStatus('idle'), 1500);
     } catch {
-      // swallow — the user can still select-and-copy the rendered text
+      if (mountedRef.current) startTransition(() => setStatus('failed'));
     }
   });
+
+  const feedback = isPending ? 'Copying' : copied ? 'Copied' : status === 'failed' ? 'Copy failed. Select the text to copy manually.' : `Copy ${label} to clipboard`;
 
   return (
     <button
       type="button"
-      className={`${styles.copy} ${copied ? styles.copied : ''} ${className ?? ''}`.trim()}
+      className={`${styles.copy} ${copied ? styles.copied : ''} ${status === 'failed' ? styles.failed : ''} ${className ?? ''}`.trim()}
       onClick={onClick}
       disabled={isPending}
       aria-busy={isPending}
-      aria-label={isPending ? `Copying ${label}` : copied ? 'Copied to clipboard' : `Copy ${label} to clipboard`}
+      aria-label={feedback}
+      title={feedback}
     >
       <span className={styles.icon} aria-hidden="true">
-        {copied ? (
-          /* checkmark */
-          <svg viewBox="0 0 16 16" width="13" height="13">
-            <path d="M2 8.5 L6.5 13 L14 4" stroke="currentColor" strokeWidth="2"
-                  fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        ) : (
-          /* two overlapping squares — classic copy glyph */
-          <svg viewBox="0 0 16 16" width="13" height="13">
-            <rect x="4.5" y="4.5" width="9" height="9" rx="1.5"
-                  stroke="currentColor" strokeWidth="1.5" fill="none" />
-            <rect x="2.5" y="2.5" width="9" height="9" rx="1.5"
-                  stroke="currentColor" strokeWidth="1.5" fill="none"
-                  style={{ opacity: 0.55 }} />
-          </svg>
-        )}
+        {copied ? <IconSuccess width="16" height="16" /> : <IconCopy width="16" height="16" />}
       </span>
-      <span className={styles.label} aria-live="polite">{isPending ? 'Copying' : copied ? 'Copied' : 'Copy'}</span>
+      <span className={styles.label} aria-hidden="true">{isPending ? 'Copying' : copied ? 'Copied' : status === 'failed' ? 'Failed' : 'Copy'}</span>
+      <span className={styles.feedback} role="status" aria-live="polite">{feedback}</span>
     </button>
   );
 }

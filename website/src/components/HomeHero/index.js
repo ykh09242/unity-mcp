@@ -21,17 +21,14 @@ export default function HomeHero() {
           <span className={styles.statusValue}>v{forkVersion}</span>
         </div>
 
-        <h1 className={styles.headline}>
-          Run the Unity Editor<br />
-          with your <em>AI&nbsp;assistant</em>.
-        </h1>
+        <h1 className={styles.headline}>{siteConfig.title}</h1>
 
         <p className={styles.tagline}>
-          Unity MCP (ykh09242) bridges AI assistants — Claude, Codex, VS Code,
-          local LLMs, and more — with the Unity Editor via the Model
-          Context Protocol. Manage assets, control scenes, edit scripts,
-          run tests, automate workflows.{' '}
-          <small>Upstream baseline: {upstreamBaselineVersion}.</small>
+          Connect your AI assistant to the Unity Editor with the Model Context
+          Protocol. Manage assets, scenes, scripts, and tests.
+        </p>
+        <p className={styles.baseline}>
+          <Link to="/releases">Upstream baseline: {upstreamBaselineVersion}</Link>
         </p>
 
         <div className={styles.ctaRow}>
@@ -48,9 +45,6 @@ export default function HomeHero() {
         <div className={styles.install}>
           <div className={styles.installHeader}>
             <span className={styles.installLabel}>// INSTALL · Unity Package Manager</span>
-            <span className={styles.installHint}>
-              Window → Package Manager → + → Add package from git URL
-            </span>
           </div>
 
           <div className={styles.installLine}>

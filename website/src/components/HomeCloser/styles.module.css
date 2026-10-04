@@ -40,7 +40,7 @@
   display: block;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.72rem;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ifm-color-primary);
   font-weight: 600;
@@ -48,9 +48,9 @@
 }
 
 .title {
-  font-size: clamp(1.8rem, 3.5vw, 2.6rem);
+  font-size: 2rem;
   font-weight: 700;
-  letter-spacing: -0.022em;
+  letter-spacing: 0;
   line-height: 1.1;
   margin: 0 0 1rem;
   color: var(--ifm-color-emphasis-1000);
@@ -150,12 +150,13 @@
 .citeMeta {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.72rem;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--ifm-color-emphasis-500);
 }
 
 .citeBody {
+  overflow-wrap: anywhere;
   font-size: 0.95rem;
   line-height: 1.55;
   color: var(--ifm-color-emphasis-700);
@@ -177,4 +178,10 @@
   border: 1px solid var(--ifm-color-emphasis-200);
   overflow-x: auto;
   white-space: pre;
+}
+
+@media (max-width: 640px) {
+  .section { padding: 3rem 1rem; }
+  .title { font-size: 1.75rem; }
+  .cite { padding: 1rem; }
 }

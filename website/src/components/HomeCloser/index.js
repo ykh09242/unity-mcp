@@ -12,8 +12,8 @@ export default function HomeCloser() {
           <span className={styles.eyebrow}>// READY?</span>
           <h2 className={styles.title}>Get the editor speaking your AI's language.</h2>
           <p className={styles.lede}>
-            Install in under a minute. No account, no telemetry by
-            default, no lock-in. Open source under MIT.
+            Git-based installation. No telemetry by default.
+            Open source under MIT.
           </p>
         </div>
 

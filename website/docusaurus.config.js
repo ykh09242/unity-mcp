@@ -221,7 +221,13 @@ const config = {
             position: 'left',
           },
           {
+            type: 'search',
+            position: 'right',
+          },
+          {
             href: 'https://github.com/ykh09242/unity-mcp',
+            label: 'GitHub',
+            title: 'GitHub repository',
             position: 'right',
             className: 'header-icon-link header-github-link',
             'aria-label': 'GitHub repository',
@@ -236,6 +242,8 @@ const config = {
             items: [
               { label: 'Getting Started', to: '/getting-started' },
               { label: 'Guides', to: '/guides/cli' },
+              { label: 'Security', to: '/guides/security' },
+              { label: 'Migrate From Upstream', to: '/getting-started/migrate' },
               { label: 'Reference', to: '/reference/tools/' },
             ],
           },

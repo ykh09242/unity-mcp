@@ -6,9 +6,10 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "prebuild": "node --test scripts/dependency-contracts.test.mjs scripts/braces-contracts.test.mjs",
+    "prebuild": "node --test scripts/dependency-contracts.test.mjs scripts/braces-contracts.test.mjs scripts/ui-contracts.test.mjs",
     "build": "docusaurus build",
     "test:dependencies": "node --test scripts/dependency-contracts.test.mjs scripts/braces-contracts.test.mjs",
+    "test:ui": "node --test scripts/ui-contracts.test.mjs",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
