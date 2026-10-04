@@ -42,16 +42,17 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             // Check caches
-            if (CacheByFqn.TryGetValue(typeName, out type) && PassesConstraint(type, requiredBaseType))
+            // A global type's FullName is also its short name, so it can still be ambiguous.
+            if (CacheByFqn.TryGetValue(typeName, out type) && typeName != type.Name && PassesConstraint(type, requiredBaseType))
                 return true;
-            if (!typeName.Contains(".") && CacheByName.TryGetValue(typeName, out type) && PassesConstraint(type, requiredBaseType))
+            if (requiredBaseType == null && !typeName.Contains(".") && CacheByName.TryGetValue(typeName, out type))
                 return true;
 
             // Try direct Type.GetType
             type = Type.GetType(typeName, throwOnError: false);
             if (type != null && PassesConstraint(type, requiredBaseType))
             {
-                Cache(type);
+                Cache(type, typeName, requiredBaseType);
                 return true;
             }
 
@@ -60,7 +61,7 @@ namespace MCPForUnity.Editor.Helpers
             if (candidates.Count == 1)
             {
                 type = candidates[0];
-                Cache(type);
+                Cache(type, typeName, requiredBaseType);
                 return true;
             }
             if (candidates.Count > 1)
@@ -80,7 +81,7 @@ namespace MCPForUnity.Editor.Helpers
                 if (candidates.Count == 1)
                 {
                     type = candidates[0];
-                    Cache(type);
+                    Cache(type, typeName, requiredBaseType);
                     return true;
                 }
                 if (candidates.Count > 1)
@@ -141,11 +142,13 @@ namespace MCPForUnity.Editor.Helpers
             t.Name.Equals(query, StringComparison.Ordinal) ||
             (t.FullName?.Equals(query, StringComparison.Ordinal) ?? false);
 
-        private static void Cache(Type t)
+        private static void Cache(Type t, string query, Type requiredBaseType)
         {
             if (t == null) return;
             if (t.FullName != null) CacheByFqn[t.FullName] = t;
-            CacheByName[t.Name] = t;
+            // Qualified and constrained lookups do not establish short-name uniqueness.
+            if (requiredBaseType == null && query == t.Name)
+                CacheByName[query] = t;
         }
 
         private static List<Type> FindCandidates(string query, Type requiredBaseType)

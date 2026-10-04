@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -144,6 +145,103 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreSame(names, extensions[typeof(ReflectionMetadataStringList)]);
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void SpecificTypeLookupDoesNotResolveAnAmbiguousShortName(bool constrained, bool secondCandidate)
+        {
+            fqn.Clear();
+            shortNames.Clear();
+            string shortName = nameof(ResolverCollisionA.ReflectionResolverCollision);
+            Assert.IsFalse(UnityTypeResolver.TryResolve(shortName, out Type coldType, out string coldError));
+            Assert.IsNull(coldType);
+            StringAssert.Contains("Ambiguous", coldError);
+            Type candidate = secondCandidate ? typeof(ResolverCollisionB.ReflectionResolverCollision)
+                : typeof(ResolverCollisionA.ReflectionResolverCollision);
+            Type constraint = secondCandidate ? typeof(ReflectionResolverBaseB) : typeof(ReflectionResolverBaseA);
+            Assert.IsTrue(UnityTypeResolver.TryResolve(constrained ? shortName : candidate.FullName,
+                out Type selected, out string selectedError, constrained ? constraint : null), selectedError);
+            Assert.AreSame(candidate, selected);
+            Assert.IsFalse(UnityTypeResolver.TryResolve(shortName, out Type warmType, out string warmError));
+            Assert.IsNull(warmType);
+            StringAssert.Contains("Ambiguous", warmError);
+        }
+
+        [Test]
+        public void SeparateBaseConstraintsResolveTheirOwnCandidates()
+        {
+            fqn.Clear();
+            shortNames.Clear();
+            string shortName = nameof(ResolverCollisionA.ReflectionResolverCollision);
+            Assert.IsTrue(UnityTypeResolver.TryResolve(shortName, out Type first, out string firstError,
+                typeof(ReflectionResolverBaseA)), firstError);
+            Assert.AreSame(typeof(ResolverCollisionA.ReflectionResolverCollision), first);
+            Assert.IsTrue(UnityTypeResolver.TryResolve(shortName, out Type second, out string secondError,
+                typeof(ReflectionResolverBaseB)), secondError);
+            Assert.AreSame(typeof(ResolverCollisionB.ReflectionResolverCollision), second);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void QualifiedCollisionsRetainTheirIdentityInEitherWarmupOrder(bool reverse)
+        {
+            fqn.Clear();
+            shortNames.Clear();
+            var types = new[] { typeof(ResolverCollisionA.ReflectionResolverCollision),
+                typeof(ResolverCollisionB.ReflectionResolverCollision) };
+            if (reverse) Array.Reverse(types);
+            foreach (Type expected in types.Concat(types.Reverse()))
+            {
+                Assert.IsTrue(UnityTypeResolver.TryResolve(expected.FullName, out Type actual, out string error), error);
+                Assert.AreSame(expected, actual);
+                Assert.AreSame(expected, fqn[expected.FullName]);
+            }
+        }
+
+        [Test]
+        public void UniqueShortNameStillUsesItsCacheForRepeatedRequests()
+        {
+            fqn.Clear();
+            shortNames.Clear();
+            Type expected = typeof(ReflectionMetadataFixture);
+            Assert.IsTrue(UnityTypeResolver.TryResolve(expected.Name, out Type first, out string firstError), firstError);
+            Assert.AreSame(expected, first);
+            Assert.AreSame(expected, shortNames[expected.Name]);
+            int count = shortNames.Count;
+            Assert.IsTrue(UnityTypeResolver.TryResolve(expected.Name, out Type second, out string secondError), secondError);
+            Assert.AreSame(first, second);
+            Assert.AreEqual(count, shortNames.Count);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void GlobalTypeFullNameCacheDoesNotResolveAnAmbiguousShortName(bool globalFirst)
+        {
+            fqn.Clear();
+            shortNames.Clear();
+            string name = "ReflectionGlobalCollision" + Guid.NewGuid().ToString("N");
+            var assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(name), AssemblyBuilderAccess.Run);
+            var module = assembly.DefineDynamicModule(name);
+            Type global = module.DefineType(name, TypeAttributes.Public, typeof(ReflectionResolverBaseA)).CreateType();
+            Type qualified = module.DefineType("Other." + name, TypeAttributes.Public, typeof(ReflectionResolverBaseB)).CreateType();
+            Assert.IsNull(Type.GetType(name, false), "Keep these types outside the resolver's calling assembly.");
+            Assert.IsFalse(UnityTypeResolver.TryResolve(name, out Type cold, out string coldError));
+            Assert.IsNull(cold);
+            StringAssert.Contains("Ambiguous", coldError);
+            var types = globalFirst ? new[] { global, qualified } : new[] { qualified, global };
+            foreach (Type expected in types.Concat(types.Reverse()))
+            {
+                Assert.IsTrue(UnityTypeResolver.TryResolve(name, out Type actual, out string error, expected.BaseType), error);
+                Assert.AreSame(expected, actual);
+            }
+            Assert.AreSame(global, fqn[name]);
+            shortNames.Clear();
+            Assert.IsFalse(UnityTypeResolver.TryResolve(name, out Type warm, out string warmError));
+            Assert.IsNull(warm);
+            StringAssert.Contains("Ambiguous", warmError);
+        }
+
         private static JObject Member(Type type, string member) => Invoke("get_member", type, member);
         private static JObject Invoke(string action, Type type, string member = null)
         {
@@ -178,6 +276,8 @@ namespace MCPForUnityTests.EditMode.Tools
         public void Consume(int[,,] cube) => throw new InvalidOperationException("Metadata only; do not invoke.");
     }
     public class ReflectionMetadataBase<T> { }
+    public class ReflectionResolverBaseA { }
+    public class ReflectionResolverBaseB { }
     public class ReflectionMetadataDerived : ReflectionMetadataBase<int> { }
     public class ReflectionMetadataIntList : List<int> { }
     public class ReflectionMetadataStringList : List<string> { }
@@ -193,4 +293,13 @@ namespace MCPForUnityTests.EditMode.Tools
         public static int CovariantObjects(this IEnumerable<object> value) => 0;
         public static int ContravariantStrings(this IComparer<string> value) => 0;
     }
+}
+
+namespace MCPForUnityTests.EditMode.Tools.ResolverCollisionA
+{
+    public class ReflectionResolverCollision : MCPForUnityTests.EditMode.Tools.ReflectionResolverBaseA { }
+}
+namespace MCPForUnityTests.EditMode.Tools.ResolverCollisionB
+{
+    public class ReflectionResolverCollision : MCPForUnityTests.EditMode.Tools.ReflectionResolverBaseB { }
 }
