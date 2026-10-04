@@ -9,6 +9,12 @@ using UnityEngine;
 using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
 
+#if UNITY_6000_0_OR_NEWER
+using PhysicsMaterialType = UnityEngine.PhysicsMaterial;
+#else
+using PhysicsMaterialType = UnityEngine.PhysicMaterial;
+#endif
+
 namespace MCPForUnityTests.Editor.Tools
 {
     public class MaterialParameterToolTests
@@ -102,6 +108,38 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 Assert.AreEqual(Color.blue, mat.GetColor("_Color"));
             }
+        }
+
+        [TestCase(0f, false)]
+        [TestCase(1f, false)]
+        [TestCase(0f, true)]
+        [TestCase(1f, true)]
+        [TestCase(0.35f, true)]
+        public void CreatePhysicsMaterial_NumericPropertiesPersist(float value, bool floatingPoint)
+        {
+            var path = $"{TempRoot}/Physics_{Guid.NewGuid():N}.physicMaterial";
+            JValue numericValue = floatingPoint ? new JValue(value) : new JValue((int)value);
+            Assert.AreEqual(floatingPoint ? JTokenType.Float : JTokenType.Integer, numericValue.Type);
+            var response = ToJObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["path"] = path,
+                ["assetType"] = "PhysicsMaterial",
+                ["properties"] = new JObject
+                {
+                    ["dynamicFriction"] = numericValue.DeepClone(),
+                    ["staticFriction"] = numericValue.DeepClone(),
+                    ["bounciness"] = numericValue.DeepClone()
+                }
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            var material = AssetDatabase.LoadAssetAtPath<PhysicsMaterialType>(path);
+            Assert.IsNotNull(material);
+            Assert.AreEqual(value, material.dynamicFriction, 0.001f);
+            Assert.AreEqual(value, material.staticFriction, 0.001f);
+            Assert.AreEqual(value, material.bounciness, 0.001f);
         }
 
         [Test]

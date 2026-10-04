@@ -341,7 +341,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object CreateFolder(string path)
+        private static object CreateFolder(string path, bool includeData = true)
         {
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for create_folder.");
@@ -356,7 +356,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new SuccessResponse(
                         $"Folder already exists at path: {fullPath}",
-                        GetAssetData(fullPath)
+                        includeData ? GetAssetData(fullPath) : null
                     );
                 }
                 else
@@ -372,7 +372,7 @@ namespace MCPForUnity.Editor.Tools
                 // Ensure parent exists
                 if (!string.IsNullOrEmpty(parentDir) && !AssetDatabase.IsValidFolder(parentDir))
                 {
-                    var parentResult = CreateFolder(parentDir);
+                    var parentResult = CreateFolder(parentDir, includeData: false);
                     if (parentResult is ErrorResponse)
                         return parentResult;
                 }
@@ -389,7 +389,7 @@ namespace MCPForUnity.Editor.Tools
                 // AssetDatabase.Refresh(); // CreateFolder usually handles refresh
                 return new SuccessResponse(
                     $"Folder '{fullPath}' created successfully.",
-                    GetAssetData(fullPath)
+                    includeData ? GetAssetData(fullPath) : null
                 );
             }
             catch (Exception e)
@@ -974,7 +974,8 @@ namespace MCPForUnity.Editor.Tools
             bool modified = false;
 
             // Example: Set dynamic friction
-            if (properties["dynamicFriction"]?.Type == JTokenType.Float)
+            if (properties["dynamicFriction"]?.Type == JTokenType.Float
+                || properties["dynamicFriction"]?.Type == JTokenType.Integer)
             {
                 float dynamicFriction = properties["dynamicFriction"].ToObject<float>();
                 pmat.dynamicFriction = dynamicFriction;
@@ -982,7 +983,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Example: Set static friction
-            if (properties["staticFriction"]?.Type == JTokenType.Float)
+            if (properties["staticFriction"]?.Type == JTokenType.Float
+                || properties["staticFriction"]?.Type == JTokenType.Integer)
             {
                 float staticFriction = properties["staticFriction"].ToObject<float>();
                 pmat.staticFriction = staticFriction;
@@ -990,7 +992,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Example: Set bounciness
-            if (properties["bounciness"]?.Type == JTokenType.Float)
+            if (properties["bounciness"]?.Type == JTokenType.Float
+                || properties["bounciness"]?.Type == JTokenType.Integer)
             {
                 float bounciness = properties["bounciness"].ToObject<float>();
                 pmat.bounciness = bounciness;

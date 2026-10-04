@@ -43,6 +43,23 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void DeepFolder_ReturnsOnlyRequestedFolderMetadata()
+        {
+            var path = _folder + "/One/Two/Three/Four/Five";
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "create_folder",
+                ["path"] = path
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(path, response["data"].Value<string>("path"));
+            Assert.AreEqual(AssetDatabase.AssetPathToGUID(path), response["data"].Value<string>("guid"));
+            Assert.IsTrue(response["data"].Value<bool>("isFolder"));
+            Assert.IsTrue(AssetDatabase.IsValidFolder(path));
+        }
+
+        [Test]
         public void ExistingFolder_ReturnsSameGuid()
         {
             var guid = AssetDatabase.AssetPathToGUID(_folder);
