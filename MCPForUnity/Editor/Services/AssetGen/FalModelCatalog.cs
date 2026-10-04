@@ -32,7 +32,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private static readonly Dictionary<string, Task<bool>> Refreshes = new();
         private static readonly Dictionary<string, string> Errors = new();
         private static readonly Dictionary<string, DateTime> Attempts = new();
-        private static bool loaded;
+        private static bool loaded, isolated;
         private static readonly SemaphoreSlim RequestGate = new(1, 1);
         private static DateTime nextRequestAt;
         public static event Action<string> Changed;
@@ -96,6 +96,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Load();
             if (IsRefreshing(kind)) return Refreshes[kind];
             if (!force && !IsStale(kind)) return Task.FromResult(true);
+            if (isolated && TransportOverrideForTests == null) return Task.FromResult(false);
             if (!force && Attempts.TryGetValue(kind, out var attempted) && UtcNow() - attempted < TimeSpan.FromMinutes(2))
                 return Task.FromResult(false);
             Attempts[kind] = UtcNow();
@@ -382,6 +383,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Errors.Clear();
             Attempts.Clear();
             loaded = false;
+            isolated = isolate;
             TransportOverrideForTests = null;
             CachePathOverrideForTests = isolate ? Path.Combine(Path.GetTempPath(), "unused_fal_catalog_" + Guid.NewGuid().ToString("N"), "catalog.json") : null;
             UtcNow = () => DateTime.UtcNow;

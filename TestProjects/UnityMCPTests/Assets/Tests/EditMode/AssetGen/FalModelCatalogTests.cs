@@ -97,6 +97,17 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
         private bool Refresh(string kind = "audio", bool force = true) => FalModelCatalog.RefreshAsync(kind, force).GetAwaiter().GetResult();
 
+        [TestCase("audio"), TestCase("image"), TestCase("model")]
+        public void IsolatedCatalog_WithoutTransport_DoesNotStartRefresh(string kind)
+        {
+            FalModelCatalog.ResetForTests(true);
+            var refresh = FalModelCatalog.RefreshAsync(kind, true);
+            Assert.IsTrue(refresh.IsCompleted);
+            Assert.IsFalse(refresh.GetAwaiter().GetResult());
+            Assert.IsFalse(FalModelCatalog.IsRefreshing(kind));
+            Assert.IsNull(FalModelCatalog.LastError(kind));
+        }
+
         [Test]
         public void CompleteCatalog_IsNotLimitedToEagerSchemaShortlist_AndCanBeSearched()
         {
@@ -446,6 +457,31 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNull(FalModelSchema.Parse(model, "audio", now.ToString("O")));
             Assert.IsNull(FalModelSchema.Parse(Endpoint("test/../music"), "audio", now.ToString("O")));
             Assert.IsNull(FalModelSchema.Parse(Endpoint("https://attacker.invalid/music"), "audio", now.ToString("O")));
+            Assert.IsNull(FalModelSchema.Parse(Endpoint("test/music\n"), "audio", now.ToString("O")));
+        }
+
+        [TestCase("{\"type\":\"integer\",\"minimum\":0.5,\"maximum\":0.75}")]
+        [TestCase("{\"type\":\"integer\",\"minimum\":1,\"maximum\":20,\"enum\":[10,20]}")]
+        [TestCase("{\"type\":\"number\",\"minimum\":1,\"maximum\":20,\"multipleOf\":5}")]
+        public void DurationSchema_WithUnsupportedOrUnsatisfiableBounds_FailsPreflight(string schema)
+        {
+            var model = Endpoint(Music);
+            Input(model)["properties"]["duration"] = JObject.Parse(schema);
+            Assert.IsNull(FalModelSchema.Parse(model, "audio", now.ToString("O")));
+            Serve(model);
+            Assert.Throws<InvalidOperationException>(() => FalModelCatalog.VerifyForGeneration(Music, "audio", "text", CancellationToken.None).GetAwaiter().GetResult());
+        }
+
+        [Test]
+        public void NumImagesSchema_ExcludingOne_IsNotAdvertisedAsSupported()
+        {
+            var model = Endpoint("test/image-v2", "image");
+            Input(model)["properties"]["num_images"] = new JObject { ["type"] = "integer", ["exclusiveMinimum"] = 1, ["maximum"] = 4 };
+            var entry = FalModelSchema.Parse(model, "image", now.ToString("O"));
+            Assert.IsNotNull(entry);
+            Assert.IsFalse(entry.SupportsNumImages);
+            ((JArray)Input(model)["required"]).Add("num_images");
+            Assert.IsNull(FalModelSchema.Parse(model, "image", now.ToString("O")));
         }
 
         [Test]

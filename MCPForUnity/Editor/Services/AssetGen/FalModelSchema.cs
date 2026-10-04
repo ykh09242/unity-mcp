@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
     {
         internal static bool SafeId(string id)
             => !string.IsNullOrEmpty(id) && id.Length <= 200
-               && Regex.IsMatch(id, @"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+$")
+               && Regex.IsMatch(id, @"\A[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+\z")
                && !id.Split('/').Any(part => part == "." || part == "..");
 
         internal static bool IsCandidate(JObject model, string kind)
@@ -101,11 +101,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 {
                     if (properties[field] == null) continue;
                     var duration = Numeric(api, properties[field]);
-                    if (duration == null || duration["exclusiveMinimum"] != null || duration["exclusiveMaximum"] != null) return null;
+                    if (duration == null || duration["exclusiveMinimum"] != null || duration["exclusiveMaximum"] != null
+                        || duration["enum"] != null || duration["multipleOf"] != null) return null;
                     float scale = field == "music_length_ms" ? 1000f : 1f;
                     float min = (float?)duration["minimum"] ?? 1f * scale;
                     float max = (float?)duration["maximum"] ?? 0f;
                     if (!Finite(min) || !Finite(max) || min < 0 || max <= 0 || min > max) return null;
+                    if ((string)duration["type"] == "integer" && Math.Ceiling(min) > Math.Floor(max)) return null;
                     entry.DurationField = field;
                     entry.DurationScale = scale;
                     entry.DurationIsInteger = (string)duration["type"] == "integer";
@@ -181,7 +183,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static bool AcceptsOne(JObject schema)
             => schema != null && ((float?)schema["minimum"] ?? 1f) <= 1f
-               && ((float?)schema["maximum"] ?? 1f) >= 1f && schema["enum"] == null;
+               && ((float?)schema["maximum"] ?? 1f) >= 1f && schema["enum"] == null
+               && schema["exclusiveMinimum"] == null && schema["exclusiveMaximum"] == null;
 
         private static bool SupportsDimensions(JObject api, JToken token, int depth = 0)
         {

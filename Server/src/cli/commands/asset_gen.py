@@ -44,6 +44,8 @@ def list_models(kind: str, provider: Optional[str], refresh: bool, search: Optio
     If catalogs[].refreshing is true, repeat this command without --refresh later.
     Discovered entries are checked for compatibility before generation.
     """
+    if provider is not None:
+        provider = provider.lower()
     if refresh and provider is not None and not (provider == "fal" or provider == "openrouter" and kind == "image"):
         raise click.UsageError("--refresh supports fal and OpenRouter images.")
     params = {"action": "refresh_models" if refresh else "list_models"}

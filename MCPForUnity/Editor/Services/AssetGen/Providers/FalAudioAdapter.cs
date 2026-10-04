@@ -1,11 +1,9 @@
 using System;
 using System.IO;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen.Http;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Services.AssetGen.Providers
@@ -19,7 +17,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     /// </summary>
     public sealed class FalAudioAdapter : IAudioProviderAdapter
     {
-        private const string QueueBase = "https://queue.fal.run/";
         private const string QueueHost = "queue.fal.run";
         // Stable Audio 2.5: music + SFX in one model, up to ~190s. The catalog default.
         // internal so the model catalog references it directly (single source of truth, drift-guarded).
@@ -33,33 +30,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             if (http == null) throw new ArgumentNullException(nameof(http));
 
             string model = string.IsNullOrEmpty(req.Model) ? DefaultModel : req.Model;
-            string url = QueueBase + model;
-            ProviderHttp.RequireHost(url, QueueHost, apiKey, "fal submit");
-
-            var spec = new HttpRequestSpec
-            {
-                Method = "POST",
-                Url = url,
-                ContentType = "application/json",
-                Body = Encoding.UTF8.GetBytes(BuildBody(model, req).ToString(Formatting.None))
-            };
-            spec.Headers["Authorization"] = "Key " + apiKey;
-
-            HttpResult res = await http.SendAsync(spec, ct);
-            JObject json = ParseOk(res, apiKey, "submit");
-
-            string responseUrl = json["response_url"]?.ToString();
-            if (string.IsNullOrEmpty(responseUrl))
-            {
-                string requestId = json["request_id"]?.ToString();
-                if (string.IsNullOrEmpty(requestId))
-                    throw new Exception(SecretRedactor.Scrub("fal submit returned no request_id: " + ProviderHttp.Truncate(res?.Text), apiKey));
-                responseUrl = QueueBase + model + "/requests/" + requestId;
-            }
-            // The response_url is provider-controlled; refuse to later attach the key to any host
-            // other than the fal queue.
-            ProviderHttp.RequireHost(responseUrl, QueueHost, apiKey, "fal submit response_url");
-            return responseUrl;
+            return await FalAdapter.SubmitQueueAsync(BuildBody(model, req), model, apiKey, http, ct);
         }
 
         // Duration is catalog-driven: the model's ModelEntry names the request key (seconds_total /

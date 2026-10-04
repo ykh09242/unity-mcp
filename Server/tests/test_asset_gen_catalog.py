@@ -64,7 +64,8 @@ def test_cli_rejects_unsupported_live_refresh_before_contacting_unity(arguments)
     run.assert_not_called()
 
 
-@pytest.mark.parametrize("kind,provider", [("model", "fal"), ("image", "openrouter")])
+@pytest.mark.parametrize("kind,provider", [("model", "fal"), ("image", "openrouter"),
+                                         ("model", "FAL"), ("image", "OpenRouter")])
 def test_cli_refreshes_new_catalogs_and_forwards_search_and_paging(kind, provider):
     config = CLIConfig(host="127.0.0.1", port=8080, timeout=30, format="json", unity_instance=None)
     with patch("cli.commands.asset_gen.get_config", return_value=config), \
@@ -72,7 +73,7 @@ def test_cli_refreshes_new_catalogs_and_forwards_search_and_paging(kind, provide
         result = CliRunner().invoke(asset_gen, ["list-models", "--kind", kind, "--provider", provider,
             "--refresh", "--search", "flux", "--mode", "image", "--limit", "20", "--offset", "40"])
     assert result.exit_code == 0, result.output
-    assert run.call_args.args[1] == {"action": "refresh_models", "provider": provider,
+    assert run.call_args.args[1] == {"action": "refresh_models", "provider": provider.lower(),
         "search": "flux", "mode": "image", "limit": 20, "offset": 40}
 
 

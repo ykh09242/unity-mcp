@@ -167,7 +167,26 @@ namespace MCPForUnityTests.Editor.AssetGen
 
             string pid = adapter.SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
 
-            StringAssert.Contains(StableAudio + "/requests/r1", pid);
+            Assert.AreEqual("https://queue.fal.run/fal-ai/stable-audio-25/requests/r1", pid);
+        }
+
+        [Test]
+        public void Submit_FallbackResponseUrl_EscapesRequestId()
+        {
+            var fake = new FakeHttpTransport { Handler = _ => Json("{\"request_id\":\"r/1?query=2\"}") };
+            string pid = new FalAudioAdapter().SubmitAsync(Req(), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("https://queue.fal.run/fal-ai/stable-audio-25/requests/r%2F1%3Fquery%3D2", pid);
+        }
+
+        [TestCase("test/music\n")]
+        [TestCase("test/../music")]
+        [TestCase("test/music?mode=other")]
+        public void Submit_InvalidModelId_FailsBeforeSending(string model)
+        {
+            var fake = new FakeHttpTransport();
+            Assert.Throws<System.InvalidOperationException>(() => new FalAudioAdapter()
+                .SubmitAsync(Req(model), "falkey123", fake, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.IsEmpty(fake.RecordedRequests);
         }
 
         [Test]
