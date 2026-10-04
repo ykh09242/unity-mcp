@@ -131,8 +131,11 @@ def test_readme_version_update_preserves_immutable_server_references(tmp_path: P
         f"git+https://github.com/{owner}/unity-mcp@{commit}#subdirectory=Server"
         for owner in ("ykh09242", "CoplayDev")
     ]
-    path = tmp_path / "README.md"
+    repo = tmp_path / "checkout"
+    path = repo / "Server" / "README.md"
+    path.parent.mkdir(parents=True)
     path.write_text("\n".join(references) + "\ngit+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n", encoding="utf-8")
+    monkeypatch.setattr(update_versions, "REPO_ROOT", repo)
     monkeypatch.setattr(update_versions, "SERVER_README", path)
 
     # When existing tag examples receive a version bump.
