@@ -114,11 +114,11 @@ def create_canvas(name: str, render_mode: str):
     "--position",
     nargs=2,
     type=float,
-    default=(0, 0),
+    default=None,
     help="Anchored position X Y."
 )
 @handle_unity_errors
-def create_text(name: str, parent: str, text: str, position: tuple):
+def create_text(name: str, parent: str, text: str, position: tuple[float, float] | None):
     """Create a UI Text element (TextMeshPro).
 
     \b
@@ -132,7 +132,7 @@ def create_text(name: str, parent: str, text: str, position: tuple):
         "action": "create",
         "name": name,
         "parent": parent,
-        "position": list(position),
+        "position": list(position if position is not None else (0, 0)),
     }, config)
 
     if not (result.get("success") or result.get("data") or result.get("result")):
@@ -148,6 +148,16 @@ def create_text(name: str, parent: str, text: str, position: tuple):
         "searchMethod": "by_id",
         "componentType": "TextMeshProUGUI",
     }, config)
+
+    if position is not None:
+        run_command("manage_components", {
+            "action": "set_property",
+            "target": target_id,
+            "searchMethod": "by_id",
+            "componentType": "RectTransform",
+            "property": "anchoredPosition",
+            "value": list(position),
+        }, config)
 
     # Step 3: Set text content
     run_command("manage_components", {

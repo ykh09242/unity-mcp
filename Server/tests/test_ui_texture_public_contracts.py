@@ -83,7 +83,18 @@ ui_cases = [
         ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
                                'componentType': 'TextMeshProUGUI'}),
         ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
+                               'componentType': 'RectTransform', 'property': 'anchoredPosition',
+                               'value': [0.0, -2.0]}),
+        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
                                'componentType': 'TextMeshProUGUI', 'property': 'text', 'value': ''}),
+    ]),
+    (['create-text', 'Fixture', '--parent', 'Parent'], [
+        ('manage_gameobject', {'action': 'create', 'name': 'Fixture', 'parent': 'Parent',
+                              'position': [0, 0]}),
+        ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
+                               'componentType': 'TextMeshProUGUI'}),
+        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
+                               'componentType': 'TextMeshProUGUI', 'property': 'text', 'value': 'New Text'}),
     ]),
     (['create-button', 'Fixture', '--parent', 'Parent', '--text', '😀'], [
         ('manage_gameobject', {'action': 'create', 'name': 'Fixture', 'parent': 'Parent'}),
