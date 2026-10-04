@@ -3,6 +3,7 @@
 Sync release notes from GitHub Releases into:
   - website/docs/releases.md         (full history, grouped by minor)
   - README.md "Recent Updates"       (latest N releases between sentinel markers)
+  - website/release-metadata.json    (official latest stable release for the homepage)
 
 Why a sync script: the previous releases.md was hand-maintained and went stale
 (it claimed v9.6.3 was latest when v9.7.0 had shipped). GitHub Releases is the
@@ -14,7 +15,7 @@ Usage:
   GITHUB_TOKEN=xxx python tools/sync_release_notes.py   # higher rate limit
 
 Local runs without a token use anonymous GitHub API (60 req/hr — plenty for one
-sync since we only paginate the /releases endpoint).
+sync: the /releases history plus the official /releases/latest stable release).
 """
 
 from __future__ import annotations
@@ -32,10 +33,12 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
+from typing import TypedDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RELEASES_MD = REPO_ROOT / "website" / "docs" / "releases.md"
 README_MD = REPO_ROOT / "README.md"
+RELEASE_METADATA = REPO_ROOT / "website" / "release-metadata.json"
 
 OWNER = "CoplayDev"
 REPO = "unity-mcp"
@@ -73,14 +76,27 @@ RELEASES_HEADER = textwrap.dedent(
 # ---------------------------------------------------------------------------
 
 
-def _fetch_via_gh(path: str) -> list[dict] | None:
+class ReleaseDataError(ValueError):
+    """GitHub returned an unusable release snapshot."""
+
+
+class ReleaseMetadata(TypedDict):
+    tag_name: str
+    html_url: str
+    published_at: str
+
+
+def _fetch_via_gh(path: str, *, paginate: bool = True) -> list[dict] | dict | None:
     """Prefer `gh api` when available — handles auth + SSL cleanly across
     macOS Python distributions that miss the system trust store."""
     if not shutil.which("gh"):
         return None
     try:
+        command = ["gh", "api", path]
+        if paginate:
+            command.extend(["--paginate", "--slurp"])
         result = subprocess.run(
-            ["gh", "api", path, "--paginate"],
+            command,
             check=True,
             capture_output=True,
             text=True,
@@ -89,22 +105,21 @@ def _fetch_via_gh(path: str) -> list[dict] | None:
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         print(f"gh api failed ({e}); falling back to urllib.", file=sys.stderr)
         return None
-    # `gh api --paginate` concatenates JSON arrays as `][`. Split + parse.
     text = result.stdout.strip()
     if not text:
         return []
-    if "][" in text:
-        text = "[" + text.replace("][", ",") + "]"
-        # Now we may have [[..],[..]] — flatten.
-        nested = json.loads(text)
-        flat: list[dict] = []
-        for chunk in nested:
-            flat.extend(chunk if isinstance(chunk, list) else [chunk])
-        return flat
-    return json.loads(text)
+    payload = json.loads(text)
+    if not paginate:
+        if not isinstance(payload, dict):
+            raise ReleaseDataError("Latest release endpoint did not return a release object.")
+        return payload
+    # --slurp wraps each page in an outer array without changing release body text.
+    if not isinstance(payload, list) or any(not isinstance(page, list) for page in payload):
+        raise ReleaseDataError("Release history did not return an array of pages.")
+    return [release for page in payload for release in page]
 
 
-def _fetch_via_urllib(url: str) -> list[dict]:
+def _fetch_via_urllib(url: str) -> list[dict] | dict:
     headers = {
         "User-Agent": "mcp-for-unity-docs-sync",
         "Accept": "application/vnd.github+json",
@@ -129,6 +144,8 @@ def fetch_all_releases() -> list[dict]:
     # Try `gh api` first.
     via_gh = _fetch_via_gh(f"repos/{OWNER}/{REPO}/releases?per_page=100")
     if via_gh is not None:
+        if not isinstance(via_gh, list) or any(not isinstance(r, dict) for r in via_gh):
+            raise ReleaseDataError("Release history did not return an array of releases.")
         return [r for r in via_gh if not r.get("draft")]
 
     # Fallback: paginate urllib.
@@ -136,6 +153,8 @@ def fetch_all_releases() -> list[dict]:
     page = 1
     while True:
         batch = _fetch_via_urllib(f"{API}?per_page=100&page={page}")
+        if not isinstance(batch, list) or any(not isinstance(r, dict) for r in batch):
+            raise ReleaseDataError("Release history did not return an array of releases.")
         if not batch:
             break
         all_releases.extend(batch)
@@ -143,6 +162,21 @@ def fetch_all_releases() -> list[dict]:
             break
         page += 1
     return [r for r in all_releases if not r.get("draft")]
+
+
+def fetch_latest_release() -> ReleaseMetadata:
+    """Use GitHub's official latest full release, never infer it from tag ordering."""
+    release = _fetch_via_gh(f"repos/{OWNER}/{REPO}/releases/latest", paginate=False)
+    if release is None:
+        release = _fetch_via_urllib(f"{API}/latest")
+    if not isinstance(release, dict) or release.get("draft") is not False or release.get("prerelease") is not False:
+        raise ReleaseDataError("Latest release must be a non-draft, non-prerelease object.")
+    tag = release.get("tag_name")
+    url = release.get("html_url")
+    published = release.get("published_at")
+    if not all(isinstance(value, str) and value.strip() for value in (tag, url, published)):
+        raise ReleaseDataError("Latest release is missing tag_name, html_url or published_at.")
+    return {"tag_name": tag, "html_url": url, "published_at": published}
 
 
 # ---------------------------------------------------------------------------
@@ -273,14 +307,14 @@ def replace_marked_block(text: str, replacement: str) -> str:
         re.DOTALL,
     )
     if pattern.search(text):
-        return pattern.sub(replacement, text)
+        return pattern.sub(lambda match: replacement, text)
     # First-time insert: try to replace the legacy <details><summary>Recent Updates</summary>
     legacy = re.compile(
         r"<details>\s*<summary>\s*<strong>Recent Updates</strong>\s*</summary>.*?</details>",
         re.DOTALL,
     )
     if legacy.search(text):
-        return legacy.sub(replacement, text)
+        return legacy.sub(lambda match: replacement, text)
     # Otherwise append before the "## Community" header if present.
     anchor = "## Community"
     if anchor in text:
@@ -296,28 +330,35 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         releases = fetch_all_releases()
+        if not releases:
+            print("No releases returned by GitHub API. Aborting to avoid blanking files.", file=sys.stderr)
+            return 2
+        latest = fetch_latest_release()
     except urllib.error.HTTPError as e:
         print(f"GitHub API error: {e.code} {e.reason}", file=sys.stderr)
         if e.code == 403:
             print("Hint: set GITHUB_TOKEN to lift the anonymous rate limit.", file=sys.stderr)
         return 2
 
-    if not releases:
-        print("No releases returned by GitHub API. Aborting to avoid blanking files.", file=sys.stderr)
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print(f"GitHub release fetch failed: {e}. Aborting without changing files.", file=sys.stderr)
         return 2
 
     new_releases = render_releases_md(releases)
     new_readme_block = render_readme_recent(releases)
+    new_metadata = json.dumps(latest, indent=2) + "\n"
 
     existing_releases = RELEASES_MD.read_text(encoding="utf-8") if RELEASES_MD.exists() else ""
     existing_readme = README_MD.read_text(encoding="utf-8") if README_MD.exists() else ""
     new_readme = replace_marked_block(existing_readme, new_readme_block)
+    existing_metadata = RELEASE_METADATA.read_text(encoding="utf-8") if RELEASE_METADATA.exists() else ""
 
     releases_drift = existing_releases != new_releases
     readme_drift = existing_readme != new_readme
+    metadata_drift = existing_metadata != new_metadata
 
     if args.check:
-        if releases_drift or readme_drift:
+        if releases_drift or readme_drift or metadata_drift:
             print("Release notes are stale. Run:")
             print("  python tools/sync_release_notes.py")
             print("then commit the changes.")
@@ -325,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - drift in {RELEASES_MD.relative_to(REPO_ROOT)}")
             if readme_drift:
                 print(f"  - drift in {README_MD.relative_to(REPO_ROOT)}")
+            if metadata_drift:
+                print(f"  - drift in {RELEASE_METADATA.relative_to(REPO_ROOT)}")
             return 1
         print(f"Release notes are up-to-date ({len(releases)} releases).")
         return 0
@@ -333,10 +376,13 @@ def main(argv: list[str] | None = None) -> int:
         RELEASES_MD.write_text(new_releases, encoding="utf-8")
     if readme_drift:
         README_MD.write_text(new_readme, encoding="utf-8")
+    if metadata_drift:
+        RELEASE_METADATA.write_text(new_metadata, encoding="utf-8")
 
     print(f"Synced {len(releases)} releases.")
     print(f"  - {RELEASES_MD.relative_to(REPO_ROOT)}: {'updated' if releases_drift else 'unchanged'}")
     print(f"  - {README_MD.relative_to(REPO_ROOT)}:    {'updated' if readme_drift else 'unchanged'}")
+    print(f"  - {RELEASE_METADATA.relative_to(REPO_ROOT)}: {'updated' if metadata_drift else 'unchanged'}")
     return 0
 
 

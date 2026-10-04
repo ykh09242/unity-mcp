@@ -1,6 +1,6 @@
 name: Docs — Sync Release Notes
 
-# Keeps website/docs/releases.md and the README's "Recent Updates" block
+# Keeps website/docs/releases.md, website/release-metadata.json and the README's "Recent Updates" block
 # in sync with the GitHub Releases API. Source of truth is GitHub Releases.
 #
 # Triggers (intentionally narrow):
@@ -23,7 +23,7 @@ name: Docs — Sync Release Notes
 # Behavior:
 #   - Commits directly to `beta` with [skip ci] in the message — the
 #     change is mechanical (re-render from API output), pre-validated,
-#     and confined to two well-known files.
+#     and confined to three well-known files.
 
 on:
   release:
@@ -67,12 +67,12 @@ jobs:
       - name: Commit & push (if anything changed)
         run: |
           set -euo pipefail
-          if git diff --quiet -- website/docs/releases.md README.md; then
+          if git diff --quiet -- website/docs/releases.md README.md website/release-metadata.json; then
             echo "No drift — release notes already up to date."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add website/docs/releases.md README.md
+          git add website/docs/releases.md README.md website/release-metadata.json
           git commit -m "docs: sync release notes from GitHub Releases [skip ci]"
           git push origin beta

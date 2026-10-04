@@ -10,7 +10,7 @@ const UPM_BETA = 'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#b
 
 export default function HomeHero() {
   const { siteConfig } = useDocusaurusContext();
-  const version = siteConfig.customFields?.latestVersion ?? 'v10.0.0';
+  const version = siteConfig.customFields.latestVersion;
   const imageBaseUrl = useBaseUrl('/img/');
 
   return (
