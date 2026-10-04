@@ -679,7 +679,8 @@ namespace MCPForUnity.Editor.Helpers
                 case JTokenType.Boolean:
                     return token.ToObject<bool>();
                 case JTokenType.Date:
-                    return token.ToObject<DateTime>();
+                    // Date tokens also carry DateTimeOffset; narrowing drops its offset.
+                    return ((JValue)token).Value;
                 case JTokenType.Guid:
                     return token.ToObject<Guid>();
                 case JTokenType.Uri:

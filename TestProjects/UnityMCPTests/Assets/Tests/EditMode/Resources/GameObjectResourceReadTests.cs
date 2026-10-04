@@ -1,6 +1,7 @@
 using System;
 using MCPForUnity.Editor.Resources.Scene;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -14,6 +15,8 @@ namespace MCPForUnityTests.Editor.Resources
     public sealed class ResourceReadCounter : MonoBehaviour
     {
         [NonSerialized] public int GetterCalls;
+        public DateTimeOffset Timestamp { get; set; }
+        public DateTimeOffset TimestampField;
         public int ProbeValue
         {
             get { GetterCalls++; return 7; }
@@ -213,6 +216,35 @@ namespace MCPForUnityTests.Editor.Resources
             Assert.IsTrue(response.Value<bool>("success"));
             Assert.AreEqual(_first.GetInstanceIDCompat(), response.SelectToken("data.component.instanceID").Value<int>());
             Assert.AreEqual(1, _first.GetterCalls);
+            Assert.AreEqual(0, _second.GetterCalls);
+        }
+
+        [Test]
+        public void ComponentDateMembers_PreserveWireOffsetsAndReadFreshValues()
+        {
+            var request = Parameters();
+            request["componentName"] = typeof(ResourceReadCounter).FullName;
+            var values = new[]
+            {
+                new DateTimeOffset(2026, 10, 4, 1, 2, 3, TimeSpan.FromHours(9)).AddTicks(1234567),
+                new DateTimeOffset(2026, 10, 5, 4, 5, 6, TimeSpan.FromHours(-7)).AddTicks(7654321)
+            };
+
+            foreach (var expected in values)
+            {
+                _first.Timestamp = expected;
+                _first.TimestampField = expected;
+                var wire = JsonConvert.SerializeObject(GameObjectComponentResource.HandleCommand(request));
+                var response = JsonConvert.DeserializeObject<JObject>(wire, new JsonSerializerSettings
+                {
+                    DateParseHandling = DateParseHandling.DateTimeOffset
+                });
+                Assert.IsTrue(response.Value<bool>("success"));
+                var properties = response.SelectToken("data.component.properties");
+                foreach (var member in new[] { "Timestamp", "TimestampField" })
+                    Assert.IsTrue(properties[member].ToObject<DateTimeOffset>().EqualsExact(expected), member);
+            }
+            Assert.AreEqual(2, _first.GetterCalls);
             Assert.AreEqual(0, _second.GetterCalls);
         }
     }

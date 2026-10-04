@@ -1,17 +1,90 @@
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using MCPForUnity.Runtime.Helpers;
 using UnityEngine.TestTools;
+using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Resources
 {
     public class GameObjectSerializationReadOnlyTests
     {
+        [TestCase(0)]
+        [TestCase(9)]
+        [TestCase(-7)]
+        public void PlainDateValues_PreserveOffsetAndFractionalTicks(int offsetHours)
+        {
+            var expected = new DateTimeOffset(2026, 10, 4, 1, 2, 3, TimeSpan.FromHours(offsetHours)).AddTicks(1234567);
+            var actual = ConvertPlainValue(JToken.FromObject(expected));
+
+            Assert.IsInstanceOf<DateTimeOffset>(actual);
+            Assert.IsTrue(((DateTimeOffset)actual).EqualsExact(expected));
+            Assert.AreEqual(JsonConvert.SerializeObject(expected), JsonConvert.SerializeObject(actual));
+        }
+
+        [TestCase(0)]
+        [TestCase(9)]
+        [TestCase(-7)]
+        public void NestedDateValues_PreserveOffsets(int offsetHours)
+        {
+            var expected = new DateTimeOffset(2026, 10, 4, 1, 2, 3, TimeSpan.FromHours(offsetHours));
+            var converted = (Dictionary<string, object>)ConvertPlainValue(JToken.FromObject(new { dates = new[] { expected } }));
+            var actual = ((List<object>)converted["dates"])[0];
+
+            Assert.IsInstanceOf<DateTimeOffset>(actual);
+            Assert.IsTrue(((DateTimeOffset)actual).EqualsExact(expected));
+        }
+
+        [TestCase(DateTimeKind.Unspecified)]
+        [TestCase(DateTimeKind.Utc)]
+        [TestCase(DateTimeKind.Local)]
+        public void PlainDateTimeValues_PreserveKind(DateTimeKind kind)
+        {
+            var expected = new DateTime(2026, 10, 4, 1, 2, 3, kind).AddTicks(1234567);
+            var actual = ConvertPlainValue(JToken.FromObject(expected));
+
+            Assert.IsInstanceOf<DateTime>(actual);
+            Assert.AreEqual(expected, actual);
+            Assert.AreEqual(kind, ((DateTime)actual).Kind);
+        }
+
+        [Test]
+        public void PlainNullDateValue_RemainsNull()
+            => Assert.IsNull(ConvertPlainValue(JValue.CreateNull()));
+
+        [TestCase(0)]
+        [TestCase(9)]
+        [TestCase(-7)]
+        public void ComponentMemberDateValues_PreserveWireOffset(int offsetHours)
+        {
+            var expected = new DateTimeOffset(2026, 10, 4, 1, 2, 3, TimeSpan.FromHours(offsetHours)).AddTicks(1234567);
+            var properties = new Dictionary<string, object>();
+            var add = typeof(GameObjectSerializer).GetMethod("AddSerializableValue", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(add);
+            add.Invoke(null, new object[] { properties, "timestamp", typeof(DateTimeOffset), expected });
+
+            Assert.IsInstanceOf<DateTimeOffset>(properties["timestamp"]);
+            Assert.IsTrue(((DateTimeOffset)properties["timestamp"]).EqualsExact(expected));
+            var wire = JsonConvert.SerializeObject(properties);
+            var roundTrip = JsonConvert.DeserializeObject<Dictionary<string, DateTimeOffset>>(wire);
+            Assert.IsTrue(roundTrip["timestamp"].EqualsExact(expected));
+        }
+
+        private static object ConvertPlainValue(JToken value)
+        {
+            var convert = typeof(GameObjectSerializer).GetMethod("ConvertJTokenToPlainObject", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(convert);
+            return convert.Invoke(null, new object[] { value });
+        }
+
         [Test]
         public void EditModeComponentReads_PreserveAssignedMaterialAndMeshReferences()
         {
