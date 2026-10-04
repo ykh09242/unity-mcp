@@ -121,7 +121,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 }
 
                 result.Progress = 1f;
-                result.DownloadUrl = ExtractModelUrl(json["model_urls"] as JObject);
+                result.DownloadUrl = ExtractModelUrl(json["model_urls"] as JObject, out string resultExt);
+                result.ResultExt = resultExt;
                 if (string.IsNullOrEmpty(result.DownloadUrl))
                 {
                     result.State = ProviderPollState.Failed;
@@ -160,15 +161,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             return id;
         }
 
-        private string ExtractModelUrl(JObject urls)
+        private string ExtractModelUrl(JObject urls, out string resultExt)
         {
+            resultExt = null;
             if (urls == null) return null;
-            string byFormat = urls[_format]?.ToString();
-            if (!string.IsNullOrEmpty(byFormat)) return byFormat;
-            string glb = urls["glb"]?.ToString();
-            if (!string.IsNullOrEmpty(glb)) return glb;
-            string fbx = urls["fbx"]?.ToString();
-            return string.IsNullOrEmpty(fbx) ? null : fbx;
+            foreach (string format in new[] { _format, "glb", "fbx" })
+            {
+                string url = urls[format]?.ToString();
+                if (string.IsNullOrEmpty(url)) continue;
+                resultExt = format;
+                return url;
+            }
+            return null;
         }
 
         private static ProviderPollState MapState(string status)

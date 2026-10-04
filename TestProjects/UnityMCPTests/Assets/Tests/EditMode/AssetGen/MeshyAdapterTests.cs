@@ -219,6 +219,51 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        [TestCase("fbx", "glb")]
+        [TestCase("glb", "fbx")]
+        public void Poll_FallbackFormat_ReportsSelectedResultExtension(string requestedFormat, string returnedFormat)
+        {
+            var adapter = new MeshyAdapter();
+            adapter.SubmitAsync(
+                new ModelGenRequest { Mode = "text", Prompt = "x", Format = requestedFormat, Texture = false },
+                "synthetic-key", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            string url = "https://assets.meshy.ai/model." + returnedFormat;
+            var http = new FakeHttpTransport
+            {
+                Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"model_urls\":{\"" + returnedFormat + "\":\"" + url + "\"}}")
+            };
+
+            ProviderPollResult result = adapter.PollAsync("id1", "synthetic-key", http, CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.AreEqual(ProviderPollState.Succeeded, result.State);
+            Assert.AreEqual(url, result.DownloadUrl);
+            Assert.AreEqual(returnedFormat, result.ResultExt, "The manager must save a fallback model using its selected format.");
+        }
+
+        [TestCase("glb")]
+        [TestCase("fbx")]
+        [TestCase("obj")]
+        public void Poll_RequestedFormatAvailable_PreservesRequestedUrlAndExtension(string format)
+        {
+            var adapter = new MeshyAdapter();
+            adapter.SubmitAsync(
+                new ModelGenRequest { Mode = "text", Prompt = "x", Format = format, Texture = false },
+                "synthetic-key", new FakeHttpTransport { Handler = _ => Json("{\"result\":\"id1\"}") }, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            var http = new FakeHttpTransport
+            {
+                Handler = _ => Json("{\"status\":\"SUCCEEDED\",\"model_urls\":{\"glb\":\"https://assets.meshy.ai/model.glb\",\"fbx\":\"https://assets.meshy.ai/model.fbx\",\"obj\":\"https://assets.meshy.ai/model.obj\"}}")
+            };
+
+            ProviderPollResult result = adapter.PollAsync("id1", "synthetic-key", http, CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.AreEqual(ProviderPollState.Succeeded, result.State);
+            Assert.AreEqual("https://assets.meshy.ai/model." + format, result.DownloadUrl);
+            Assert.AreEqual(format, result.ResultExt);
+        }
+
+        [Test]
         public void Poll_Failed_MapsFailed_WithError()
         {
             var http = new FakeHttpTransport
