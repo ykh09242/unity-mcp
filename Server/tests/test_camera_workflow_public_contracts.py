@@ -297,3 +297,71 @@ def test_camera_actual_cli_contracts(tmp_path):
 
 def test_camera_registered_sdk_contracts(tmp_path):
     assert "SDK_SUMMARY" in _run(SDK_PROGRAM, tmp_path)
+
+
+def test_camera_image_metadata_remains_structured_at_real_sdk_boundary(tmp_path):
+    _run(r'''
+import copy
+import json
+import anyio
+from fastmcp import Client, FastMCP
+from services.tools import register_all_tools
+from core.config import config
+from transport.plugin_hub import PluginHub
+
+# Given: native capture replies and the actual registered tool pipeline.
+config.transport_mode = 'http'
+config.http_remote_hosted = False
+reply = {}
+async def controlled_send(instance, command, params, **kwargs):
+    return copy.deepcopy(reply)
+PluginHub.send_command_for_instance = staticmethod(controlled_send)
+server = FastMCP('camera-image-metadata')
+register_all_tools(server)
+image = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8'
+         '/x8AAwMCAO+a5XkAAAAASUVORK5CYII=')
+cases = [
+    ({'action': 'screenshot_multiview'},
+     {'imageBase64': image, 'imageWidth': 1, 'imageHeight': 1,
+      'outputFolder': 'Captures', 'shots': [{'angle': 'Front'}]}),
+    ({'action': 'screenshot', 'view_position': [0, 0, 0], 'include_image': True},
+     {'imageBase64': image, 'imageWidth': 1, 'imageHeight': 1,
+      'path': 'Captures/positioned.png', 'position': [0, 0, 0]}),
+    ({'action': 'screenshot', 'batch': 'surround', 'include_image': True},
+     {'sceneCenter': [0, 0, 0], 'sceneRadius': 0,
+      'screenshots': [{'angle': 'Front', 'path': 'Captures/front.png',
+                       'imageBase64': image}]}),
+]
+
+async def main():
+    global reply
+    for mode in ('2026-07-28', 'legacy'):
+        async with Client(server, mode=mode) as client:
+            for payload, data in cases:
+                reply = {'success': True, 'message': 'Captured', 'data': data}
+                expected = copy.deepcopy(reply)
+                expected['data'].pop('imageBase64', None)
+                for shot in expected['data'].get('screenshots', []):
+                    shot.pop('imageBase64', None)
+                # When: the public SDK requests an inline screenshot.
+                result = await client.call_tool('manage_camera', payload)
+                # Then: metadata is structured and image bytes occur only in image blocks.
+                assert result.structured_content == expected, (mode, result.structured_content)
+                assert json.loads(result.content[0].text) == expected
+                images = [block for block in result.content if block.type == 'image']
+                assert len(images) == 1 and images[0].data == image
+                assert images[0].mime_type == 'image/png'
+            for response in (
+                {'success': True, 'message': 'Saved', 'data': {
+                    'path': 'Captures/plain.png', 'imageWidth': 1, 'imageHeight': 1,
+                }},
+                {'success': False, 'error': 'capture_failed', 'data': {
+                    'imageBase64': image, 'modified': False,
+                }},
+            ):
+                reply = response
+                result = await client.call_tool('manage_camera', {'action': 'screenshot'})
+                assert result.structured_content == response
+                assert all(block.type == 'text' for block in result.content)
+anyio.run(main)
+''', tmp_path)

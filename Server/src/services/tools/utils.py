@@ -440,7 +440,7 @@ def extract_screenshot_images(response: dict[str, Any]) -> "ToolResult | None":
             if b64:
                 blocks.append(TextContent(type="text", text=f"[Angle: {s.get('angle', '?')}]"))
                 blocks.append(ImageContent(type="image", data=b64, mimeType="image/png"))
-        return ToolResult(content=blocks)
+        return ToolResult(content=blocks, structured_content=text_result)
 
     # Single image (include_image or positioned capture) or contact sheet
     image_b64 = data.get("imageBase64")
@@ -449,6 +449,7 @@ def extract_screenshot_images(response: dict[str, Any]) -> "ToolResult | None":
     text_data = {k: v for k, v in data.items() if k != "imageBase64"}
     text_result = {"success": True, "message": response.get("message", ""), "data": text_data}
     return ToolResult(
+        structured_content=text_result,
         content=[
             TextContent(type="text", text=json.dumps(text_result)),
             ImageContent(type="image", data=image_b64, mimeType="image/png"),
