@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor.SceneManagement;
+using UnityEditor.PackageManager.Requests;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -154,6 +155,32 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(cache.ContainsKey(first));
             Assert.IsTrue(cache.ContainsKey(last));
             Assert.AreEqual(last, order.Last());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TerminalQueryCacheReleasesOnlyItsPendingRequest(bool search)
+        {
+            string id = "mcp-test-query-" + Guid.NewGuid().ToString("N");
+            string active = "mcp-test-query-" + Guid.NewGuid().ToString("N");
+            var lists = Field<Dictionary<string, ListRequest>>("PendingListRequests");
+            var searches = Field<Dictionary<string, SearchRequest>>("PendingSearchRequests");
+            // Null sentinels test bookkeeping without allocating native UPM requests.
+            if (search) { searches.Add(id, null); searches.Add(active, null); }
+            else { lists.Add(id, null); lists.Add(active, null); }
+            try
+            {
+                Cache(id, new SuccessResponse("Owned terminal result"));
+                Assert.IsFalse(lists.ContainsKey(id) || searches.ContainsKey(id));
+                Assert.IsTrue(search ? searches.ContainsKey(active) : lists.ContainsKey(active));
+            }
+            finally
+            {
+                lists.Remove(id);
+                lists.Remove(active);
+                searches.Remove(id);
+                searches.Remove(active);
+            }
         }
 
         [Test]

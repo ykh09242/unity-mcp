@@ -252,6 +252,8 @@ namespace MCPForUnity.Editor.Tools
                 if (request.IsCompleted)
                     return CheckListRequest(jobId, request);
 
+                RegisterCompletionCallback(jobId, request);
+
                 return new PendingResponse(
                     "Listing installed packages...",
                     pollIntervalSeconds: 1.0,
@@ -275,25 +277,30 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            PendingListRequests.Remove(jobId);
+            try
+            {
+                if (request.Status == StatusCode.Failure)
+                    return CacheQueryResult(jobId, new ErrorResponse($"Failed to list packages: {request.Error?.message ?? "Unknown error"}"));
 
-            if (request.Status == StatusCode.Failure)
-                return CacheQueryResult(jobId, new ErrorResponse($"Failed to list packages: {request.Error?.message ?? "Unknown error"}"));
+                var packages = request.Result
+                    .Select(pkg => new
+                    {
+                        name = pkg.name,
+                        version = pkg.version,
+                        display_name = pkg.displayName,
+                        source = pkg.source.ToString()
+                    })
+                    .ToArray();
 
-            var packages = request.Result
-                .Select(pkg => new
-                {
-                    name = pkg.name,
-                    version = pkg.version,
-                    display_name = pkg.displayName,
-                    source = pkg.source.ToString()
-                })
-                .ToArray();
-
-            return CacheQueryResult(jobId, new SuccessResponse(
-                $"Found {packages.Length} installed package(s).",
-                new { packages, count = packages.Length }
-            ));
+                return CacheQueryResult(jobId, new SuccessResponse(
+                    $"Found {packages.Length} installed package(s).",
+                    new { packages, count = packages.Length }
+                ));
+            }
+            catch (Exception ex)
+            {
+                return CacheQueryResult(jobId, new ErrorResponse($"Failed to read package list result: {ex.Message}"));
+            }
         }
 
         // === search_packages ===
@@ -311,6 +318,8 @@ namespace MCPForUnity.Editor.Tools
 
                 if (request.IsCompleted)
                     return CheckSearchRequest(jobId, request);
+
+                RegisterCompletionCallback(jobId, request);
 
                 return new PendingResponse(
                     $"Searching packages for '{queryResult.Value}'...",
@@ -335,25 +344,30 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            PendingSearchRequests.Remove(jobId);
+            try
+            {
+                if (request.Status == StatusCode.Failure)
+                    return CacheQueryResult(jobId, new ErrorResponse($"Package search failed: {request.Error?.message ?? "Unknown error"}"));
 
-            if (request.Status == StatusCode.Failure)
-                return CacheQueryResult(jobId, new ErrorResponse($"Package search failed: {request.Error?.message ?? "Unknown error"}"));
+                var packages = request.Result
+                    .Select(pkg => new
+                    {
+                        name = pkg.name,
+                        version = pkg.version,
+                        display_name = pkg.displayName,
+                        description = TruncateDescription(pkg.description)
+                    })
+                    .ToArray();
 
-            var packages = request.Result
-                .Select(pkg => new
-                {
-                    name = pkg.name,
-                    version = pkg.version,
-                    display_name = pkg.displayName,
-                    description = TruncateDescription(pkg.description)
-                })
-                .ToArray();
-
-            return CacheQueryResult(jobId, new SuccessResponse(
-                $"Found {packages.Length} matching package(s).",
-                new { packages, count = packages.Length }
-            ));
+                return CacheQueryResult(jobId, new SuccessResponse(
+                    $"Found {packages.Length} matching package(s).",
+                    new { packages, count = packages.Length }
+                ));
+            }
+            catch (Exception ex)
+            {
+                return CacheQueryResult(jobId, new ErrorResponse($"Failed to read package search result: {ex.Message}"));
+            }
         }
 
         // === get_package_info ===
@@ -622,6 +636,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CacheQueryResult(string jobId, object result)
         {
+            PendingListRequests.Remove(jobId);
+            PendingSearchRequests.Remove(jobId);
             CompletedQueryResults[jobId] = result;
             CompletedQueryOrder.Enqueue(jobId);
             while (CompletedQueryOrder.Count > MaxCompletedQueries)
@@ -645,7 +661,9 @@ namespace MCPForUnity.Editor.Tools
         {
             void CheckCompletion()
             {
-                if (!PendingRequests.ContainsKey(jobId))
+                if (!PendingRequests.ContainsKey(jobId)
+                    && !PendingListRequests.ContainsKey(jobId)
+                    && !PendingSearchRequests.ContainsKey(jobId))
                 {
                     EditorApplication.update -= CheckCompletion;
                     return;
@@ -655,7 +673,12 @@ namespace MCPForUnity.Editor.Tools
                     return;
 
                 EditorApplication.update -= CheckCompletion;
-                FinalizeRequest(jobId, request);
+                if (request is ListRequest listRequest)
+                    CheckListRequest(jobId, listRequest);
+                else if (request is SearchRequest searchRequest)
+                    CheckSearchRequest(jobId, searchRequest);
+                else
+                    FinalizeRequest(jobId, request);
             }
 
             EditorApplication.update += CheckCompletion;
