@@ -289,6 +289,12 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            {
+                error = $"Unsupported HTTP Local URL scheme '{uri.Scheme}'. Use http:// or https://.";
+                return false;
+            }
+
             string host = uri.Host;
             if (IsLoopbackHost(host))
             {
@@ -383,7 +389,7 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Normalizes a URL so that we consistently store just the base (no trailing slash/path).
+        /// Normalizes the base URL while preserving its path prefix, query, and fragment.
         /// </summary>
         private static string NormalizeBaseUrl(string value, string defaultUrl, bool remoteScope)
         {
@@ -403,7 +409,22 @@ namespace MCPForUnity.Editor.Helpers
                 trimmed = $"{defaultScheme}://{trimmed}";
             }
 
-            // Remove trailing slash segments.
+            if (Uri.TryCreate(trimmed, UriKind.Absolute, out Uri parsed))
+            {
+                string path = parsed.AbsolutePath.TrimEnd('/');
+                if (path.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase))
+                    path = path[..^4];
+                var builder = new UriBuilder(parsed) { Path = path };
+
+                // Keep the IPv4 localhost workaround without dropping proxy paths or queries.
+                if (!remoteScope && string.Equals(parsed.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+                    builder.Host = "127.0.0.1";
+
+                Uri normalized = builder.Uri;
+                return normalized.GetLeftPart(UriPartial.Path).TrimEnd('/') + normalized.Query + normalized.Fragment;
+            }
+
+            // Preserve invalid input for the caller's existing validation and error reporting.
             trimmed = trimmed.TrimEnd('/');
 
             // Strip trailing "/mcp" (case-insensitive) if provided.
@@ -412,22 +433,16 @@ namespace MCPForUnity.Editor.Helpers
                 trimmed = trimmed[..^4];
             }
 
-            // For local scope, force 127.0.0.1 over "localhost". Windows getaddrinfo returns ::1
-            // first; clients without Happy Eyeballs (e.g., Codex/reqwest) hit the v6 socket while
-            // our server binds v4-only, breaking the handshake. The default server bind is
-            // 127.0.0.1, so emitting the literal v4 keeps every client unambiguous.
-            if (!remoteScope && Uri.TryCreate(trimmed, UriKind.Absolute, out Uri parsed)
-                && string.Equals(parsed.Host, "localhost", StringComparison.OrdinalIgnoreCase))
-            {
-                var builder = new UriBuilder(parsed) { Host = "127.0.0.1" };
-                trimmed = builder.Uri.GetLeftPart(UriPartial.Authority);
-            }
-
             return trimmed;
         }
 
         private static string AppendPathSegment(string baseUrl, string segment)
         {
+            if (Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri parsed))
+            {
+                var builder = new UriBuilder(parsed) { Path = parsed.AbsolutePath.TrimEnd('/') + "/" + segment };
+                return builder.Uri.AbsoluteUri;
+            }
             return $"{baseUrl.TrimEnd('/')}/{segment}";
         }
     }
