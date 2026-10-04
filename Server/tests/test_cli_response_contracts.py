@@ -151,6 +151,31 @@ def test_raw_custom_payload_without_status_is_not_failure(command_response):
     assert json.loads(result.stdout) == response
 
 
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        ([{"name": "First"}, {"name": "Second", "diagnostic": "LaterField"}],
+         ["First", "Second", "diagnostic", "LaterField"]),
+        ([["First"], ["Second", "LaterCell"]], ["First", "Second", "LaterCell"]),
+        ([[], ["LaterCell"]], ["LaterCell"]),
+        ([{"name": "First"}, None, ["LaterCell"], 42],
+         ["First", "None", "LaterCell", "42"]),
+    ],
+)
+def test_raw_table_preserves_heterogeneous_visible_rows(command_response, rows, expected):
+    response, requests = command_response
+    response["data"] = rows
+    result = CliRunner().invoke(cli, [
+        "--host", "127.0.0.1", "--port", "8080", "--timeout", "30",
+        "--instance", "Owned@fixture", "--format", "table", "raw", "owned_tool",
+    ])
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert result.stderr == ""
+    for value in expected:
+        assert value in result.stdout, result.stdout
+    assert requests == [{"type": "owned_tool", "params": {}, "unity_instance": "Owned@fixture"}]
+
+
 @pytest.mark.parametrize("failure", ["http", "connect", "timeout"])
 def test_transport_errors_still_exit_nonzero(monkeypatch, failure):
     client_type = httpx.AsyncClient

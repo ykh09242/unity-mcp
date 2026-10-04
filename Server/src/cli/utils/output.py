@@ -141,14 +141,14 @@ def _build_table(
     data = data[:_TABLE_ROW_LIMIT]
 
     # Convert list of dicts to rows
-    if isinstance(data[0], dict):
+    if all(isinstance(item, dict) for item in data):
         if headers is None:
-            headers = list(data[0].keys())
+            headers = list(dict.fromkeys(key for item in data for key in item))
         rows = [[str(item.get(h, ""))[:40] for h in headers] for item in data]
-    elif isinstance(data[0], (list, tuple)):
+    elif all(isinstance(item, (list, tuple)) for item in data):
         rows = [[str(cell)[:40] for cell in row] for row in data]
         if headers is None:
-            headers = [f"Col{i}" for i in range(len(data[0]))]
+            headers = [f"Col{i}" for i in range(max(len(row) for row in data))]
     else:
         rows = [[str(item)[:60]] for item in data]
         headers = headers or ["Value"]
