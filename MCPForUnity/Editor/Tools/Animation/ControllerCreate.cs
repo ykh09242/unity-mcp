@@ -341,18 +341,23 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (controller == null)
                 return ControllerNotFoundError(@params);
 
+            var controllerLayers = controller.layers;
+            var controllerParameters = controller.parameters;
             var layers = new List<object>();
-            for (int i = 0; i < controller.layers.Length; i++)
+            for (int i = 0; i < controllerLayers.Length; i++)
             {
-                var layer = controller.layers[i];
+                var layer = controllerLayers[i];
+                var layerStates = layer.stateMachine.states;
                 var states = new List<object>();
-                foreach (var cs in layer.stateMachine.states)
+                foreach (var cs in layerStates)
                 {
+                    var stateTransitions = cs.state.transitions;
                     var transitions = new List<object>();
-                    foreach (var t in cs.state.transitions)
+                    foreach (var t in stateTransitions)
                     {
+                        var transitionConditions = t.conditions;
                         var conditions = new List<object>();
-                        foreach (var c in t.conditions)
+                        foreach (var c in transitionConditions)
                         {
                             conditions.Add(new
                             {
@@ -368,7 +373,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                             hasExitTime = t.hasExitTime,
                             exitTime = t.exitTime,
                             duration = t.duration,
-                            conditionCount = t.conditions.Length,
+                            conditionCount = transitionConditions.Length,
                             conditions
                         });
                     }
@@ -380,7 +385,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                         hasMotion = cs.state.motion != null,
                         motionName = cs.state.motion?.name,
                         isDefault = layer.stateMachine.defaultState == cs.state,
-                        transitionCount = cs.state.transitions.Length,
+                        transitionCount = stateTransitions.Length,
                         transitions
                     });
                 }
@@ -389,13 +394,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     index = i,
                     name = layer.name,
-                    stateCount = layer.stateMachine.states.Length,
+                    stateCount = layerStates.Length,
                     states
                 });
             }
 
             var parameters = new List<object>();
-            foreach (var p in controller.parameters)
+            foreach (var p in controllerParameters)
             {
                 parameters.Add(new
                 {
@@ -414,8 +419,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 {
                     path = AssetDatabase.GetAssetPath(controller),
                     name = controller.name,
-                    layerCount = controller.layers.Length,
-                    parameterCount = controller.parameters.Length,
+                    layerCount = controllerLayers.Length,
+                    parameterCount = controllerParameters.Length,
                     layers,
                     parameters
                 }

@@ -298,5 +298,85 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             RejectWithoutMutation("remove_layer", new JObject { ["layer_index"] = 0 }, false);
         }
+
+        [TestCase("create_blend_tree_1d")]
+        [TestCase("create_blend_tree_2d")]
+        public void BlendTreeCreationWithExistingOrdinaryStateNameDoesNotMutateController(string action)
+        {
+            RejectWithoutMutation(action, new JObject
+            {
+                ["state_name"] = "From", ["blend_parameter"] = "Speed",
+                ["blend_parameter_x"] = "Speed", ["blend_parameter_y"] = "Turn"
+            }, false);
+        }
+
+        [TestCase("create_blend_tree_1d", "Simple1D")]
+        [TestCase("create_blend_tree_2d", "SimpleDirectional2D")]
+        public void RepeatedBlendTreeCreationPreservesOriginalStateAndMotion(string action, string blendType)
+        {
+            var properties = new JObject
+            {
+                ["state_name"] = "Move", ["blend_parameter"] = "Speed",
+                ["blend_parameter_x"] = "Speed", ["blend_parameter_y"] = "Turn"
+            };
+            JObject response = Send(action, properties);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var state = _controller.layers[0].stateMachine.states.Single(s => s.state.name == "Move").state;
+            var motion = state.motion as BlendTree;
+            Assert.IsNotNull(motion);
+            Assert.AreEqual(state.name, response["data"].Value<string>("stateName"));
+            Assert.AreEqual(blendType, motion.blendType.ToString());
+            Assert.AreEqual("Speed", motion.blendParameter);
+            if (action == "create_blend_tree_2d") Assert.AreEqual("Turn", motion.blendParameterY);
+
+            RejectWithoutMutation(action, properties, false);
+            Assert.AreSame(motion, state.motion);
+            Assert.AreEqual(3, _controller.layers[0].stateMachine.states.Length);
+        }
+
+        [TestCase(1)]
+        [TestCase(4)]
+        [TestCase(16)]
+        public void ControllerInfoPreservesLayerAndGraphCountsAndReadsChangesOnNextCall(int layerCount)
+        {
+            for (int i = 1; i < layerCount; i++)
+            {
+                _controller.AddLayer("Layer" + i);
+                _controller.layers[i].stateMachine.AddState("Aux");
+            }
+            _controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+            var machine = _controller.layers[0].stateMachine;
+            var transition = machine.defaultState.AddTransition(machine.states.Single(s => s.state.name == "To").state);
+            transition.AddCondition(AnimatorConditionMode.Greater, 2f, "Speed");
+            AssetDatabase.SaveAssets();
+
+            string before = Snapshot();
+            JObject response = Send("get_info", new JObject());
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(layerCount, response["data"].Value<int>("layerCount"));
+            Assert.AreEqual(1, response["data"].Value<int>("parameterCount"));
+            Assert.AreEqual(layerCount, response["data"]["layers"].Count());
+            var firstLayer = response["data"]["layers"][0];
+            Assert.AreEqual(2, firstLayer.Value<int>("stateCount"));
+            var from = firstLayer["states"].Single(s => s.Value<string>("name") == "From");
+            Assert.AreEqual(1, from.Value<int>("transitionCount"));
+            Assert.AreEqual(1, from["transitions"][0].Value<int>("conditionCount"));
+            Assert.AreEqual(2f, from["transitions"][0]["conditions"][0].Value<float>("threshold"));
+            for (int i = 1; i < layerCount; i++)
+            {
+                Assert.AreEqual("Layer" + i, response["data"]["layers"][i].Value<string>("name"));
+                Assert.AreEqual(1, response["data"]["layers"][i].Value<int>("stateCount"));
+            }
+            Assert.AreEqual(before, Snapshot());
+
+            machine.AddState("Later");
+            _controller.AddParameter("Later", AnimatorControllerParameterType.Bool);
+            AssetDatabase.SaveAssets();
+            before = Snapshot();
+            JObject next = Send("get_info", new JObject());
+            Assert.AreEqual(3, next["data"]["layers"][0].Value<int>("stateCount"));
+            Assert.AreEqual(2, next["data"].Value<int>("parameterCount"));
+            Assert.AreEqual(before, Snapshot(), "Controller info must remain a read after graph changes.");
+        }
     }
 }

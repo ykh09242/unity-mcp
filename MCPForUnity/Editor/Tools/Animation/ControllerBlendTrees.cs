@@ -39,6 +39,12 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             var stateMachine = layers[layerIndex].stateMachine;
 
+            foreach (var existingState in stateMachine.states)
+            {
+                if (existingState.state.name == stateName)
+                    return new { success = false, message = $"State '{stateName}' already exists in layer {layerIndex}" };
+            }
+
             AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Create Blend Tree 1D");
             var state = stateMachine.AddState(stateName);
@@ -115,6 +121,12 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = $"Layer index {layerIndex} out of range (0-{layers.Length - 1})" };
 
             var stateMachine = layers[layerIndex].stateMachine;
+
+            foreach (var existingState in stateMachine.states)
+            {
+                if (existingState.state.name == stateName)
+                    return new { success = false, message = $"State '{stateName}' already exists in layer {layerIndex}" };
+            }
 
             AssetPathUtility.GetFullAssetPath(controllerPath);
             Undo.RecordObject(controller, "Create Blend Tree 2D");
