@@ -108,5 +108,41 @@ namespace MCPForUnityTests.Editor.Tools
             var result = (List<string>)method.Invoke(null, new object[] { new ToolParams(parameters), Unity.Profiling.ProfilerCategory.Render });
             CollectionAssert.AreEqual(new[] { "first", "First", "last" }, result);
         }
+
+        [TestCase("Owned", "Owned_valid", "Owned_valid")]
+        [TestCase("Owned_valid", "Owned", "Owned_valid")]
+        [TestCase("Owned", "Owned_unit", "Owned_unit")]
+        [TestCase("Owned_unit", "Owned", "Owned_unit")]
+        public void CollidingCounterMetadataKeys_AreRejectedBeforeWaitingForFrames(string first, string second, string collision)
+        {
+            var task = ManageProfiler.HandleCommand(new JObject
+            {
+                ["action"] = "get_counters", ["category"] = "Render",
+                ["counters"] = new JArray(first, second)
+            });
+
+            Assert.IsTrue(task.IsCompleted, "Collision preflight must finish before starting recorders or waiting for a frame.");
+            var result = JObject.FromObject(task.GetAwaiter().GetResult());
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains(collision, result.Value<string>("error"));
+            StringAssert.Contains("metadata key", result.Value<string>("error"));
+        }
+
+        [TestCase("Owned_valid", "Owned_unit")]
+        [TestCase("Owned", "owned_valid")]
+        [TestCase("Owned ", "Owned_valid")]
+        [TestCase("Owned", "Owned")]
+        public void NoncollidingSuffixNames_PreserveOrdinalNamesAndDuplicateSelection(string first, string second)
+        {
+            var parameters = new ToolParams(new JObject { ["counters"] = new JArray(first, second) });
+            var select = typeof(CounterOps).GetMethod("GetRequestedCounters", BindingFlags.NonPublic | BindingFlags.Static);
+            var validate = typeof(CounterOps).GetMethod("GetCounterKeyCollision", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(select);
+            Assert.IsNotNull(validate);
+            var names = (List<string>)select.Invoke(null, new object[] { parameters, Unity.Profiling.ProfilerCategory.Render });
+
+            Assert.IsNull(validate.Invoke(null, new object[] { names }));
+            CollectionAssert.AreEqual(first == second ? new[] { first } : new[] { first, second }, names);
+        }
     }
 }

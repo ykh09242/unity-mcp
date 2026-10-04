@@ -34,6 +34,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     counters = new Dictionary<string, object>()
                 });
 
+            string collision = GetCounterKeyCollision(counterNames);
+            if (collision != null)
+                return new ErrorResponse($"Counter name '{collision}' conflicts with another counter's '_valid' or '_unit' metadata key. Query these counters separately.");
+
             // Start recorders
             var recorders = new List<ProfilerRecorder>();
             var data = new Dictionary<string, object>();
@@ -88,6 +92,17 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 .Select(d => d.Name)
                 .OrderBy(n => n)
                 .ToList();
+        }
+
+        private static string GetCounterKeyCollision(List<string> counterNames)
+        {
+            var names = new HashSet<string>(counterNames, StringComparer.Ordinal);
+            foreach (string name in counterNames)
+            {
+                if (names.Contains(name + "_valid")) return name + "_valid";
+                if (names.Contains(name + "_unit")) return name + "_unit";
+            }
+            return null;
         }
 
         private static Task WaitOneFrameAsync()
