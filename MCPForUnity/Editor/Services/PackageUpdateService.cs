@@ -259,42 +259,30 @@ namespace MCPForUnity.Editor.Services
             return true;
         }
 
-        private static bool IsPreReleaseVersion(string version)
-        {
-            if (string.IsNullOrWhiteSpace(version))
-            {
-                return AssetPathUtility.IsPreReleaseVersion();
-            }
-
-            return version.IndexOf('-', StringComparison.Ordinal) >= 0;
-        }
-
         /// <inheritdoc/>
         public virtual string GetGitUpdateBranch(string currentVersion)
         {
             try
             {
                 var packageInfo = PackageInfo.FindForAssembly(typeof(PackageUpdateService).Assembly);
-                string packageId = packageInfo?.packageId ?? string.Empty;
-                int revisionStart = packageId.IndexOf('#');
-                string revision = revisionStart >= 0 ? packageId.Substring(revisionStart + 1) : string.Empty;
-
-                if (string.Equals(revision, "beta", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "beta";
-                }
-
-                if (string.Equals(revision, "main", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "main";
-                }
+                return GetGitUpdateBranchForPackageId(packageInfo?.packageId);
             }
             catch
             {
-                // Fall back to version-based inference below.
+                // Use the fork's default branch when installation metadata is unavailable.
             }
 
-            return IsPreReleaseVersion(currentVersion) ? "beta" : "main";
+            return "beta";
+        }
+
+        internal static string GetGitUpdateBranchForPackageId(string packageId)
+        {
+            int revisionStart = packageId?.IndexOf('#') ?? -1;
+            string revision = revisionStart >= 0 ? packageId.Substring(revisionStart + 1) : string.Empty;
+            if (string.Equals(revision, "main", StringComparison.OrdinalIgnoreCase)) return "main";
+
+            // Tags and commits follow this fork's default branch, including stable releases.
+            return "beta";
         }
 
         /// <inheritdoc/>
@@ -340,7 +328,7 @@ namespace MCPForUnity.Editor.Services
                 // - No API rate limits (GitHub serves raw files freely)
                 // - Simpler - just parse JSON for version field
                 // - More reliable - doesn't require releases to be published
-                // - Direct source of truth from the main branch
+                // - Direct source of truth from the selected fork branch
 
                 using (var client = CreateWebClient())
                 {

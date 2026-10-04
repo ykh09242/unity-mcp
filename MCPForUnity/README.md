@@ -1,6 +1,6 @@
 # Unity MCP (ykh09242) - Editor Plugin Guide
 
-This Git-only fork is maintained by [ykh09242](https://github.com/ykh09242), based on CoplayDev/unity-mcp. Install `com.ykh09242.unity-mcp` using the [fork quickstart](https://github.com/ykh09242/unity-mcp/blob/beta/README.md#quickstart). The package's `mcpServerSource` pins its Python server to immutable Git source; see the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Open the Editor menu at `Window > Unity MCP (ykh09242)`. CLI executables and MCP protocol identifiers retain their existing names. See the package-local [license and upstream attribution](Documentation~/LICENSE.md).
+This Git-only fork is maintained by [ykh09242](https://github.com/ykh09242), based on CoplayDev/unity-mcp. Install `com.ykh09242.unity-mcp` using the [fork quickstart](https://ykh09242.github.io/unity-mcp/getting-started/install). Fork versions start at `1.0.0`, independently of upstream versions. The package's `mcpServerSource` pins its Python server to immutable Git source; see the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Open the Editor menu at `Window > Unity MCP (ykh09242)`. CLI executables and MCP protocol identifiers retain their existing names. See the package-local [license and upstream attribution](Documentation~/LICENSE.md).
 
 Use this guide to configure and run Unity MCP (ykh09242) inside the Unity Editor. Installation is covered elsewhere; this document focuses on the Editor window, client configuration, and troubleshooting.
 

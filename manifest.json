@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "Unity MCP (ykh09242)",
-  "version": "10.3.0",
+  "version": "1.0.0",
   "description": "AI-powered Unity Editor automation via MCP - manage GameObjects, scripts, materials, scenes, prefabs, VFX, and run tests",
   "author": {
     "name": "ykh09242",
@@ -11,8 +11,8 @@
     "type": "git",
     "url": "https://github.com/ykh09242/unity-mcp"
   },
-  "homepage": "https://github.com/ykh09242/unity-mcp",
-  "documentation": "https://github.com/ykh09242/unity-mcp/blob/beta/README.md",
+  "homepage": "https://ykh09242.github.io/unity-mcp/",
+  "documentation": "https://ykh09242.github.io/unity-mcp/",
   "support": "https://github.com/ykh09242/unity-mcp/issues",
   "server": {
     "type": "python",
@@ -21,7 +21,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/ykh09242/unity-mcp.git@d290c1a2016ec398472bb88c57f64c778a69f82b#subdirectory=Server",
+        "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}

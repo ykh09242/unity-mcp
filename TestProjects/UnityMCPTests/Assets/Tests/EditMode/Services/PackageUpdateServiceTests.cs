@@ -339,6 +339,20 @@ namespace MCPForUnityTests.Editor.Services
                 typeof(PackageUpdateService).GetField("BetaPackageJsonUrl", flags).GetRawConstantValue());
         }
 
+        [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#v1.0.0", "beta")]
+        [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#0123456789abcdef0123456789abcdef01234567", "beta")]
+        [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity", "beta")]
+        [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta", "beta")]
+        [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#main", "main")]
+        [TestCase("https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#MAIN", "main")]
+        [TestCase(null, "beta")]
+        [TestCase("", "beta")]
+        public void GitUpdateBranch_UsesForkDefaultForImmutableOrUnspecifiedRevision(string url, string expected)
+        {
+            string packageId = url == null ? null : "com.ykh09242.unity-mcp@" + url;
+            Assert.AreEqual(expected, PackageUpdateService.GetGitUpdateBranchForPackageId(packageId));
+        }
+
         [TestCase("main")]
         [TestCase("beta")]
         public void UpdateCache_IsIsolatedFromUpstreamAndOtherChannel(string branch)
