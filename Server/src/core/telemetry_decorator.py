@@ -5,7 +5,7 @@ Telemetry decorator for MCP for Unity tools
 import functools
 import inspect
 import logging
-import time
+from time import perf_counter_ns
 from typing import Callable, Any
 
 from core.telemetry import record_resource_usage, record_tool_usage, record_milestone, MilestoneType, register_tool_actions, tool_action_label
@@ -20,7 +20,7 @@ def telemetry_tool(tool_name: str):
         register_tool_actions(tool_name, func)
         @functools.wraps(func)
         def _sync_wrapper(*args, **kwargs) -> Any:
-            start_time = time.time()
+            start_time = perf_counter_ns()
             success = False
             error = None
             # Extract sub-action (e.g., 'get_hierarchy') from bound args when available
@@ -54,7 +54,7 @@ def telemetry_tool(tool_name: str):
                 error = e
                 raise
             finally:
-                duration_ms = (time.time() - start_time) * 1000
+                duration_ms = (perf_counter_ns() - start_time) / 1_000_000
                 try:
                     record_tool_usage(tool_name, success,
                                       duration_ms, error, sub_action=sub_action)
@@ -63,7 +63,7 @@ def telemetry_tool(tool_name: str):
 
         @functools.wraps(func)
         async def _async_wrapper(*args, **kwargs) -> Any:
-            start_time = time.time()
+            start_time = perf_counter_ns()
             success = False
             error = None
             # Extract sub-action (e.g., 'get_hierarchy') from bound args when available
@@ -97,7 +97,7 @@ def telemetry_tool(tool_name: str):
                 error = e
                 raise
             finally:
-                duration_ms = (time.time() - start_time) * 1000
+                duration_ms = (perf_counter_ns() - start_time) / 1_000_000
                 try:
                     record_tool_usage(tool_name, success,
                                       duration_ms, error, sub_action=sub_action)
@@ -113,7 +113,7 @@ def telemetry_resource(resource_name: str):
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def _sync_wrapper(*args, **kwargs) -> Any:
-            start_time = time.time()
+            start_time = perf_counter_ns()
             success = False
             error = None
             try:
@@ -129,7 +129,7 @@ def telemetry_resource(resource_name: str):
                 error = e
                 raise
             finally:
-                duration_ms = (time.time() - start_time) * 1000
+                duration_ms = (perf_counter_ns() - start_time) / 1_000_000
                 try:
                     record_resource_usage(resource_name, success,
                                           duration_ms, error)
@@ -138,7 +138,7 @@ def telemetry_resource(resource_name: str):
 
         @functools.wraps(func)
         async def _async_wrapper(*args, **kwargs) -> Any:
-            start_time = time.time()
+            start_time = perf_counter_ns()
             success = False
             error = None
             try:
@@ -154,7 +154,7 @@ def telemetry_resource(resource_name: str):
                 error = e
                 raise
             finally:
-                duration_ms = (time.time() - start_time) * 1000
+                duration_ms = (perf_counter_ns() - start_time) / 1_000_000
                 try:
                     record_resource_usage(resource_name, success,
                                           duration_ms, error)

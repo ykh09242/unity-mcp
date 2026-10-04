@@ -610,52 +610,70 @@ class TestTelemetryDuration:
 
     """Tests for duration measurement in telemetry decorators."""
 
-    def test_telemetry_measures_duration_sync(self):
-        """Verify telemetry_tool measures and records execution duration (sync)."""
-        @telemetry_tool("timed_tool")
-        def slow_tool():
-            time.sleep(0.05)  # 50ms
+    @pytest.mark.parametrize("kind", ["tool", "resource"])
+    def test_telemetry_measures_duration_sync(self, kind):
+        decorator = telemetry_tool if kind == "tool" else telemetry_resource
+
+        @decorator("timed_execution")
+        def timed_execution():
             return "done"
 
-        with patch("core.telemetry_decorator.record_tool_usage") as mock_record:
-            result = slow_tool()
+        with patch("core.telemetry_decorator.perf_counter_ns", side_effect=[10**18, 10**18 + 50_000_000]) as mock_clock, \
+                patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record, \
+                patch("core.telemetry_decorator.record_milestone"):
+            result = timed_execution()
 
             assert result == "done"
-            assert mock_record.called
-            # duration_ms should be in call args
-            duration_ms = mock_record.call_args[0][2]
-            assert duration_ms >= 50  # Should be at least 50ms
+            assert mock_clock.call_count == 2
+            assert mock_record.call_count == 1
+            assert mock_record.call_args[0] == ("timed_execution", True, 50.0, None)
 
-    def test_telemetry_measures_duration_async(self):
-        """Verify telemetry_tool measures and records execution duration (async)."""
-        @telemetry_tool("async_timed")
-        async def slow_async_tool():
-            await asyncio.sleep(0.05)
+    @pytest.mark.parametrize("kind", ["tool", "resource"])
+    def test_telemetry_measures_duration_async(self, kind):
+        decorator = telemetry_tool if kind == "tool" else telemetry_resource
+
+        @decorator("async_timed")
+        async def timed_execution():
+            await asyncio.sleep(0)
             return "done"
 
-        with patch("core.telemetry_decorator.record_tool_usage") as mock_record:
-            result = asyncio.run(slow_async_tool())
+        with patch("core.telemetry_decorator.perf_counter_ns", side_effect=[10**18, 10**18 + 50_000_000]) as mock_clock, \
+                patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record, \
+                patch("core.telemetry_decorator.record_milestone"):
+            result = asyncio.run(timed_execution())
 
             assert result == "done"
-            assert mock_record.called
-            duration_ms = mock_record.call_args[0][2]
-            # Allow 20% variance for timer resolution (especially on Windows)
-            assert duration_ms >= 40
+            assert mock_clock.call_count == 2
+            assert mock_record.call_count == 1
+            assert mock_record.call_args[0] == ("async_timed", True, 50.0, None)
 
-    def test_telemetry_duration_recorded_even_on_error(self):
-        """Verify duration is recorded even when tool raises exception."""
-        @telemetry_tool("error_tool")
-        def error_tool():
-            time.sleep(0.02)
-            raise ValueError("Error")
+    @pytest.mark.parametrize("kind", ["tool", "resource"])
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    def test_telemetry_duration_recorded_even_on_error(self, kind, asynchronous):
+        decorator = telemetry_tool if kind == "tool" else telemetry_resource
+        expected_error = ValueError("Error")
 
-        with patch("core.telemetry_decorator.record_tool_usage") as mock_record:
-            with pytest.raises(ValueError):
-                error_tool()
+        def error_execution():
+            raise expected_error
 
-            assert mock_record.called
-            duration_ms = mock_record.call_args[0][2]
-            assert duration_ms >= 20
+        async def async_error_execution():
+            await asyncio.sleep(0)
+            raise expected_error
+
+        wrapped = decorator("error_execution")(async_error_execution if asynchronous else error_execution)
+        with patch("core.telemetry_decorator.perf_counter_ns", side_effect=[10**18, 10**18 + 20_000_000]) as mock_clock, \
+                patch(f"core.telemetry_decorator.record_{kind}_usage") as mock_record, \
+                patch("core.telemetry_decorator.record_milestone"):
+            with pytest.raises(ValueError) as raised:
+                if asynchronous:
+                    asyncio.run(wrapped())
+                else:
+                    wrapped()
+
+            assert raised.value is expected_error
+            assert mock_clock.call_count == 2
+            assert mock_record.call_count == 1
+            assert mock_record.call_args[0] == ("error_execution", False, 20.0, expected_error)
 
 
 # =============================================================================
