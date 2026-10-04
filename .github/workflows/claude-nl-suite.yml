@@ -110,7 +110,7 @@ jobs:
             echo "License source: ULF (Signature found)"
             echo "ok=true" >> "$GITHUB_OUTPUT"
           # If someone pasted an entitlement XML into UNITY_LICENSE by mistake, re-home it:
-          elif grep -qi 'Entitlement|entitlement' "$f"; then
+          elif grep -qi 'entitlement' "$f"; then
             mkdir -p "$RUNNER_TEMP/unity-config/Unity/licenses"
             mv "$f" "$RUNNER_TEMP/unity-config/Unity/licenses/UnityEntitlementLicense.xml"
             echo "License source: Entitlement XML (re-homed)"
