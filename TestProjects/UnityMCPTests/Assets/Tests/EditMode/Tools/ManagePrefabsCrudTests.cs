@@ -532,6 +532,67 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("", "Child1")]
+        [TestCase(null, "Child1")]
+        [TestCase("", "Child1/Grandchild")]
+        public void ModifyContents_RejectsDetachingChildAndPreservesAsset(string parent, string target)
+        {
+            string prefabPath = CreateNestedTestPrefab("DetachChildTest");
+
+            try
+            {
+                byte[] originalAsset = File.ReadAllBytes(prefabPath);
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
+                {
+                    ["action"] = "modify_contents",
+                    ["prefabPath"] = prefabPath,
+                    ["target"] = target,
+                    ["name"] = "UnexpectedRename",
+                    ["parent"] = parent == null ? JValue.CreateNull() : new JValue(parent)
+                }));
+
+                Assert.IsFalse(result.Value<bool>("success"), $"Expected rejection but got: {result}");
+                StringAssert.Contains("Cannot detach", result.Value<string>("error"));
+                CollectionAssert.AreEqual(originalAsset, File.ReadAllBytes(prefabPath));
+
+                GameObject reloaded = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+                Assert.IsNotNull(reloaded.transform.Find("Child1/Grandchild"));
+                Assert.IsNotNull(reloaded.transform.Find("Child2"));
+                Assert.IsNull(reloaded.transform.Find("UnexpectedRename"));
+                Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage());
+            }
+            finally
+            {
+                SafeDeleteAsset(prefabPath);
+            }
+        }
+
+        [Test]
+        public void ModifyContents_ReparentsNestedChildToNamedPrefabRoot()
+        {
+            string prefabPath = CreateNestedTestPrefab("NamedRootReparentTest");
+
+            try
+            {
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
+                {
+                    ["action"] = "modify_contents",
+                    ["prefabPath"] = prefabPath,
+                    ["target"] = "Child1/Grandchild",
+                    ["parent"] = "NamedRootReparentTest"
+                }));
+
+                Assert.IsTrue(result.Value<bool>("success"), $"Expected success but got: {result}");
+                GameObject reloaded = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+                Assert.IsNotNull(reloaded.transform.Find("Grandchild"));
+                Assert.IsNull(reloaded.transform.Find("Child1/Grandchild"));
+            }
+            finally
+            {
+                SafeDeleteAsset(prefabPath);
+            }
+        }
+
         [Test]
         public void ModifyContents_CreateChild_AddsSingleChildWithPrimitive()
         {

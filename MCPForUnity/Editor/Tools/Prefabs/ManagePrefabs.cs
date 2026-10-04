@@ -812,6 +812,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 string parentTarget = parentToken.ToString();
                 Transform newParent = null;
 
+                if (string.IsNullOrEmpty(parentTarget) && targetGo != prefabRoot)
+                {
+                    return (false, new ErrorResponse($"Cannot detach '{targetGo.name}' from the prefab root. Specify a parent name or path within the prefab."));
+                }
+
                 if (!string.IsNullOrEmpty(parentTarget))
                 {
                     GameObject parentGo = FindInPrefabContents(prefabRoot, parentTarget);
