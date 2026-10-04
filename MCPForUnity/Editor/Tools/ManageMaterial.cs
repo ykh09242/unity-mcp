@@ -200,6 +200,10 @@ namespace MCPForUnity.Editor.Tools
             string searchMethod = @params["searchMethod"]?.ToString();
             string materialPath = NormalizePath(@params["materialPath"]?.ToString());
             int slot = @params["slot"]?.ToObject<int>() ?? 0;
+            string mode = @params["mode"]?.ToString() ?? "shared";
+
+            if (mode != "shared" && mode != "instance")
+                return new ErrorResponse($"Unsupported assignment mode: {mode}. Use shared or instance.");
 
             if (string.IsNullOrEmpty(target) || string.IsNullOrEmpty(materialPath))
             {
@@ -234,8 +238,14 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMats.Length})");
             }
 
+            Material assignedMaterial = mat;
+            if (mode == "instance")
+            {
+                assignedMaterial = new Material(mat);
+                Undo.RegisterCreatedObjectUndo(assignedMaterial, "Create Material Instance");
+            }
             Undo.RecordObject(renderer, "Assign Material");
-            sharedMats[slot] = mat;
+            sharedMats[slot] = assignedMaterial;
             renderer.sharedMaterials = sharedMats;
 
             EditorUtility.SetDirty(renderer);
@@ -677,6 +687,10 @@ namespace MCPForUnity.Editor.Tools
                 else if (propsToken is JObject obj)
                 {
                     properties = obj;
+                }
+                else
+                {
+                    return new ErrorResponse("properties must be a JSON object or a JSON object string.");
                 }
             }
 
