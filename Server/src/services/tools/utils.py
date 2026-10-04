@@ -93,7 +93,7 @@ def coerce_float(value: Any, default: float | None = None) -> float | None:
         if s.lower() in ("", "none", "null"):
             return default
         return float(s)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -157,7 +157,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
                 if all(math.isfinite(n) for n in vec):
                     return vec, None
                 return None, f"{param_name} values must be finite numbers, got {value}"
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError, OverflowError):
                 return None, f"{param_name} dict values must be numbers, got {value}"
         return None, f"{param_name} dict must have 'x', 'y', 'z' keys, got {list(value.keys())}"
 
@@ -168,7 +168,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
             if all(math.isfinite(n) for n in vec):
                 return vec, None
             return None, f"{param_name} values must be finite numbers, got {value}"
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return None, f"{param_name} values must be numbers, got {value}"
 
     # Try parsing as string
@@ -190,7 +190,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
                 if all(math.isfinite(n) for n in vec):
                     return vec, None
                 return None, f"{param_name} values must be finite numbers, got {parsed}"
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return None, f"{param_name} values must be numbers, got {parsed}"
 
         # Handle comma-separated strings "1,2,3", "[1,2,3]", or "(1,2,3)"
@@ -204,7 +204,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
                 if all(math.isfinite(n) for n in vec):
                     return vec, None
                 return None, f"{param_name} values must be finite numbers, got {value}"
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return None, f"{param_name} values must be numbers, got {value}"
 
         return None, f"{param_name} must be a [x, y, z] array or {{x, y, z}} object, got: {value}"
@@ -315,10 +315,12 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
                 else:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
+                    elif output_range == "float" and not any(c > 1 for c in color):
+                        color.append(1.0)
                     else:
-                        color.append(1.0 if output_range == "float" else 255)
+                        color.append(255)
                 return _to_output_range(color), None
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError, OverflowError):
                 return None, f"color dict values must be numbers, got {value}"
         return None, f"color dict must have 'r', 'g', 'b' keys, got {list(value.keys())}"
 
@@ -330,10 +332,12 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
                 if len(color) == 3:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
+                    elif output_range == "float" and not any(c > 1 for c in color):
+                        color.append(1.0)
                     else:
-                        color.append(1.0 if output_range == "float" else 255)
+                        color.append(255)
                 return _to_output_range(color), None
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return None, f"color values must be numbers, got {value}"
         return None, f"color must have 3 or 4 components, got {len(value)}"
 
@@ -374,10 +378,12 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
                 if len(color) == 3:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
+                    elif output_range == "float" and not any(c > 1 for c in color):
+                        color.append(1.0)
                     else:
-                        color.append(1.0 if output_range == "float" else 255)
+                        color.append(255)
                 return _to_output_range(color), None
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return None, f"color values must be numbers, got {parsed}"
 
         # Handle tuple-style strings "(r, g, b)" or "(r, g, b, a)"
@@ -391,10 +397,12 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
                 if len(color) == 3:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
+                    elif output_range == "float" and not any(c > 1 for c in color):
+                        color.append(1.0)
                     else:
-                        color.append(1.0 if output_range == "float" else 255)
+                        color.append(255)
                 return _to_output_range(color), None
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 pass  # Fall through to error message
 
         return None, f"Failed to parse color string: {value}"
