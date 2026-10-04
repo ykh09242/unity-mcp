@@ -106,7 +106,7 @@ class CustomToolService:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 return JSONResponse({"success": False, "error": "Request body must be valid JSON"}, status_code=400)
             except ValidationError as exc:
-                return JSONResponse({"success": False, "error": exc.errors()}, status_code=400)
+                return JSONResponse({"success": False, "error": exc.errors(include_input=False)}, status_code=400)
 
             registered, replaced = self._register_project_tools(
                 payload.project_id, payload.tools, project_hash=payload.project_hash)
@@ -408,7 +408,7 @@ class CustomToolService:
             self._register_tool(project_id, tool)
             registered.append(tool.name)
             if not self._project_scoped_tools:
-                self._register_global_tool(tool)
+                self.register_global_tools([tool])
 
         if project_hash:
             self._hash_to_project[project_hash.lower()] = project_id
