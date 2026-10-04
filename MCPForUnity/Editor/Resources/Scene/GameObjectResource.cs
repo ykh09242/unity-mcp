@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using BigInteger = System.Numerics.BigInteger;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -143,8 +145,8 @@ namespace MCPForUnity.Editor.Resources.Scene
             }
 
             // Pagination parameters
-            int pageSize = ParamCoercion.CoerceInt(@params["pageSize"] ?? @params["page_size"], 25);
-            int cursor = ParamCoercion.CoerceInt(@params["cursor"], 0);
+            int pageSize = CoercePaginationInt(@params["pageSize"] ?? @params["page_size"], 25);
+            int cursor = CoercePaginationInt(@params["cursor"], 0);
             bool includeProperties = ParamCoercion.CoerceBool(@params["includeProperties"] ?? @params["include_properties"], true);
 
             pageSize = Mathf.Clamp(pageSize, 1, 100);
@@ -205,6 +207,16 @@ namespace MCPForUnity.Editor.Resources.Scene
                 McpLog.Error($"[GameObjectComponentsResource] Error getting components: {e}");
                 return new ErrorResponse($"Error getting components: {e.Message}");
             }
+        }
+
+        private static int CoercePaginationInt(JToken token, int defaultValue)
+        {
+            // Saturate whole numbers before Int32 conversion can reset paging to its defaults.
+            if (token != null && (token.Type == JTokenType.Integer || token.Type == JTokenType.String)
+                && BigInteger.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+                return (int)BigInteger.Min(BigInteger.Max(value, int.MinValue), int.MaxValue);
+
+            return ParamCoercion.CoerceInt(token, defaultValue);
         }
     }
 
