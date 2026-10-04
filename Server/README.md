@@ -42,6 +42,8 @@ metadata can use a stateful protocol and `set_active_instance` for a persistent 
 
 **Fork maintained by [ykh09242](https://github.com/ykh09242)**, based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original MIT copyright and authorship are retained. This project is not affiliated with Unity Technologies.
 
+This fork has an independent release sequence, starting with stable `1.0.0`. The Python server distribution also reports `1.0.0`. Upstream `10.3.0` identifies the source baseline, not the fork's release version. Use the immutable server source recorded in the matching Unity package; the Git commit selects the server implementation independently of its version label.
+
 **Required:** Install the [Unity MCP Plugin](../README.md#quickstart) to connect Unity Editor with this MCP server. You also need `uvx` (requires [uv](https://docs.astral.sh/uv/)) to run the server.
 
 ---
@@ -318,7 +320,7 @@ Once connected, try these commands in your AI assistant:
 
 For complete documentation, troubleshooting, and advanced usage:
 
-📖 **[Full Documentation](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/getting-started/index.md)**
+📖 **[Full Documentation](https://ykh09242.github.io/unity-mcp/)**
 
 ---
 

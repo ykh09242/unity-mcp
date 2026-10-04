@@ -2376,7 +2376,7 @@ wheels = [
 
 [[package]]
 name = "ykh09242-unity-mcp-server"
-version = "10.3.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
