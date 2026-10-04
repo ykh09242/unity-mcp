@@ -184,7 +184,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private static bool AcceptsOne(JObject schema)
             => schema != null && ((float?)schema["minimum"] ?? 1f) <= 1f
                && ((float?)schema["maximum"] ?? 1f) >= 1f && schema["enum"] == null
-               && schema["exclusiveMinimum"] == null && schema["exclusiveMaximum"] == null;
+               && schema["exclusiveMinimum"] == null && schema["exclusiveMaximum"] == null
+               && schema["multipleOf"] == null;
 
         private static bool SupportsDimensions(JObject api, JToken token, int depth = 0)
         {
@@ -224,7 +225,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (schema?["anyOf"] is JArray options)
             {
                 var nonNull = options.Where(option => (string)option["type"] != "null").ToArray();
-                if (nonNull.Length == 1) return Resolve(api, nonNull[0], depth + 1);
+                if (nonNull.Length == 1)
+                {
+                    var resolved = Resolve(api, nonNull[0], depth + 1);
+                    if (resolved != null && schema["default"] != null)
+                    {
+                        resolved = (JObject)resolved.DeepClone();
+                        resolved["default"] = schema["default"].DeepClone();
+                    }
+                    return resolved;
+                }
             }
             return schema?["$ref"] == null ? schema : null;
         }

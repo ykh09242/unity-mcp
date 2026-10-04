@@ -449,6 +449,51 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(JTokenType.Integer, body["music_length_ms"].Type);
         }
 
+        [TestCase(false), TestCase(true)]
+        public void NullableDuration_DefaultOnWrapper_IsUsedInSubmittedRequest(bool reference)
+        {
+            var model = Endpoint("test/music-default");
+            var duration = new JObject { ["anyOf"] = new JArray(
+                new JObject { ["type"] = "number", ["minimum"] = 0.5, ["maximum"] = 22 },
+                new JObject { ["type"] = "null" }), ["default"] = 5 };
+            if (reference)
+            {
+                model["openapi"]["components"]["schemas"]["Duration"] = duration;
+                Input(model)["properties"]["duration"] = new JObject { ["$ref"] = "#/components/schemas/Duration" };
+            }
+            else Input(model)["properties"]["duration"] = duration;
+            var original = model.DeepClone();
+            var entry = FalModelSchema.Parse(model, "audio", now.ToString("O"));
+            Assert.IsNotNull(entry);
+            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200,
+                Text = "{\"response_url\":\"https://queue.fal.run/test/music-default/requests/r1\"}" } };
+            new FalAudioAdapter().SubmitAsync(new AudioGenRequest { Model = entry.Id, CatalogEntry = entry,
+                Prompt = "rain", Duration = 0 }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests.Single().Body));
+            Assert.AreEqual(5f, (float)body["duration"], "The submitted default must come from the nullable field wrapper.");
+            Assert.IsTrue(JToken.DeepEquals(original, model), "Resolving a nullable default must not mutate provider metadata.");
+        }
+
+        [TestCase(false), TestCase(true)]
+        public void NumImagesSchema_WithMultipleOf_OmitsUnsupportedFixedCount(bool edit)
+        {
+            var model = Endpoint("test/image-multiple", "image", edit: edit);
+            Input(model)["properties"]["num_images"] = new JObject { ["type"] = "integer",
+                ["minimum"] = 1, ["maximum"] = 4, ["multipleOf"] = 2, ["default"] = 2 };
+            var entry = FalModelSchema.Parse(model, "image", now.ToString("O"));
+            Assert.IsNotNull(entry);
+            var submit = new FakeHttpTransport { Handler = _ => new HttpResult { Status = 200,
+                Text = "{\"response_url\":\"https://queue.fal.run/test/image-multiple/requests/r1\"}" } };
+            new FalAdapter().SubmitAsync(new ImageGenRequest { Model = entry.Id, CatalogEntry = entry,
+                Mode = edit ? "image" : "text", ImageUrl = edit ? "https://example.com/source.png" : null,
+                Prompt = "rain" }, "test-key", submit, CancellationToken.None).GetAwaiter().GetResult();
+            var body = JObject.Parse(Encoding.UTF8.GetString(submit.RecordedRequests.Single().Body));
+            Assert.IsNull(body["num_images"], "The adapter's fixed count of one violates multipleOf=2: " + body);
+            Assert.IsFalse(entry.SupportsNumImages);
+            ((JArray)Input(model)["required"]).Add("num_images");
+            Assert.IsNull(FalModelSchema.Parse(model, "image", now.ToString("O")), "A required unsupported count must fail preflight.");
+        }
+
         [Test]
         public void SchemaGate_RejectsUnsupportedOutputAndUnsafeEndpointId()
         {
