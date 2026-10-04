@@ -6,6 +6,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, TypeAdapter, ValidationError
 
+from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -33,6 +34,7 @@ class Resolution(BaseModel):
 
 
 _RESOLUTIONS: Final = TypeAdapter(Annotated[list[Resolution], Field(min_length=1, max_length=8)])
+_PROPERTIES: Final = TypeAdapter(dict[str, JsonValue])
 
 
 @mcp_for_unity_tool(
@@ -90,7 +92,12 @@ async def manage_ugui(
     if name is not None and (not name.strip() or any(character in name for character in "/\\\x00\r\n")):
         return {"success": False, "message": "name must be a non-empty single hierarchy name without path separators or control characters."}
 
-    properties, properties_error = normalize_properties(properties)
+    try:
+        properties, properties_error = normalize_properties(properties)
+        if properties is not None:
+            properties = _PROPERTIES.validate_python(properties)
+    except (RecursionError, ValidationError):
+        return {"success": False, "message": "properties must contain supported JSON values with bounded nesting; reduce the property structure."}
     if properties_error:
         return {"success": False, "message": properties_error}
     if action_lower.startswith("set_") and not properties:
@@ -100,8 +107,8 @@ async def manage_ugui(
     if resolutions is not None:
         try:
             parsed = _RESOLUTIONS.validate_json(resolutions) if type(resolutions) is str else _RESOLUTIONS.validate_python(resolutions)
-        except ValidationError as exc:
-            return {"success": False, "message": f"Invalid resolutions: {exc}"}
+        except ValidationError:
+            return {"success": False, "message": "Invalid resolutions: supply 1 to 8 objects containing only width and height, each an integer from 64 to 8192."}
         params["resolutions"] = [size.model_dump() for size in parsed]
     for key, value in (("target", target), ("parent", parent), ("name", name), ("element_type", element_type), ("properties", properties)):
         if value is not None:
@@ -116,4 +123,5 @@ async def manage_ugui(
     result = await send_mutation(ctx, unity_instance, "manage_ugui", params) if is_mutation else await send_with_unity_instance(
         async_send_command_with_retry, unity_instance, "manage_ugui", params,
     )
+    result = result.model_dump() if isinstance(result, MCPResponse) else result
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

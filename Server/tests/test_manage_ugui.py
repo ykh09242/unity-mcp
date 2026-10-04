@@ -9,9 +9,12 @@ from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import JsonValue
 
+from core.config import config
 from models import MCPResponse
 from services.registry import get_group_tool_names, get_registered_tools
 from services.tools.manage_ugui import manage_ugui
+from services.tools.refresh_unity import send_mutation
+from transport.unity_transport import send_with_unity_instance
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,3 +206,60 @@ async def test_accepts_full_resolution_budget_when_at_bounds(boundary: Boundary)
     # Then
     assert result["success"] is True
     assert boundary.read.await_args.args[3]["resolutions"] == resolutions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [{"action": "ping"}, {"action": "create", "element_type": "canvas"}])
+async def test_preserves_retry_details_when_legacy_transport_returns_response_model(
+    boundary: Boundary, monkeypatch: pytest.MonkeyPatch, options: dict[str, JsonValue],
+) -> None:
+    # Given: stdio transport really returns MCPResponse when the retry wrapper fails.
+    response = MCPResponse(success=False, error="Unity connection unavailable", hint="retry",
+                           data={"reason": "reloading", "retry_after_ms": 500})
+    legacy_send = AsyncMock(return_value=response)
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    monkeypatch.setattr("services.tools.manage_ugui.send_with_unity_instance", send_with_unity_instance)
+    monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
+    monkeypatch.setattr("services.tools.manage_ugui.async_send_command_with_retry", legacy_send)
+    monkeypatch.setattr("transport.legacy.unity_connection.async_send_command_with_retry", legacy_send)
+    server = FastMCP("ugui-legacy-response")
+    server.tool()(manage_ugui)
+    # When: exercise the real MCP serialization and both production routing helpers.
+    async with Client(server) as client:
+        result = await client.call_tool("manage_ugui", options)
+    # Then: machine-readable error/hint/data survive the legacy failure path.
+    assert result.structured_content == response.model_dump()
+    assert legacy_send.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_rejects_nested_json_when_properties_exceed_decoder_depth(boundary: Boundary) -> None:
+    # Given: JSON supplied inside a string bypasses the MCP envelope's depth bound.
+    properties = '{"anchorMin":' + '[' * 2000 + '0' + ']' * 2000 + '}'
+    server = FastMCP("ugui-json-depth")
+    server.tool()(manage_ugui)
+    # When
+    async with Client(server) as client:
+        response = await client.call_tool("manage_ugui", {"action": "set_rect", "target": "Canvas", "properties": properties})
+    result = response.structured_content
+    # Then: invalid structure produces a regular error without reaching Unity.
+    assert result["success"] is False
+    for seam in (boundary.mutate, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bounds_error_when_resolution_keys_are_invalid(boundary: Boundary) -> None:
+    # Given: each key's value is only a small scalar, but validation repeats its name.
+    unknown = "unexpected_" + "x" * 2000
+    resolutions = [{"width": 64, "height": 64, **{f"{unknown}{n}": 64 + n for n in range(20)}}]
+    server = FastMCP("ugui-json-validation-budget")
+    server.tool()(manage_ugui)
+    # When
+    async with Client(server) as client:
+        response = await client.call_tool("manage_ugui", {"action": "diagnose", "target": "Canvas", "resolutions": resolutions})
+    result = response.structured_content
+    # Then: reject without retaining/echoing an unbounded validation transcript.
+    assert result["success"] is False
+    assert len(result["message"]) < 1000
+    boundary.read.assert_not_awaited()
