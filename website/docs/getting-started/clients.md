@@ -59,7 +59,7 @@ Reconfigure and reconnect HTTP MCP clients after each restart; an old token prod
 
 ### Stdio
 
-For stable `1.0.0`, use the matching immutable server source:
+This beta checkout uses the following immutable server source. Published stable releases keep their own source pins; use the installed package's `mcpServerSource`:
 
 ```json
 {
@@ -68,7 +68,7 @@ For stable `1.0.0`, use the matching immutable server source:
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server",
+        "git+https://github.com/ykh09242/unity-mcp.git@a9ffad07a232c1492e04c5895264a5f0b94bdca8#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
@@ -78,7 +78,7 @@ For stable `1.0.0`, use the matching immutable server source:
 }
 ```
 
-If `uvx` is not on the client's PATH, use its verified absolute path. For another package revision, use **that installed package's** `mcpServerSource`; do not retain this release's pin accidentally. Stdio does not use the local HTTP token header.
+If `uvx` is not on the client's PATH, use its verified absolute path. For another package revision, use **that installed package's** `mcpServerSource`; do not retain this example's pin accidentally. Stdio does not use the local HTTP token header.
 
 ## Confirm the connection and target
 

@@ -12,10 +12,10 @@ description: Launch the pinned Editor-control CLI, target requests explicitly, a
 
 ## Run the matching CLI
 
-Stable `1.0.0` uses this pinned source:
+This beta checkout uses this pinned source. Published stable releases keep their own pins; use the installed package's `mcpServerSource`:
 
 ```bash
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server" unity-mcp --help
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@a9ffad07a232c1492e04c5895264a5f0b94bdca8#subdirectory=Server" unity-mcp --help
 ```
 
 For another installed Unity revision, use its `mcpServerSource`. If `unity-mcp` is already installed from the matching source, the shorter commands below work directly. Otherwise prepend the same `uvx --from` prefix to each command.
