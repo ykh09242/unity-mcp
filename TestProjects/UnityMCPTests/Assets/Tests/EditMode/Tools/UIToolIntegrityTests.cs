@@ -230,6 +230,121 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(new Vector2Int(64, 32), panel.referenceResolution);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ListRejectsMissingOrFileScopeWithoutReturningOutsideAssets(bool fileScope)
+        {
+            string panelPath = assetRoot + "/Panel.asset";
+            CreateOwnedPanel(panelPath);
+            var response = JObject.FromObject(ManageUI.HandleCommand(new JObject
+            {
+                ["action"] = "list", ["path"] = fileScope ? panelPath : assetRoot + "/Missing",
+                ["filter_type"] = "PanelSettings"
+            }));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.That(response.Value<string>("error"), Does.Contain("folder"));
+        }
+
+        [Test]
+        public void ListKeepsExistingFolderScopeAndPageBoundaries()
+        {
+            CreateOwnedPanel(assetRoot + "/Outside.asset");
+            string scoped = assetRoot + "/Scoped";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Scoped"));
+            CreateOwnedPanel(scoped + "/First.asset");
+            CreateOwnedPanel(scoped + "/Second.asset");
+            var paths = new HashSet<string>();
+            for (int page = 1; page <= 3; page++)
+            {
+                var response = JObject.FromObject(ManageUI.HandleCommand(new JObject
+                {
+                    ["action"] = "list", ["path"] = scoped, ["filterType"] = "PanelSettings",
+                    ["pageSize"] = 1, ["pageNumber"] = page
+                }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(2, response["data"].Value<int>("total"));
+                var assets = (JArray)response["data"]["assets"];
+                Assert.AreEqual(page < 3 ? 1 : 0, assets.Count);
+                foreach (JToken asset in assets)
+                {
+                    string path = asset.Value<string>("path");
+                    Assert.That(path, Does.StartWith(scoped + "/"));
+                    Assert.IsTrue(paths.Add(path), "Page returned a duplicate.");
+                }
+            }
+            Assert.AreEqual(2, paths.Count);
+        }
+
+        [TestCase("style", "string")]
+        [TestCase("inline_style", "object")]
+        [TestCase("inlineStyle", "null")]
+        public void MalformedLateNumericStylePreservesEveryEarlierElementMutation(string alias, string badType)
+        {
+            var go = new GameObject("__McpUIElement_" + Guid.NewGuid().ToString("N"));
+            allocated.Add(go);
+            var document = go.AddComponent<UIDocument>();
+            Assert.IsNotNull(document.rootVisualElement);
+            var label = new Label("original") { name = "owned-label", tooltip = "before" };
+            label.style.width = 12;
+            label.style.height = 13;
+            label.AddToClassList("keep");
+            document.rootVisualElement.Add(label);
+            JToken invalid = badType == "object" ? (JToken)new JObject { ["x"] = 1 }
+                : badType == "null" ? JValue.CreateNull() : new JValue("bad");
+
+            var response = JObject.FromObject(ManageUI.HandleCommand(new JObject
+            {
+                ["action"] = "modify_visual_element", ["target"] = go.name,
+                ["element_name"] = label.name, ["text"] = "changed",
+                ["add_classes"] = new JArray("new"), ["remove_classes"] = new JArray("keep"),
+                [alias] = new JObject { ["width"] = 64, ["height"] = invalid },
+                ["enabled"] = false, ["visible"] = false, ["tooltip"] = "after"
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("original", label.text);
+            CollectionAssert.AreEquivalent(new[] { "keep" }, label.GetClasses());
+            Assert.AreEqual(12f, label.style.width.value.value);
+            Assert.AreEqual(13f, label.style.height.value.value);
+            Assert.IsTrue(label.enabledSelf);
+            Assert.AreEqual("before", label.tooltip);
+        }
+
+        [Test]
+        public void ValidMixedElementMutationPreservesAliasesSkipsAndApplicationOrder()
+        {
+            var go = new GameObject("__McpUIElement_" + Guid.NewGuid().ToString("N"));
+            allocated.Add(go);
+            var document = go.AddComponent<UIDocument>();
+            Assert.IsNotNull(document.rootVisualElement);
+            var label = new Label("original") { name = "owned-label" };
+            document.rootVisualElement.Add(label);
+            var response = JObject.FromObject(ManageUI.HandleCommand(new JObject
+            {
+                ["action"] = "modify_visual_element", ["target"] = go.name,
+                ["elementName"] = label.name, ["text"] = "", ["addClasses"] = new JArray("new"),
+                ["inlineStyle"] = new JObject
+                {
+                    ["width"] = 64, ["HEIGHT"] = "32", ["border-radius"] = 4,
+                    ["display"] = "None", ["unsupported"] = 1, ["color"] = "not-a-color"
+                },
+                ["enabled"] = false, ["visible"] = true, ["tooltip"] = ""
+            }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("", label.text);
+            Assert.IsTrue(label.ClassListContains("new"));
+            Assert.AreEqual(64f, label.style.width.value.value);
+            Assert.AreEqual(32f, label.style.height.value.value);
+            Assert.AreEqual(4f, label.style.borderBottomRightRadius.value.value);
+            Assert.AreEqual(DisplayStyle.Flex, label.style.display.value);
+            Assert.IsFalse(label.enabledSelf);
+            Assert.AreEqual("", label.tooltip);
+            Assert.AreEqual(1, ((JArray)response["data"]["skipped"]).Count);
+            CollectionAssert.AreEqual(new[] { "text=''", "+class 'new'", "width=64", "height=32", "borderRadius=4",
+                "display=None", "enabled=False", "visible=True", "tooltip=''" },
+                response["data"]["modifications"].ToObject<string[]>());
+        }
+
         private PanelSettings CreateOwnedPanel(string path)
         {
             PanelSettings panel = ScriptableObject.CreateInstance<PanelSettings>();

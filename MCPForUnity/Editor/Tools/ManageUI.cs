@@ -1409,9 +1409,9 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Invalid path: contains traversal sequences.");
             }
 
-            string[] folderScope = AssetDatabase.IsValidFolder(scope)
-                ? new[] { scope }
-                : null;
+            if (!AssetDatabase.IsValidFolder(scope))
+                return new ErrorResponse($"UI asset scope is not an existing folder: {scope}");
+            string[] folderScope = new[] { scope };
 
             // Find UXML and USS assets based on filter
             var paged = new List<object>();
@@ -1562,18 +1562,22 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Visual element with name '{elementName}' not found in the visual tree.");
             }
 
+            string text = p.Get("text");
+            if (text != null && element is not TextElement)
+                return new ErrorResponse($"Element '{elementName}' ({element.GetType().Name}) does not support text content.");
+
+            // Parse all style values before changing text, classes or earlier styles.
+            JToken styleToken = p.GetRaw("style") ?? p.GetRaw("inline_style") ?? p.GetRaw("inlineStyle");
+            var styleModifications = new List<string>();
+            var inlineStyles = styleToken is JObject styleObj
+                ? PrepareInlineStyles(styleObj, styleModifications) : null;
             var modifications = new List<string>();
 
             // Set text content (Label, Button, etc.)
-            string text = p.Get("text");
             if (text != null && element is TextElement textEl)
             {
                 textEl.text = text;
                 modifications.Add($"text='{text}'");
-            }
-            else if (text != null)
-            {
-                return new ErrorResponse($"Element '{elementName}' ({element.GetType().Name}) does not support text content.");
             }
 
             // Add CSS classes
@@ -1619,10 +1623,10 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Set inline styles
-            JToken styleToken = p.GetRaw("style") ?? p.GetRaw("inline_style") ?? p.GetRaw("inlineStyle");
-            if (styleToken is JObject styleObj)
+            if (inlineStyles != null)
             {
-                ApplyInlineStyles(element, styleObj, modifications);
+                foreach (var apply in inlineStyles) apply(element);
+                modifications.AddRange(styleModifications);
             }
 
             // Set enabled/disabled
@@ -1679,8 +1683,9 @@ namespace MCPForUnity.Editor.Tools
                 responseData);
         }
 
-        private static void ApplyInlineStyles(VisualElement element, JObject styleObj, List<string> modifications)
+        private static List<Action<VisualElement>> PrepareInlineStyles(JObject styleObj, List<string> modifications)
         {
+            var setters = new List<Action<VisualElement>>();
             foreach (var prop in styleObj)
             {
                 string key = prop.Key;
@@ -1692,7 +1697,7 @@ namespace MCPForUnity.Editor.Tools
                     case "background-color":
                         if (ColorUtility.TryParseHtmlString(val.ToString(), out Color bgColor))
                         {
-                            element.style.backgroundColor = bgColor;
+                            setters.Add(element => element.style.backgroundColor = bgColor);
                             modifications.Add($"backgroundColor={val}");
                         }
                         break;
@@ -1700,36 +1705,40 @@ namespace MCPForUnity.Editor.Tools
                     case "color":
                         if (ColorUtility.TryParseHtmlString(val.ToString(), out Color fgColor))
                         {
-                            element.style.color = fgColor;
+                            setters.Add(element => element.style.color = fgColor);
                             modifications.Add($"color={val}");
                         }
                         break;
 
                     case "fontsize":
                     case "font-size":
-                        element.style.fontSize = val.ToObject<float>();
+                        float fontSize = val.ToObject<float>();
+                        setters.Add(element => element.style.fontSize = fontSize);
                         modifications.Add($"fontSize={val}");
                         break;
 
                     case "width":
-                        element.style.width = val.ToObject<float>();
+                        float width = val.ToObject<float>();
+                        setters.Add(element => element.style.width = width);
                         modifications.Add($"width={val}");
                         break;
 
                     case "height":
-                        element.style.height = val.ToObject<float>();
+                        float height = val.ToObject<float>();
+                        setters.Add(element => element.style.height = height);
                         modifications.Add($"height={val}");
                         break;
 
                     case "opacity":
-                        element.style.opacity = val.ToObject<float>();
+                        float opacity = val.ToObject<float>();
+                        setters.Add(element => element.style.opacity = opacity);
                         modifications.Add($"opacity={val}");
                         break;
 
                     case "display":
                         if (Enum.TryParse<DisplayStyle>(val.ToString(), true, out var display))
                         {
-                            element.style.display = display;
+                            setters.Add(element => element.style.display = display);
                             modifications.Add($"display={val}");
                         }
                         break;
@@ -1737,78 +1746,91 @@ namespace MCPForUnity.Editor.Tools
                     case "visibility":
                         if (Enum.TryParse<Visibility>(val.ToString(), true, out var vis))
                         {
-                            element.style.visibility = vis;
+                            setters.Add(element => element.style.visibility = vis);
                             modifications.Add($"visibility={val}");
                         }
                         break;
 
                     case "flexgrow":
                     case "flex-grow":
-                        element.style.flexGrow = val.ToObject<float>();
+                        float flexGrow = val.ToObject<float>();
+                        setters.Add(element => element.style.flexGrow = flexGrow);
                         modifications.Add($"flexGrow={val}");
                         break;
 
                     case "flexshrink":
                     case "flex-shrink":
-                        element.style.flexShrink = val.ToObject<float>();
+                        float flexShrink = val.ToObject<float>();
+                        setters.Add(element => element.style.flexShrink = flexShrink);
                         modifications.Add($"flexShrink={val}");
                         break;
 
                     case "marginleft":
                     case "margin-left":
-                        element.style.marginLeft = val.ToObject<float>();
+                        float marginLeft = val.ToObject<float>();
+                        setters.Add(element => element.style.marginLeft = marginLeft);
                         modifications.Add($"marginLeft={val}");
                         break;
 
                     case "marginright":
                     case "margin-right":
-                        element.style.marginRight = val.ToObject<float>();
+                        float marginRight = val.ToObject<float>();
+                        setters.Add(element => element.style.marginRight = marginRight);
                         modifications.Add($"marginRight={val}");
                         break;
 
                     case "margintop":
                     case "margin-top":
-                        element.style.marginTop = val.ToObject<float>();
+                        float marginTop = val.ToObject<float>();
+                        setters.Add(element => element.style.marginTop = marginTop);
                         modifications.Add($"marginTop={val}");
                         break;
 
                     case "marginbottom":
                     case "margin-bottom":
-                        element.style.marginBottom = val.ToObject<float>();
+                        float marginBottom = val.ToObject<float>();
+                        setters.Add(element => element.style.marginBottom = marginBottom);
                         modifications.Add($"marginBottom={val}");
                         break;
 
                     case "paddingleft":
                     case "padding-left":
-                        element.style.paddingLeft = val.ToObject<float>();
+                        float paddingLeft = val.ToObject<float>();
+                        setters.Add(element => element.style.paddingLeft = paddingLeft);
                         modifications.Add($"paddingLeft={val}");
                         break;
 
                     case "paddingright":
                     case "padding-right":
-                        element.style.paddingRight = val.ToObject<float>();
+                        float paddingRight = val.ToObject<float>();
+                        setters.Add(element => element.style.paddingRight = paddingRight);
                         modifications.Add($"paddingRight={val}");
                         break;
 
                     case "paddingtop":
                     case "padding-top":
-                        element.style.paddingTop = val.ToObject<float>();
+                        float paddingTop = val.ToObject<float>();
+                        setters.Add(element => element.style.paddingTop = paddingTop);
                         modifications.Add($"paddingTop={val}");
                         break;
 
                     case "paddingbottom":
                     case "padding-bottom":
-                        element.style.paddingBottom = val.ToObject<float>();
+                        float paddingBottom = val.ToObject<float>();
+                        setters.Add(element => element.style.paddingBottom = paddingBottom);
                         modifications.Add($"paddingBottom={val}");
                         break;
 
                     case "borderradius":
                     case "border-radius":
                         float radius = val.ToObject<float>();
-                        element.style.borderTopLeftRadius = radius;
-                        element.style.borderTopRightRadius = radius;
-                        element.style.borderBottomLeftRadius = radius;
-                        element.style.borderBottomRightRadius = radius;
+                        setters.Add(element =>
+                        {
+                            element.style.borderTopLeftRadius = radius;
+                            element.style.borderTopRightRadius = radius;
+                            element.style.borderBottomLeftRadius = radius;
+                            element.style.borderBottomRightRadius = radius;
+                        });
                         modifications.Add($"borderRadius={val}");
                         break;
 
@@ -1817,6 +1839,7 @@ namespace MCPForUnity.Editor.Tools
                         break;
                 }
             }
+            return setters;
         }
 
         private static bool? GetNullableBool(this ToolParams p, string key)
