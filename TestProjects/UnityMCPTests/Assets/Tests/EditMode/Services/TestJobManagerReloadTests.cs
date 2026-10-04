@@ -195,6 +195,27 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(0, RetainedResults(service).Count, "Global manual-run callbacks must not accumulate in the idle MCP service.");
         }
 
+        [TestCase(false, 0)]
+        [TestCase(true, 1000)]
+        public void RunFinished_OnlyMaterializesResultsForAnOwnedRun(bool recoveredRun, int expectedReads)
+        {
+            TestJob job = recoveredRun ? AddJob() : null;
+            var service = recoveredRun ? RestoreCallbacks() : new TestRunnerService();
+            ServiceField.SetValue(null, service);
+            var leaves = Enumerable.Range(0, 1000)
+                .Select(index => new ResultStub("Fixture.Test" + index, "Passed")).ToArray();
+
+            service.RunFinished(ResultStub.Suite(leaves));
+
+            Assert.AreEqual(expectedReads, leaves.Sum(leaf => leaf.NameReads),
+                "Global callbacks for an idle service must not materialize an unrelated result tree.");
+            if (recoveredRun)
+            {
+                Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
+                Assert.AreEqual(1000, job.Result.Results.Count);
+            }
+        }
+
         [Test]
         public void RecoveredRunError_ReleasesCollectedResults()
         {
@@ -414,9 +435,10 @@ namespace MCPForUnityTests.Editor.Services
         private sealed class ResultStub : ITestResultAdaptor
         {
             private readonly ITestResultAdaptor[] _children;
+            private readonly string _name;
             public ResultStub(string name, string state, string message = null, params ITestResultAdaptor[] children)
             {
-                Name = FullName = name;
+                _name = FullName = name;
                 ResultState = state;
                 Message = message;
                 _children = children;
@@ -424,7 +446,8 @@ namespace MCPForUnityTests.Editor.Services
             public static ResultStub Suite(params ITestResultAdaptor[] children) => new ResultStub("Suite", "Failed", null, children);
             public bool IsSuite { get; set; }
             public ITestAdaptor Test => new TestStub(FullName, IsSuite || HasChildren);
-            public string Name { get; }
+            public int NameReads { get; private set; }
+            public string Name { get { NameReads++; return _name; } }
             public string FullName { get; }
             public string ResultState { get; }
             public TestStatus TestStatus => ResultState == "Passed" ? TestStatus.Passed : TestStatus.Failed;

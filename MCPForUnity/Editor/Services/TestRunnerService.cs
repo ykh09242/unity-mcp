@@ -372,6 +372,11 @@ namespace MCPForUnity.Editor.Services
 
         public void RunFinished(ITestResultAdaptor result)
         {
+            if (_runCompletionSource == null && _trackedJobId == null)
+            {
+                return;
+            }
+
             // Always create payload and clean up job state, even if _runCompletionSource is null.
             // This handles domain reload scenarios (e.g., PlayMode tests) where the TestRunnerService
             // is recreated and _runCompletionSource is lost, but TestJobManager state persists via
