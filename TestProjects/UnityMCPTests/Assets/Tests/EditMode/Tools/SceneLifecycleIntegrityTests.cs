@@ -185,6 +185,95 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void Unload_RetainsHierarchyEntryButReportsOnlyLoadedScenes()
+        {
+            int loadedBefore = LoadedScenes().Count(scene => scene.isLoaded);
+            Scene[] before = LoadedScenes();
+            JObject response = Call(Select("close_scene"));
+            Success(response);
+            CollectionAssert.AreEqual(before, LoadedScenes());
+            Assert.IsTrue(first.isLoaded);
+            Assert.IsTrue(second.IsValid());
+            Assert.IsFalse(second.isLoaded);
+            Assert.AreEqual(loadedBefore - 1, response["data"].Value<int>("loadedSceneCount"));
+
+            JObject query = Call(new JObject { ["action"] = "get_loaded_scenes" });
+            Success(query);
+            Assert.AreEqual($"{loadedBefore - 1} scene(s) loaded.", query.Value<string>("message"));
+            JToken unloaded = query["data"]["scenes"].Single(scene => scene.Value<string>("path") == secondPath);
+            Assert.IsFalse(unloaded.Value<bool>("isLoaded"));
+            Assert.AreEqual(0, unloaded.Value<int>("rootCount"));
+        }
+
+        [Test]
+        public void RemovePreviouslyUnloadedScene_PreservesLoadedScenes()
+        {
+            Assert.IsTrue(EditorSceneManager.CloseScene(second, false));
+            Scene[] loadedBefore = LoadedScenes().Where(scene => scene.isLoaded).ToArray();
+            JObject request = Select("close_scene");
+            request["removeScene"] = true;
+            JObject response = Call(request);
+            Success(response);
+            CollectionAssert.AreEqual(loadedBefore, LoadedScenes().Where(scene => scene.isLoaded).ToArray());
+            Assert.AreEqual(loadedBefore.Length, response["data"].Value<int>("loadedSceneCount"));
+            Assert.IsFalse(second.IsValid());
+            Assert.AreEqual(first, SceneManager.GetActiveScene());
+        }
+
+        [Test]
+        public void AdditiveLoad_WithRetainedUnloadedScene_ReportsOnlyLoadedScenes()
+        {
+            Assert.IsTrue(EditorSceneManager.CloseScene(second, false));
+            Scene third = NewOwnedScene();
+            string thirdPath = assetRoot + "/Third.unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(third, thirdPath));
+            Assert.IsTrue(EditorSceneManager.CloseScene(third, true));
+            int loadedBefore = LoadedScenes().Count(scene => scene.isLoaded);
+            JObject response = Call(new JObject { ["action"] = "load", ["path"] = thirdPath, ["additive"] = true });
+            Scene loaded = SceneManager.GetSceneByPath(thirdPath);
+            if (loaded.IsValid() && loaded.isLoaded) ownedScenes.Add(loaded);
+            Success(response);
+            Assert.IsTrue(loaded.IsValid() && loaded.isLoaded);
+            Assert.IsTrue(first.isLoaded);
+            Assert.IsTrue(second.IsValid() && !second.isLoaded);
+            Assert.AreEqual(loadedBefore + 1, response["data"].Value<int>("loadedSceneCount"));
+        }
+
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        public void BuildSettingsIndices_CountOnlyEnabledScenes(bool firstEnabled, bool secondEnabled)
+        {
+            EditorBuildSettingsScene[] original = EditorBuildSettings.scenes;
+            Scene[] before = LoadedScenes();
+            try
+            {
+                EditorBuildSettings.scenes = new[]
+                {
+                    new EditorBuildSettingsScene(firstPath, firstEnabled),
+                    new EditorBuildSettingsScene(secondPath, secondEnabled)
+                };
+                JObject response = Call(new JObject { ["action"] = "get_build_settings" });
+                Success(response);
+                var rows = (JArray)response["data"];
+                Assert.AreEqual(2, rows.Count);
+                Assert.AreEqual(firstPath, rows[0].Value<string>("path"));
+                Assert.AreEqual(secondPath, rows[1].Value<string>("path"));
+                Assert.AreEqual(firstEnabled, rows[0].Value<bool>("enabled"));
+                Assert.AreEqual(secondEnabled, rows[1].Value<bool>("enabled"));
+                Assert.AreEqual(firstEnabled ? 0 : -1, rows[0].Value<int>("buildIndex"));
+                Assert.AreEqual(secondEnabled ? (firstEnabled ? 1 : 0) : -1, rows[1].Value<int>("buildIndex"));
+                CollectionAssert.AreEqual(before, LoadedScenes());
+                Assert.AreEqual(first, SceneManager.GetActiveScene());
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = original;
+            }
+        }
+
+        [Test]
         public void CombinedSelector_MovesOwnedRootToExactLaterPath()
         {
             var go = new GameObject("Owned_" + Guid.NewGuid().ToString("N"));

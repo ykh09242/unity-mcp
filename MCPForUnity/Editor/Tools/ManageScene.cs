@@ -1719,6 +1719,14 @@ namespace MCPForUnity.Editor.Tools
 
         // ── Multi-scene editing ────────────────────────────────────────────
 
+        private static int CountLoadedScenes()
+        {
+            int count = 0;
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+                if (SceneManager.GetSceneAt(i).isLoaded) count++;
+            return count;
+        }
+
         private static object LoadSceneAdditive(string scenePath)
         {
             if (!SceneAssetExists(scenePath))
@@ -1733,7 +1741,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 sceneName = scene.name,
                 scenePath = scene.path,
-                loadedSceneCount = SceneManager.sceneCount
+                loadedSceneCount = CountLoadedScenes()
             });
         }
 
@@ -1743,7 +1751,7 @@ namespace MCPForUnity.Editor.Tools
             if (!scene.HasValue)
                 return new ErrorResponse("Scene not found among loaded scenes. Provide 'sceneName' or 'scenePath'.");
 
-            if (SceneManager.sceneCount <= 1)
+            if (scene.Value.isLoaded && CountLoadedScenes() <= 1)
                 return new ErrorResponse("Cannot close the last loaded scene.");
 
             if (scene.Value.isDirty)
@@ -1759,7 +1767,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 sceneName = capturedName,
                 removed = remove,
-                loadedSceneCount = SceneManager.sceneCount
+                loadedSceneCount = CountLoadedScenes()
             });
         }
 
@@ -1796,7 +1804,7 @@ namespace MCPForUnity.Editor.Tools
                     rootCount = s.isLoaded ? s.rootCount : 0
                 });
             }
-            return new SuccessResponse($"{scenes.Count} scene(s) loaded.", new { scenes });
+            return new SuccessResponse($"{CountLoadedScenes()} scene(s) loaded.", new { scenes });
         }
 
         private static object MoveToScene(SceneCommand cmd)
@@ -1997,16 +2005,18 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 var scenes = new List<object>();
-                for (int i = 0; i < EditorBuildSettings.scenes.Length; i++)
+                var buildScenes = EditorBuildSettings.scenes;
+                int buildIndex = 0;
+                for (int i = 0; i < buildScenes.Length; i++)
                 {
-                    var scene = EditorBuildSettings.scenes[i];
+                    var scene = buildScenes[i];
                     scenes.Add(
                         new
                         {
                             path = scene.path,
                             guid = scene.guid.ToString(),
                             enabled = scene.enabled,
-                            buildIndex = i, // Actual build index considering only enabled scenes might differ
+                            buildIndex = scene.enabled ? buildIndex++ : -1,
                         }
                     );
                 }
