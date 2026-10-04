@@ -60,7 +60,7 @@ cases = [
      {**defaults, 'types': ['all'], 'count': 2}),
     (['console', '--type', 'error', '--type', 'warning', '--filter', 'Owned', '--stacktrace'],
      'read_console', {**defaults, 'types': ['error', 'warning'], 'filter_text': 'Owned',
-                      'include_stacktrace': True}),
+                      'include_stacktrace': True, 'format': 'detailed'}),
     (['console', '--filter', ''], 'read_console', defaults),
     (['console', '--clear'], 'read_console', {'action': 'clear'}),
     (['menu', 'Fixture/Action'], 'execute_menu_item', {'menu_path': 'Fixture/Action'}),
@@ -258,3 +258,70 @@ def test_console_menu_top_level_cli_when_transport_returns_native_documents(tmp_
 
 def test_console_menu_registered_sdk_and_resource_when_inputs_use_supported_shapes(tmp_path):
     assert 'SDK_SUMMARY' in _run(SDK_PROGRAM, tmp_path)
+
+
+def test_console_stacktrace_flag_displays_native_trace_when_console_defaults_to_plain(tmp_path):
+    program = r'''
+import json
+import httpx
+from click.testing import CliRunner
+from cli.main import cli
+from cli.utils import connection
+
+# Given the native console's plain-message and detailed-entry response formats.
+requests = []
+client_type = httpx.AsyncClient
+fixture_mode = 'entries'
+
+def respond(request):
+    payload = json.loads(request.content)
+    requests.append(payload)
+    params = payload['params']
+    if params.get('action') == 'clear':
+        return httpx.Response(200, json={'success': True, 'message': 'Console cleared successfully.'})
+    if fixture_mode == 'empty':
+        return httpx.Response(200, json={'success': True, 'message': 'Retrieved 0 log entries.', 'data': []})
+    if fixture_mode == 'error':
+        return httpx.Response(200, json={'success': False, 'error': 'Owned console read diagnostic'})
+    entry = {'type': 'Error', 'message': 'Owned console body', 'file': 'Assets/Owned.cs',
+             'line': 12, 'stackTrace': 'Owned.Stack.Frame (at Assets/Owned.cs:12)\n' + 'x' * 200 + '\nOwned.Trace.Tail'
+             if params.get('include_stacktrace') else None}
+    data = [entry['message']] if params.get('format', 'plain') == 'plain' else [entry]
+    return httpx.Response(200, json={'success': True, 'data': data})
+
+connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+connection._auth_headers = lambda config: {}
+runner = CliRunner()
+
+for output_format in ('json', 'text', 'table'):
+    fixture_mode = 'entries'
+    # When requesting stack traces through the top-level CLI and central HTTP adapter.
+    result = runner.invoke(cli, ['--format', output_format, 'editor', 'console', '--stacktrace'])
+    # Then the requested trace survives the native format and CLI rendering.
+    assert result.exit_code == 0, result.output
+    assert 'Owned console body' in result.output
+    assert 'Owned.Stack.Frame' in result.output, result.output
+    assert 'Owned.Trace.Tail' in result.output, result.output
+    assert requests[-1]['params']['format'] == 'detailed'
+
+    result = runner.invoke(cli, ['--format', output_format, 'editor', 'console'])
+    assert result.exit_code == 0, result.output
+    assert 'Owned console body' in result.output and 'Owned.Stack.Frame' not in result.output
+    assert 'format' not in requests[-1]['params']
+
+    fixture_mode = 'empty'
+    result = runner.invoke(cli, ['--format', output_format, 'editor', 'console', '--stacktrace'])
+    assert result.exit_code == 0 and result.output.strip(), result.output
+    if output_format == 'json':
+        assert json.loads(result.output)['data'] == []
+
+    fixture_mode = 'error'
+    result = runner.invoke(cli, ['--format', output_format, 'editor', 'console', '--stacktrace'])
+    assert result.exit_code == 1 and 'Owned console read diagnostic' in result.output, result.output
+
+    result = runner.invoke(cli, ['--format', output_format, 'editor', 'console', '--stacktrace', '--clear'])
+    assert result.exit_code == 0 and 'cleared' in result.output.lower(), result.output
+    assert requests[-1]['params'] == {'action': 'clear'}
+print('console stacktrace rendering controls passed')
+'''
+    assert 'console stacktrace rendering controls passed' in _run(program, tmp_path)

@@ -108,12 +108,19 @@ def console(log_types: tuple, count: int, filter_text: Optional[str], stacktrace
         "count": count,
         "include_stacktrace": stacktrace,
     }
+    if stacktrace:
+        params["format"] = "detailed"
 
     if filter_text:
         params["filter_text"] = filter_text
 
     result = run_command("read_console", params, config)
-    click.echo(format_output(result, config.format))
+    data = result.get("data")
+    if stacktrace and config.format != "json" and result.get("success") and isinstance(data, list) and data:
+        for entry in data:
+            click.echo(format_output(entry, "text"))
+    else:
+        click.echo(format_output(result, config.format))
 
 
 @editor.command("add-tag")
