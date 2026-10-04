@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.TestTools.TestRunner.Api;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -16,6 +19,8 @@ namespace MCPForUnityTests.Editor.Services
         private string _originalSessionJobs;
         private string _originalSessionCurrent;
         private long _originalPersistTime;
+        private object _originalTestService;
+        private static FieldInfo TestServiceField => typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate);
 
         private static Dictionary<string, TestJob> Jobs =>
             (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", StaticPrivate).GetValue(null);
@@ -28,6 +33,7 @@ namespace MCPForUnityTests.Editor.Services
             _originalSessionJobs = SessionState.GetString("MCPForUnity.TestJobsV1", string.Empty);
             _originalSessionCurrent = SessionState.GetString("MCPForUnity.CurrentTestJobIdV1", string.Empty);
             _originalPersistTime = (long)typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).GetValue(null);
+            _originalTestService = TestServiceField.GetValue(null);
             Jobs.Clear();
             SetCurrent(null);
         }
@@ -41,6 +47,52 @@ namespace MCPForUnityTests.Editor.Services
             typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).SetValue(null, _originalPersistTime);
             SessionState.SetString("MCPForUnity.TestJobsV1", _originalSessionJobs);
             SessionState.SetString("MCPForUnity.CurrentTestJobIdV1", _originalSessionCurrent);
+            TestServiceField.SetValue(null, _originalTestService);
+        }
+
+        [Test]
+        public void SynchronousStartupFailure_FailsAndPersistsReservedJob()
+        {
+            TestServiceField.SetValue(null, new ThrowingTestService());
+
+            var error = Assert.Throws<InvalidOperationException>(() => TestJobManager.StartJob(TestMode.EditMode));
+
+            Assert.AreEqual("synchronous-startup-failure", error.Message);
+            Assert.IsFalse(TestJobManager.HasRunningJob, "A rejected startup must release its running reservation.");
+            var job = Jobs.Values.Single();
+            Assert.AreEqual(TestJobStatus.Failed, job.Status);
+            Assert.AreEqual(error.Message, job.Error);
+            Assert.IsNotNull(job.FinishedUnixMs);
+            var persisted = JObject.Parse(SessionState.GetString("MCPForUnity.TestJobsV1", ""));
+            Assert.AreEqual(JTokenType.Null, persisted["current_job_id"].Type);
+            Assert.AreEqual("failed", (string)persisted["jobs"][0]["status"]);
+        }
+
+        [Test]
+        public void SynchronousStartupFailure_DoesNotBlockNextRequest()
+        {
+            var service = new ThrowingTestService();
+            TestServiceField.SetValue(null, service);
+            Assert.Throws<InvalidOperationException>(() => TestJobManager.StartJob(TestMode.EditMode));
+
+            var error = Assert.Throws<InvalidOperationException>(() => TestJobManager.StartJob(TestMode.EditMode));
+
+            Assert.AreEqual("synchronous-startup-failure", error.Message);
+            Assert.AreEqual(2, service.Calls, "A retry must reach the service instead of the already-running guard.");
+            Assert.AreEqual(2, Jobs.Count);
+            Assert.IsTrue(Jobs.Values.All(job => job.Status == TestJobStatus.Failed));
+        }
+
+        private sealed class ThrowingTestService : ITestRunnerService
+        {
+            public int Calls { get; private set; }
+            public Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions filterOptions = null)
+            {
+                Calls++;
+                throw new InvalidOperationException("synchronous-startup-failure");
+            }
+            public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) =>
+                throw new NotSupportedException();
         }
 
         [TestCase(false, false, -1)]

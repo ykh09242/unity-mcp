@@ -390,7 +390,17 @@ namespace MCPForUnity.Editor.Services
             PersistToSessionState(force: true);
 
             // Kick the run (must be called on main thread; our command handlers already run there).
-            Task<TestRunResult> task = MCPServiceLocator.Tests.RunTestsAsync(mode, filterOptions);
+            Task<TestRunResult> task;
+            try
+            {
+                task = MCPServiceLocator.Tests.RunTestsAsync(mode, filterOptions);
+            }
+            catch (Exception ex)
+            {
+                // A synchronous startup failure has no task continuation to release the job.
+                FinalizeFromTask(jobId, Task.FromException<TestRunResult>(ex));
+                throw;
+            }
 
             void FinalizeJob(Action finalize)
             {
