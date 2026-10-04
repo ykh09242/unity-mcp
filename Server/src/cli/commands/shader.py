@@ -87,7 +87,7 @@ def create_shader(name: str, path: str, contents: Optional[str], file_path: Opti
 
     # Get contents from file, option, or stdin
     if file_path:
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
             shader_contents = f.read()
     elif contents is not None:
         shader_contents = contents
@@ -174,7 +174,7 @@ def update_shader(path: str, contents: Optional[str], file_path: Optional[str]):
 
     # Get contents from file, option, or stdin
     if file_path:
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
             shader_contents = f.read()
     elif contents is not None:
         shader_contents = contents

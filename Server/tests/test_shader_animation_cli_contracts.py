@@ -1,4 +1,6 @@
 """Shader/animation contracts through actual Click and central HTTP handling."""
+import builtins
+import importlib
 import json
 import os
 import subprocess
@@ -97,6 +99,38 @@ def test_explicit_empty_shader_contents_do_not_read_stdin(controlled_http, actio
     result = CliRunner().invoke(cli, command, input="Unexpected stdin replacement")
     assert result.exit_code == 0, result.output
     assert requests[0]["params"]["contents"] == ""
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+@pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252", "cp949"])
+@pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"])
+def test_shader_file_unicode_is_independent_of_locale(controlled_http, monkeypatch, tmp_path, action, default_encoding, bom):
+    _, _, requests = controlled_http
+    shader_commands = importlib.import_module("cli.commands.shader")
+    contents = 'Shader "Custom/Fixture" { /* caf\u00e9 \ud55c\uae00 \U0001f600 */ }\n'
+    source = tmp_path / "unicode.shader"
+    source.write_bytes(bom + contents.encode("utf-8"))
+
+    def locale_open(path, mode="r", **kwargs):
+        kwargs.setdefault("encoding", default_encoding)
+        return builtins.open(path, mode, **kwargs)
+
+    monkeypatch.setattr(shader_commands, "open", locale_open, raising=False)
+    command = ["shader", action, "Fixture" if action == "create" else SHADER, "--file", str(source)]
+    result = CliRunner().invoke(cli, command)
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert requests[0]["params"]["contents"] == contents
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_shader_file_invalid_utf8_never_sends_contents(controlled_http, tmp_path, action):
+    _, _, requests = controlled_http
+    source = tmp_path / "invalid.shader"
+    source.write_bytes(b"\xef\xbb\xbf\xff")
+    command = ["shader", action, "Fixture" if action == "create" else SHADER, "--file", str(source)]
+    result = CliRunner().invoke(cli, command)
+    assert result.exit_code != 0, result.output
+    assert requests == []
 
 
 @pytest.mark.parametrize("path", ["Assets/Shaders/Fixture", SHADER, "Assets/Shaders/Fixture.SHADER"])
