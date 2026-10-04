@@ -25,6 +25,9 @@ unity_ci = sys.modules["unity_ci"]
 VERSION = "6000.3.25f1"
 BASE = "unityci/base:ubuntu-3.2.2@sha256:" + "b" * 64
 IMAGE = f"unityci/editor:ubuntu-{VERSION}-base-3@sha256:" + "a" * 64
+ROSLYN_INPUTS = tuple("MonoBleedingEdge/lib/mono/4.5/" + name for name in (
+    "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
+    "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll"))
 
 
 @pytest.fixture
@@ -51,6 +54,10 @@ def environment(tmp_path, monkeypatch):
         target = image_data / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
+    for relative in (*ROSLYN_INPUTS, "MonoBleedingEdge/lib/mono/4.5/mscorlib.dll"):
+        target = image_data / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(relative.encode())
     (image_data / "NetCoreRuntime/dotnet").chmod(0o755)
     for name in ("com.unity.modules.ui", "com.unity.modules.imgui", *cache.PACKAGES,
                  "com.unity.ide.rider", "com.unity.nuget.newtonsoft-json"):
@@ -80,6 +87,7 @@ def install_docker(monkeypatch, image_data, failure=None):
             assert "--entrypoint" in args and args[-1] == cache.INVENTORY
             assert not any(value.startswith("--volume") for value in args)
             directories = [value for value in cache.DIRECTORIES if (image_data / value).is_dir()]
+            directories += [value for value in ROSLYN_INPUTS if (image_data / value).exists()]
             directories += [path.relative_to(image_data).as_posix() for path in image_data.rglob("DotNetSdk") if path.is_dir()]
             directories += [path.relative_to(image_data).as_posix() for path in (image_data / cache.BUILTINS).iterdir()
                             if path.name in cache.PACKAGES or path.name.startswith("com.unity.modules.")]
@@ -417,3 +425,84 @@ def test_missing_declared_ui_reference_never_publishes_cache(environment, monkey
 ])
 def test_template_scope_accepts_only_bounded_exact_ui_files(entry):
     assert not cache._allowed_input(entry)
+
+
+def test_optional_roslyn_cache_copies_only_exact_coherent_group(environment, monkeypatch):
+    directory, _, calls = populate(environment, monkeypatch)
+    data = directory / "Data"
+    assert {path.relative_to(data).as_posix() for path in (data / "MonoBleedingEdge").rglob("*.dll")} == set(ROSLYN_INPUTS)
+    receipt = json.loads((directory / cache.RECEIPT).read_text(encoding="utf-8"))
+    assert set(ROSLYN_INPUTS) <= set(receipt["directories"])
+    assert set(ROSLYN_INPUTS) <= set(receipt["files"])
+    assert {args[2].split(cache.IMAGE_DATA + "/", 1)[1] for args in calls
+            if args[1] == "cp" and "MonoBleedingEdge" in args[2]} == set(ROSLYN_INPUTS)
+    for relative in ROSLYN_INPUTS:
+        assert relative in cache.INVENTORY
+        assert cache._allowed_input(relative)
+    for relative in ("MonoBleedingEdge", "MonoBleedingEdge/lib/mono/4.5", "MonoBleedingEdge/lib/mono/4.5/mscorlib.dll",
+                     "MonoBleedingEdge/lib/mono/4.8/Microsoft.CodeAnalysis.dll"):
+        assert not cache._allowed_input(relative)
+
+
+@pytest.mark.parametrize("relative", ROSLYN_INPUTS)
+@pytest.mark.parametrize("damage", ["missing", "directory"])
+def test_optional_roslyn_input_missing_or_wrong_type_cannot_publish_cache(
+    environment, monkeypatch, relative, damage,
+):
+    repo, manifest, image_data = environment
+    path = image_data / relative
+    path.unlink()
+    if damage == "directory":
+        path.mkdir()
+    calls = install_docker(monkeypatch, image_data)
+    with pytest.raises(ValueError, match="Roslyn|wrong type"):
+        cache.prepare(manifest, VERSION, Path(f".unity-ci-sdk/{VERSION}"))
+    assert calls[-1][1] == "rm"
+    assert list((repo / ".unity-ci-sdk").iterdir()) == []
+
+
+@pytest.mark.parametrize("relative", ROSLYN_INPUTS)
+@pytest.mark.parametrize("damage", ["missing", "tampered", "directory", "receipt_omission", "mode"])
+def test_optional_roslyn_restored_inputs_are_verified_before_use(environment, monkeypatch, relative, damage):
+    directory, _, _ = populate(environment, monkeypatch)
+    path = directory / "Data" / relative
+    receipt_path = directory / cache.RECEIPT
+    if damage == "receipt_omission":
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["directories"].remove(relative)
+        receipt["files"].pop(relative)
+        path.unlink()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif damage == "mode":
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["files"][relative]["mode"] ^= 0o111
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif damage == "tampered":
+        path.write_bytes(b"corrupted metadata")
+    else:
+        path.unlink()
+        if damage == "directory":
+            path.mkdir()
+    docker = Mock(side_effect=AssertionError("damaged restored input must not call Docker"))
+    monkeypatch.setattr(cache.subprocess, "run", docker)
+    with pytest.raises(ValueError, match="Invalid compiler cache"):
+        cache.prepare(environment[1], VERSION, directory)
+    docker.assert_not_called()
+
+
+@pytest.mark.parametrize("relative", ROSLYN_INPUTS)
+def test_optional_roslyn_input_symlinks_fail_closed(environment, monkeypatch, relative):
+    repo, manifest, image_data = environment
+    target = image_data / relative
+    outside = image_data.parent / "external-roslyn.dll"
+    outside.write_bytes(b"outside metadata")
+    target.unlink()
+    try:
+        target.symlink_to(outside)
+    except OSError:
+        pytest.skip("Host does not permit unprivileged symbolic links")
+    calls = install_docker(monkeypatch, image_data)
+    with pytest.raises(ValueError, match="Linked compiler input"):
+        cache.prepare(manifest, VERSION, Path(f".unity-ci-sdk/{VERSION}"))
+    assert calls[-1][1] == "rm"
+    assert list((repo / ".unity-ci-sdk").iterdir()) == []

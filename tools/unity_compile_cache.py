@@ -30,12 +30,18 @@ PACKAGES = ("com.unity.test-framework", "com.unity.ext.nunit", "com.unity.ugui")
 BUILTINS = "Resources/PackageManager/BuiltInPackages"
 LIBCACHE = "Resources/PackageManager/ProjectTemplates/libcache"
 UI_REFERENCES = ("UnityEngine.UI.dll", "UnityEditor.UI.dll")
+ROSLYN_REFERENCES = tuple("MonoBleedingEdge/lib/mono/4.5/" + name for name in (
+    "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
+    "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll"))
 # Only inspect the public Editor data tree; no host mounts, network or Editor entrypoint.
 INVENTORY = """set -eu
 d=/opt/unity/Editor/Data
 test -d "$d"
 for p in Managed NetStandard UnityReferenceAssemblies DotNetSdkRoslyn NetCoreRuntime Tools/Compilation/ApiUpdater Tools/ScriptUpdater; do
   if [ -d "$d/$p" ]; then printf '%s\\n' "$d/$p"; fi
+done
+for p in MonoBleedingEdge/lib/mono/4.5/Microsoft.CodeAnalysis.dll MonoBleedingEdge/lib/mono/4.5/Microsoft.CodeAnalysis.CSharp.dll MonoBleedingEdge/lib/mono/4.5/System.Collections.Immutable.dll MonoBleedingEdge/lib/mono/4.5/System.Reflection.Metadata.dll; do
+  if [ -f "$d/$p" ]; then printf '%s\\n' "$d/$p"; fi
 done
 find "$d" -mindepth 1 -maxdepth 10 -type d -name DotNetSdk -print
 for p in "$d"/Resources/PackageManager/BuiltInPackages/com.unity.modules.* "$d"/Resources/PackageManager/BuiltInPackages/com.unity.test-framework "$d"/Resources/PackageManager/BuiltInPackages/com.unity.ext.nunit "$d"/Resources/PackageManager/BuiltInPackages/com.unity.ugui; do
@@ -93,6 +99,8 @@ def _allowed_input(value: str) -> bool:
     if not value or path.is_absolute() or ".." in path.parts or "\\" in value or ":" in value:
         return False
     if value in DIRECTORIES:
+        return True
+    if value in ROSLYN_REFERENCES:
         return True
     if path.name == "DotNetSdk" and len(path.parts) <= 10 and path.parts[0] not in {"Resources", "PlaybackEngines"}:
         return True
@@ -157,8 +165,11 @@ def _check_inputs(data: Path, directories: list[str]) -> None:
     for name in UI_REFERENCES:
         if not any(_ui_reference(value) and PurePosixPath(value).name == name for value in directories):
             raise ValueError(f"Required template UI reference missing: {name}")
+    for value in ROSLYN_REFERENCES:
+        if value not in directories or not (data / value).is_file():
+            raise ValueError(f"Required optional Roslyn reference missing or has wrong type: {value}")
     for value in directories:
-        present = (data / value).is_file() if _ui_reference(value) else (data / value).is_dir()
+        present = (data / value).is_file() if _ui_reference(value) or value in ROSLYN_REFERENCES else (data / value).is_dir()
         if not present:
             raise ValueError(f"Compiler input missing or has wrong type: {value}")
     for path in data.rglob("*"):

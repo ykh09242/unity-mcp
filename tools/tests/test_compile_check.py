@@ -12,6 +12,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "compile-check.sh"
+ROSLYN_DIRECTORY = "MonoBleedingEdge/lib/mono/4.5"
+ROSLYN_REFERENCES = ("Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
+                     "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll")
+OPTIONAL_ASSEMBLIES = ("MCPForUnity.CustomTools.RoslynOff", "MCPForUnity.CustomTools.RoslynOn")
 STALE_REFERENCES = {
     "DATA/Managed/UnityEngine/UnityEditor.PackageManagerUIModule.dll",
     "DATA/Managed/UnityEngine/UnityEditor.UIServiceModule.dll",
@@ -63,6 +67,14 @@ def harness(tmp_path: Path) -> CompileHarness:
         directory.mkdir(parents=True)
         (directory / "Fixture.cs").write_text("class Fixture {}\n", encoding="utf-8")
     (repo / "tools" / "compile-defines.txt").write_text("UNITY_EDITOR\n", encoding="utf-8")
+    optional = repo / "CustomTools/RoslynRuntimeCompilation"
+    optional.mkdir(parents=True)
+    for name in ("RoslynRuntimeCompiler.cs", "ManageRuntimeCompilation.cs"):
+        (optional / name).write_text("class Fixture {}\n", encoding="utf-8")
+    roslyn = data / ROSLYN_DIRECTORY
+    roslyn.mkdir(parents=True)
+    for name in ROSLYN_REFERENCES:
+        (roslyn / name).touch()
     bcl = repo / "tools" / "compile-refs" / "BCL"
     bcl.mkdir()
     for name in ("Runtime", "Editor"):
@@ -120,7 +132,7 @@ def test_matrix_compiles_all_platforms_with_selected_explicit_profile(
             rsp = (harness.output / platform / f"MCPForUnity.{assembly}.rsp").read_text(encoding="utf-8")
             assert '/Managed/Selected.dll"' in rsp
             assert f"-define:UNITY_EDITOR_{platform.upper()}" in rsp
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 6
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 12
 
 
 @pytest.mark.parametrize("version", ["6000.7.0b2", "6000.7.0a6", "6000.8.0a1"])
@@ -141,7 +153,7 @@ def test_windows_compiler_layout_uses_bundled_runtime(harness: CompileHarness) -
     shim.rename(shim.with_suffix(".exe"))
     result = harness.run("2021.3.45f2")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 4
 
 
 def test_missing_compiler_reports_distribution_candidates_without_selecting_them(harness: CompileHarness) -> None:
@@ -177,7 +189,7 @@ def test_modern_sdk_uses_one_coherent_bundled_toolchain(harness: CompileHarness,
     assert "Tools/Scripting/DotNetSdk/sdk/9.0.100/Roslyn/bincore/csc.dll" in result.stdout
     assert "Runtime       : " in result.stdout
     assert "Tools/Scripting/DotNetSdk/dotnet" in result.stdout
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 4
 
 
 @pytest.mark.parametrize("failure", ["absent", "compiler", "runtime", "two_roots", "two_versions", "partial_version", "two_runtimes"])
@@ -208,7 +220,7 @@ def test_modern_sdk_supports_explicit_executable_suffix(harness: CompileHarness)
     (sdk / "dotnet").rename(sdk / "dotnet.exe")
     result = harness.run("6000.6.4f1")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 4
 
 
 def test_modern_sdk_rejects_external_symlinks(harness: CompileHarness) -> None:
@@ -413,7 +425,7 @@ def test_explicit_staged_project_compiles_fixture_and_editmode_all_platforms(
         (harness.output / platform).mkdir()
     result = harness.run("6000.7.0b2", "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 18
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 24
     for platform in ("win", "osx", "linux"):
         rsp = (harness.output / platform / "MCPForUnityTests.EditMode.rsp").read_text(encoding="utf-8")
         assert "/Assets/Tests/EditMode/Fixture.cs" in rsp
@@ -518,3 +530,97 @@ def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
     assert tests["overrideReferences"]
     assert set(tests["precompiledReferences"]) == {"nunit.framework.dll", "Newtonsoft.Json.dll"}
     assert "UNITY_INCLUDE_TESTS" in (ROOT / "tools/compile-defines.txt").read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize("version", [row["id"] for row in json.loads(
+    (ROOT / "tools/unity-versions.json").read_text(encoding="utf-8"))["versions"]])
+def test_optional_examples_complete_matrix_preserves_sources_defines_and_reference_graph(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str,
+) -> None:
+    project, framework = staged_tests
+    # Nested sources must be selected too, without changing any core assembly sources.
+    nested = harness.repo / "CustomTools/RoslynRuntimeCompilation/Nested/Additional.cs"
+    nested.parent.mkdir()
+    nested.write_text("class Additional {}", encoding="utf-8")
+    result = harness.run(version, "win osx linux", test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    core = ("UnityEngine.TestRunner", "UnityEditor.TestRunner", "MCPForUnity.Runtime", "MCPForUnity.Editor")
+    expected = (*core, *OPTIONAL_ASSEMBLIES, "TestAsmdef", "MCPForUnityTests.EditMode")
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    assert calls == list(expected) * 3
+    for platform in ("win", "osx", "linux"):
+        responses = {name: (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8").splitlines()
+                     for name in expected}
+        editor_defines = {line for line in responses["MCPForUnity.Editor"] if line.startswith("-define:")}
+        for name in expected:
+            lines = responses[name]
+            assert ("-define:USE_ROSLYN" in lines) == (name == OPTIONAL_ASSEMBLIES[1])
+            roslyn_refs = {line for line in lines if f"/{ROSLYN_DIRECTORY}/" in line}
+            if name in OPTIONAL_ASSEMBLIES:
+                defines = {line for line in lines if line.startswith("-define:")}
+                assert defines == editor_defines | ({"-define:USE_ROSLYN"} if name.endswith("RoslynOn") else set())
+                assert {Path(line.removeprefix('-r:').strip('"')).name for line in roslyn_refs} == set(ROSLYN_REFERENCES)
+                for owned in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "UnityEngine.TestRunner", "UnityEditor.TestRunner"):
+                    assert any(line.endswith(f'/{owned}.dll"') for line in lines)
+                sources = {Path(line.strip('"')).relative_to(harness.repo).as_posix()
+                           for line in lines if line.startswith('"')}
+                assert sources == {f"CustomTools/RoslynRuntimeCompilation/{source}" for source in
+                                   ("ManageRuntimeCompilation.cs", "RoslynRuntimeCompiler.cs", "Nested/Additional.cs")}
+                assert '-nowarn:CS1701,CS1702' in lines
+                assert sum(line.startswith("-nowarn:") for line in lines) == 1
+                assert "-warnaserror+" in lines
+            else:
+                assert not roslyn_refs
+                assert not any("CustomTools/" in line for line in lines)
+                assert "-warnaserror+" not in lines
+
+
+@pytest.mark.parametrize("name", ROSLYN_REFERENCES)
+def test_optional_missing_required_roslyn_component_cannot_use_other_groups(
+    harness: CompileHarness, name: str,
+) -> None:
+    (harness.data / ROSLYN_DIRECTORY / name).unlink()
+    candidate = harness.data / "Tools/Compilation/ApiUpdater" / name
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.touch()
+    result = harness.run("6000.0.84f1")
+    assert result.returncode != 0
+    assert f"{ROSLYN_DIRECTORY}/{name}" in result.stderr + result.stdout
+    calls = harness.calls.read_text(encoding="utf-8") if harness.calls.exists() else ""
+    assert not any(name in calls for name in OPTIONAL_ASSEMBLIES)
+
+
+@pytest.mark.parametrize("name", OPTIONAL_ASSEMBLIES)
+@pytest.mark.parametrize("failure", ["exit_code", "missing_output"])
+def test_optional_compiler_failure_is_not_reported_as_success(
+    harness: CompileHarness, name: str, failure: str,
+) -> None:
+    compiler = harness.data / "NetCoreRuntime/dotnet"
+    replacement = f'case "$output" in *{name}.dll) {"exit 7" if failure == "exit_code" else ":"} ;; *) touch "$output" ;; esac'
+    compiler.write_text(compiler.read_text(encoding="utf-8").replace('touch "$output"', replacement), encoding="utf-8")
+    result = harness.run("6000.0.84f1")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"{name} failed to compile" in result.stdout
+    assert "compile check passed" not in result.stdout
+
+
+@pytest.mark.parametrize("failure", ["directory", "sources"])
+def test_optional_sources_are_required(harness: CompileHarness, failure: str) -> None:
+    directory = harness.repo / "CustomTools/RoslynRuntimeCompilation"
+    for path in directory.iterdir():
+        path.unlink()
+    if failure == "directory":
+        directory.rmdir()
+    result = harness.run("6000.0.84f1")
+    assert result.returncode == 1
+    assert "assembly sources not found:" in result.stderr
+    assert "CustomTools/RoslynRuntimeCompilation" in result.stderr
+
+
+def test_workflow_triggers_optional_sources_and_compile_contract_tests() -> None:
+    workflow = (ROOT / ".github/workflows/compile-check.yml").read_text(encoding="utf-8")
+    for path in ("CustomTools/RoslynRuntimeCompilation/**/*.cs", "tools/tests/test_compile_check.py",
+                 "tools/tests/test_unity_compile_cache.py", "tools/tests/test_unity_compile_cache_diagnostics.py",
+                 "tools/tests/test_unity_ci_packages.py", "tools/tests/test_unity_matrix_workflows.py"):
+        assert f"- {path}" in workflow
+    assert "USE_ROSLYN" in workflow and "off" in workflow and "on" in workflow

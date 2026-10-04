@@ -222,6 +222,8 @@ compile() {
     echo "-nowarn:CS1701,CS1702"      # benign netstandard facade version unification
     echo "-out:\"$dir/$name.dll\""
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
+    case "$name" in MCPForUnity.CustomTools.Roslyn*) echo "-warnaserror+" ;; esac
+    case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
     # ${var%$'\r'} strips the CR a core.autocrlf checkout appends to every line: a CR inside
     # -define:FOO silently defines the wrong symbol, and inside a LIBCACHE/ name it makes
     # `find -name` match nothing, so the Editor build fails on TestRunner/UI types.
@@ -294,6 +296,17 @@ for platform in $PLATFORMS; do
     "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
     "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+  # Use Unity's coherent Mono/.NET Framework Roslyn group in both modes: the
+  # compiler helper still references CodeAnalysis under UNITY_EDITOR when off.
+  roslyn_refs=()
+  for name in Microsoft.CodeAnalysis Microsoft.CodeAnalysis.CSharp System.Collections.Immutable System.Reflection.Metadata; do
+    roslyn_refs+=("$UNITY_DATA/MonoBleedingEdge/lib/mono/4.5/$name.dll")
+  done
+  for assembly in MCPForUnity.CustomTools.RoslynOff MCPForUnity.CustomTools.RoslynOn; do
+    compile "$assembly" "$REPO/CustomTools/RoslynRuntimeCompilation" "$platform" \
+      "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
+      "$OUT/$platform/MCPForUnity.Editor.dll" "${roslyn_refs[@]}" || failed=1
+  done
   if [ -n "$TEST_PROJECT" ]; then
     # These names/references mirror the owned asmdefs; the harness contract test
     # checks their JSON so a changed assembly graph cannot silently lose coverage.

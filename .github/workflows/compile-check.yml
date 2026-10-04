@@ -23,6 +23,7 @@ on:
       - MCPForUnity/Editor/**
       - MCPForUnity/Runtime/**
       - MCPForUnity/package.json
+      - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
       - tools/compile-defines.txt
@@ -34,6 +35,11 @@ on:
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
+      - tools/tests/test_compile_check.py
+      - tools/tests/test_unity_compile_cache.py
+      - tools/tests/test_unity_compile_cache_diagnostics.py
+      - tools/tests/test_unity_ci_packages.py
+      - tools/tests/test_unity_matrix_workflows.py
       - .github/workflows/compile-check.yml
   pull_request:
     branches: [main, beta]
@@ -176,6 +182,7 @@ jobs:
               echo
               echo "MCP runtime, Editor and EditMode test assemblies compiled against Unity"
               echo "\`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) reference assemblies for **win, osx and linux**."
+              echo "CustomTools Roslyn examples also compiled with USE_ROSLYN **off and on**, with warnings treated as errors."
               echo
               echo "No Unity license was used, so this runs on fork PRs too."
               echo "Note: this compiles the code, it does not run the test suite."
