@@ -236,6 +236,10 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
         print_error(f"Invalid JSON params: {e}")
         sys.exit(1)
 
+    if not isinstance(params_dict, dict):
+        print_error(f"Invalid JSON params: expected an object, got {type(params_dict).__name__}")
+        sys.exit(1)
+
     try:
         result = run_command(command_type, params_dict, config)
         click.echo(format_output(result, config.format))

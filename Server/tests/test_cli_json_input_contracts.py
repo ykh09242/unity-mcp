@@ -101,3 +101,30 @@ def test_invalid_compatibility_input_never_dispatches(command_requests, consumer
     assert result.exit_code == 1, result.output
     assert "Invalid JSON" in result.stderr
     assert command_requests == []
+
+
+@pytest.mark.parametrize("payload", ["[]", '["value"]', "null", "true", "false", "0", '"value"'])
+def test_raw_rejects_non_object_parameters_before_dispatch(command_requests, payload):
+    result = CliRunner().invoke(cli, [
+        "--host", "127.0.0.1", "--port", "8080", "--timeout", "30",
+        "--instance", "Owned@fixture", "--format", "json", "raw", "owned_tool", payload,
+    ])
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert "expected an object" in result.stderr
+    assert command_requests == []
+
+
+@pytest.mark.parametrize("payload", [[], ["{}"], ['{"enabled":false,"count":0,"items":[]}']])
+def test_raw_object_parameters_preserve_wire_values(command_requests, payload):
+    result = CliRunner().invoke(cli, [
+        "--host", "127.0.0.1", "--port", "8080", "--timeout", "30",
+        "--instance", "Owned@fixture", "--format", "json", "raw", "owned_tool", *payload,
+    ])
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == {"success": True, "data": {}}
+    assert command_requests == [{
+        "type": "owned_tool", "params": json.loads(payload[0]) if payload else {},
+        "unity_instance": "Owned@fixture",
+    }]
