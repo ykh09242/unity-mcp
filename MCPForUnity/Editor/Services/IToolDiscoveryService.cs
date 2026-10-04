@@ -41,7 +41,7 @@ namespace MCPForUnity.Editor.Services
     public interface IToolDiscoveryService
     {
         /// <summary>
-        /// Discovers all tools marked with [McpForUnityTool]
+        /// Discovers tools marked with [McpForUnityTool] that expose a supported command handler.
         /// </summary>
         List<ToolMetadata> DiscoverAllTools();
 

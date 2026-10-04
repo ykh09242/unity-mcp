@@ -4,6 +4,8 @@ namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
     /// Marks a class as an MCP tool handler
+    /// with a closed public static HandleCommand(JObject) method returning a
+    /// reference type, Task, or Task&lt;T&gt;. Plain Task handlers return no result value.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
     public class McpForUnityToolAttribute : Attribute

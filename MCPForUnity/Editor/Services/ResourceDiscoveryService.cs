@@ -5,6 +5,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
+using MCPForUnity.Editor.Tools;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Services
@@ -22,17 +23,20 @@ namespace MCPForUnity.Editor.Services
 
             _cachedResources = new Dictionary<string, ResourceMetadata>();
 
-            var resourceTypes = TypeCache.GetTypesWithAttribute<McpForUnityResourceAttribute>();
+            var resourceTypes = ToolDiscoveryService.InRegistrationOrder(
+                TypeCache.GetTypesWithAttribute<McpForUnityResourceAttribute>());
             foreach (var type in resourceTypes)
             {
                 McpForUnityResourceAttribute resourceAttr;
                 try
                 {
                     resourceAttr = type.GetCustomAttribute<McpForUnityResourceAttribute>();
+                    if (CommandRegistry.GetCommandMethod(type) == null)
+                        continue;
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"Failed to read [McpForUnityResource] for {type.FullName}: {ex.Message}");
+                    McpLog.Warn($"Failed to discover MCP resource {type.FullName}: {ex.Message}");
                     continue;
                 }
 

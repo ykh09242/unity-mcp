@@ -21,7 +21,7 @@ namespace MCPForUnity.Editor.Services
     public interface IResourceDiscoveryService
     {
         /// <summary>
-        /// Discovers all resources marked with [McpForUnityResource]
+        /// Discovers resources marked with [McpForUnityResource] that expose a supported command handler.
         /// </summary>
         List<ResourceMetadata> DiscoverAllResources();
 

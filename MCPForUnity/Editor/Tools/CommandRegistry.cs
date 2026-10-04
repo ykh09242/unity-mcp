@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -80,26 +80,10 @@ namespace MCPForUnity.Editor.Tools
                 // It also removes the GetCustomAttribute calls that made the AssetImportWorker
                 // crash in issue #1134; the worker guard above stays regardless, since the
                 // registry is unused there either way.
-                // Ordered by FullName because RegisterCommandType lets a duplicate command
-                // name overwrite the previous handler, so registration order decides which
-                // one wins. TypeCache does not document an order, and the assembly scan this
-                // replaces was stable within a build, so without sorting a name collision
-                // could resolve differently between domain reloads.
-                int toolCount = 0;
-                foreach (var type in TypeCache.GetTypesWithAttribute<McpForUnityToolAttribute>()
-                             .OrderBy(t => t.FullName, StringComparer.Ordinal))
-                {
-                    if (RegisterCommandType(type, isResource: false))
-                        toolCount++;
-                }
-
-                int resourceCount = 0;
-                foreach (var type in TypeCache.GetTypesWithAttribute<McpForUnityResourceAttribute>()
-                             .OrderBy(t => t.FullName, StringComparer.Ordinal))
-                {
-                    if (RegisterCommandType(type, isResource: true))
-                        resourceCount++;
-                }
+                int toolCount = RegisterCommandTypes(
+                    TypeCache.GetTypesWithAttribute<McpForUnityToolAttribute>(), isResource: false);
+                int resourceCount = RegisterCommandTypes(
+                    TypeCache.GetTypesWithAttribute<McpForUnityResourceAttribute>(), isResource: true);
 
                 McpLog.Info($"Auto-discovered {toolCount} tools and {resourceCount} resources ({_handlers.Count} total handlers)", false);
             }
@@ -107,6 +91,31 @@ namespace MCPForUnity.Editor.Tools
             {
                 McpLog.Error($"Failed to auto-discover MCP commands: {ex.Message}");
             }
+        }
+
+        internal static int RegisterCommandTypes(IEnumerable<Type> types, bool isResource)
+        {
+            int count = 0;
+            foreach (var type in ToolDiscoveryService.InRegistrationOrder(types))
+            {
+                if (RegisterCommandType(type, isResource))
+                    count++;
+            }
+            return count;
+        }
+
+        internal static MethodInfo GetCommandMethod(Type type)
+        {
+            var method = type.GetMethod("HandleCommand", BindingFlags.Public | BindingFlags.Static,
+                null, new[] { typeof(JObject) }, null);
+            if (method == null || method.ContainsGenericParameters)
+                return null;
+
+            // Sync delegates support reference returns; async handlers support Task and Task<T>.
+            return typeof(Task).IsAssignableFrom(method.ReturnType) ||
+                   (!method.ReturnType.IsValueType && typeof(object).IsAssignableFrom(method.ReturnType))
+                ? method
+                : null;
         }
 
         private static bool? _cachedIsAssetImportWorker;
@@ -159,56 +168,34 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static bool RegisterCommandType(Type type, bool isResource)
         {
-            string commandName;
             string typeLabel = isResource ? "resource" : "tool";
-
-            // Get command name from appropriate attribute
-            if (isResource)
-            {
-                var resourceAttr = type.GetCustomAttribute<McpForUnityResourceAttribute>();
-                commandName = resourceAttr.ResourceName;
-            }
-            else
-            {
-                var toolAttr = type.GetCustomAttribute<McpForUnityToolAttribute>();
-                commandName = toolAttr.CommandName;
-            }
-
-            // Auto-generate command name if not explicitly provided
-            if (string.IsNullOrEmpty(commandName))
-            {
-                commandName = ToSnakeCase(type.Name);
-            }
-
-            // Check for duplicate command names
-            if (_handlers.ContainsKey(commandName))
-            {
-                McpLog.Warn(
-                    $"Duplicate command name '{commandName}' detected. " +
-                    $"{typeLabel} {type.Name} will override previously registered handler."
-                );
-            }
-
-            // Find HandleCommand method
-            var method = type.GetMethod(
-                "HandleCommand",
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                new[] { typeof(JObject) },
-                null
-            );
-
-            if (method == null)
-            {
-                McpLog.Warn(
-                    $"MCP {typeLabel} {type.Name} is marked with [McpForUnity{(isResource ? "Resource" : "Tool")}] " +
-                    $"but has no public static HandleCommand(JObject) method"
-                );
-                return false;
-            }
-
             try
             {
+                string commandName;
+                if (isResource)
+                {
+                    var resourceAttr = type.GetCustomAttribute<McpForUnityResourceAttribute>();
+                    commandName = resourceAttr.ResourceName;
+                }
+                else
+                {
+                    var toolAttr = type.GetCustomAttribute<McpForUnityToolAttribute>();
+                    commandName = toolAttr.CommandName;
+                }
+
+                if (string.IsNullOrEmpty(commandName))
+                    commandName = ToSnakeCase(type.Name);
+
+                var method = GetCommandMethod(type);
+                if (method == null)
+                {
+                    McpLog.Warn(
+                        $"MCP {typeLabel} {type.Name} is marked with [McpForUnity{(isResource ? "Resource" : "Tool")}] " +
+                        $"but has no supported closed public static HandleCommand(JObject) method"
+                    );
+                    return false;
+                }
+
                 HandlerInfo handlerInfo;
 
                 if (typeof(Task).IsAssignableFrom(method.ReturnType))
@@ -225,6 +212,13 @@ namespace MCPForUnity.Editor.Tools
                     handlerInfo = new HandlerInfo(commandName, handler, null);
                 }
 
+                if (_handlers.ContainsKey(commandName))
+                {
+                    McpLog.Warn(
+                        $"Duplicate command name '{commandName}' detected. " +
+                        $"{typeLabel} {type.Name} will override previously registered handler."
+                    );
+                }
                 _handlers[commandName] = handlerInfo;
                 return true;
             }
@@ -335,6 +329,14 @@ namespace MCPForUnity.Editor.Tools
         /// <exception cref="InvalidOperationException"></exception>
         private static Func<JObject, Task<object>> CreateAsyncHandlerDelegate(MethodInfo method, string commandName)
         {
+            // The declared Task contract determines whether a result exists; runtime
+            // implementations of plain Task can be Task<VoidTaskResult> internally.
+            Type resultTaskType = method.ReturnType;
+            while (resultTaskType != null &&
+                   (!resultTaskType.IsGenericType || resultTaskType.GetGenericTypeDefinition() != typeof(Task<>)))
+                resultTaskType = resultTaskType.BaseType;
+            var resultProperty = resultTaskType?.GetProperty("Result");
+
             return async (JObject parameters) =>
             {
                 object rawResult;
@@ -362,17 +364,7 @@ namespace MCPForUnity.Editor.Tools
 
                 await task.ConfigureAwait(true);
 
-                var taskType = task.GetType();
-                if (taskType.IsGenericType)
-                {
-                    var resultProperty = taskType.GetProperty("Result");
-                    if (resultProperty != null)
-                    {
-                        return resultProperty.GetValue(task);
-                    }
-                }
-
-                return null;
+                return resultProperty?.GetValue(task);
             };
         }
 

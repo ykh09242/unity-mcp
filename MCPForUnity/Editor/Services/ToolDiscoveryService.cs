@@ -41,10 +41,12 @@ namespace MCPForUnity.Editor.Services
                 try
                 {
                     toolAttr = type.GetCustomAttribute<McpForUnityToolAttribute>();
+                    if (CommandRegistry.GetCommandMethod(type) == null)
+                        continue;
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"Failed to read [McpForUnityTool] for {type.FullName}: {ex.Message}");
+                    McpLog.Warn($"Failed to discover MCP tool {type.FullName}: {ex.Message}");
                     continue;
                 }
 
