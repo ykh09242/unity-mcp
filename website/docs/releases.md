@@ -1,12 +1,14 @@
 ---
 id: releases
 slug: /releases
-title: Release Notes
-sidebar_label: Releases
-description: Full version-by-version change history for MCP for Unity.
+title: Upstream Release History
+sidebar_label: Upstream History
+description: Preserved CoplayDev/unity-mcp releases, not ykh09242 fork releases.
 ---
 
-# Release Notes
+# Upstream Release History
+
+The releases and changelog bodies below are preserved CoplayDev/unity-mcp history. They are not releases of the ykh09242 fork. See [fork Git distribution](/contributing/releases) for current fork versioning guidance.
 
 Latest releases land in [`beta`](https://github.com/CoplayDev/unity-mcp/tree/beta) before promotion to [`main`](https://github.com/CoplayDev/unity-mcp/tree/main). Major breaking changes get a dedicated migration guide under [Migrations](/migrations/v5).
 

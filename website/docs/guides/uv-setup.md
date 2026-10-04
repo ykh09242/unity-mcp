@@ -11,9 +11,9 @@ description: Install or repair uv and Python — the runtime MCP for Unity needs
 The key to configuring MCP with **Cursor, VS Code, Windsurf, and Rider is [`uv`](https://docs.astral.sh/uv/)**.
 
 - `uv` is a fast Python package manager used to install and run the Unity MCP Server (`mcp-for-unity`).
-- **How it's used:** your MCP client config points to `command: uvx` with args like `--from mcpforunityserver mcp-for-unity --transport stdio`. The client invokes `uvx` directly to launch the server.
-- **Why it matters:** if `uv` isn't installed or on PATH, Cursor / Windsurf / VS Code can't start the server. The MCP for Unity window will show **"uv Not Found"** until fixed.
-- **Detection / override:** the MCP for Unity window auto-detects `uv` in common locations and on PATH. If not found, use **"Choose UV Install Location"** to navigate to your `uv` binary and save the path.
+- **How it's used:** your MCP client config points to `command: uvx` with args like `--from "<mcpServerSource>" mcp-for-unity --transport stdio`. Replace `<mcpServerSource>` with the immutable Git URL from the installed Unity package's `package.json`; see [installation](../getting-started/install.md). The client invokes `uvx` directly to launch the server.
+- **Why it matters:** if `uv` isn't installed or on PATH, Cursor / Windsurf / VS Code can't start the server. The Unity MCP (ykh09242) window will show **"uv Not Found"** until fixed.
+- **Detection / override:** the Unity MCP (ykh09242) window auto-detects `uv` in common locations and on PATH. If not found, use **"Choose UV Install Location"** to navigate to your `uv` binary and save the path.
 
 :::tip When in doubt, restart your client
 Clients like Claude Code or JetBrains Rider can get confused if you switch from `http` to `stdio` (or vice versa). If they say **"No Unity Instances found"**, restart the client so it picks up the new configuration.
@@ -75,7 +75,7 @@ winget install --id=astral-sh.uv -e
 | **Linux** | `/usr/local/bin/uv`, `/usr/bin/uv`, `~/.local/bin/uv` |
 | **Windows** | `%LOCALAPPDATA%/Programs/Python/Python3xx/Scripts/uv.exe` |
 
-## MCP for Unity window behavior
+## Unity MCP (ykh09242) window behavior
 
 - If `uv` isn't found, the status panel shows a red **"uv Not Found"** with a hint **"Make sure uv is installed! [CLICK]"**.
 - Use **"Choose UV Install Location"** to browse to the `uv` binary. This saves the path and reconfigures automatically.

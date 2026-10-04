@@ -57,7 +57,7 @@ Useful when a group's tools are confusing the assistant — e.g., `manage_shader
 
 ## Other actions
 
-- `sync` — refreshes visibility from the Unity Editor's per-tool toggle UI. Use after toggling tools in `Window > MCP for Unity > Tools`.
+- `sync` — refreshes visibility from the Unity Editor's per-tool toggle UI. Use after toggling tools in `Window > Unity MCP (ykh09242) > Tools`.
 - `reset` — restores defaults (only `core` enabled).
 
 ## Why this exists
@@ -70,7 +70,7 @@ Three reasons:
 
 ## Server vs. session state
 
-- The Unity Editor maintains a per-tool **toggle UI** (`Window > MCP for Unity > Tools`) that controls server-side visibility.
+- The Unity Editor maintains a per-tool **toggle UI** (`Window > Unity MCP (ykh09242) > Tools`) that controls server-side visibility.
 - The `manage_tools` meta-tool controls **per-session** visibility — different MCP sessions can see different groups even against the same server.
 
 `sync` reconciles the two: it pulls the Editor's toggle states into the current session.

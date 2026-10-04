@@ -1,6 +1,6 @@
-# MCP for Unity — Documentation Site
+# Unity MCP (ykh09242) - Documentation Site
 
-Docusaurus 3.x site for MCP for Unity. Deployed to https://coplaydev.github.io/unity-mcp/ by `.github/workflows/docs-deploy.yml` on every push to `beta` that touches `website/**`, `docs/**`, or the Python tool registry.
+Docusaurus 3.x documentation for the Git-only ykh09242 fork. No live fork deployment URL is established here. The default origin is local; set `WEBSITE_URL` to a verified deployment origin before publishing. The repository's retained release metadata and release bodies describe upstream CoplayDev history, not fork releases.
 
 ## Local development
 

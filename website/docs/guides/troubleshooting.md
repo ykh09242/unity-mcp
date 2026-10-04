@@ -8,6 +8,8 @@ description: Real-world fixes for the issues people actually hit — macOS dyld 
 
 # Common Setup Problems
 
+> Upstream history: linked CoplayDev issues and contributor credits document the original reports. For new reports about this fork, use https://github.com/ykh09242/unity-mcp/issues.
+
 ## macOS: Claude CLI fails to start (dyld ICU library not loaded)
 
 **Symptoms:**
@@ -60,7 +62,7 @@ If you're running Claude Code from WSL2 and Unity on Windows, the MCP server run
 In Unity Package Manager, add by git URL:
 
 ```text
-https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta
 ```
 
 In the MCP for Unity settings, change the port to **8090** (or any free port — the default 8080 can conflict with other services like Tailscale).
@@ -169,7 +171,7 @@ This is a Unity bug (UUM-132096), not an MCP for Unity one.
 
 Adding the package from a Git URL makes the Package Manager shell out to `git`. Two things make that fail:
 
-1. **git is not installed or not on PATH.** Install it from [git-scm.com](https://git-scm.com/downloads) and restart Unity so the Editor picks up the new PATH. The setup window (**Window → MCP for Unity → Local Setup Window**) shows a **Git (optional)** row so you can confirm the Editor sees it.
+1. **git is not installed or not on PATH.** Install it from [git-scm.com](https://git-scm.com/downloads) and restart Unity so the Editor picks up the new PATH. The setup window (**Window → Unity MCP (ykh09242) → Local Setup Window**) shows a **Git (optional)** row so you can confirm the Editor sees it.
 2. **git refuses the folder.** Newer git versions decline to run inside a directory owned by a different user account (external drives, shared folders, projects created by another account). The Package Manager surfaces this as `fatal: not in a git directory`. Tell git the folder is yours:
 
 ```bash
@@ -212,7 +214,7 @@ Clients like Claude Code or JetBrains Rider can get confused if you switch trans
 If restarting doesn't fix it:
 - Check the MCP for Unity status panel — does it say `Connected`?
 - Open `mcpforunity://instances` in your client. If it returns an empty list, the Unity-side bridge isn't running.
-- Try **Window → MCP for Unity → Restart Server**.
+- Try **Window → Unity MCP (ykh09242) → Restart Server**.
 
 ---
 
@@ -255,13 +257,13 @@ entirely when background tests already run reliably.
 ## FAQ — Claude Code
 
 **Q: Unity can't find `claude` even though Terminal can.**
-A: macOS apps launched from Finder / Hub don't inherit your shell PATH. In the MCP for Unity window, click **"Choose Claude Location"** and select the absolute path (e.g., `/opt/homebrew/bin/claude` or `~/.nvm/versions/node/<ver>/bin/claude`).
+A: macOS apps launched from Finder / Hub don't inherit your shell PATH. In the Unity MCP (ykh09242) window, click **"Choose Claude Location"** and select the absolute path (e.g., `/opt/homebrew/bin/claude` or `~/.nvm/versions/node/<ver>/bin/claude`).
 
 **Q: I installed via NVM; where is `claude`?**
 A: Typically `~/.nvm/versions/node/<ver>/bin/claude`. The MCP for Unity UI also scans NVM versions and you can browse to it via **"Choose Claude Location"**.
 
 **Q: The Register button says "Claude Not Found".**
-A: Install the CLI or set the path. Click the orange **[HELP]** link in the MCP for Unity window for step-by-step install instructions, then choose the binary location. See also: [Install or Repair Claude Code CLI](/guides/claude-code-cli).
+A: Install the CLI or set the path. Click the orange **[HELP]** link in the Unity MCP (ykh09242) window for step-by-step install instructions, then choose the binary location. See also: [Install or Repair Claude Code CLI](/guides/claude-code-cli).
 
 ## FAQ — VS Code
 
@@ -273,4 +275,4 @@ A: Start a new chat — the bad chat didn't pick up the MCP server configuration
 ## FAQ — Cursor / Windsurf / VS Code (Windows uv path)
 
 **Q: My MCP client keeps failing to launch the server even though `uv` is installed.**
-A: Some Windows machines have multiple `uv.exe` locations. Auto-config sometimes picks a less stable path, causing the launch to fail or auto-rewrite on every restart. Use **"Choose UV Install Location"** in the MCP for Unity window and pin the **WinGet Links shim** path (`%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe`) — it's stable across uv upgrades.
+A: Some Windows machines have multiple `uv.exe` locations. Auto-config sometimes picks a less stable path, causing the launch to fail or auto-rewrite on every restart. Use **"Choose UV Install Location"** in the Unity MCP (ykh09242) window and pin the **WinGet Links shim** path (`%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe`) — it's stable across uv upgrades.

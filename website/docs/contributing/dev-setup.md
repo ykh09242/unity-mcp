@@ -1,11 +1,11 @@
-# MCP for Unity - Developer Guide
+# Unity MCP (ykh09242) - Developer Guide
 
-| English | [简体中文](https://github.com/CoplayDev/unity-mcp/blob/beta/docs/development/README-DEV-zh.md) |
+| English | [简体中文](https://github.com/ykh09242/unity-mcp/blob/beta/docs/development/README-DEV-zh.md) |
 |---------------------------|------------------------------|
 
 ## Contributing
 
-**Branch off `beta`** to create PRs. The `main` branch is reserved for stable releases.
+**Branch off `beta`** to create fork PRs. This is the moving preview branch; no fork stable release is assumed here.
 
 Before proposing major new features, please reach out to discuss - someone may already be working on it or it may have been considered previously. Open an issue or discussion to coordinate.
 
@@ -18,7 +18,7 @@ For bug fixes, include:
 - resolved Git commit from `Packages/packages-lock.json` when the package source is a Git URL
 - commands/tests run locally
 
-Avoid mixing release/version bumps with feature or bug-fix PRs. The release workflows handle package and server version updates.
+Avoid mixing release/version bumps with feature or bug-fix PRs. The inherited release workflow is upstream-only; see [fork Git version preparation](releases.md).
 
 ## Repository Map
 
@@ -30,6 +30,16 @@ Avoid mixing release/version bumps with feature or bug-fix PRs. The release work
 - `CustomTools/` - examples and support code for project-defined custom tools.
 
 ## Local Development Setup
+
+### First use of the local Unity test project
+
+The checked-in `TestProjects/UnityMCPTests/Packages/manifest.json` is intentionally left unchanged to preserve local project settings. Before opening that project in Unity, run this from the repository root:
+
+```bash
+python mcp_source.py --manifest TestProjects/UnityMCPTests/Packages/manifest.json --repo . --choice 4
+```
+
+Option 4 selects your local `MCPForUnity/` folder, removes the old `com.coplaydev.unity-mcp` dependency, adds `com.ykh09242.unity-mcp`, and migrates the package's existing `testables` entries. Keep this contributor-specific manifest change local. Hosted compile and licensed Unity workflows prepare isolated manifests dynamically with `tools/unity_ci_packages.py`; they do not require editing the checked-in local project manifest.
 
 ### 0. Prepare the Python Server
 
@@ -48,17 +58,17 @@ Most Python unit tests do not need Unity running. Integration tests that talk to
 
 For the fastest iteration when working on the Python server:
 
-1. Open Unity and go to **Window > MCP for Unity**
+1. Open Unity and go to **Window > Unity MCP (ykh09242)**
 2. Open **Settings > Advanced Settings**
 3. Set **Server Source Override** to your local `Server/` directory path
 4. Enable **Dev Mode (Force fresh server install)** - this adds `--refresh` to uvx commands so your changes are picked up on every server start
 
 ### 2. Switch Package Sources
 
-You may want to use the `mcp_source.py` script to quickly switch your Unity project between different MCP package sources [allows you to quickly point your personal project to your local or remote unity-mcp repo, or the live upstream (Coplay) versions of the unity-mcp package]:
+For fork work, use the fork preview Git URL or a local `MCPForUnity/` folder. `mcp_source.py` selects the matching package identity and updates existing `testables` entries; options 1 and 2 intentionally switch to upstream, while option 4 uses this local fork:
 
 ```bash
-python mcp_source.py
+python mcp_source.py --manifest /path/to/UnityProject/Packages/manifest.json --repo .
 ```
 
 Options:
@@ -76,8 +86,8 @@ When testing Unity package changes, prefer **Local workspace**. Do not patch `Li
 Example Git package lock entry:
 
 ```json
-"com.coplaydev.unity-mcp": {
-  "version": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta",
+"com.ykh09242.unity-mcp": {
+  "version": "https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta",
   "source": "git",
   "hash": "<resolved-git-commit>"
 }
@@ -116,11 +126,11 @@ When adding, removing, or renaming tools/resources, update the public docs and c
 
 ## Tool Selection & the Meta-Tool
 
-MCP for Unity organizes tools into **groups**. You can selectively enable or disable tools to control which capabilities are exposed to AI clients — reducing context window usage and focusing the AI on relevant tools.
+Unity MCP (ykh09242) organizes tools into **groups**. You can selectively enable or disable tools to control which capabilities are exposed to AI clients — reducing context window usage and focusing the AI on relevant tools.
 
 ### Using the Tools Tab in the Editor
 
-Open **Window > MCP for Unity** and switch to the **Tools** tab. Each tool group is displayed as a collapsible foldout with:
+Open **Window > Unity MCP (ykh09242)** and switch to the **Tools** tab. Each tool group is displayed as a collapsible foldout with:
 
 - **Per-tool toggles** — click individual tool toggles to enable or disable them.
 - **Group checkbox** — a checkbox embedded directly in each group's foldout header (next to the group title) enables or disables all tools in that group at once without expanding or collapsing the foldout.
@@ -238,7 +248,7 @@ For compatibility PRs, note the exact editor versions you tested in the PR body.
 
 ## Troubleshooting During Development
 
-- **Unity still loads an old Git package**: close Unity, check `Packages/packages-lock.json`, then refresh Package Manager. If needed, remove only the stale `Library/PackageCache/com.coplaydev.unity-mcp@<hash>` folder while Unity is closed.
+- **Unity still loads an old Git package**: close Unity, check `Packages/packages-lock.json`, then refresh Package Manager. If needed, remove only the stale `Library/PackageCache/com.ykh09242.unity-mcp@<hash>` folder while Unity is closed.
 - **Unity opens in Safe Mode after changing package source**: the package failed to compile before MCP can start. Fix the compile errors first; the MCP server cannot recover from package compile failures.
 - **Server changes are not picked up**: make sure **Server Source Override** points to your local `Server/` directory and **Dev Mode (Force fresh server install)** is enabled.
 - **Stdio tool visibility looks stale**: call `manage_tools(action="sync")` or restart the MCP session. HTTP mode can push `tools/list_changed` notifications automatically.

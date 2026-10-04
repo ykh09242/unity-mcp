@@ -26,7 +26,7 @@ export default function HomeCloser() {
           </Link>
           <a
             className={styles.ctaLink}
-            href="https://github.com/CoplayDev/unity-mcp"
+            href="https://github.com/ykh09242/unity-mcp"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -34,11 +34,11 @@ export default function HomeCloser() {
           </a>
           <a
             className={styles.ctaLink}
-            href="https://discord.gg/y4p8KfzrN4"
+            href="https://github.com/ykh09242/unity-mcp/issues"
             target="_blank"
             rel="noopener noreferrer"
           >
-            Join Discord <span aria-hidden="true">→</span>
+            Fork issues <span aria-hidden="true">→</span>
           </a>
         </div>
 
@@ -48,7 +48,7 @@ export default function HomeCloser() {
             <span className={styles.citeMeta}>SA Technical Communications ’25 · ACM</span>
           </div>
           <p className={styles.citeBody}>
-            Using MCP for Unity in research? Please cite our paper —
+            Using MCP for Unity in research? Please cite the original paper —
             <em> MCP-Unity: Protocol-Driven Framework for Interactive
             3D Authoring</em> (Wu &amp; Barnett, 2025).
           </p>

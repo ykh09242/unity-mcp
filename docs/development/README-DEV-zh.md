@@ -1,11 +1,21 @@
-# MCP for Unity - 开发者指南
+# Unity MCP (ykh09242) - 开发者指南
+
+## 本地测试项目首次使用
+
+仓库中的 `TestProjects/UnityMCPTests/Packages/manifest.json` 保持原样，以保留本地项目设置。在 Unity 打开测试项目之前，从仓库根目录运行：
+
+```bash
+python mcp_source.py --manifest TestProjects/UnityMCPTests/Packages/manifest.json --repo . --choice 4
+```
+
+选项 4 会指向本地 `MCPForUnity/`，移除旧的 `com.coplaydev.unity-mcp` 依赖、添加 `com.ykh09242.unity-mcp`，并迁移已有 `testables` 条目。请将此本地 manifest 变更保留在本机。托管编译和授权 Unity CI 使用 `tools/unity_ci_packages.py` 动态准备隔离的 manifest。
 
 | [English](README-DEV.md) | [简体中文](README-DEV-zh.md) |
 |---------------------------|------------------------------|
 
 ## 贡献代码
 
-**从 `beta` 分支创建 PR**。`main` 分支仅用于稳定版本发布。
+**从 `beta` 分支创建 PR**。这是此 fork 的移动预览分支，不代表已发布的稳定版本。
 
 在提出重大新功能之前，请先联系讨论——可能已有人在开发，或者该功能曾被讨论过。请通过 issue 或 discussion 进行协调。
 
@@ -15,17 +25,17 @@
 
 开发 Python server 时，最快的迭代方式：
 
-1. 打开 Unity，进入 **Window > MCP for Unity**
+1. 打开 Unity，进入 **Window > Unity MCP (ykh09242)**
 2. 打开 **Settings > Advanced Settings**
 3. 将 **Server Source Override** 设置为本地 `Server/` 目录路径
 4. 启用 **Dev Mode (Force fresh server install)** - 这会在 uvx 命令中添加 `--refresh`，确保每次启动 server 时都使用最新代码
 
 ### 2. 切换包源
 
-使用 `mcp_source.py` 快速切换 Unity 项目的 MCP 包源：
+此 fork 请使用 `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta` 或本地 `MCPForUnity/` 路径。`mcp_source.py` 会匹配包名并迁移已有 `testables`：选项 1/2 切换到上游，选项 4 使用本地 fork。
 
 ```bash
-python mcp_source.py
+python mcp_source.py --manifest /path/to/UnityProject/Packages/manifest.json --repo .
 ```
 
 选项：
@@ -42,7 +52,7 @@ MCP for Unity 将工具组织为**分组**（Core、VFX & Shaders、Animation、
 
 ### 使用编辑器中的 Tools 标签页
 
-打开 **Window > MCP for Unity**，切换到 **Tools** 标签页。每个工具分组显示为可折叠面板，包含：
+打开 **Window > Unity MCP (ykh09242)**，切换到 **Tools** 标签页。每个工具分组显示为可折叠面板，包含：
 
 - **单个工具开关** — 点击单个工具的开关来启用或禁用。
 - **分组复选框** — 每个分组折叠面板的标题旁内嵌一个复选框，可一次性启用或禁用该分组内所有工具，且不会触发折叠面板的展开或收起。

@@ -18,7 +18,6 @@ MCP for Unity supports two transports between the MCP client and the Python serv
 | Multiple Unity instances driven from one client | either |
 | Lowest setup friction | **stdio** (Claude Desktop default) |
 | Remote-hosted server (cloud, Docker) | **HTTP** |
-| Marketplace distribution that can't ship Python | **HTTP** (remote URL) |
 
 ## HTTP (default)
 
@@ -43,20 +42,20 @@ MCP for Unity supports two transports between the MCP client and the Python serv
 
 **What you give up:**
 - Port-number shorthand for `set_active_instance` (HTTP enforces `Name@hash`)
-- A small amount of setup complexity if you bind to LAN — see [Security](https://github.com/CoplayDev/unity-mcp/blob/beta/SECURITY.md)
+- A small amount of setup complexity if you bind to LAN — see [Security](https://github.com/ykh09242/unity-mcp/blob/beta/SECURITY.md)
 
 ## Stdio
 
 **Architecture:** the MCP client spawns a dedicated Python process via `stdio`, communicating over stdin/stdout. The Python process talks to Unity over a legacy TCP bridge.
 
-**MCP client config (macOS/Linux):**
+**MCP client config (macOS/Linux):** replace `<mcpServerSource>` with the installed Unity package's pinned Git URL, as described in [installation](../getting-started/install.md).
 
 ```json
 {
   "mcpServers": {
     "unityMCP": {
       "command": "uvx",
-      "args": ["--from", "mcpforunityserver", "mcp-for-unity", "--transport", "stdio"]
+      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
     }
   }
 }
@@ -81,7 +80,7 @@ See [Multi-Instance Routing](/guides/multi-instance) for the routing API.
 
 ## Switching transport
 
-In the Unity Editor: **Window → MCP for Unity → Settings**, pick `HTTP` or `stdio`, click **Configure All Detected Clients**. The configurator rewrites each client's MCP config to match.
+In the Unity Editor: **Window → Unity MCP (ykh09242) → Settings**, pick `HTTP` or `stdio`, click **Configure All Detected Clients**. The configurator rewrites each client's MCP config to match.
 
 Claude Desktop is the exception — it's always written as stdio regardless of your selection, because it doesn't support HTTP.
 

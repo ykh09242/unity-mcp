@@ -7,10 +7,11 @@
 
 <div align="center">
 
-[English](README.md) <img src="docs/images/connector.svg" alt="↔" height="14"> [简体中文](docs/i18n/README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [Discord](https://discord.gg/y4p8KfzrN4) <img src="docs/images/connector.svg" alt="↔" height="14"> [Wiki](https://coplaydev.github.io/unity-mcp/)
+[English](README.md) <img src="docs/images/connector.svg" alt="↔" height="14"> [简体中文](docs/i18n/README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [Documentation](website/docs/getting-started/install.md)
 
-#### Proudly sponsored and maintained by [Aura](https://www.tryaura.dev/) — the AI assistant for Unreal & Unity.
-##### And don't miss [Godot AI](https://github.com/hi-godot/godot-ai), the new open source project from the makers of MCP for Unity.
+## Unity MCP (ykh09242)
+
+Git-only fork maintained by [ykh09242](https://github.com/ykh09242), based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original MIT copyright, authorship, and research citation are retained. This fork is not an upstream release or a Coplay/Aura service.
 
 </div>
 
@@ -24,7 +25,9 @@
 
 <!-- recent-updates:start -->
 <details>
-<summary><strong>Recent Updates</strong></summary>
+<summary><strong>Upstream Release History</strong></summary>
+
+These releases belong to CoplayDev/unity-mcp, not this fork.
 
 * **[v10.3.0](https://github.com/CoplayDev/unity-mcp/releases/tag/v10.3.0)** (2026-10-04)
 * **[v10.2.0](https://github.com/CoplayDev/unity-mcp/releases/tag/v10.2.0)** (2026-09-01)
@@ -32,7 +35,7 @@
 * **[v10.1.0](https://github.com/CoplayDev/unity-mcp/releases/tag/v10.1.0)** (2026-07-13)
 * **[v10.0.2](https://github.com/CoplayDev/unity-mcp/releases/tag/v10.0.2)** (2026-07-13)
 
-Full history: [Release Notes](https://coplaydev.github.io/unity-mcp/releases).
+Full upstream history: [Release Notes](website/docs/releases.md).
 
 </details>
 <!-- recent-updates:end -->
@@ -43,7 +46,7 @@ Full history: [Release Notes](https://coplaydev.github.io/unity-mcp/releases).
 
 Control the Unity Editor in natural language from any MCP client — create scenes & GameObjects, edit C# scripts, manage assets, run tests, profile, and build. 50 focused MCP tool entrypoints, any client, free & MIT.
 
-**[Browse the full tool catalog →](https://coplaydev.github.io/unity-mcp/reference/tools/)**
+**[Browse the full tool catalog →](website/docs/reference/tools/index.md)**
 
 ---
 
@@ -52,38 +55,34 @@ Control the Unity Editor in natural language from any MCP client — create scen
 **Requirements:** Unity **2021.3 LTS → 6.x** · Python **3.10+** (via [`uv`](https://docs.astral.sh/uv/)). Works with **any MCP client** — Claude Desktop & Code, Cursor, VS Code, Windsurf, Cline, Gemini CLI, and more.
 
 1. **Install** — Unity → Package Manager → Add from git URL:
-   `https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main` &nbsp;_(pin `#v10.0.0` for this release, or `openupm add com.coplaydev.unity-mcp`)_
-2. **Configure** — `Window → MCP for Unity → Configure All Detected Clients`.
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta`
+2. **Configure** — `Window → Unity MCP (ykh09242) → Configure All Detected Clients`.
 3. **Prompt** — *"Create a cube at the origin and add a Rigidbody."* The cube appears in seconds.
+
+`beta` is a moving preview. For reproducible installs, replace `#beta` with a full commit SHA or a verified fork release tag. Do not treat inherited upstream tags as fork releases. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the immutable Git server source in `mcpServerSource`. The Python distribution is `ykh09242-unity-mcp-server`, installed from Git, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted service distribution is advertised.
 
 ---
 
 ## Community
 
-- [Discord](https://discord.gg/y4p8KfzrN4) — chat with maintainers and other contributors
-- [Issues](https://github.com/CoplayDev/unity-mcp/issues) — bugs and feature requests
-- [Discussions](https://github.com/CoplayDev/unity-mcp/discussions) — design ideas and broader questions
+- [Issues](https://github.com/ykh09242/unity-mcp/issues) — bugs, feature requests, and questions about this fork
 - Security: see [SECURITY.md](SECURITY.md) for private reporting
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Branch off `beta`, not `main`. The full dev setup, testing, and release process live in the [Contributing](https://coplaydev.github.io/unity-mcp/contributing/dev-setup) docs.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Branch off `beta`. The full dev setup and testing guidance live in the [Contributing](website/docs/contributing/dev-setup.md) docs.
 
 ## Advanced
 
-- **Multiple Unity instances** — [Multi-Instance Routing](https://coplaydev.github.io/unity-mcp/guides/multi-instance)
-- **Tool groups (vfx / animation / ui / testing / etc.)** — [Tool Groups](https://coplaydev.github.io/unity-mcp/guides/tool-groups)
-- **v10 asset generation and upgrade notes** — [v10 Migration](https://coplaydev.github.io/unity-mcp/migrations/v10)
-- **Roslyn script validation** — [Roslyn Validation](https://coplaydev.github.io/unity-mcp/guides/roslyn)
-- **Remote-hosted server with auth** — [Remote Server Auth](https://coplaydev.github.io/unity-mcp/guides/remote-server-auth)
-
-## Star History
-
-[![Star History Chart](https://star-history.dera.page/svg?repos=CoplayDev/unity-mcp&type=Date)](https://star-history.dera.page/#CoplayDev/unity-mcp&Date)
+- **Multiple Unity instances** — [Multi-Instance Routing](website/docs/guides/multi-instance.md)
+- **Tool groups (vfx / animation / ui / testing / etc.)** — [Tool Groups](website/docs/guides/tool-groups.md)
+- **Upstream v10 asset generation and upgrade notes** — [v10 Migration](website/docs/migrations/v10.md)
+- **Roslyn script validation** — [Roslyn Validation](website/docs/guides/roslyn.md)
+- **Remote-hosted server with auth** — [Remote Server Auth](website/docs/guides/remote-server-auth.md)
 
 ## Citation
 
-If MCP for Unity helped your research, please cite it.
+If MCP for Unity helped your research, please cite the original work by Wu and Barnett.
 
 ```bibtex
 @inproceedings{wu2025mcpunity,
@@ -98,12 +97,6 @@ If MCP for Unity helped your research, please cite it.
   series    = {SA Technical Communications '25}
 }
 ```
-
-## Unity AI Tools by Aura
-
-Aura offers 2 AI tools for Unity:
-- **MCP for Unity** is available freely under the MIT license.
-- **Aura for Unity** is a premium Unity/Unreal AI assistant built for game devs.
 
 ## Disclaimer
 

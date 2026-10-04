@@ -8,6 +8,8 @@ description: Living document — goals, current focus, mid-term and long-term pl
 
 # Project Roadmap
 
+> Upstream history: this page preserves CoplayDev/unity-mcp releases, plans, authorship, and references. Historical publisher services and install paths are not fork distribution claims. For current fork installation, see https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/getting-started/install.md.
+
 A living document outlining MCP for Unity's high-level goals, priorities, and planned features. It evolves with community feedback, technical discoveries, and shifting priorities.
 
 For the deep-research **2026 Feature Roadmap** (per-tool API coverage analysis), see [Feature Roadmap 2026](/architecture/roadmap).
@@ -71,11 +73,10 @@ For details on past releases, see [Release Notes](/releases) or the [GitHub Rele
 
 ## How to Contribute or Provide Feedback
 
-1. **Discuss ideas:** use [GitHub Discussions](https://github.com/CoplayDev/unity-mcp/discussions) to discuss roadmap items or propose new ones.
-2. **Request features:** [open a new issue](https://github.com/CoplayDev/unity-mcp/issues/new) using the Feature Request template. **Check existing issues first.**
-3. **Report bugs:** [open a bug report](https://github.com/CoplayDev/unity-mcp/issues/new). Provide clear steps to reproduce.
-4. **Contribute code / docs:** see [CONTRIBUTING.md](https://github.com/CoplayDev/unity-mcp/blob/beta/CONTRIBUTING.md). Look for issues tagged `help wanted` or `good first issue`. Review open [Pull Requests](https://github.com/CoplayDev/unity-mcp/pulls).
-5. **Comment on issues / PRs:** provide feedback directly on the issues and PRs linked above.
+1. **Discuss ideas or request features:** use [fork issues](https://github.com/ykh09242/unity-mcp/issues/new). Check existing issues first.
+2. **Report bugs:** [open a fork bug report](https://github.com/ykh09242/unity-mcp/issues/new). Provide clear steps to reproduce.
+3. **Contribute code / docs:** see [CONTRIBUTING.md](https://github.com/ykh09242/unity-mcp/blob/beta/CONTRIBUTING.md) and open [fork Pull Requests](https://github.com/ykh09242/unity-mcp/pulls).
+4. **Comment on fork issues / PRs:** provide feedback directly in the fork repository.
 
 ## Disclaimer
 

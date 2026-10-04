@@ -49,7 +49,7 @@ function countReferenceResources() {
   return (readFileSync(path, 'utf8').match(/\n## `/g) ?? []).length;
 }
 
-const latestVersion = JSON.parse(readFileSync(resolve(__dirname, 'release-metadata.json'), 'utf8')).tag_name;
+const upstreamBaselineVersion = JSON.parse(readFileSync(resolve(__dirname, 'release-metadata.json'), 'utf8')).tag_name;
 const toolCount = countReferenceTools();
 const toolGroupCount = countToolGroups();
 const resourceCount = countReferenceResources();
@@ -58,16 +58,15 @@ const baseUrl = '/unity-mcp/';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'MCP for Unity',
+  title: 'Unity MCP (ykh09242)',
   tagline: 'AI-driven game development for the Unity Editor',
   favicon: 'img/favicon.png',
 
-  // Hosted on GitHub Pages under the CoplayDev org.
-  // Custom domain (CNAME) deferred — see plan Phase 2.
-  url: 'https://coplaydev.github.io',
+  // Set WEBSITE_URL to a verified deployment origin before publishing.
+  url: process.env.WEBSITE_URL || 'http://localhost:3000',
   baseUrl,
 
-  organizationName: 'CoplayDev',
+  organizationName: 'ykh09242',
   projectName: 'unity-mcp',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
@@ -75,7 +74,7 @@ const config = {
   // Build-time data the homepage components read via siteConfig.customFields.
   // Keeps stats accurate without a hand-maintained constant.
   customFields: {
-    latestVersion,
+    upstreamBaselineVersion,
     toolCount,
     toolGroupCount,
     resourceCount,
@@ -147,7 +146,7 @@ const config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/CoplayDev/unity-mcp/edit/beta/website/',
+          editUrl: 'https://github.com/ykh09242/unity-mcp/edit/beta/website/',
           showLastUpdateTime: true,
           showLastUpdateAuthor: true,
         },
@@ -189,9 +188,9 @@ const config = {
       image: 'img/social-card.png',
       metadata: [{ name: 'theme-color', content: '#4f46e5' }],
       navbar: {
-        title: 'MCP for Unity',
+        title: 'Unity MCP (ykh09242)',
         logo: {
-          alt: 'MCP for Unity logo',
+          alt: 'Unity MCP logo (upstream artwork)',
           src: 'img/logo-mark.svg',
           srcDark: 'img/logo-mark.svg',
         },
@@ -209,20 +208,14 @@ const config = {
           },
           {
             to: '/releases',
-            label: 'Releases',
+            label: 'Upstream History',
             position: 'left',
           },
           {
-            href: 'https://github.com/CoplayDev/unity-mcp',
+            href: 'https://github.com/ykh09242/unity-mcp',
             position: 'right',
             className: 'header-icon-link header-github-link',
             'aria-label': 'GitHub repository',
-          },
-          {
-            href: 'https://discord.gg/y4p8KfzrN4',
-            position: 'right',
-            className: 'header-icon-link header-discord-link',
-            'aria-label': 'Discord',
           },
         ],
       },
@@ -240,19 +233,18 @@ const config = {
           {
             title: 'Community',
             items: [
-              { label: 'Discord', href: 'https://discord.gg/y4p8KfzrN4' },
-              { label: 'GitHub Issues', href: 'https://github.com/CoplayDev/unity-mcp/issues' },
+              { label: 'GitHub Issues', href: 'https://github.com/ykh09242/unity-mcp/issues' },
             ],
           },
           {
             title: 'More',
             items: [
-              { label: 'GitHub', href: 'https://github.com/CoplayDev/unity-mcp' },
-              { label: 'PyPI', href: 'https://pypi.org/p/mcpforunityserver' },
+              { label: 'GitHub', href: 'https://github.com/ykh09242/unity-mcp' },
+              { label: 'Upstream Source', href: 'https://github.com/CoplayDev/unity-mcp' },
             ],
           },
         ],
-        copyright: `MIT licensed. Sponsored and maintained by <a href="https://www.tryaura.dev/">Aura</a>. Not affiliated with Unity Technologies.`,
+        copyright: `MIT licensed fork maintained by <a href="https://github.com/ykh09242">ykh09242</a>. Original copyright and authorship retained from CoplayDev/unity-mcp. Not affiliated with Unity Technologies.`,
       },
       prism: {
         theme: prismThemes.github,

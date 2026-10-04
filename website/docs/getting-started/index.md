@@ -8,9 +8,9 @@ description: AI-driven game development for the Unity Editor via the Model Conte
 
 # Overview
 
-MCP for Unity bridges AI assistants — Claude, Codex, VS Code, local LLMs, and more — with the Unity Editor via the [Model Context Protocol](https://modelcontextprotocol.io/introduction). Give your LLM the tools to manage assets, control scenes, edit scripts, run tests, and automate workflows.
+Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp that bridges AI assistants — Claude, Codex, VS Code, local LLMs, and more — with the Unity Editor via the [Model Context Protocol](https://modelcontextprotocol.io/introduction). Give your LLM the tools to manage assets, control scenes, edit scripts, run tests, and automate workflows.
 
-![MCP for Unity building a scene](https://raw.githubusercontent.com/CoplayDev/unity-mcp/beta/docs/images/building_scene.gif)
+![MCP for Unity building a scene](https://raw.githubusercontent.com/ykh09242/unity-mcp/beta/docs/images/building_scene.gif)
 
 ## What you get
 
@@ -36,4 +36,4 @@ MCP for Unity bridges AI assistants — Claude, Codex, VS Code, local LLMs, and 
 
 ---
 
-MIT licensed. Sponsored and maintained by [Aura](https://www.tryaura.dev/). Not affiliated with Unity Technologies.
+MIT licensed fork maintained by [ykh09242](https://github.com/ykh09242). Original copyright, artwork, authorship, and citation are retained from CoplayDev/unity-mcp. Not affiliated with Unity Technologies.

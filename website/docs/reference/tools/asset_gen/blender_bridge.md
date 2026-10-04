@@ -1,7 +1,7 @@
 ---
 title: blender_bridge
 sidebar_label: blender_bridge
-description: "Bridge to a running Blender that has the BlenderMCP addon connected (socket, default 127.0.0.1:9876; configured in Window > MCP for Unity > Generative > Blender Bridge)."
+description: "Bridge to a running Blender that has the BlenderMCP addon connected (socket, default 127.0.0.1:9876; configured in Window > Unity MCP (ykh09242) > Generative > Blender Bridge)."
 ---
 
 # `blender_bridge`
@@ -12,7 +12,7 @@ description: "Bridge to a running Blender that has the BlenderMCP addon connecte
 
 ## Description
 
-Bridge to a running Blender that has the BlenderMCP addon connected (socket, default 127.0.0.1:9876; configured in Window > MCP for Unity > Generative > Blender Bridge). Unity talks to the addon directly, so no BlenderMCP client is needed.
+Bridge to a running Blender that has the BlenderMCP addon connected (socket, default 127.0.0.1:9876; configured in Window > Unity MCP (ykh09242) > Generative > Blender Bridge). Unity talks to the addon directly, so no BlenderMCP client is needed.
 
 Actions:
 - status: is Blender reachable, is the checkout configured, does the installed addon match it.

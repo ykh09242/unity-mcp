@@ -11,7 +11,7 @@ export default function Home() {
   const { siteConfig } = useDocusaurusContext();
   return (
     <Layout
-      title="MCP for Unity"
+      title={siteConfig.title}
       description={siteConfig.tagline}
     >
       <main>

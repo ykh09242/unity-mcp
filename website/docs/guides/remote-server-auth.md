@@ -118,7 +118,7 @@ We strongly recommend using this feature because it ensures that the entity requ
 
 When connecting to a remote-hosted server, Unity users need to provide their API key:
 
-1. Open the MCP for Unity window in the Unity Editor.
+1. Open the Unity MCP (ykh09242) window in the Unity Editor.
 2. Select HTTP Remote as the connection mode.
 3. Set the server URL to `https://mcp.example.com` and enter the API key in the API Key field. The key is stored in `EditorPrefs` (per-machine, not source-controlled). Keep **Allow Insecure Remote HTTP** disabled. The plugin derives its `wss://` connection from this HTTPS URL.
 4. Click **Get API Key** to open the login URL in a browser if you need a new key. This fetches the URL from the server's `/api/auth/login-url` endpoint.
@@ -287,7 +287,7 @@ Remote hosting requires both `--api-key-validation-url` and `--http-behind-tls-p
 
 ### WebSocket upgrade is rejected
 
-Check that the Unity plugin sends a valid API key in the MCP for Unity window's connection settings. If the key is valid, check network connectivity between the MCP server and the validation URL; authentication fails closed when the external service is unavailable.
+Check that the Unity plugin sends a valid API key in the Unity MCP (ykh09242) window's connection settings. If the key is valid, check network connectivity between the MCP server and the validation URL; authentication fails closed when the external service is unavailable.
 
 ### User cannot see their Unity instance
 

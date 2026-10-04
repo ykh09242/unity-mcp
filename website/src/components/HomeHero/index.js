@@ -5,12 +5,11 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 import CopyButton from '@site/src/components/CopyButton';
 import styles from './styles.module.css';
 
-const UPM_MAIN = 'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main';
-const UPM_BETA = 'https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta';
+const UPM_BETA = 'https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta';
 
 export default function HomeHero() {
   const { siteConfig } = useDocusaurusContext();
-  const version = siteConfig.customFields.latestVersion;
+  const version = siteConfig.customFields.upstreamBaselineVersion;
   const imageBaseUrl = useBaseUrl('/img/');
 
   return (
@@ -20,8 +19,8 @@ export default function HomeHero() {
       <div className={styles.inner}>
         <div className={styles.statusBar}>
           <span className={styles.statusDot} aria-hidden="true" />
-          <span className={styles.statusKey}>STATUS</span>
-          <span className={styles.statusValue}>OPERATIONAL · {version}</span>
+          <span className={styles.statusKey}>PREVIEW</span>
+          <span className={styles.statusValue}>Upstream baseline · {version}</span>
         </div>
 
         <h1 className={styles.headline}>
@@ -30,7 +29,7 @@ export default function HomeHero() {
         </h1>
 
         <p className={styles.tagline}>
-          MCP for Unity bridges AI assistants — Claude, Codex, VS Code,
+          Unity MCP (ykh09242) bridges AI assistants — Claude, Codex, VS Code,
           local LLMs, and more — with the Unity Editor via the Model
           Context Protocol. Manage assets, control scenes, edit scripts,
           run tests, automate workflows.
@@ -56,15 +55,9 @@ export default function HomeHero() {
           </div>
 
           <div className={styles.installLine}>
-            <span className={styles.installChannel}>STABLE</span>
-            <code className={styles.installUrl}>{UPM_MAIN}</code>
-            <CopyButton text={UPM_MAIN} label="stable URL" className={styles.installCopy} />
-          </div>
-
-          <div className={styles.installLine}>
-            <span className={`${styles.installChannel} ${styles.installChannelBeta}`}>BETA</span>
+            <span className={`${styles.installChannel} ${styles.installChannelBeta}`}>PREVIEW</span>
             <code className={styles.installUrl}>{UPM_BETA}</code>
-            <CopyButton text={UPM_BETA} label="beta URL" className={styles.installCopy} />
+            <CopyButton text={UPM_BETA} label="fork preview URL" className={styles.installCopy} />
           </div>
         </div>
 

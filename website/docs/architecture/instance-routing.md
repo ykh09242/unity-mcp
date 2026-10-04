@@ -8,6 +8,8 @@ description: How a tool call finds the right Unity Editor, how discovery differs
 
 # Unity Instance Routing
 
+> Upstream history: linked CoplayDev issues and contributor credits document the original reports. For new reports about this fork, use https://github.com/ykh09242/unity-mcp/issues.
+
 With one Unity Editor open, routing is invisible. With two, every tool call has to answer a question
 first: which Editor? Answering it wrong is not a cosmetic problem, because the wrong answer means an
 agent working on project A writes a script into project B. That is what [#1023](https://github.com/CoplayDev/unity-mcp/issues/1023)

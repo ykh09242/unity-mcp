@@ -4,7 +4,7 @@
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, email **security@coplay.dev** with:
+This fork is maintained by [ykh09242](https://github.com/ykh09242). No private reporting email or response-time guarantee has been established for the fork. If GitHub private vulnerability reporting is enabled on [the fork's Security page](https://github.com/ykh09242/unity-mcp/security), use it with:
 
 - A clear description of the issue
 - Steps to reproduce or a proof-of-concept
@@ -12,15 +12,14 @@ Instead, email **security@coplay.dev** with:
 - Your OS, Unity Editor version, and MCP client
 - Optional: a suggested fix
 
-We aim to acknowledge reports within **3 business days** and to share an initial assessment within **10 business days**. Critical fixes are released as patch versions on both `main` and the beta channel.
+If private reporting is unavailable, contact the maintainer through a contact method they publish on their GitHub profile before sharing sensitive details. Coplay's upstream security contact does not represent this fork.
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| latest (`main`) | Yes |
-| latest beta (`beta`) | Yes |
-| older releases | No — please upgrade |
+| current fork preview (`beta`) | Development focus; no support SLA |
+| inherited upstream tags / older commits | Upstream history; no fork support guarantee |
 
 ## Network Defaults (Safe by Default)
 
@@ -74,4 +73,4 @@ If you find a way to bypass any of these guards, that qualifies as a security vu
 
 ## Disclosure Timeline
 
-Once a fix is shipped, we publish a security advisory on the GitHub Security tab and credit the reporter (unless they prefer anonymity).
+Disclosure and reporter credit will be coordinated with the reporter when a fork fix is available. There is no established fork publication schedule.

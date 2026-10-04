@@ -18,13 +18,13 @@ Most users don't need this. Enable it when:
 
 ## One-click installer (recommended)
 
-1. Open **Window → MCP for Unity**.
+1. Open **Window → Unity MCP (ykh09242)**.
 2. Scroll to the **Runtime Code Execution (Roslyn)** section in the Scripts / Validation tab.
 3. Click **Install Roslyn DLLs**.
 
 The installer downloads the required NuGet packages, places the DLLs in `Assets/Plugins/Roslyn/`, and adds `USE_ROSLYN` to Scripting Define Symbols.
 
-You can also trigger it from the menu: **Window → MCP for Unity → Install Roslyn DLLs**.
+You can also trigger it from the menu: **Window → Unity MCP (ykh09242) → Install Roslyn DLLs**.
 
 ## Manual install (if the installer isn't available)
 

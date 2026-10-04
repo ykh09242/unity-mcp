@@ -6,7 +6,7 @@ It covers:
 
 - **Typical JSON-file clients** (Cursor, VSCode GitHub Copilot, VSCode Insiders, GitHub Copilot CLI, Windsurf, Kiro, Trae, Antigravity 2.0, Antigravity IDE, etc.).
 - **Special clients** like **Claude CLI**, **Codex**, and **OpenClaw** that require custom logic.
-- **How to add a new configurator class** so it shows up automatically in the MCP for Unity window.
+- **How to add a new configurator class** so it shows up automatically in the Unity MCP (ykh09242) window.
 
 ## Quick example: JSON-file configurator
 
@@ -250,7 +250,7 @@ Only override these methods if your client has constraints that cannot be expres
 
 After adding your configurator class:
 
-1. Open Unity and the **MCP for Unity** window.
+1. Open Unity and the **Unity MCP (ykh09242)** window.
 2. Your client should appear in the list, sorted by display name (`McpClient.name`).
 3. Use **Check Status** to verify:
    - Missing config files show as `Not Configured`.
@@ -297,4 +297,4 @@ Use this only if the client exposes an official CLI for managing MCP servers.
 - **Special cases** like Codex (TOML) and Claude Code (CLI) have dedicated base classes.
 - **No manual registration** is needed: `McpClientRegistry` auto-discovers all configurators with a public parameterless constructor.
 
-Following these patterns keeps all MCP client integrations consistent and lets users configure everything from the MCP for Unity window with minimal friction.
+Following these patterns keeps all MCP client integrations consistent and lets users configure everything from the Unity MCP (ykh09242) window with minimal friction.

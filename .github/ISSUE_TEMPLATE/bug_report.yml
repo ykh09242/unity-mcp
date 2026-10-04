@@ -9,8 +9,8 @@ body:
         Thanks for taking the time to file a bug. The more specific you can be, the faster we can help.
 
         **Before filing:**
-        - Search [existing issues](https://github.com/CoplayDev/unity-mcp/issues?q=is%3Aissue) to avoid duplicates
-        - Check the [troubleshooting docs](https://coplaydev.github.io/unity-mcp/guides/troubleshooting) and [setup wiki](https://github.com/CoplayDev/unity-mcp/wiki)
+        - Search [existing issues](https://github.com/ykh09242/unity-mcp/issues?q=is%3Aissue) to avoid duplicates
+        - Check the [troubleshooting docs](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/guides/troubleshooting.md) and [fork installation guide](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/getting-started/install.md)
 
   - type: textarea
     id: what-happened
@@ -27,7 +27,7 @@ body:
       label: Reproduction steps
       description: Numbered steps. Include the exact prompt or command if relevant.
       placeholder: |
-        1. Open Window > MCP for Unity
+        1. Open Window > Unity MCP (ykh09242)
         2. Click Start Server
         3. In Claude Desktop, prompt: "create a red cube"
         4. Observe error in console: ...
@@ -45,8 +45,8 @@ body:
   - type: input
     id: package-version
     attributes:
-      label: MCP for Unity package version
-      description: Found under Window > Package Manager → MCP for Unity.
+      label: Unity MCP (ykh09242) package version
+      description: Found under Window > Package Manager. Include the Git commit resolved in Packages/packages-lock.json.
       placeholder: "9.6.3"
     validations:
       required: true
@@ -55,7 +55,7 @@ body:
     id: server-version
     attributes:
       label: Python server version
-      description: Run `uv pip show mcpforunityserver` or check the bundled wheel.
+      description: Provide the Git source/commit from the Unity package's mcpServerSource field and the ykh09242-unity-mcp-server version shown in your uv environment.
       placeholder: "9.6.3"
     validations:
       required: false

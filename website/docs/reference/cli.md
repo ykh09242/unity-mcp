@@ -8,19 +8,21 @@ description: The mcp-for-unity command-line interface — invocation, global fla
 
 # CLI Reference
 
+Replace `<mcpServerSource>` in the examples with the immutable Git URL from the installed Unity package's `package.json`. See [fork installation](/getting-started/install); this fork is not installed from PyPI.
+
 The `mcp-for-unity` CLI is a developer-facing terminal for the same Unity automations the MCP tools expose. Both invoke the same C# `HandleCommand` methods on the Unity side — see [Three-Layer Python Design](/architecture/python-layers) for why both layers exist.
 
 ## Invocation
 
 ```bash
 # Run via uvx (no install)
-uvx --from mcpforunityserver mcp-for-unity <command> [args]
+uvx --from "<mcpServerSource>" mcp-for-unity <command> [args]
 
 # Run from a Server checkout
 cd Server && uv run mcp-for-unity <command> [args]
 
 # Run via the dedicated CLI entry point (alias)
-uvx --from mcpforunityserver unity-mcp <command> [args]
+uvx --from "<mcpServerSource>" unity-mcp <command> [args]
 ```
 
 ## How it talks to Unity
@@ -93,4 +95,4 @@ See [CLI Examples](/guides/cli-examples) for end-to-end walkthroughs and the [CL
 
 ## Source
 
-CLI command definitions: [`Server/src/cli/commands/`](https://github.com/CoplayDev/unity-mcp/tree/beta/Server/src/cli/commands). Entry point: [`Server/src/cli/main.py`](https://github.com/CoplayDev/unity-mcp/blob/beta/Server/src/cli/main.py).
+CLI command definitions: [`Server/src/cli/commands/`](https://github.com/ykh09242/unity-mcp/tree/beta/Server/src/cli/commands). Entry point: [`Server/src/cli/main.py`](https://github.com/ykh09242/unity-mcp/blob/beta/Server/src/cli/main.py).

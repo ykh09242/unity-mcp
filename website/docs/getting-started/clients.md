@@ -53,4 +53,4 @@ Everything else just connects on next launch.
 
 ## When you update the package
 
-Run **Window → MCP for Unity → Configure All Detected Clients** any time. It's safe to re-run — the configurator writes idempotently.
+Run **Window → Unity MCP (ykh09242) → Configure All Detected Clients** any time. It's safe to re-run — the configurator writes idempotently.

@@ -8,7 +8,7 @@ genuine provider keys and an interactive Editor before shipping.
 
 - [ ] A licensed Unity Editor with the package installed and the bridge connected.
 - [ ] Enable the group: `manage_tools` → enable `asset_gen` (it is off by default).
-- [ ] Open **Window → MCP for Unity → Asset Gen** tab to enter provider keys
+- [ ] Open **Window → Unity MCP (ykh09242) → Asset Gen** tab to enter provider keys
       (stored in the OS secure store — Keychain / Windows Credential Manager / libsecret).
 
 ## Tripo (default 3D, text→3D)

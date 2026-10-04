@@ -8,7 +8,7 @@ description: Add MCP for Unity to your Unity project and connect an MCP client.
 
 # Install
 
-Three install paths are supported. Pick one. **Git URL** is the fastest if you just want to try it.
+Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp. Install the Unity package from this fork and use its pinned Git server source. No fork Asset Store, OpenUPM, or PyPI distribution is advertised.
 
 ## Prerequisites
 
@@ -16,33 +16,19 @@ Three install paths are supported. Pick one. **Git URL** is the fastest if you j
 - **Python 3.10+** with [`uv`](https://docs.astral.sh/uv/getting-started/installation/) — the setup wizard guides you through both if missing
 - **An MCP client** — [Claude Desktop](https://claude.ai/download), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Cursor](https://www.cursor.com/), [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli), [Windsurf](https://windsurf.com/), [Cline](https://cline.bot/), [OpenClaw](https://openclaw.ai/), and more
 
-## Option 1 — Git URL (fastest)
+## Git URL
 
 This path needs `git` on your PATH (the Package Manager runs it). If it reports `Error when executing git command`, see [troubleshooting](../guides/troubleshooting.md#package-manager-error-when-executing-git-command--not-in-a-git-directory).
 
 In Unity, open **Window → Package Manager**, click the **`+`** button, choose **Add package from git URL...**, and paste:
 
 ```text
-https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta
 ```
 
-For the latest beta features, use the `beta` branch:
+`beta` is a moving preview. Replace `#beta` with a full commit SHA or a verified fork release tag to pin the Unity package. Inherited upstream release tags are upstream history, not fork releases. The UPM name is `com.ykh09242.unity-mcp`.
 
-```text
-https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta
-```
-
-## Option 2 — Unity Asset Store
-
-1. Visit [MCP for Unity on the Asset Store](https://assetstore.unity.com/packages/tools/generative-ai/mcp-for-unity-ai-driven-development-329908).
-2. Click **Add to My Assets**.
-3. Import via **Window → Package Manager → My Assets**.
-
-## Option 3 — OpenUPM
-
-```bash
-openupm add com.coplaydev.unity-mcp
-```
+The Unity package's `mcpServerSource` field in [`MCPForUnity/package.json`](https://github.com/ykh09242/unity-mcp/blob/beta/MCPForUnity/package.json) specifies the immutable Git URL for the matching Python distribution, `ykh09242-unity-mcp-server`. Use that value for `uvx --from`; executable names remain `mcp-for-unity` and `unity-mcp`. See the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md).
 
 ## Start the server and connect
 
@@ -52,7 +38,7 @@ After import, MCP for Unity opens a **setup wizard** automatically.
 2. Click **Done**. Once dependencies are green, a list of MCP clients detected on your machine appears.
 3. Pick the clients you want to configure and click **Configure Selected**.
 
-You can return to this UI anytime via **Window → MCP for Unity** to start/stop the server, switch transport (HTTP vs stdio), or reconfigure clients. The status panel reads `Connected` when everything is wired up.
+You can return to this UI anytime via **Window → Unity MCP (ykh09242)** to start/stop the server, switch transport (HTTP vs stdio), or reconfigure clients. The status panel reads `Connected` when everything is wired up.
 
 ### First prompt
 
@@ -75,7 +61,7 @@ Detailed per-client setup lives in the [MCP Client Configurators guide](/guides/
 
 ## Manual MCP client configuration
 
-If auto-configuration doesn't work for your client, add this to your client's MCP config file:
+If auto-configuration doesn't work for your client, add this to your client's MCP config file. In the stdio examples, replace `<mcpServerSource>` with the exact value from the installed package's `package.json` before running. For local HTTP, start the server before configuring clients; include the current launch token from its private token file.
 
 ### HTTP (default — Cursor, Windsurf, Antigravity, VS Code, Cline, etc.)
 
@@ -83,7 +69,8 @@ If auto-configuration doesn't work for your client, add this to your client's MC
 {
   "mcpServers": {
     "unityMCP": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
     }
   }
 }
@@ -96,7 +83,8 @@ If auto-configuration doesn't work for your client, add this to your client's MC
   "servers": {
     "unityMCP": {
       "type": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
     }
   }
 }
@@ -111,7 +99,7 @@ If auto-configuration doesn't work for your client, add this to your client's MC
   "mcpServers": {
     "unityMCP": {
       "command": "uvx",
-      "args": ["--from", "mcpforunityserver", "mcp-for-unity", "--transport", "stdio"]
+      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
     }
   }
 }
@@ -124,7 +112,7 @@ If auto-configuration doesn't work for your client, add this to your client's MC
   "mcpServers": {
     "unityMCP": {
       "command": "C:/Users/YOUR_USERNAME/AppData/Local/Microsoft/WinGet/Links/uvx.exe",
-      "args": ["--from", "mcpforunityserver", "mcp-for-unity", "--transport", "stdio"]
+      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
     }
   }
 }
@@ -132,10 +120,10 @@ If auto-configuration doesn't work for your client, add this to your client's MC
 
 ## Troubleshooting
 
-- **Unity Bridge not connecting** — Open **Window → MCP for Unity** and check the status panel. Restart Unity if needed.
+- **Unity Bridge not connecting** — Open **Window → Unity MCP (ykh09242)** and check the status panel. Restart Unity if needed.
 - **Server not starting** — Verify `uv --version` works in your terminal. Check the MCP for Unity log for errors.
 - **Client not connecting** — Confirm the HTTP server is running on `localhost:8080` and the URL in your client config matches.
 
-For Cursor / VS Code / Windsurf and Claude Code troubleshooting, see the [GitHub Wiki](https://github.com/CoplayDev/unity-mcp/wiki) *(migrating into this site)*.
+For runtime and client setup, see [uv setup](../guides/uv-setup.md) and [troubleshooting](../guides/troubleshooting.md).
 
-Still stuck? [Open an issue](https://github.com/CoplayDev/unity-mcp/issues) or [join Discord](https://discord.gg/y4p8KfzrN4).
+Still stuck? [Open an issue](https://github.com/ykh09242/unity-mcp/issues) for this fork.

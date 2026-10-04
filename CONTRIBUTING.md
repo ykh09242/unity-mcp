@@ -1,6 +1,6 @@
-# Contributing to MCP for Unity
+# Contributing to Unity MCP (ykh09242)
 
-Thanks for wanting to help! MCP for Unity is community-maintained and PRs of any size are welcome — bug fixes, new tools, docs improvements, tests.
+This Git-only fork is maintained by ykh09242. Contributions are welcome: bug fixes, tools, docs improvements, and tests. Original upstream authorship and MIT copyright are retained.
 
 ## Quick Start
 
@@ -9,14 +9,14 @@ Thanks for wanting to help! MCP for Unity is community-maintained and PRs of any
    ```bash
    git checkout -b feat/your-idea upstream/beta
    ```
-3. Install the dev environment (see [Dev Setup](https://coplaydev.github.io/unity-mcp/contributing/dev-setup)).
+3. Install the dev environment (see [Dev Setup](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/contributing/dev-setup.md)).
 4. Make your change with tests.
 5. Open a PR against `beta`. PRs against `main` will be redirected.
 
 ## What We Look For
 
 - **Tests for new behavior.** Python tests live in `Server/tests/`; Unity EditMode tests live in `TestProjects/UnityMCPTests/Assets/Tests/`.
-- **Domain symmetry.** New tools live in *both* `Server/src/services/tools/manage_<domain>.py` (Python MCP tool) and `MCPForUnity/Editor/Tools/Manage<Domain>.cs` (C# implementation). See [Adding a New Tool](https://coplaydev.github.io/unity-mcp/contributing/dev-setup).
+- **Domain symmetry.** New tools live in *both* `Server/src/services/tools/manage_<domain>.py` (Python MCP tool) and `MCPForUnity/Editor/Tools/Manage<Domain>.cs` (C# implementation). See [Adding a New Tool](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/contributing/dev-setup.md).
 - **Minimal abstraction.** Three similar lines of code is better than a helper that's only used once.
 - **Documentation as code.** Tool reference pages under `website/docs/reference/` are auto-generated — never hand-edit them outside the `<!-- examples:start --><!-- examples:end -->` blocks.
 
@@ -66,6 +66,5 @@ See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Be excellent to each other.
 
 ## Questions?
 
-- [GitHub Issues](https://github.com/CoplayDev/unity-mcp/issues) — bugs, features
-- [Discord](https://discord.gg/y4p8KfzrN4) — chat with maintainers and other contributors
-- [Discussions](https://github.com/CoplayDev/unity-mcp/discussions) — design ideas, broad questions
+- [GitHub Issues](https://github.com/ykh09242/unity-mcp/issues) — bugs, features
+- Use fork issues for questions and design ideas; no fork Discord or Discussions service is advertised.

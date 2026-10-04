@@ -11,7 +11,7 @@ description: Install or repair the Claude Code CLI (claude) so MCP for Unity can
 You need the Claude Code CLI (`claude`) available on your system.
 
 :::caution Switching transport requires a restart
-If you change from `http` to `stdio` (or vice versa) in the MCP for Unity window, **restart Claude Code** for it to pick up the change.
+If you change from `http` to `stdio` (or vice versa) in the Unity MCP (ykh09242) window, **restart Claude Code** for it to pick up the change.
 :::
 
 ## Recommended (native installers)
@@ -64,7 +64,7 @@ claude --version
 On macOS, Unity launched from Finder / Hub may not inherit your shell PATH. If `claude` isn't found:
 
 - **Either** launch Hub from Terminal (so PATH propagates),
-- **or** use the MCP for Unity window's **"Choose Claude Install Location"** to set the absolute path.
+- **or** use the Unity MCP (ykh09242) window's **"Choose Claude Install Location"** to set the absolute path.
 
 ## Related troubleshooting
 

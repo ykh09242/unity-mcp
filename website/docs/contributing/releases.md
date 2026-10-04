@@ -1,111 +1,23 @@
 # Releasing (Maintainers)
 
-This repo uses a two-branch flow to keep `main` stable for users:
+This fork currently distributes the Unity package and Python server from Git. The `beta` branch is a moving preview, not a stable release. No fork release tag, PyPI package publication, Asset Store listing, OpenUPM registration, pre-built Docker image, or MCPB publication is established by these docs.
 
-- `beta`: integration branch where feature PRs land
-- `main`: stable branch that should match the latest release tag
+## Prepare a pinned Git version
 
-## Release checklist
+1. Verify the server changes and commit them in the fork.
+2. Record the full immutable server commit in `MCPForUnity/package.json` as `mcpServerSource`, using the fork Git URL and `#subdirectory=Server`. Keep the root `manifest.json` server invocation's `--from` argument identical; the metadata contract test enforces this alignment.
+3. Verify the Unity package uses that source by default and that `Server/pyproject.toml` names the distribution `ykh09242-unity-mcp-server`.
+4. Run the relevant Python, Unity compile, metadata, and documentation checks.
+5. Commit the Unity package and documentation changes. Users can replace the preview URL's `#beta` with that Unity-package commit SHA for reproducibility.
 
-### 1) Promote `beta` to `main` via PR
+A server commit and a Unity-package commit need not be the same: the latter records the former's immutable source.
 
-- Create a PR with:
-  - base: `main`
-  - compare: `beta`
-- Ensure required CI checks are green.
-- Merge the PR.
+## Fork release tags
 
-Release note quality depends on how you merge:
+Only describe a tag as a fork release after the maintainer actually creates and verifies it. Preserve original MIT copyright and attribution. If publishing GitHub release notes later, explain the fork's changes and link the upstream baseline as history.
 
-- Squash-merging feature PRs into `beta` is OK.
-- Avoid squash-merging the `beta -> main` promotion PR. Prefer a merge commit (or rebase merge) so GitHub can produce better auto-generated release notes.
+Do not relabel inherited upstream tags or release bodies as fork releases. The [Upstream Release History](/releases) page and `release-metadata.json` intentionally retain CoplayDev history.
 
-### 2) Run the Release workflow (manual)
+## Legacy upstream automation
 
-- Go to **GitHub → Actions → Release**
-- Click **Run workflow**
-- Select:
-  - `patch`, `minor`, or `major`
-- Run it on branch: `main`
-
-What the workflow does:
-
-1. Creates a temporary `release/vX.Y.Z` branch with the version bump commit
-2. Opens a PR from that branch into `main`
-3. Auto-merges the PR (or waits for required checks, then merges)
-4. Creates an annotated tag `vX.Y.Z` on the merged commit
-5. Creates a GitHub Release for the tag
-6. Publishes artifacts (Docker / PyPI / MCPB)
-7. Opens a PR to merge `main` back into `beta` (so `beta` gets the bump)
-8. Auto-merges the sync PR
-9. Cleans up the temporary release branch
-
-### 3) Verify release outputs
-
-- Confirm a new tag exists: `vX.Y.Z`
-- Confirm a GitHub Release exists for the tag
-- Confirm artifacts:
-  - Docker image published with version `X.Y.Z`
-  - PyPI package published (if configured)
-  - `unity-mcp-X.Y.Z.mcpb` attached to the GitHub Release
-
-## Required repo settings
-
-### Branch protection (Rulesets)
-
-The release workflow uses PRs instead of direct pushes, so it works with strict branch protection. No bypass actors are required.
-
-Recommended ruleset for `main`:
-
-- Require PR before merging
-- Allowed merge methods: `merge`, `rebase` (no squash for promotion PRs)
-- Required approvals: `0` (so automated PRs can merge without human review)
-- Optionally require status checks
-
-Recommended ruleset for `beta`:
-
-- Require PR before merging
-- Allowed merge methods: `squash` (for feature PRs)
-- Required approvals: `0` (so the sync PR can auto-merge)
-
-### Enable auto-merge (required)
-
-The workflow uses `gh pr merge --auto` to automatically merge PRs once checks pass.
-
-To enable:
-
-1. Go to **Settings → General**
-2. Scroll to **Pull Requests**
-3. Check **Allow auto-merge**
-
-Without this setting, the workflow will fall back to direct merge attempts, which may fail if branch protection requires checks.
-
-## Failure modes and recovery
-
-### Tag already exists
-
-The workflow fails if the computed tag already exists. Pick a different bump type or investigate why a tag already exists for that version.
-
-### Bump PR fails to merge
-
-If the version bump PR cannot be merged (e.g., required checks fail):
-
-- The workflow will fail before creating a tag.
-- Fix the issue, then either:
-  - Manually merge the PR and create the tag/release, or
-  - Close the PR, delete the `release/vX.Y.Z` branch, and re-run the workflow.
-
-### Sync PR (`main -> beta`) fails
-
-If the sync PR has merge conflicts:
-
-- The workflow will fail after the release is published (artifacts are already out).
-- Manually resolve conflicts in the sync PR and merge it.
-
-### Leftover release branch
-
-If the workflow fails mid-run, a `release/vX.Y.Z` branch may remain. Delete it manually before re-running:
-
-```bash
-git push origin --delete release/vX.Y.Z
-```
+The inherited release and release-note synchronization workflows are restricted to the upstream repository. They are not a fork publication procedure. Their historical PyPI, Docker, and MCPB steps must not be used as evidence that those fork channels exist.

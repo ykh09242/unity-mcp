@@ -8,7 +8,7 @@ description: How MCP for Unity supports Unity 2021 LTS through 6.x and the CoreC
 
 # Unity API Compatibility Shims
 
-MCP for Unity targets a wide Unity version range — **2021.3 LTS → Unity 6.x → CoreCLR 6.8**. Unity has renamed, deprecated, and threatened to remove a handful of APIs across that window. Rather than sprinkle `#if UNITY_*_OR_NEWER` at every call site, MCP for Unity routes the friction through a small set of **shims** under `MCPForUnity/Runtime/Helpers/`.
+Unity MCP (ykh09242) targets a wide Unity version range — **2021.3 LTS → Unity 6.x → CoreCLR 6.8**. Unity has renamed, deprecated, and threatened to remove a handful of APIs across that window. Rather than sprinkle `#if UNITY_*_OR_NEWER` at every call site, Unity MCP (ykh09242) routes the friction through a small set of **shims** under `MCPForUnity/Runtime/Helpers/`.
 
 ## The catalog
 

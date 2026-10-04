@@ -7,10 +7,11 @@
 
 <div align="center">
 
-[English](../../README.md) <img src="../images/connector.svg" alt="↔" height="14"> [简体中文](README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [Discord](https://discord.gg/y4p8KfzrN4) <img src="../images/connector.svg" alt="↔" height="14"> [Wiki](https://coplaydev.github.io/unity-mcp/)
+[English](../../README.md) <img src="../images/connector.svg" alt="↔" height="14"> [简体中文](README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [文档](../../website/docs/getting-started/install.md)
 
-#### 由 [Aura](https://www.tryaura.dev/) 荣誉赞助并维护 —— 面向 Unreal 与 Unity 的 AI 助手。
-##### 别错过 [Godot AI](https://github.com/hi-godot/godot-ai) 🤖，MCP for Unity 团队推出的全新开源项目！
+## Unity MCP (ykh09242)
+
+由 [ykh09242](https://github.com/ykh09242) 维护的 Git-only fork，源自 [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp)。保留原始 MIT 版权、作者和论文引用。此 fork 不是 Coplay/Aura 服务，也未声明 Asset Store、OpenUPM 或 PyPI 发布。
 
 </div>
 
@@ -23,7 +24,9 @@
 ---
 
 <details>
-<summary><strong>最近更新</strong></summary>
+<summary><strong>上游发布历史</strong></summary>
+
+以下版本属于 CoplayDev 上游，不是此 fork 的发布版本。
 
 * **[v10.0.0](https://github.com/CoplayDev/unity-mcp/releases/tag/v10.0.0)**（2026-06-30）
 * **[v9.7.3](https://github.com/CoplayDev/unity-mcp/releases/tag/v9.7.3)**（2026-06-15）
@@ -31,7 +34,7 @@
 * **[v9.7.0](https://github.com/CoplayDev/unity-mcp/releases/tag/v9.7.0)**（2026-05-22）
 * **[v9.6.8](https://github.com/CoplayDev/unity-mcp/releases/tag/v9.6.8)**（2026-04-27）
 
-完整更新历史见 [发布说明](https://coplaydev.github.io/unity-mcp/releases)。
+完整上游历史见 [发布说明](../../website/docs/releases.md)。
 
 </details>
 
@@ -41,7 +44,7 @@
 
 用自然语言从任意 MCP 客户端操作 Unity 编辑器：搭场景、建 GameObject、写改 C# 脚本、调材质和着色器、跑测试、看性能、出包。47 个 MCP 工具入口，任意客户端可用，免费、MIT 开源。
 
-**[查看完整工具目录 →](https://coplaydev.github.io/unity-mcp/reference/tools/)**
+**[查看完整工具目录 →](../../website/docs/reference/tools/index.md)**
 
 ---
 
@@ -50,9 +53,11 @@
 **环境要求：** Unity **2021.3 LTS → 6.x** · Python **3.10+**（用 [`uv`](https://docs.astral.sh/uv/) 管理）。兼容**任意 MCP 客户端**——Claude Desktop 与 Claude Code、Cursor、VS Code、Windsurf、Cline、Gemini CLI 等等。
 
 1. **安装** —— 在 Unity 里打开 Package Manager，从 git URL 添加：
-   `https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main` &nbsp;_（如需固定本次发布，可用 `#v10.0.0`；也可以用 `openupm add com.coplaydev.unity-mcp`）_
-2. **配置客户端** —— `Window → MCP for Unity → Configure All Detected Clients`，一键搞定所有检测到的客户端。
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta`
+2. **配置客户端** —— `Window → Unity MCP (ykh09242) → Configure All Detected Clients`，一键搞定所有检测到的客户端。
 3. **发个提示试试** —— *"在原点放一个立方体，加个 Rigidbody。"* 立方体几秒就出现在场景里了。
+
+`beta` 是移动预览；如需可复现安装，请换成完整 commit SHA 或已核实的 fork 发布标签。不要将继承的上游标签视为 fork 发布。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
 
 <details>
 <summary><strong>手动配置</strong></summary>
@@ -60,11 +65,14 @@
 如果自动配置不生效，把下面的内容加到你的 MCP 客户端配置文件里：
 
 **HTTP（默认 —— 适用于 Claude Desktop、Cursor、Windsurf）：**
+
+For local HTTP, start the server first and replace <current launch token> with the private token file value. Reconfigure clients after each server restart.
 ```json
 {
   "mcpServers": {
     "unityMCP": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
     }
   }
 }
@@ -76,7 +84,8 @@
   "servers": {
     "unityMCP": {
       "type": "http",
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
     }
   }
 }
@@ -91,7 +100,7 @@
   "mcpServers": {
     "unityMCP": {
       "command": "uvx",
-      "args": ["--from", "mcpforunityserver", "mcp-for-unity", "--transport", "stdio"]
+      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
     }
   }
 }
@@ -103,7 +112,7 @@
   "mcpServers": {
     "unityMCP": {
       "command": "C:/Users/YOUR_USERNAME/AppData/Local/Microsoft/WinGet/Links/uvx.exe",
-      "args": ["--from", "mcpforunityserver", "mcp-for-unity", "--transport", "stdio"]
+      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
     }
   }
 }
@@ -148,22 +157,22 @@ MCP for Unity 支持同时开多个 Unity 编辑器实例。想把操作定向�
 <details>
 <summary><strong>故障排除</strong></summary>
 
-* **Unity Bridge 连不上：** 看一下 `Window > MCP for Unity` 的状态，重启 Unity
+* **Unity Bridge 连不上：** 看一下 `Window > Unity MCP (ykh09242)` 的状态，重启 Unity
 * **服务器起不来：** 确认 `uv --version` 能跑，并看看终端报错
 * **客户端连不上：** 确认 HTTP 服务在运行，且 URL 和你的配置一致
 
 **详细配置指南：**
-* [Fix Unity MCP and Cursor, VSCode & Windsurf](https://github.com/CoplayDev/unity-mcp/wiki/1.-Fix-Unity-MCP-and-Cursor,-VSCode-&-Windsurf) —— uv/Python 安装、PATH 问题
-* [Fix Unity MCP and Claude Code](https://github.com/CoplayDev/unity-mcp/wiki/2.-Fix-Unity-MCP-and-Claude-Code) —— Claude CLI 安装
-* [Common Setup Problems](https://github.com/CoplayDev/unity-mcp/wiki/3.-Common-Setup-Problems) —— macOS dyld 错误、常见问题
+* [uv/Python 安装](../../website/docs/guides/uv-setup.md)
+* [客户端配置](../../website/docs/guides/client-configurators.md)
+* [常见问题](../../website/docs/guides/troubleshooting.md)
 
-还是搞不定？[提个 Issue](https://github.com/CoplayDev/unity-mcp/issues) 或者 [来 Discord 问](https://discord.gg/y4p8KfzrN4)
+还是搞不定？[提个 fork Issue](https://github.com/ykh09242/unity-mcp/issues)。
 </details>
 
 <details>
 <summary><strong>参与贡献</strong></summary>
 
-开发环境配置见 [README-DEV.md](../development/README-DEV.md)，自定义工具见 [CUSTOM_TOOLS.md](../reference/CUSTOM_TOOLS.md)。
+开发环境配置见 [开发者指南](../development/README-DEV-zh.md)，自定义工具见 [工具指南](../../website/docs/guides/custom-tools.md)。
 
 1. Fork → 开 issue → 建分支（`feature/your-idea`）→ 改 → 提 PR
 </details>
@@ -171,22 +180,18 @@ MCP for Unity 支持同时开多个 Unity 编辑器实例。想把操作定向�
 <details>
 <summary><strong>遥测与隐私</strong></summary>
 
-匿名、注重隐私的遥测（不收集代码、项目名或任何个人数据），用 `DISABLE_TELEMETRY=true` 就能关掉。详见 [TELEMETRY.md](../reference/TELEMETRY.md)。
+此 fork 默认没有遥测目标，不会向 Coplay 发送遥测。只有明确设置有效端点并启用遥测后才会运行。`DISABLE_TELEMETRY=true` 等已有关闭开关继续生效。详见 [遥测文档](../../website/docs/architecture/telemetry.md)。
 </details>
 
 ---
 
-**许可证：** MIT —— 见 [LICENSE](../../LICENSE) | **需要帮助？** [Discord](https://discord.gg/y4p8KfzrN4) | [Issues](https://github.com/CoplayDev/unity-mcp/issues)
+**许可证：** MIT —— 见 [LICENSE](../../LICENSE) | **需要帮助？** [fork Issues](https://github.com/ykh09242/unity-mcp/issues)
 
 ---
 
-## Star 历史
-
-[![Star History Chart](https://star-history.dera.page/svg?repos=CoplayDev/unity-mcp&type=Date)](https://star-history.dera.page/#CoplayDev/unity-mcp&Date)
-
 <details>
 <summary><strong>论文引用</strong></summary>
-如果 MCP for Unity 对你的研究有帮助，欢迎引用我们！
+如果 MCP for Unity 对你的研究有帮助，请引用 Wu 和 Barnett 的原始论文。
 
 ```bibtex
 @inproceedings{10.1145/3757376.3771417,
@@ -202,12 +207,6 @@ series = {SA Technical Communications '25}
 }
 ```
 </details>
-
-## Aura 的 Unity AI 工具
-
-Aura 出品两款 Unity AI 工具：
-- **MCP for Unity** —— MIT 许可证，免费开源。
-- **Aura for Unity** —— 面向游戏开发者的高级 Unity/Unreal AI 助手。
 
 ## 免责声明
 
