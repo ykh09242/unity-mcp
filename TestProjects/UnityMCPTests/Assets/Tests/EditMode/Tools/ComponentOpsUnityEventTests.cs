@@ -193,6 +193,83 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void SetProperty_UnityEvent_InvalidCall_DoesNotResizeExistingCalls()
+        {
+            var comp = testGo.AddComponent<UnityEventTestComponent>();
+            var original = CreateEventValue(true);
+            Assert.IsTrue(ComponentOps.SetProperty(comp, "onSimpleEvent", original, out string setupError), setupError);
+
+            var invalid = CreateEventValue(false);
+            var calls = (JArray)invalid["m_PersistentCalls"]["m_Calls"];
+            calls.Add(new JObject { ["m_UnknownProperty"] = 1 });
+
+            bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", invalid, out string error);
+
+            Assert.IsFalse(ok);
+            StringAssert.Contains("m_UnknownProperty", error);
+            using var so = new SerializedObject(comp);
+            var callsProp = so.FindProperty("onSimpleEvent.m_PersistentCalls.m_Calls");
+            Assert.AreEqual(1, callsProp.arraySize, "A rejected event update must preserve its existing calls.");
+            Assert.IsTrue(callsProp.GetArrayElementAtIndex(0).FindPropertyRelative("m_Arguments.m_BoolArgument").boolValue);
+        }
+
+        [Test]
+        public void SetProperty_UnityEvent_InvalidSibling_DoesNotClearExistingCalls()
+        {
+            var comp = testGo.AddComponent<UnityEventTestComponent>();
+            Assert.IsTrue(ComponentOps.SetProperty(comp, "onSimpleEvent", CreateEventValue(true), out string setupError), setupError);
+            var invalid = new JObject
+            {
+                ["m_PersistentCalls"] = new JObject { ["m_Calls"] = new JArray() },
+                ["m_UnknownProperty"] = 1
+            };
+
+            bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", invalid, out string error);
+
+            Assert.IsFalse(ok);
+            StringAssert.Contains("m_UnknownProperty", error);
+            Assert.AreEqual(1, comp.onSimpleEvent.GetPersistentEventCount(), "A later validation error must not clear the event.");
+            Assert.AreEqual(testGo, comp.onSimpleEvent.GetPersistentTarget(0));
+        }
+
+        [TestCase("nonsense")]
+        [TestCase("")]
+        public void SetProperty_UnityEvent_InvalidBoolean_PreservesExistingArgument(string value)
+        {
+            var comp = testGo.AddComponent<UnityEventTestComponent>();
+            Assert.IsTrue(ComponentOps.SetProperty(comp, "onSimpleEvent", CreateEventValue(true), out string setupError), setupError);
+            var invalid = CreateEventValue(true);
+            invalid["m_PersistentCalls"]["m_Calls"][0]["m_Arguments"]["m_BoolArgument"] = value;
+
+            bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", invalid, out string error);
+
+            Assert.IsFalse(ok);
+            StringAssert.Contains("Expected boolean value", error);
+            using var so = new SerializedObject(comp);
+            Assert.IsTrue(so.FindProperty("onSimpleEvent.m_PersistentCalls.m_Calls")
+                .GetArrayElementAtIndex(0).FindPropertyRelative("m_Arguments.m_BoolArgument").boolValue);
+        }
+
+        private JObject CreateEventValue(bool argument)
+        {
+            return new JObject
+            {
+                ["m_PersistentCalls"] = new JObject
+                {
+                    ["m_Calls"] = new JArray(new JObject
+                    {
+                        ["m_Target"] = new JObject { ["instanceID"] = testGo.GetInstanceIDCompat() },
+                        ["m_TargetAssemblyTypeName"] = "UnityEngine.GameObject, UnityEngine",
+                        ["m_MethodName"] = "SetActive",
+                        ["m_Mode"] = 6,
+                        ["m_Arguments"] = new JObject { ["m_BoolArgument"] = argument },
+                        ["m_CallState"] = 2
+                    })
+                }
+            };
+        }
+
+        [Test]
         public void HandleCommand_EndToEnd_UnityEventWiring()
         {
             testGo.AddComponent<UnityEventTestComponent>();

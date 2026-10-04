@@ -505,8 +505,6 @@ namespace MCPForUnity.Editor.Helpers
                 if (prop.isArray && prop.propertyType != SerializedPropertyType.String && value is JArray jArray)
                 {
                     prop.arraySize = jArray.Count;
-                    prop.serializedObject.ApplyModifiedProperties();
-                    prop.serializedObject.Update();
 
                     for (int i = 0; i < jArray.Count; i++)
                     {
@@ -556,12 +554,13 @@ namespace MCPForUnity.Editor.Helpers
                         return true;
 
                     case SerializedPropertyType.Boolean:
-                        if (value == null || value.Type == JTokenType.Null)
+                        bool? boolVal = ParamCoercion.CoerceBoolNullable(value);
+                        if (!boolVal.HasValue)
                         {
                             error = "Expected boolean value.";
                             return false;
                         }
-                        prop.boolValue = ParamCoercion.CoerceBool(value, false);
+                        prop.boolValue = boolVal.Value;
                         return true;
 
                     case SerializedPropertyType.Float:
