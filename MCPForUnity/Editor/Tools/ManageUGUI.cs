@@ -180,8 +180,14 @@ namespace MCPForUnity.Editor.Tools
             CheckKeys(props, CanvasKeys);
             var canvasKeys = Keys("renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit");
             var scalerKeys = Keys("uiScaleMode referenceResolution screenMatchMode matchWidthOrHeight");
-            JObject scalerProps = Select(props, scalerKeys);
             var scaler = Find(go, Ui + "CanvasScaler");
+            if (Enabled(scaler))
+            {
+                var controlledKeys = Keys("scaleFactor referencePixelsPerUnit");
+                canvasKeys.ExceptWith(controlledKeys);
+                scalerKeys.UnionWith(controlledKeys);
+            }
+            JObject scalerProps = Select(props, scalerKeys);
             if (scalerProps.Count > 0 && scaler == null) throw new ArgumentException("Target has no CanvasScaler.");
             var cv = Prepare(typeof(Canvas), Select(props, canvasKeys), canvasKeys);
             var sv = scalerProps.Count == 0 ? new List<Assignment>() : Prepare(scaler.GetType(), scalerProps, scalerKeys);
@@ -364,7 +370,23 @@ namespace MCPForUnity.Editor.Tools
             }
             if ((props["offsetMin"] != null || props["offsetMax"] != null) && (props["sizeDelta"] != null || props["anchoredPosition"] != null))
                 throw new ArgumentException("Use offsets or sizeDelta/anchoredPosition in one request, since these properties overlap.");
+            // Offset setters derive position and size using float arithmetic. Individually
+            // finite endpoints can still overflow those serialized fields.
+            Vector2 size = rt != null ? rt.sizeDelta : stretchDefaults ? Vector2.zero : new Vector2(160, 80);
+            Vector2 position = rt != null ? rt.anchoredPosition : Vector2.zero;
+            Vector2 projectedPivot = props["pivot"] != null ? (Vector2)ConvertValue(props["pivot"], typeof(Vector2), "pivot") : rt != null ? rt.pivot : new Vector2(.5f, .5f);
+            foreach (var entry in props.Properties().Where(p => p.Name == "offsetMin" || p.Name == "offsetMax"))
+            {
+                Vector2 value = (Vector2)ConvertValue(entry.Value, typeof(Vector2), entry.Name);
+                bool isMin = entry.Name == "offsetMin";
+                Vector2 offset = value - (isMin ? position - Vector2.Scale(size, projectedPivot) : position + Vector2.Scale(size, Vector2.one - projectedPivot));
+                size += isMin ? -offset : offset;
+                position += Vector2.Scale(offset, isMin ? Vector2.one - projectedPivot : projectedPivot);
+                if (!Finite(size) || !Finite(position)) throw new ArgumentException("Offsets would overflow RectTransform position or size. Use smaller finite offsets.");
+            }
         }
+
+        private static bool Finite(Vector2 value) => !float.IsNaN(value.x) && !float.IsInfinity(value.x) && !float.IsNaN(value.y) && !float.IsInfinity(value.y);
 
         private static void ValidateTextRange(Component c, JObject props)
         {
@@ -382,8 +404,14 @@ namespace MCPForUnity.Editor.Tools
             var fitter = Find(rt.gameObject, Ui + "ContentSizeFitter");
             if (Enabled(fitter) && (Convert.ToInt32(fitter.GetType().GetProperty("horizontalFit").GetValue(fitter)) != 0 || Convert.ToInt32(fitter.GetType().GetProperty("verticalFit").GetValue(fitter)) != 0)) return true;
             if (rt.parent == null) return false;
-            var element = Find(rt.gameObject, Ui + "LayoutElement");
-            if (Enabled(element) && (bool)element.GetType().GetProperty("ignoreLayout").GetValue(element)) return false;
+            Type ignorer = UnityTypeResolver.ResolveAny(Ui + "ILayoutIgnorer");
+            if (ignorer != null)
+            {
+                var components = rt.GetComponents(ignorer);
+                // Match LayoutGroup.CalculateLayoutInputHorizontal: disabled ignorers
+                // still participate, and any false value includes the child in layout.
+                if (components.Length > 0 && components.All(c => (bool)ignorer.GetProperty("ignoreLayout").GetValue(c))) return false;
+            }
             return Enabled(Find(rt.parent.gameObject, Ui + "LayoutGroup"));
         }
 
@@ -410,7 +438,9 @@ namespace MCPForUnity.Editor.Tools
         {
             if (target == null || (target.Type != JTokenType.String && target.Type != JTokenType.Integer) || string.IsNullOrWhiteSpace(target.ToString()))
                 throw new ArgumentException("target/parent must be a scene GameObject name, hierarchy path or instance ID.");
-            string name = target.ToString();
+            string name = target is JValue scalar ? scalar.ToString(CultureInfo.InvariantCulture) : target.ToString();
+            if (target.Type == JTokenType.Integer && !int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                throw new ArgumentException("Numeric target/parent instance ID must fit a signed 32-bit integer.");
             if (int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
             {
                 var go = GameObjectLookup.FindById(id);
@@ -545,7 +575,8 @@ namespace MCPForUnity.Editor.Tools
         private static int ReadInt(JToken token, int? fallback, int min, int max, string key)
         {
             if (token == null && fallback.HasValue) return fallback.Value;
-            if (token == null || token.Type != JTokenType.Integer || !int.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) || n < min || n > max)
+            string value = token is JValue scalar ? scalar.ToString(CultureInfo.InvariantCulture) : token?.ToString();
+            if (token == null || token.Type != JTokenType.Integer || !int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) || n < min || n > max)
                 throw new ArgumentException(key + " must be an integer in " + min + ".." + max + ".");
             return n;
         }

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
@@ -92,6 +94,109 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("ambiguous", r["error"].ToString());
         }
 
+        [TestCase(2147483648L)]
+        [TestCase(-2147483649L)]
+        public void OutOfRangeIntegerTargetCannotFallBackToAnObjectName(long invalidId)
+        {
+            var go = Root();
+            go.name = invalidId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var rect = (RectTransform)go.transform;
+            Vector2 before = rect.sizeDelta;
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "set_rect", ["target"] = invalidId,
+                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) } }));
+            Failure(r);
+            Assert.That(rect.sizeDelta, Is.EqualTo(before), "An invalid numeric identity must not edit an object sharing its textual representation.");
+        }
+
+        [Test]
+        public void InRangeMissingIntegerTargetCannotFallBackToAnObjectName()
+        {
+            // 0 is Unity's null instance ID and cannot identify a loaded object.
+            var go = Root();
+            go.name = "0";
+            Vector2 before = ((RectTransform)go.transform).sizeDelta;
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "set_rect", ["target"] = 0,
+                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) } }));
+            Failure(r);
+            Assert.That(((RectTransform)go.transform).sizeDelta, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void IntegerPropertyParsingUsesProtocolCulture()
+        {
+            var go = Root(true);
+            CultureInfo previous = CultureInfo.CurrentCulture;
+            var custom = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+            custom.NumberFormat.NegativeSign = "~";
+            try
+            {
+                CultureInfo.CurrentCulture = custom;
+                var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "set_canvas", ["target"] = go.name,
+                    ["properties"] = new JObject { ["sortingOrder"] = -15 } }));
+                Success(r);
+                Assert.That(go.GetComponent<Canvas>().sortingOrder, Is.EqualTo(-15));
+            }
+            finally { CultureInfo.CurrentCulture = previous; }
+        }
+
+        [Test]
+        public void IntegerTargetParsingUsesProtocolCulture()
+        {
+            var go = Root();
+            int id = go.GetInstanceIDCompat();
+            if (id >= 0) Assert.Ignore("This case needs a negative runtime instance ID to distinguish editor/protocol notation.");
+            CultureInfo previous = CultureInfo.CurrentCulture;
+            var custom = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+            custom.NumberFormat.NegativeSign = "~";
+            try
+            {
+                CultureInfo.CurrentCulture = custom;
+                Success(Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
+                Assert.That(((RectTransform)go.transform).sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+            }
+            finally { CultureInfo.CurrentCulture = previous; }
+        }
+
+        [Test]
+        public void MixedLayoutIgnorersStillRejectDrivenRectEdits()
+        {
+            var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.VerticalLayoutGroup");
+            var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
+            if (groupType == null || elementType == null) Assert.Ignore("uGUI is not installed.");
+            var root = Root();
+            var group = root.AddComponent(groupType);
+            var child = new GameObject("Child", typeof(RectTransform));
+            child.transform.SetParent(root.transform, false);
+            elementType.GetProperty("ignoreLayout").SetValue(child.AddComponent(elementType), true);
+            elementType.GetProperty("ignoreLayout").SetValue(child.AddComponent(elementType), false);
+            groupType.GetMethod("CalculateLayoutInputHorizontal").Invoke(group, null);
+            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(group);
+            Assert.That(children.Count, Is.EqualTo(1), "Installed uGUI includes a child if any ILayoutIgnorer returns false.");
+            var r = Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(240, 90) });
+            Failure(r);
+            StringAssert.Contains("layout-driven", r["error"].ToString());
+        }
+
+        [Test]
+        public void DisabledLayoutIgnorerStillExcludesChildFromParentLayout()
+        {
+            var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.VerticalLayoutGroup");
+            var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
+            if (groupType == null || elementType == null) Assert.Ignore("uGUI is not installed.");
+            var root = Root();
+            var group = root.AddComponent(groupType);
+            var child = new GameObject("Child", typeof(RectTransform));
+            child.transform.SetParent(root.transform, false);
+            var element = child.AddComponent(elementType);
+            elementType.GetProperty("ignoreLayout").SetValue(element, true);
+            ((Behaviour)element).enabled = false;
+            groupType.GetMethod("CalculateLayoutInputHorizontal").Invoke(group, null);
+            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(group);
+            Assert.That(children.Count, Is.EqualTo(0), "Installed uGUI evaluates ignoreLayout even on disabled components.");
+            Success(Call("set_rect", child, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
+            Assert.That(((RectTransform)child.transform).sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+        }
+
         [Test]
         public void RectEditIsUndoable()
         {
@@ -106,6 +211,53 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void SameFrameEditsAndInvalidRequestPreserveSeparateUndoGroups()
+        {
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            Vector2 beforeSize = rect.sizeDelta;
+            Success(Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
+            Success(Call("set_rect", go, new JObject { ["anchoredPosition"] = new JArray(20, 30) }));
+            Failure(Call("set_rect", go, new JObject { ["pivot"] = new JArray(2, 1) }));
+            Undo.PerformUndo();
+            Assert.That(rect.anchoredPosition, Is.EqualTo(Vector2.zero));
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+            Undo.PerformUndo();
+            Assert.That(rect.sizeDelta, Is.EqualTo(beforeSize));
+        }
+
+        [Test]
+        public void RectEditsRecordPrefabOverridesAndUndoWithoutEditingAsset()
+        {
+            string path = "Assets/" + prefix + ".prefab";
+            var source = Root();
+            Vector2 beforeSize = ((RectTransform)source.transform).sizeDelta;
+            try
+            {
+                var asset = PrefabUtility.SaveAsPrefabAsset(source, path);
+                Assert.That(asset, Is.Not.Null);
+                var instance = (GameObject)PrefabUtility.InstantiatePrefab(asset);
+                roots.Add(instance);
+                var rect = (RectTransform)instance.transform;
+                Success(Call("set_rect", instance, new JObject { ["sizeDelta"] = new JArray(240, 90), ["localScale"] = new JArray(2, 2, 2) }));
+                var modifications = PrefabUtility.GetPropertyModifications(instance);
+                Assert.That(modifications, Is.Not.Null);
+                Assert.That(modifications.Any(m => m.target == asset.transform && m.propertyPath == "m_LocalScale.x" && m.value == "2"), Is.True,
+                    "Record the changed property as a prefab-instance override.");
+                Assert.That(asset.transform.localScale, Is.EqualTo(Vector3.one));
+                Assert.That(((RectTransform)asset.transform).sizeDelta, Is.EqualTo(beforeSize));
+                Undo.PerformUndo();
+                Assert.That(rect.localScale, Is.EqualTo(Vector3.one));
+                Assert.That(rect.sizeDelta, Is.EqualTo(beforeSize));
+                Assert.That(asset.transform.localScale, Is.EqualTo(Vector3.one));
+                // Persistent prefab assets cannot be edited through an instance-ID target.
+                Failure(Call("set_rect", asset, new JObject { ["localScale"] = new JArray(3, 3, 3) }));
+                Assert.That(asset.transform.localScale, Is.EqualTo(Vector3.one));
+            }
+            finally { AssetDatabase.DeleteAsset(path); }
+        }
+
+        [Test]
         public void InvalidRectPayloadDoesNotPartiallyApply()
         {
             var go = Root();
@@ -117,6 +269,20 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(rect.sizeDelta, Is.EqualTo(before));
             Failure(Call("set_rect", go, new JObject { ["anchoredPosition"] = new JArray(double.NaN, 0) }));
             Assert.That(rect.anchoredPosition, Is.EqualTo(Vector2.zero));
+        }
+
+        [Test]
+        public void FiniteOffsetsCannotOverflowSerializedRectState()
+        {
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            Vector2 beforeSize = rect.sizeDelta;
+            Vector2 beforePosition = rect.anchoredPosition;
+            var r = Call("set_rect", go, new JObject { ["offsetMin"] = new JArray(-float.MaxValue, -float.MaxValue),
+                ["offsetMax"] = new JArray(float.MaxValue, float.MaxValue) });
+            Failure(r);
+            Assert.That(rect.sizeDelta, Is.EqualTo(beforeSize));
+            Assert.That(rect.anchoredPosition, Is.EqualTo(beforePosition));
         }
 
         [Test]
@@ -215,6 +381,47 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(canvas.sortingOrder, Is.EqualTo(0));
             var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "diagnose", ["target"] = go.GetInstanceIDCompat(), ["resolutions"] = new JArray(new JObject { ["width"] = 0, ["height"] = 1080 }) }));
             Failure(r);
+        }
+
+        [Test]
+        public void CanvasScaleEditsPersistInEnabledScalerAndUndoTogether()
+        {
+            var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
+            if (type == null) Assert.Ignore("uGUI is not installed.");
+            var go = Root(true);
+            var canvas = go.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            var scaler = go.AddComponent(type);
+            type.GetProperty("uiScaleMode").SetValue(scaler, Enum.Parse(type.GetProperty("uiScaleMode").PropertyType, "ConstantPixelSize"));
+            var handle = type.GetMethod("Handle", BindingFlags.Instance | BindingFlags.NonPublic);
+            Success(Call("set_canvas", go, new JObject { ["scaleFactor"] = 2, ["referencePixelsPerUnit"] = 200 }));
+            Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(2f), "Persist the value in the component that controls the Canvas.");
+            Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(200f));
+            handle.Invoke(scaler, null);
+            Assert.That(canvas.scaleFactor, Is.EqualTo(2f));
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(200f));
+            Undo.PerformUndo();
+            handle.Invoke(scaler, null);
+            Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(1f));
+            Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
+            Assert.That(canvas.scaleFactor, Is.EqualTo(1f));
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(100f));
+        }
+
+        [Test]
+        public void CanvasScaleEditsUseCanvasWhenScalerIsDisabled()
+        {
+            var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
+            if (type == null) Assert.Ignore("uGUI is not installed.");
+            var go = Root(true);
+            var canvas = go.GetComponent<Canvas>();
+            var scaler = go.AddComponent(type);
+            ((Behaviour)scaler).enabled = false;
+            Success(Call("set_canvas", go, new JObject { ["scaleFactor"] = 2, ["referencePixelsPerUnit"] = 200 }));
+            Assert.That(canvas.scaleFactor, Is.EqualTo(2f));
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(200f));
+            Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(1f));
+            Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
         }
 
         [Test]

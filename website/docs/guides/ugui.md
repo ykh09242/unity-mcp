@@ -63,7 +63,7 @@ RectTransform keys include `anchorMin`, `anchorMax`, `pivot`, `anchoredPosition`
 
 Text properties include `text`, `fontSize`, `color`, `alignment`, `raycastTarget`, and TMP-specific `enableAutoSizing`, `fontSizeMin`, `fontSizeMax`. Existing legacy Text components accept their supported shared properties. Enum values use named strings and are case-insensitive; unsupported names are errors.
 
-Canvas properties include `renderMode`, `sortingOrder`, `overrideSorting`, `pixelPerfect`, `worldCamera`, `planeDistance`, `scaleFactor`, and `referencePixelsPerUnit`. CanvasScaler properties include `uiScaleMode`, `referenceResolution`, `screenMatchMode`, and `matchWidthOrHeight`. `worldCamera` resolves a scene camera by GameObject name/path/ID or accepts null to clear the assignment.
+Canvas properties include `renderMode`, `sortingOrder`, `overrideSorting`, `pixelPerfect`, `worldCamera`, `planeDistance`, `scaleFactor`, and `referencePixelsPerUnit`. CanvasScaler properties include `uiScaleMode`, `referenceResolution`, `screenMatchMode`, and `matchWidthOrHeight`. When an enabled CanvasScaler is present, `scaleFactor` and `referencePixelsPerUnit` update its settings; otherwise they update the Canvas directly. The scaler uses `scaleFactor` in Constant Pixel Size mode. `worldCamera` resolves a scene camera by GameObject name/path/ID or accepts null to clear the assignment.
 
 Layout groups drive child RectTransforms. Inspect and edit the controlling layout component when a manual child size is overridden after rebuilding.
 
