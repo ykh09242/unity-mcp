@@ -5,6 +5,7 @@ while the lock still recorded 10.1.0, which `uv sync --locked` rejects. These te
 the lock updater to the lock format uv actually writes for this repo, so a format change
 surfaces here rather than in a release run.
 """
+import json
 import re
 import shutil
 import sys
@@ -146,3 +147,69 @@ def test_readme_version_update_preserves_immutable_server_references(tmp_path: P
     updated = path.read_text(encoding="utf-8")
     assert all(reference in updated for reference in references)
     assert "@v10.4.0#subdirectory=Server" in updated
+
+
+@pytest.fixture
+def version_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    repo = tmp_path / "checkout"
+    pin = "git+https://github.com/ykh09242/unity-mcp.git@" + "a" * 40 + "#subdirectory=Server"
+    contents = {
+        "PACKAGE_JSON": ("MCPForUnity/package.json", json.dumps({"version": "3.2.1", "mcpServerSource": pin})),
+        "MANIFEST_JSON": ("manifest.json", json.dumps({"version": "3.2.1", "server": {"source": pin}})),
+        "PYPROJECT_TOML": ("Server/pyproject.toml", '[project]\nversion = "10.1.0"\n'),
+        "UV_LOCK": ("Server/uv.lock", SAMPLE_LOCK),
+        "SERVER_README": ("Server/README.md", "git+https://github.com/CoplayDev/unity-mcp@v10.1.0#subdirectory=Server\n"),
+    }
+    for constant, (relative, content) in contents.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        monkeypatch.setattr(update_versions, constant, path)
+    monkeypatch.setattr(update_versions, "REPO_ROOT", repo)
+    return repo
+
+
+@pytest.mark.parametrize("component", [None, "unity", "server", "all"])
+def test_component_version_updates_do_not_synchronize_unselected_packages(
+    version_checkout: Path, monkeypatch: pytest.MonkeyPatch, component: str | None,
+) -> None:
+    # Given: Unity and server have different versions and a commit-pinned source.
+    before = {path.relative_to(version_checkout): path.read_bytes() for path in version_checkout.rglob("*") if path.is_file()}
+    argv = ["update_versions.py", "--version", "4.5.6"]
+    if component is not None:
+        argv.extend(["--component", component])
+    monkeypatch.setattr(sys, "argv", argv)
+    # When: the version CLI updates the selected component (Unity by default).
+    result = update_versions.main()
+    # Then: only the selected metadata changes; pins and other component bytes survive.
+    assert result == 0
+    selected = component or "unity"
+    expected = {
+        "unity": {Path("MCPForUnity/package.json"), Path("manifest.json")},
+        "server": {Path("Server/pyproject.toml"), Path("Server/uv.lock")},
+        "all": set(before),
+    }[selected]
+    changed = {path for path, content in before.items() if (version_checkout / path).read_bytes() != content}
+    assert changed == expected
+    for relative in (Path("MCPForUnity/package.json"), Path("manifest.json")):
+        original = json.loads(before[relative])
+        updated = json.loads((version_checkout / relative).read_text(encoding="utf-8"))
+        if relative in expected:
+            original["version"] = "4.5.6"
+        assert updated == original
+    if Path("Server/uv.lock") in expected:
+        lock = (version_checkout / "Server/uv.lock").read_text(encoding="utf-8")
+        assert update_versions._UV_LOCK_SELF_VERSION.search(lock).group(2) == "4.5.6"
+        assert 'name = "click"\nversion = "8.3.1"' in lock
+
+
+def test_server_version_requires_an_explicit_value(version_checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: the server version must not be inferred from the Unity package.
+    before = {path: path.read_bytes() for path in version_checkout.rglob("*") if path.is_file()}
+    monkeypatch.setattr(sys, "argv", ["update_versions.py", "--component", "server"])
+    # When: the server update omits its version.
+    with pytest.raises(SystemExit) as result:
+        update_versions.main()
+    # Then: argument validation fails without writing either component.
+    assert result.value.code == 2
+    assert all(path.read_bytes() == content for path, content in before.items())

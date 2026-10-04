@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Update version across all project files.
+"""Update independently versioned Unity or Python distribution metadata.
 
 This script updates the version in all files that need it:
 - MCPForUnity/package.json (Unity package version)
@@ -11,18 +11,22 @@ This script updates the version in all files that need it:
 - docs/i18n/README-zh.md (fixed version examples)
 
 Usage:
-    python3 tools/update_versions.py [--dry-run] [--version VERSION]
+    python3 tools/update_versions.py [--component unity|server|all] [--dry-run] [--version VERSION]
 
 Options:
     --dry-run: Show what would be updated without making changes
     --version: Specify version to use (auto-detected from package.json if not provided)
+    --component: Update Unity (default), server, or the legacy synchronized release
 
 Examples:
-    # Update all files to match package.json version
+    # Update Unity bundle metadata to match package.json without changing the server
     python3 tools/update_versions.py
     
-    # Update all files to a specific version
-    python3 tools/update_versions.py --version 9.2.0
+    # Update the server independently; its source pin is changed only after a commit
+    python3 tools/update_versions.py --component server --version 1.0.1
+
+    # Explicitly retain the upstream synchronized release behavior
+    python3 tools/update_versions.py --component all --version 9.2.0
     
     # Dry run to see what would be updated
     python3 tools/update_versions.py --dry-run
@@ -272,7 +276,7 @@ def update_zh_readme(new_version: str, dry_run: bool = False) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Update version across all project files",
+        description="Update Unity or server versions independently",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -285,8 +289,16 @@ def main() -> int:
         "--version",
         help="Version to set (auto-detected from package.json if not provided)",
     )
+    parser.add_argument(
+        "--component",
+        choices=("unity", "server", "all"),
+        default="unity",
+        help="Metadata to update (default: unity; all preserves legacy synchronization)",
+    )
 
     args = parser.parse_args()
+    if args.component == "server" and not args.version:
+        parser.error("--component server requires --version; it cannot inherit the Unity version")
 
     try:
         # Determine version
@@ -297,26 +309,23 @@ def main() -> int:
             version = load_package_version()
             print(f"Auto-detected version from package.json: {version}")
 
-        # Update all files
+        unity_updates = [
+            ("MCPForUnity/package.json", update_package_json),
+            ("manifest.json", update_manifest_json),
+        ]
+        server_updates = [
+            ("Server/pyproject.toml", update_pyproject_toml),
+            ("Server/uv.lock", update_uv_lock),
+        ]
+        updaters = {
+            "unity": unity_updates,
+            "server": server_updates,
+            "all": unity_updates + server_updates + [("Server/README.md", update_server_readme)],
+        }[args.component]
         updates_made = []
-
-        # Always update package.json if a version is specified
-        if args.version:
-            if update_package_json(version, args.dry_run):
-                updates_made.append("MCPForUnity/package.json")
-
-        if update_manifest_json(version, args.dry_run):
-            updates_made.append("manifest.json")
-
-        if update_pyproject_toml(version, args.dry_run):
-            updates_made.append("Server/pyproject.toml")
-
-        if update_uv_lock(version, args.dry_run):
-            updates_made.append("Server/uv.lock")
-
-        if update_server_readme(version, args.dry_run):
-            updates_made.append("Server/README.md")
-
+        for path, updater in updaters:
+            if updater(version, args.dry_run):
+                updates_made.append(path)
 
         # Summary
         if args.dry_run:

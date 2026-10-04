@@ -222,7 +222,7 @@ jobs:
           set -euo pipefail
 
           echo "Updating all version references to $NEW_VERSION"
-          python3 tools/update_versions.py --version "$NEW_VERSION"
+          python3 tools/update_versions.py --component all --version "$NEW_VERSION"
 
       - name: Commit version bump to a temporary branch
         id: bump_branch
