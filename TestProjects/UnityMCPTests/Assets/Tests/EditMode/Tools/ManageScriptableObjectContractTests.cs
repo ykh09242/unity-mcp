@@ -185,6 +185,54 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(string.IsNullOrEmpty(_asset.textValue));
         }
 
+        [TestCase("1.2345678901234567", false)]
+        [TestCase("16777217", false)]
+        [TestCase("1e100", false)]
+        [TestCase("1.2345678901234567", true)]
+        [TestCase("1e100", true)]
+        public void DoubleField_PreservesPrecisionAndRange(string number, bool asString)
+        {
+            using var serialized = new SerializedObject(_asset);
+            var property = serialized.FindProperty("doubleValue");
+            Assert.AreEqual(SerializedPropertyType.Float, property.propertyType);
+            Assert.AreEqual("double", property.type);
+            JToken value = asString ? new JValue(number) : JToken.Parse(number);
+            JObject response = Modify(new JObject { ["path"] = "doubleValue", ["value"] = value });
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            double expected = double.Parse(number, System.Globalization.CultureInfo.InvariantCulture);
+            Assert.AreEqual(expected, _asset.doubleValue);
+            serialized.Update();
+            Assert.AreEqual(expected, serialized.FindProperty("doubleValue").doubleValue);
+        }
+
+        [TestCase("1.25", false)]
+        [TestCase("0", false)]
+        [TestCase("-2.5", false)]
+        [TestCase("1.25", true)]
+        [TestCase("0", true)]
+        [TestCase("-2.5", true)]
+        public void FloatField_PreservesExistingNumericAndStringInputs(string number, bool asString)
+        {
+            float expected = float.Parse(number, System.Globalization.CultureInfo.InvariantCulture);
+            JToken value = asString ? new JValue(number) : JToken.Parse(number);
+            JObject response = Modify(new JObject { ["path"] = "floatValue", ["value"] = value });
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            Assert.AreEqual(expected, _asset.floatValue);
+        }
+
+        [TestCase("null")]
+        [TestCase("\"invalid\"")]
+        [TestCase("\"NaN\"")]
+        [TestCase("true")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        public void MalformedDoubleValues_DoNotWrite(string encoded)
+        {
+            JObject response = Modify(new JObject { ["path"] = "doubleValue", ["value"] = JToken.Parse(encoded) });
+            Assert.IsFalse((bool)response["data"]["results"][0]["ok"], response.ToString());
+            Assert.AreEqual(7, _asset.doubleValue);
+        }
+
         private JObject ModifyMany(JArray patches, bool dryRun = false)
             => JObject.FromObject(ManageScriptableObject.HandleCommand(new JObject
             {

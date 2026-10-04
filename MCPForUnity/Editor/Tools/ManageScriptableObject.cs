@@ -1383,6 +1383,25 @@ namespace MCPForUnity.Editor.Tools
                         return true;
 
                     case SerializedPropertyType.Float:
+                        if (prop.type == "double")
+                        {
+                            double doubleVal = double.NaN;
+                            if (valueToken?.Type == JTokenType.Float || valueToken?.Type == JTokenType.Integer)
+                                doubleVal = valueToken.Value<double>();
+                            else if (valueToken?.Type == JTokenType.String)
+                            {
+                                if (!double.TryParse(valueToken.ToString(), System.Globalization.NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture, out doubleVal))
+                                {
+                                    message = "Expected double value.";
+                                    return false;
+                                }
+                            }
+                            if (double.IsNaN(doubleVal)) { message = "Expected double value."; return false; }
+                            prop.doubleValue = doubleVal;
+                            message = "Set double.";
+                            return true;
+                        }
                         // Use ParamCoercion for robust float parsing
                         float floatVal = ParamCoercion.CoerceFloat(valueToken, float.NaN);
                         if (float.IsNaN(floatVal))
