@@ -1,14 +1,15 @@
-# Manual Verify — blender-to-unity
+# Optional Live Handoff Verification
 
-Run against a live Blender (BlenderMCP) + Unity (MCP for Unity) pair.
+Use this checklist only for a user-authorized live Blender/Unity handoff. Static skill validation does not execute these steps or prove fidelity.
 
-- [ ] A cube/model exists in Blender (`get_scene_info` shows it).
-- [ ] FBX export writes a non-empty file to the temp path (printed path exists, size > 0).
-- [ ] `import_model_file` returns `success: true` with `asset_path` under `Assets/` and a non-empty `asset_guid`.
-- [ ] The imported model appears in the Project window at `asset_path`.
-- [ ] The model is instantiated in the open scene and visible in a `manage_camera` screenshot.
-- [ ] Scale: after the Step 4 measure-bounds-then-`localScale` routine, the placed model's largest
-      world dimension ≈ the target size (Blender FBX imports ~100× too large until normalized).
-- [ ] glTF path: with glTFast installed, a `.glb` export imports successfully; without it,
-      the error names glTFast/the Dependencies tab (and FBX still works).
-- [ ] No API keys or file bytes appear in any bridge payload (handoff is filesystem-only).
+- Confirm the intended Blender objects and Unity project/scene; no arbitrary selection or scene replacement.
+- Confirm the hosts share the verified filesystem, or complete the specifically authorized transfer.
+- Export a nonempty model file to an unlinked path inside the target Unity Assets folder without overwriting an unrelated file.
+- Confirm the visible import tool/group and its current schema; no hidden-handler workaround.
+- Confirm import success, returned Assets-relative path/GUID and required texture/animation subassets.
+- Instantiate the returned asset in the requested scene and retain its ID.
+- If a size was requested, compare measured world bounds before/after scaling, rather than assuming a fixed unit correction.
+- For GLB, verify glTFast capability; missing support requires a format choice or a separate installation request.
+- Check materials, normals, rig/morph data and clips relevant to this particular model. Playback verification is separate from import success.
+- Inspect a relevant screenshot and console; report unavailable capture/runtime checks honestly.
+- No credentials or model-file bytes should be placed in the import MCP payload; it carries a target-host file path.

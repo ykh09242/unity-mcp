@@ -1,83 +1,58 @@
 ---
 name: mcp-source
-description: Switch MCP for Unity package source in connected Unity projects. Use /mcp-source [main|beta|branch|local] to swap between upstream releases, your remote branch, or local dev checkout.
+description: Change the Unity MCP fork's UPM source in a user-selected Unity project, including pinned Git revisions, development branches or a local checkout. Use for package-source switches, not general package installation.
 ---
 
-# Switch MCP for Unity Package Source
+# Switch Unity MCP Package Source
 
-You are switching the `com.coplaydev.unity-mcp` package source in one or more Unity projects.
+Change only the requested project's `Packages/manifest.json` entry for `com.ykh09242.unity-mcp`. This is the Git-distributed **Unity MCP (ykh09242)** fork. It is not the upstream `com.coplaydev.unity-mcp` package, even though assemblies and asset GUIDs remain compatible.
 
-## allowed-tools
+## Resolve The Request And Project
 
-Bash, Read, Edit, ReadMcpResourceTool, ListMcpResourcesTool
+Interpret supplied arguments in the client's supported invocation format; `main`, `beta`, `branch`, `local` and an explicit tag/full SHA are source choices, not permission to update every connected project. If the source or target project is unclear, ask only for that missing choice.
 
-## Instructions
+For a connected Editor, discover the available resource reader and `mcpforunity://instances`, then read `mcpforunity://project/info` for the selected instance. Its `data.projectRoot` identifies the project. Use per-request targeting or a verified stateful session default; do not assume a prior selection persists in a sessionless client.
 
-### 1. Parse arguments
+For a repository-only request, use the user-named project or a bounded search within the requested workspace. Do not search or edit unrelated projects. Multiple matches require selection, not automatic bulk modification. A remote Editor's path does not establish local access; use its authorized host workflow or report the limitation.
 
-The user's argument is: `$ARGUMENTS`
+## Choose The Dependency
 
-Valid values: `main`, `beta`, `branch`, `local`, or empty.
+| Choice | Dependency value | Meaning |
+|---|---|---|
+| Initial stable release | `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0` | Published independent fork release |
+| `beta` | `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta` | Authoritative development/default branch, floating |
+| `main` | `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#main` | Explicit branch choice; inherited upstream content, not the fork's stable channel |
+| Explicit tag/SHA | Same fork URL with the user's verified revision after `#` | Prefer a full immutable commit for reproducibility |
+| `branch` | Verified remote URL with `?path=/MCPForUnity#<branch>` | Existing remote development branch; do not publish/create it implicitly |
+| `local` | `file:<absolute-checkout>/MCPForUnity` | Local package checkout, not `Server/` |
 
-If empty or not one of the four valid values, ask the user to choose:
-- **main** — upstream main branch (stable releases)
-- **beta** — upstream beta branch (pre-release)
-- **branch** — your current remote branch (for testing a PR)
-- **local** — local file reference to your checkout (for live dev iteration)
+For `branch` or `local`, read the selected checkout's Git root/ref/origin and `MCPForUnity/package.json`. Read-only commands such as `git rev-parse --show-toplevel`, `git branch --show-current` and `git remote get-url origin` can establish context. A detached HEAD is not a branch; ask for a revision rather than inventing one. Normalize a GitHub SSH origin only when forming an HTTPS Git URL, preserving its owner/repository.
 
-### 2. Detect repo context
+Check that the selected revision/checkout actually declares the expected UPM identity before switching when its metadata is available. In particular, inherited `main` may declare the upstream identity and cannot be assumed compatible with the new dependency key. Stop and explain a known mismatch; if remote metadata cannot be verified, disclose that uncertainty rather than asserting compatibility.
 
-Run these git commands from the current working directory to find the unity-mcp repo:
+## Apply A Scoped Manifest Edit
 
-```bash
-git rev-parse --show-toplevel    # → repo_root
-git rev-parse --abbrev-ref HEAD  # → branch_name
-git remote get-url origin        # → origin_url
+Stable fork example, showing only the relevant dependency:
+
+```json
+{"dependencies":{"com.ykh09242.unity-mcp":"https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0"}}
 ```
 
-Convert SSH origins to HTTPS: if `origin_url` starts with `git@github.com:`, transform it to `https://github.com/{owner}/{repo}.git`.
+Read the manifest as JSON and preserve all unrelated dependency/registry settings. If the fork entry already exists, change its value only. If migrating from upstream at the user's request, remove `com.coplaydev.unity-mcp` and add the fork entry together: both cannot be co-installed because assembly names/GUIDs are retained. An unexpected existing package/source needs clarification, not silent adoption.
 
-### 3. Discover target Unity projects
+For that upstream-to-fork migration, also inspect an existing `testables` array. Replace
+upstream Unity MCP entries with `com.ykh09242.unity-mcp`, keeping unrelated entries and
+their order; collapse duplicate Unity MCP entries. Do not create `testables` when absent.
+For example, this migration preserves the unrelated dependency and testable:
 
-Try two approaches to find `Packages/manifest.json` files to update:
-
-**Approach A — MCP resources (preferred):**
-Read `mcpforunity://project/info` for each connected Unity instance (use `ListMcpResourcesTool` to find available instances). Extract `projectRoot` and use `{projectRoot}/Packages/manifest.json`.
-
-**Approach B — filesystem fallback:**
-If no MCP instances are connected, search upward from the current working directory for `Packages/manifest.json` files using Bash:
-```bash
-find "$(pwd)" -maxdepth 3 -name "manifest.json" -path "*/Packages/manifest.json" 2>/dev/null
+```json
+{"before":{"dependencies":{"com.coplaydev.unity-mcp":"https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta","com.example.game":"file:../Game"},"testables":["com.example.game","com.coplaydev.unity-mcp","com.ykh09242.unity-mcp"]},"after":{"dependencies":{"com.ykh09242.unity-mcp":"https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0","com.example.game":"file:../Game"},"testables":["com.example.game","com.ykh09242.unity-mcp"]}}
 ```
 
-If multiple manifests are found, update all of them (confirming with the user first).
+Use a native structured/file edit that preserves valid JSON and the user's formatting where practical. Do not hand-edit `packages-lock.json`, package cache contents or ProjectSettings as part of this source switch. A local path must point to the package folder and be accessible to the Unity host; use the platform's UPM file-path form.
 
-### 4. Build the package URL
+The Unity package's `mcpServerSource` independently pins Server to a full Git SHA. Switching the UPM entry does not authorize editing that field, replacing an intentional development override or falling back to PyPI.
 
-Based on the user's selection, construct the dependency value:
+## Verify And Report
 
-| Selection | URL |
-|-----------|-----|
-| `main`    | `https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main` |
-| `beta`    | `https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta` |
-| `branch`  | `{origin_https}?path=/MCPForUnity#{branch_name}` |
-| `local`   | `file:{repo_root}/MCPForUnity` |
-
-For `branch`: use the HTTPS-normalized origin URL and current git branch name.
-For `local`: use the absolute path to the repo root with `file:` prefix (no `//`), e.g. `file:/Users/davidsarno/unity-mcp/MCPForUnity`.
-
-### 5. Update each manifest
-
-For each discovered `manifest.json`:
-
-1. Read the file with the Read tool
-2. Find the `"com.coplaydev.unity-mcp"` dependency line
-3. Use the Edit tool to replace the old value with the new URL
-4. Report what was changed: old value → new value, file path
-
-### 6. Report results
-
-After updating, tell the user:
-- Which manifests were updated
-- The old and new package source values
-- Remind them: "Unity will re-resolve the package automatically. If it doesn't, open Package Manager and click Refresh."
+Reread the manifest, confirm valid JSON and only the intended dependency/source and conditional Unity MCP `testables` migration, then report old/new values and exact project path. A manifest edit is not proof of a completed Unity package resolution. If the Editor is available within the request, inspect Package Manager/installed metadata and console after resolution; otherwise report that check as pending. Do not launch Unity, refresh unrelated projects or retry a failed resolution by changing revisions without authorization.

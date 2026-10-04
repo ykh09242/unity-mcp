@@ -1,134 +1,83 @@
 ---
 name: blender-to-unity
-description: Hand off a model from Blender (via BlenderMCP) into Unity (via MCP for Unity) — export the current Blender model, import it through import_model_file, and place it in the open scene. Use when the user has BlenderMCP and MCP for Unity both connected and wants to bring a Blender model into Unity. Does NOT drive Blender's own generators; BlenderMCP owns how the model got into Blender.
+description: Export an existing Blender model into a selected Unity project through Unity's Blender bridge or separate connected Blender/Unity tools. Use for model handoff, not model generation or automatic package installation.
 ---
 
-# Blender → Unity Model Handoff
+# Blender To Unity Handoff
 
-Bring whatever model is currently in Blender into the open Unity scene. The seam is the
-local filesystem: Blender exports a file, Unity imports it. The two servers never talk
-directly.
+Blender writes an interchange file; Unity reads it from its own filesystem. Discover the tools actually exposed by both clients rather than assuming `mcp__blender__*` bindings. This skill does not create a model merely because the Blender scene is empty.
 
-## Preconditions
-- Both `mcp__blender__*` tools and MCP for Unity tools are connected.
-- A model exists in the Blender scene (confirm with `mcp__blender__get_scene_info` /
-  `mcp__blender__get_object_info`). If empty, stop and tell the user — this skill does not generate models.
-- **`import_model_file` is in the `asset_gen` tool group, which is off by default** (only `core`
-  loads). Enable it first with `manage_tools` (enable the `asset_gen` group), **or** call the C#
-  handler straight through `batch_execute` —
-  `{"tool":"import_model_file","params":{"sourcePath":...,"name":...,"outputFolder":...}}` (camelCase)
-  — which dispatches by name regardless of group gating.
+## Choose The Available Route
 
-## Steps
-1. **Resolve the Unity project path.** Read `mcpforunity://editor/state` for the project
-   root (the editor dataPath's parent). Decide the export format:
-   - **GLB (glTFast) when the model has a rig, animation, PBR (metallic/roughness), emission,
-     or transparency** — glTFast carries all of these automatically, no post-processing
-     (see [references/bridge-fidelity.md](references/bridge-fidelity.md)). Multi-material zones
-     survive either format, so they alone don't force GLB.
-   - **FBX otherwise** — when glTFast isn't installed, the model is plain geometry, or you
-     specifically need the built-in importer's humanoid-avatar pipeline. FBX drops emission/metallic
-     (Step 5 restores emission) and surfaces animation only with `animation_type` set (Step 3).
-2. **Export from Blender to a temp path** via `mcp__blender__execute_blender_code`:
-   ```python
-   import bpy, os, tempfile
-   out = os.path.join(tempfile.gettempdir(), "blender_to_unity.fbx")
-   # Export the selection if any, else the whole scene:
-   bpy.ops.export_scene.fbx(filepath=out, use_selection=bool(bpy.context.selected_objects),
-                            apply_unit_scale=True, bake_space_transform=True)
-   print(out)
-   ```
-   (glTF branch: `out_glb = os.path.join(tempfile.gettempdir(), "blender_to_unity.glb")`, then
-   `bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_active_scene=True)`
-   — its default `use_active_scene=False` can silently export a *different* open scene.)
-3. **Import into Unity** with `import_model_file`:
-   `import_model_file(source_path=<temp path>, name=<asset name>, target_size=<final size in meters>)`.
-   For a **rigged/animated FBX**, also pass `animation_type="generic"` (or `"humanoid"`; `"legacy"`
-   targets the old Animation-component system) — the importer defaults to `"none"`, which
-   deliberately imports the mesh with **zero animation clips**. GLB ignores this (glTFast imports
-   animation itself), so it's an FBX-only knob.
-   It returns `{ asset_path, asset_guid }`. Pass `target_size` as the intended final size, but treat
-   it only as a hint: it rescales at import solely when the project's **Auto-normalize** pref is on,
-   and even then is unreliable for Blender FBX (see the **Scale** note). Step 4 does the reliable
-   normalization.
-4. **Place it in the scene, normalized to size.** Ensure the scene has a camera + directional
-   light (`manage_scene` / `manage_gameobject`). Instantiate the model at the chosen position via
-   `manage_gameobject(action="create", prefab_path=<asset_path>, name=<asset name>, position=[x,y,z])`.
-   Then normalize its size deterministically — Blender FBX commonly imports ~100× too large — by
-   measuring the placed model's world bounds and scaling so its largest dimension equals your target
-   size. Run via `execute_code` (substitute your object name and target meters):
-   ```csharp
-   var go = GameObject.Find("<asset name>");
-   var rs = go.GetComponentsInChildren<Renderer>();
-   var b = rs[0].bounds; for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds);
-   float maxDim = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
-   float target = 2f; // intended size in meters
-   if (maxDim > 0.0001f) go.transform.localScale *= target / maxDim;
-   ```
-5. **Restore emission FBX dropped (FBX path).** Blender scenes commonly store their color/glow
-   in *material emission* (and other Principled-node inputs). FBX carries base/diffuse color but
-   **not emission**, so neon / "Tron" scenes import as dark bodies with black accents. If the
-   import looks flat vs. Blender, restore it:
-   a. Dump the emissive materials from Blender via `execute_blender_code`:
-      ```python
-      import bpy, json
-      out = {}
-      for m in bpy.data.materials:
-          if not (m.use_nodes and m.node_tree): continue
-          col, s = (0, 0, 0), 0.0
-          p = next((n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
-          es = next((k for k in ('Emission Color', 'Emission') if p and k in p.inputs), None)  # 4.x / 3.x name
-          if es:
-              col = tuple(p.inputs[es].default_value)[:3]
-              s = float(p.inputs['Emission Strength'].default_value)
-          e = next((n for n in m.node_tree.nodes if n.type == 'EMISSION'), None)
-          if e and s == 0:
-              col = tuple(e.inputs['Color'].default_value)[:3]; s = float(e.inputs['Strength'].default_value)
-          if s > 0 and sum(col) > 0.01:
-              out[m.name] = [round(col[0], 3), round(col[1], 3), round(col[2], 3), round(s, 3)]
-      print(json.dumps(out))
-      ```
-   b. In Unity (`execute_code`): extract the FBX's materials so they're editable
-      (`AssetDatabase.ExtractAsset` per `Material`, then `ImportAsset(fbx, ForceUpdate)`), then for
-      each dumped name set `_EmissionColor = color * Mathf.Clamp(strength*0.45f, 1.5f, 5f)`,
-      `EnableKeyword("_EMISSION")`, and `globalIlluminationFlags = RealtimeEmissive`. Match names
-      **case-insensitively** — FBX mangles case and can split one material into variants
-      (`EdgeCyan` → `EdgeCyan` + `EDGE_CYAN`); set every match. Add a global Bloom volume and enable
-      the camera's `renderPostProcessing` so the emission actually glows.
-6. **Verify** with `manage_camera(action="screenshot", include_image=true)` and report the
-   asset path + a screenshot.
+- If Unity advertises `blender_bridge`, it can talk directly to a running BlenderMCP addon
+  socket configured in Unity. A separate client-side BlenderMCP server is not required.
+  Read [unity-bridge.md](references/unity-bridge.md) for inspection/import/placement and
+  optional finishing controls. Do not require a second MCP connection or ask the user to
+  manually export a file when this existing route meets the request.
+- Otherwise, use the separate export/import workflow below when both the Blender export
+  capability and Unity's `import_model_file` are actually available.
 
-## Notes
-- **Scale.** Models from Blender almost always arrive at the wrong scale — its FBX unit handling
-  makes them land ~100× too large in Unity. `import_model_file`'s `target_size` only rescales at
-  import when the project's Auto-normalize pref is enabled, and its importer-level normalization is
-  unreliable for Blender FBX (it can over- or under-shoot, e.g. a `target_size=2` model measured 200 m).
-  The robust fix is the Step 4 measure-bounds-then-set-`localScale` routine, which hits the target
-  size deterministically regardless of the import scale or the Auto-normalize pref.
-- **Materials & emission.** FBX carries base/diffuse color and transforms fine, but **drops
-  emission and any node-based color** — so Blender neon / "Tron" scenes (color stored in
-  emission) import as dark bodies with black accents. Two fixes: **(a) prefer glTF/GLB when glTFast
-  is installed** — glTF's PBR model carries `emissiveFactor` + `KHR_materials_emissive_strength`
-  natively, so emission survives with no post-step (`bpy.ops.export_scene.gltf(filepath=out, export_format='GLB', use_active_scene=True)`);
-  **(b) with FBX, run Step 5** to dump Blender's emission and reapply it. Also check the mesh for a
-  `color_attributes` (vertex color) layer — the *data* survives FBX, but URP Lit won't *display* it;
-  that needs a vertex-color-reading shader, not `_EmissionColor`.
-- FBX is the default because glTFast is optional in MCP for Unity. If the import errors with
-  "GLB import requires glTFast", re-export as FBX (or install glTFast from the Dependencies tab).
-- **Format fidelity.** [references/bridge-fidelity.md](references/bridge-fidelity.md) is a tested
-  matrix of what each format carries. Summary: **GLB (glTFast)** keeps textures, metallic/roughness,
-  emission, transparency, and animation automatically; **FBX** drops metallic + emission, needs
-  `ModelImporter.animationType = Generic` to surface transform animation, and needs material/texture
-  extraction to assign an embedded texture. Both bake modifiers and carry geometry + vertex-color
-  *data* (URP Lit won't *display* vertex colors). Neither carries procedural/node materials — bake
-  them to image textures in Blender first.
-- **Animation doesn't auto-play.** An imported clip won't move the model until an `AnimatorController`
-  drives it — the placed model has an `Animator` with a **null controller**, so it looks frozen. Build
-  one with `manage_animation` (`controller_create` → add the clip as a looping state → `controller_assign`
-  onto the instance) rather than hand-rolling `execute_code`. See bridge-fidelity gotcha #7.
-- **Multi-material zones survive.** A mesh split into material slots in Blender (e.g. skin/shirt/pants
-  regions) imports as submeshes with one material each — base colors carry over GLB natively — so you
-  can "dress" a model with material zones and it arrives intact.
-- Keep one model per handoff; for batches, repeat the loop with distinct names.
-- This skill never sends API keys or file bytes over the MCP bridge — Unity reads the file from disk.
-- `import_model_file` copies only the single source file; for multi-file exports (a text `.gltf` with an external `.bin`, or an `.obj` with a sibling `.mtl`/textures), zip them first and pass the `.zip` — a bare `.gltf`/`.obj` will lose its sidecars.
+## Resolve The Handoff
+
+- Identify the requested Blender objects/selection and the intended Unity project/scene. Use available scene/object inspection tools and Unity's instance inventory when needed.
+- Read `mcpforunity://project/info` for the selected Unity instance. Use `data.projectRoot`/`assetsPath`, not legacy root fields in Editor state.
+- Establish that Blender can write to that Unity host's filesystem. A remote path is not evidence of a shared disk. If hosts differ, use an explicitly authorized transfer into the target project's `Assets/` folder or report the missing transfer capability.
+- Discover `import_model_file`. If hidden and `manage_tools` is exposed, inspect groups and activate `asset_gen` in a stateful session when appropriate. Never use `batch_execute` to bypass tool visibility or consent.
+
+Choose GLB when glTFast is installed and PBR/animation fidelity matters; choose FBX for the built-in importer or requested humanoid pipeline. Neither is a promise of lossless material/rig transfer. Read [bridge-fidelity.md](references/bridge-fidelity.md) for historical observations and conditional fixes; read [export-examples.md](references/export-examples.md) only when authoring an export.
+
+## Export And Import
+
+This section is the separate-client route. The integrated bridge owns its export/staging;
+its internal temporary file does not make arbitrary external sources acceptable to the
+public `import_model_file` tool.
+
+Export to a unique, non-overwriting path **inside the selected Unity project's Assets folder**, for example `Assets/ModelHandoff/Robot.fbx`. `import_model_file` accepts Assets-relative or physically-contained absolute sources; arbitrary temp paths, traversal and linked paths are rejected. If an existing export is outside Assets, obtain permission for a contained copy/transfer instead of weakening the boundary.
+
+The import request uses public snake_case parameters:
+
+```json
+{"tool":"import_model_file","params":{"source_path":"Assets/ModelHandoff/Robot.fbx","name":"Robot","output_folder":"Assets/ImportedModels","animation_type":"generic"}}
+```
+
+For rigged/animated FBX, choose `generic`/`humanoid` intentionally; omitted/`none` can yield no imported clips. GLB uses glTFast's animation import. `target_size` depends on the project's auto-normalization preference; do not claim it guarantees world-space dimensions.
+
+A multi-file OBJ/glTF export needs its sidecars in a supported inert ZIP layout because a bare source copy does not carry them. Verify required files and textures before importing. Do not zip unrelated directories or include executable files. If glTFast is absent, offer FBX or a separately authorized installation; do not install it as an implicit fallback.
+
+Inspect `success`, then returned `data.asset_path` and `data.asset_guid`. A failed import is not permission to delete previous assets or repeat exports blindly.
+
+## Place And Verify
+
+Instantiate the returned asset path using `manage_gameobject(action="create", prefab_path=...)` with the user's intended position/name. Retain its returned ID for later edits; do not replace the current scene or add cameras/lights automatically.
+
+Inspect renderer bounds and actual materials/clips. If the user requested a target size, measure the placed model's largest world dimension and multiply its current local scale by `target_size / measured_dimension`, provided the measured dimension is finite and nonzero. Recheck after scaling; do not apply a universal 100x correction.
+
+Apply material/emission or Animator/controller fixes only when the observed result and requested scope require them. Inspect shader properties and asset ownership first. Imported clips do not prove playback; entering Play mode or enabling Bloom changes scene behavior and is not a mandatory handoff step. An `execute_code` fallback requires explicit Unity consent and scoped authorization, not merely a failed inspection tool.
+
+## When A Prefab Is Requested
+
+An imported model's `asset_path`/GUID is not a newly created `.prefab` deliverable. For the
+integrated bridge, request `save_prefab=true` on the original import and verify its returned
+`data.prefab_path` as described in [unity-bridge.md](references/unity-bridge.md); do not
+repeat a completed import just to save a prefab.
+
+For an already placed model, inspect the intended root in the active scene (or open prefab
+stage) and ensure its name is unambiguous: this creation action finds by name, not instance
+ID or hierarchy path. If it is a connected model/prefab instance, the requested new prefab
+requires unlinking that root. Use `unlink_if_instance=true` only for that inspected,
+authorized root; otherwise omit it or leave it false.
+
+```json
+{"tool":"manage_prefabs","params":{"action":"create_from_gameobject","target":"Robot","prefab_path":"Assets/Prefabs/Robot.prefab","allow_overwrite":false,"unlink_if_instance":true}}
+```
+
+Check `success` and `data.prefabPath`: with overwrite disabled, an occupied destination
+gets a unique path rather than replacing the existing asset. Verify the **actual returned
+path**, substituting it for the example below, and inspect the prefab hierarchy/material
+references and the scene instance's connection. Report any different filename.
+
+```json
+{"tool":"manage_prefabs","params":{"action":"get_info","prefab_path":"Assets/Prefabs/Robot.prefab"}}
+```
+
+Capture the relevant view with an available camera/UI capture tool, inspect the image, and report asset identity, scene instance and any fidelity/verification limits. [manual-verify.md](manual-verify.md) is an optional acceptance checklist for an authorized live run, not a requirement to launch applications.
