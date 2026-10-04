@@ -472,8 +472,9 @@ namespace MCPForUnity.Editor.Helpers
                 && value != null
                 && !(value is JValue jv && jv.Type == JTokenType.Null))
             {
+                string propertyPath = prop.propertyPath;
                 so.Update();
-                var verifyProp = FindTopLevelProperty(so, propertyName, normalizedName, out _);
+                var verifyProp = so.FindProperty(propertyPath);
                 if (verifyProp != null
                     && verifyProp.propertyType == SerializedPropertyType.ObjectReference
                     && verifyProp.objectReferenceValue == null)
