@@ -253,6 +253,9 @@ async def get_editor_state(ctx: Context) -> MCPResponse:
         {},
     )
 
+    if isinstance(response, MCPResponse):
+        response = response.model_dump()
+
     # If Unity returns a structured retry hint or error, surface it directly.
     if isinstance(response, dict) and not response.get("success", True):
         return MCPResponse(**response)
@@ -275,18 +278,15 @@ async def get_editor_state(ctx: Context) -> MCPResponse:
         unity_section = {}
         state_v2["unity"] = unity_section
     current_instance_id = unity_section.get("instance_id")
-    if current_instance_id in (None, ""):
-        if unity_instance:
-            unity_section["instance_id"] = unity_instance
-        else:
-            inferred = await infer_single_instance_id(ctx)
-            if inferred:
-                unity_section["instance_id"] = inferred
+    instance_id = unity_instance
+    if not instance_id and current_instance_id in (None, ""):
+        instance_id = await infer_single_instance_id(ctx)
+    if current_instance_id in (None, "") and instance_id:
+        unity_section["instance_id"] = instance_id
 
     # Host-local change detection never consumes remote plugin metadata.
     try:
-        instance_id = unity_instance
-        if not config.http_remote_hosted and not instance_id:
+        if not config.http_remote_hosted and not instance_id and current_instance_id not in (None, ""):
             instance_id = await infer_single_instance_id(ctx)
         if not config.http_remote_hosted and isinstance(instance_id, str) and instance_id.strip():
             project_root = await _local_project_root(instance_id)
