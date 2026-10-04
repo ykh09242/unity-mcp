@@ -66,7 +66,7 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 }
 ```
 
-Pair with [`manage_material`](./manage_material) to make it actually red.
+Pair with [`manage_material`](./manage_material.md) to make it actually red.
 
 ### Find a GameObject by name and move it
 

@@ -84,7 +84,7 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 
 <!-- examples:start -->
 :::tip
-Prefer this over [`apply_text_edits`](./apply_text_edits) for method-level changes. Structured ops keep braces balanced and survive incidental whitespace drift. Use `apply_text_edits` only when you need surgical line/column patching.
+Prefer this over [`apply_text_edits`](./apply_text_edits.md) for method-level changes. Structured ops keep braces balanced and survive incidental whitespace drift. Use `apply_text_edits` only when you need surgical line/column patching.
 :::
 
 ### Replace a single method
@@ -187,6 +187,6 @@ Anchor ops are great for adding instrumentation near stable comment markers with
 
 ### After every edit
 
-Poll the `mcpforunity://editor/state` resource until `data.compilation.is_compiling` flips back to `false`, then run [`read_console`](./read_console) to catch any compile errors before relying on the new types.
+Poll the `mcpforunity://editor/state` resource until `data.compilation.is_compiling` flips back to `false`, then run [`read_console`](./read_console.md) to catch any compile errors before relying on the new types.
 <!-- examples:end -->
 

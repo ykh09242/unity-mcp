@@ -71,7 +71,8 @@ const config = {
   organizationName: 'ykh09242',
   projectName: 'unity-mcp',
   deploymentBranch: 'gh-pages',
-  trailingSlash: false,
+  // Match GitHub Pages directory routes and the search plugin's /search/ link.
+  trailingSlash: true,
 
   // Build-time data the homepage components read via siteConfig.customFields.
   // Keeps stats accurate without a hand-maintained constant.

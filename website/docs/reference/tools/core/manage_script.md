@@ -34,10 +34,10 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 <!-- examples:start -->
 :::note Use the right tool for the job
 `manage_script` only handles whole-file lifecycle: **create**, **read**, **delete**. For editing existing scripts, reach for:
-- **[`script_apply_edits`](./script_apply_edits)** — structured edits (replace method, insert method, anchor-based insert/replace) with balanced-brace guards. Use this for most code changes.
-- **[`apply_text_edits`](./apply_text_edits)** — raw line/column text edits with optional SHA precondition. Use for surgical text patches.
-- **[`validate_script`](./validate_script)** — Roslyn-based validation (structural or full semantic).
-- **[`read_console`](./read_console)** — fetch compile diagnostics after any change.
+- **[`script_apply_edits`](./script_apply_edits.md)** — structured edits (replace method, insert method, anchor-based insert/replace) with balanced-brace guards. Use this for most code changes.
+- **[`apply_text_edits`](./apply_text_edits.md)** — raw line/column text edits with optional SHA precondition. Use for surgical text patches.
+- **[`validate_script`](./validate_script.md)** — Roslyn-based validation (structural or full semantic).
+- **[`read_console`](./read_console.md)** — fetch compile diagnostics after any change.
 :::
 
 ### Create a new script
@@ -68,7 +68,7 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 }
 ```
 
-Returns the full file. For just a SHA (to detect drift between reads and writes), use [`get_sha`](./get_sha) instead — it's cheaper.
+Returns the full file. For just a SHA (to detect drift between reads and writes), use [`get_sha`](./get_sha.md) instead — it's cheaper.
 
 ### Delete a script
 
@@ -84,6 +84,6 @@ Returns the full file. For just a SHA (to detect drift between reads and writes)
 
 ### After every create / delete
 
-Unity needs a domain reload to compile the new file (or notice the old one is gone). Poll the `mcpforunity://editor/state` resource until `data.compilation.is_compiling` flips back to `false`, then run [`read_console`](./read_console) to catch any compile errors before relying on the new types.
+Unity needs a domain reload to compile the new file (or notice the old one is gone). Poll the `mcpforunity://editor/state` resource until `data.compilation.is_compiling` flips back to `false`, then run [`read_console`](./read_console.md) to catch any compile errors before relying on the new types.
 <!-- examples:end -->
 
