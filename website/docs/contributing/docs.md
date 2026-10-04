@@ -118,17 +118,18 @@ Preserve the historical release bodies and their original links. Keep the fork's
 
 ## Deploy
 
-No live fork deployment URL is established by these docs. The site configuration defaults to `http://localhost:3000` with `/unity-mcp/` as its base path. Set `WEBSITE_URL` to a verified deployment origin before publishing; do not infer a GitHub Pages address from the fork owner name.
+The GitHub Pages deployment target is [https://ykh09242.github.io/unity-mcp/](https://ykh09242.github.io/unity-mcp/). The site configuration defaults to the production origin `https://ykh09242.github.io` with `/unity-mcp/` as its base path. Internal routes and assets keep that base path. `WEBSITE_URL` remains an optional origin override; the local development server still uses `http://localhost:3000/unity-mcp/`.
 
 ### First-time setup (maintainers only)
 
-If the maintainer chooses GitHub Pages, deployment requires enabling Pages for the fork and checking the retained build/deploy workflow:
+The fork uses the `Docs — Build & Deploy` GitHub Actions workflow for Pages:
 
 1. **Settings → Pages → Source** → choose **GitHub Actions** (not "Deploy from a branch").
-2. Configure the actual deployment origin and base path, then verify a local build.
-3. Follow the fork's configured deployment process. After a successful deployment, verify the URL under **Settings → Pages** before documenting it as live.
+2. Verify the production origin and `/unity-mcp/` base path with a local build.
+3. Run **Actions → Docs — Build & Deploy → Run workflow** on `beta`, or push a qualifying documentation change to `beta`.
+4. Confirm the build and Pages deployment jobs succeed, then check the published site and an internal documentation route. Verify that the repository's Pages URL matches the configured deployment target.
 
-The inherited workflow's presence does not confirm that a deployment exists or that repository settings and permissions have been configured.
+PRs build without publishing. Push and manual deployment jobs are allowed only in `ykh09242/unity-mcp` and `CoplayDev/unity-mcp`, so an arbitrary fork does not inherit automatic publication. The workflow run and live-site checks establish whether a particular deployment succeeded.
 
 ### Custom domain
 

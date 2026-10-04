@@ -47,14 +47,30 @@ def test_forks_keep_python_and_unity_validation() -> None:
         assert jobs[name]["uses"].startswith("./.github/workflows/")
 
 
-def test_pages_setup_upload_and_deployment_are_upstream_only() -> None:
+def test_pages_setup_upload_and_deployment_require_an_owned_beta_branch() -> None:
     jobs = workflow("docs-deploy.yml")["jobs"]
-    condition = f"{UPSTREAM_ONLY} && github.event_name == 'push' && github.ref == 'refs/heads/beta'"
+    condition = (
+        f"({UPSTREAM_ONLY} || github.repository == 'ykh09242/unity-mcp') && "
+        "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && "
+        "github.ref == 'refs/heads/beta'"
+    )
     assert jobs["deploy"]["if"] == condition
     steps = {step["name"]: step for step in jobs["build"]["steps"]}
     for name in ("Setup Pages", "Upload Pages artifact"):
         assert steps[name]["if"] == condition
     assert "if" not in steps["Build"]
+
+
+def test_pages_build_uses_the_configured_deployment_origin() -> None:
+    # Given: the repository's Pages setting is resolved only for an allowed deployment.
+    config = workflow("docs-deploy.yml")
+    steps = {step["name"]: step for step in config["jobs"]["build"]["steps"]}
+    # When: the production build reads its canonical origin.
+    origin = steps["Build"]["env"].get("WEBSITE_URL")
+    # Then: it uses Pages metadata, not localhost or an inherited upstream URL.
+    assert steps["Setup Pages"]["id"] == "pages"
+    assert origin == "${{ steps.pages.outputs.origin }}"
+    assert "workflow_dispatch" in config.get("on", config.get(True))
 
 
 def push_selects(workflow_name: str, branch: str, path: str) -> bool:

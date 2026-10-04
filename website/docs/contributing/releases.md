@@ -1,6 +1,27 @@
 # Releasing (Maintainers)
 
-This fork currently distributes the Unity package and Python server from Git. The `beta` branch is a moving preview, not a stable release. No fork release tag, PyPI package publication, Asset Store listing, OpenUPM registration, pre-built Docker image, or MCPB publication is established by these docs.
+This fork distributes the Unity package and Python server from Git. Publish fork releases through [GitHub Releases](https://github.com/ykh09242/unity-mcp/releases). The `beta` branch is the moving source branch; the version suffix and GitHub prerelease flag determine a release's channel independently of the branch name. A GitHub release is separate from documentation deployment and does not imply PyPI, Asset Store, OpenUPM, pre-built Docker image, or MCPB publication.
+
+## Fork versioning
+
+The fork owns its SemVer series independently of the original project's `10.3.x` versions. Unity-package and Python-server versions describe their respective fork components and can evolve independently; the Unity package's immutable `mcpServerSource` selects the matching server commit.
+
+The first stable fork release is tagged `ykh09242-v1.0.0`, with both Unity and Python component versions initially `1.0.0`. Fork tags use the `ykh09242-v` prefix to avoid collisions with inherited upstream tags such as `v1.0.0`; never replace those historical tags. Publish the fork tag as a stable GitHub release rather than a prerelease after the release checks pass. Later component versions can be maintained independently.
+
+Record the original project's version and commit as the upstream baseline, not as the fork's release version. A `-beta.N` suffix identifies a preview version, which should also be marked as a prerelease on GitHub. Do not imply a stable release until the maintainer selects and publishes one.
+
+## Update component versions
+
+Run the version helper from the repository root, replacing the version placeholders with the desired versions independently:
+
+```bash
+python tools/update_versions.py --component unity --version X.Y.Z
+python tools/update_versions.py --component server --version A.B.C
+```
+
+`unity` is the default component and updates `MCPForUnity/package.json` and the root `manifest.json`. `server` requires an explicit `--version` and updates only `Server/pyproject.toml` and its own distribution entry in `Server/uv.lock`. Neither mode changes the immutable server pin or couples the component versions.
+
+After a server version change, test and commit the server files, then manually repin the Unity package and root manifest to that verified server commit using the procedure below. `--component all` is the legacy synchronized upstream mode, explicitly used by the upstream release workflow; use the independent modes for this fork.
 
 ## Prepare a pinned Git version
 
@@ -12,11 +33,14 @@ This fork currently distributes the Unity package and Python server from Git. Th
 
 A server commit and a Unity-package commit need not be the same: the latter records the former's immutable source.
 
-## Fork release tags
+## Publish a fork GitHub release
 
-Only describe a tag as a fork release after the maintainer actually creates and verifies it. Preserve original MIT copyright and attribution. If publishing GitHub release notes later, explain the fork's changes and link the upstream baseline as history.
+1. Select the fork version and whether it is a prerelease or stable release. Complete the relevant checks for the prepared Git version.
+2. Create a fork release tag on the verified commit, then publish its GitHub release with the selected prerelease state and any explicitly prepared assets. Publication is a manual maintainer operation; it does not use the upstream release workflow.
+3. Explain the fork changes, identify the Unity and Python component versions and immutable server commit, and credit the original MIT authorship. Link the upstream version and commit as the baseline.
+4. Verify the published tag, target commit, release notes, prerelease state, and attached assets. Users can pin the Unity Git installation URL to the verified fork tag or commit.
 
-Do not relabel inherited upstream tags or release bodies as fork releases. The [Upstream Release History](/releases) page and `release-metadata.json` intentionally retain CoplayDev history.
+Only tags and releases actually created for this fork belong on [Fork Releases](https://github.com/ykh09242/unity-mcp/releases). Do not relabel inherited upstream tags or release bodies as fork releases. The [Upstream Release History](/releases) page and `release-metadata.json` intentionally retain CoplayDev history.
 
 ## Legacy upstream automation
 

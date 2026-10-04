@@ -50,6 +50,8 @@ function countReferenceResources() {
 }
 
 const upstreamBaselineVersion = JSON.parse(readFileSync(resolve(__dirname, 'release-metadata.json'), 'utf8')).tag_name;
+const forkVersion = JSON.parse(readFileSync(resolve(__dirname, '..', 'MCPForUnity', 'package.json'), 'utf8')).version;
+const releaseUpmUrl = `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v${forkVersion}`;
 const toolCount = countReferenceTools();
 const toolGroupCount = countToolGroups();
 const resourceCount = countReferenceResources();
@@ -62,8 +64,8 @@ const config = {
   tagline: 'AI-driven game development for the Unity Editor',
   favicon: 'img/favicon.png',
 
-  // Set WEBSITE_URL to a verified deployment origin before publishing.
-  url: process.env.WEBSITE_URL || 'http://localhost:3000',
+  // GitHub Pages project site; WEBSITE_URL can override the production origin.
+  url: process.env.WEBSITE_URL || 'https://ykh09242.github.io',
   baseUrl,
 
   organizationName: 'ykh09242',
@@ -74,6 +76,8 @@ const config = {
   // Build-time data the homepage components read via siteConfig.customFields.
   // Keeps stats accurate without a hand-maintained constant.
   customFields: {
+    forkVersion,
+    releaseUpmUrl,
     upstreamBaselineVersion,
     toolCount,
     toolGroupCount,
@@ -207,6 +211,11 @@ const config = {
             position: 'left',
           },
           {
+            href: 'https://github.com/ykh09242/unity-mcp/releases',
+            label: 'Fork Releases',
+            position: 'left',
+          },
+          {
             to: '/releases',
             label: 'Upstream History',
             position: 'left',
@@ -240,6 +249,7 @@ const config = {
             title: 'More',
             items: [
               { label: 'GitHub', href: 'https://github.com/ykh09242/unity-mcp' },
+              { label: 'Fork Releases', href: 'https://github.com/ykh09242/unity-mcp/releases' },
               { label: 'Upstream Source', href: 'https://github.com/CoplayDev/unity-mcp' },
             ],
           },

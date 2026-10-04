@@ -25,10 +25,12 @@ This path needs `git` on your PATH (the Package Manager runs it). If it reports 
 In Unity, open **Window → Package Manager**, click the **`+`** button, choose **Add package from git URL...**, and paste:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0
 ```
 
-`beta` is a moving preview. Replace `#beta` with a full commit SHA or a verified fork release tag to pin the Unity package. Inherited upstream release tags are upstream history, not fork releases. The UPM name is `com.ykh09242.unity-mcp`.
+`ykh09242-v1.0.0` identifies the stable `1.0.0` fork release. The prefix separates [Fork Releases](https://github.com/ykh09242/unity-mcp/releases) from inherited upstream tags. Fork component versions follow their own SemVer series, independently of upstream versions. Use a full commit SHA instead of a tag for immutable installation. The UPM name is `com.ykh09242.unity-mcp`.
+
+For development only, replace the tag with `#beta` to follow the moving source branch. The branch name does not make a tagged GitHub release a prerelease.
 
 The Unity package's `mcpServerSource` field in [`MCPForUnity/package.json`](https://github.com/ykh09242/unity-mcp/blob/beta/MCPForUnity/package.json) specifies the immutable Git URL for the matching Python distribution, `ykh09242-unity-mcp-server`. Use that value for `uvx --from`; executable names remain `mcp-for-unity` and `unity-mcp`. See the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md).
 

@@ -5,11 +5,9 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 import CopyButton from '@site/src/components/CopyButton';
 import styles from './styles.module.css';
 
-const UPM_BETA = 'https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta';
-
 export default function HomeHero() {
   const { siteConfig } = useDocusaurusContext();
-  const version = siteConfig.customFields.upstreamBaselineVersion;
+  const { forkVersion, releaseUpmUrl, upstreamBaselineVersion } = siteConfig.customFields;
   const imageBaseUrl = useBaseUrl('/img/');
 
   return (
@@ -19,8 +17,8 @@ export default function HomeHero() {
       <div className={styles.inner}>
         <div className={styles.statusBar}>
           <span className={styles.statusDot} aria-hidden="true" />
-          <span className={styles.statusKey}>PREVIEW</span>
-          <span className={styles.statusValue}>Upstream baseline · {version}</span>
+          <span className={styles.statusKey}>RELEASE</span>
+          <span className={styles.statusValue}>v{forkVersion}</span>
         </div>
 
         <h1 className={styles.headline}>
@@ -32,7 +30,8 @@ export default function HomeHero() {
           Unity MCP (ykh09242) bridges AI assistants — Claude, Codex, VS Code,
           local LLMs, and more — with the Unity Editor via the Model
           Context Protocol. Manage assets, control scenes, edit scripts,
-          run tests, automate workflows.
+          run tests, automate workflows.{' '}
+          <small>Upstream baseline: {upstreamBaselineVersion}.</small>
         </p>
 
         <div className={styles.ctaRow}>
@@ -55,9 +54,9 @@ export default function HomeHero() {
           </div>
 
           <div className={styles.installLine}>
-            <span className={`${styles.installChannel} ${styles.installChannelBeta}`}>PREVIEW</span>
-            <code className={styles.installUrl}>{UPM_BETA}</code>
-            <CopyButton text={UPM_BETA} label="fork preview URL" className={styles.installCopy} />
+            <span className={`${styles.installChannel} ${styles.installChannelBeta}`}>RELEASE</span>
+            <code className={styles.installUrl}>{releaseUpmUrl}</code>
+            <CopyButton text={releaseUpmUrl} label="fork release URL" className={styles.installCopy} />
           </div>
         </div>
 

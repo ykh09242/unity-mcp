@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[English](../../README.md) <img src="../images/connector.svg" alt="↔" height="14"> [简体中文](README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [文档](../../website/docs/getting-started/install.md)
+[English](../../README.md) <img src="../images/connector.svg" alt="↔" height="14"> [简体中文](README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [文档](https://ykh09242.github.io/unity-mcp/)
 
 ## Unity MCP (ykh09242)
 
@@ -55,11 +55,11 @@
 **环境要求：** Unity **2021.3 LTS → 6.x** · Python **3.10+**（用 [`uv`](https://docs.astral.sh/uv/) 管理）。兼容**任意 MCP 客户端**——Claude Desktop 与 Claude Code、Cursor、VS Code、Windsurf、Cline、Gemini CLI 等等。
 
 1. **安装** —— 在 Unity 里打开 Package Manager，从 git URL 添加：
-   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta`
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0`
 2. **配置客户端** —— `Window → Unity MCP (ykh09242) → Configure All Detected Clients`，一键搞定所有检测到的客户端。
 3. **发个提示试试** —— *"在原点放一个立方体，加个 Rigidbody。"* 立方体几秒就出现在场景里了。
 
-`beta` 是移动预览；如需可复现安装，请换成完整 commit SHA 或已核实的 fork 发布标签。不要将继承的上游标签视为 fork 发布。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
+此 fork 从稳定版本 `1.0.0` 开始独立管理版本，不沿用上游的 `10.3.x`。`ykh09242-v1.0.0` 是稳定发布标签，前缀用于区分上游历史标签；如需不可变安装，请使用完整 commit SHA。`#beta` 仅用于跟踪移动开发分支，分支名称不决定发布是否为测试版。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
 
 <details>
 <summary><strong>手动配置</strong></summary>

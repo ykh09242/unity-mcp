@@ -1,6 +1,8 @@
 # Unity MCP (ykh09242) - Documentation Site
 
-Docusaurus 3.x documentation for the Git-only ykh09242 fork. No live fork deployment URL is established here. The default origin is local; set `WEBSITE_URL` to a verified deployment origin before publishing. The repository's retained release metadata and release bodies describe upstream CoplayDev history, not fork releases.
+Docusaurus 3.x documentation for the Git-only ykh09242 fork. The GitHub Pages deployment target is [https://ykh09242.github.io/unity-mcp/](https://ykh09242.github.io/unity-mcp/): the default production origin is `https://ykh09242.github.io`, with `/unity-mcp/` as its base path. `WEBSITE_URL` can override the origin for another configured deployment. Local development still uses `http://localhost:3000/unity-mcp/`.
+
+Fork versions use their own SemVer series. Published fork versions belong on [Fork Releases](https://github.com/ykh09242/unity-mcp/releases); the retained `release-metadata.json` and `/releases` page describe upstream CoplayDev history and baseline versions.
 
 ## Local development
 
@@ -18,6 +20,12 @@ Edits to Markdown under `docs/` hot-reload.
 npm run build    # outputs to website/build/
 npm run serve    # serves the build for local verification
 ```
+
+## GitHub Pages deployment
+
+The `Docs — Build & Deploy` workflow builds PRs and publishes eligible `beta` pushes or manual dispatches. Deployment is restricted to `ykh09242/unity-mcp` and the upstream repository; arbitrary forks do not deploy automatically. Set the fork's Pages source to **GitHub Actions**, then run the workflow on `beta` or push a qualifying docs change. Confirm the successful Pages deployment and the published URL after the run; a local build alone does not publish the site.
+
+See [Docs Workflow](docs/contributing/docs.md#deploy) for setup and verification, and [Releasing](docs/contributing/releases.md) for the separate GitHub release process. No Asset Store or PyPI publication is part of either workflow.
 
 ## Layout
 

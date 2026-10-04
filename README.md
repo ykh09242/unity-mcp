@@ -7,11 +7,13 @@
 
 <div align="center">
 
-[English](README.md) <img src="docs/images/connector.svg" alt="↔" height="14"> [简体中文](docs/i18n/README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [Documentation](website/docs/getting-started/install.md)
+[English](README.md) <img src="docs/images/connector.svg" alt="↔" height="14"> [简体中文](docs/i18n/README-zh.md) &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; [Documentation](https://ykh09242.github.io/unity-mcp/)
 
 ## Unity MCP (ykh09242)
 
 Git-only fork maintained by [ykh09242](https://github.com/ykh09242), based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original MIT copyright, authorship, and research citation are retained. This fork is not an upstream release or a Coplay/Aura service.
+
+Fork versions start at `1.0.0` independently of the upstream `10.3.x` baseline. See [fork releases](https://github.com/ykh09242/unity-mcp/releases) for the tested component versions and server source pin.
 
 </div>
 
@@ -57,11 +59,11 @@ Control the Unity Editor in natural language from any MCP client — create scen
 **Requirements:** Unity **2021.3 LTS → 6.x** · Python **3.10+** (via [`uv`](https://docs.astral.sh/uv/)). Works with **any MCP client** — Claude Desktop & Code, Cursor, VS Code, Windsurf, Cline, Gemini CLI, and more.
 
 1. **Install** — Unity → Package Manager → Add from git URL:
-   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta`
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0`
 2. **Configure** — `Window → Unity MCP (ykh09242) → Configure All Detected Clients`.
 3. **Prompt** — *"Create a cube at the origin and add a Rigidbody."* The cube appears in seconds.
 
-`beta` is a moving preview. For reproducible installs, replace `#beta` with a full commit SHA or a verified fork release tag. Do not treat inherited upstream tags as fork releases. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the immutable Git server source in `mcpServerSource`. The Python distribution is `ykh09242-unity-mcp-server`, installed from Git, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted service distribution is advertised.
+`ykh09242-v1.0.0` is the fork's stable release tag. The prefix distinguishes fork releases from inherited upstream tags. Use a full commit SHA for immutable installation, or `#beta` only to follow the moving development branch. The branch name does not make a tagged release a beta. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the immutable Git server source in `mcpServerSource`. The Python distribution is `ykh09242-unity-mcp-server`, installed from Git, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted MCP service distribution is advertised.
 
 ---
 

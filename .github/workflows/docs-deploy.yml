@@ -1,7 +1,7 @@
 name: Docs — Build & Deploy
 
-# Builds the Docusaurus site under /website and, on push to beta, deploys
-# to GitHub Pages at https://coplaydev.github.io/unity-mcp/.
+# Builds /website and deploys the owned repositories on beta pushes or manual
+# dispatch. The fork site is https://ykh09242.github.io/unity-mcp/.
 #
 # PR runs only build (no deploy) as a preview-validation step.
 # Re-deploys also fire when the Python tool/resource registry changes,
@@ -69,7 +69,11 @@ jobs:
         run: npm ci
 
       - name: Setup Pages
-        if: github.repository == 'CoplayDev/unity-mcp' && github.event_name == 'push' && github.ref == 'refs/heads/beta'
+        id: pages
+        if: >-
+          (github.repository == 'CoplayDev/unity-mcp' || github.repository == 'ykh09242/unity-mcp') &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/beta'
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         with:
           enablement: false
@@ -77,6 +81,7 @@ jobs:
       - name: Build
         working-directory: website
         env:
+          WEBSITE_URL: ${{ steps.pages.outputs.origin }}
           # Inject the cookieless GoatCounter beacon when provisioned. The site
           # gates on process.env.GOATCOUNTER_CODE, which Actions does NOT
           # auto-expose — the Actions variable must be mapped in explicitly.
@@ -84,7 +89,10 @@ jobs:
         run: npm run build
 
       - name: Upload Pages artifact
-        if: github.repository == 'CoplayDev/unity-mcp' && github.event_name == 'push' && github.ref == 'refs/heads/beta'
+        if: >-
+          (github.repository == 'CoplayDev/unity-mcp' || github.repository == 'ykh09242/unity-mcp') &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/beta'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: website/build
@@ -95,7 +103,10 @@ jobs:
     permissions:
       pages: write
       id-token: write
-    if: github.repository == 'CoplayDev/unity-mcp' && github.event_name == 'push' && github.ref == 'refs/heads/beta'
+    if: >-
+      (github.repository == 'CoplayDev/unity-mcp' || github.repository == 'ykh09242/unity-mcp') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
