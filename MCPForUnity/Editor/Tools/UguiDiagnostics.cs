@@ -343,11 +343,23 @@ namespace MCPForUnity.Editor.Tools
         {
             var type = UnityTypeResolver.ResolveAny("UnityEngine.UI.LayoutRebuilder");
             var method = type?.GetMethod("ForceRebuildLayoutImmediate", BindingFlags.Public | BindingFlags.Static);
-            if (method == null) return;
-            // LayoutRebuilder stops traversing when a plain RectTransform has no layout interfaces.
-            // Rebuild every bounded preview rect: bottom-up preferred sizes, then top-down placement.
-            for (int i = rects.Length - 1; i >= 0; i--) method.Invoke(null, new object[] { rects[i] });
-            for (int i = 0; i < rects.Length; i++) method.Invoke(null, new object[] { rects[i] });
+            var controllerType = UnityTypeResolver.ResolveAny("UnityEngine.UI.ILayoutController");
+            var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutGroup");
+            if (method == null || controllerType == null || groupType == null) return;
+
+            var roots = new List<RectTransform>();
+            foreach (var rect in rects)
+            {
+                if (!rect.gameObject.activeInHierarchy) continue;
+                if (rect.parent != null && Enabled(rect.parent.GetComponent(groupType))) continue;
+                if (rect.GetComponents(controllerType).Any(Enabled)) roots.Add(rect);
+            }
+
+            // An enabled parent LayoutGroup already rebuilds its child controllers.
+            // Keep separate roots behind plain/disabled parents, resolving preferred sizes
+            // bottom-up before the final top-down placement without repeating every subtree.
+            for (int i = roots.Count - 1; i >= 0; i--) method.Invoke(null, new object[] { roots[i] });
+            for (int i = 0; i < roots.Count; i++) method.Invoke(null, new object[] { roots[i] });
         }
 
         private static Rect Bounds(RectTransform rect, RectTransform canvas, float scale, Vector2 size)
