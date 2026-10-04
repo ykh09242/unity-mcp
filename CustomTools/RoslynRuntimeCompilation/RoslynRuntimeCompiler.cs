@@ -793,10 +793,12 @@ public static class RoslynMCPHelper
             if (!string.IsNullOrEmpty(targetGameObjectName))
             {
                 var found = GameObject.Find(targetGameObjectName);
-                if (found != null)
+                if (found == null)
                 {
-                    target = found;
+                    result = $"GameObject '{targetGameObjectName}' not found.";
+                    return false;
                 }
+                target = found;
             }
 
             bool success = compiler.CompileAndExecute(sourceCode, className, methodName, target, false, out string error);

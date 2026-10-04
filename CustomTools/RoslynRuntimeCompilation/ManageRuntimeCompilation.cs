@@ -480,7 +480,7 @@ namespace MCPForUnity.Editor.Tools
         private static GameObject FindGameObjectByPath(string path)
         {
             // Handle hierarchical paths like "Canvas/Panel/Button"
-            var parts = path.Split('/');
+            var parts = path.TrimStart('/').Split('/');
             GameObject current = null;
             
             foreach (var part in parts)
@@ -489,6 +489,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // Find root object
                     current = GameObject.Find(part);
+                    if (current == null)
+                        return null;
                 }
                 else
                 {
