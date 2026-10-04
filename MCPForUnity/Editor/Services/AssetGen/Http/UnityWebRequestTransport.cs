@@ -68,7 +68,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         Status = (int)request.responseCode,
                         Body = body,
                         Text = Encoding.UTF8.GetString(body),
-                        IsSuccess = request.result == UnityWebRequest.Result.Success
+                        IsSuccess = request.result == UnityWebRequest.Result.Success,
+                        RetryAfterSeconds = int.TryParse(request.GetResponseHeader("Retry-After"), out int retryAfter) ? (int?)retryAfter : null
                     };
                     tcs.TrySetResult(result);
                 }

@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         public string Text;
         public bool IsSuccess;
         public string RedirectLocation;
+        public int? RetryAfterSeconds;
 
         /// <summary>True when the transport reports success or the status code is 2xx.</summary>
         public bool Ok => IsSuccess || (Status >= 200 && Status < 300);
