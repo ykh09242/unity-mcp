@@ -76,21 +76,122 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Apply(string newText, int endLine)
         {
+            return Apply(new JArray(new JObject
+            {
+                ["startLine"] = 4, ["startCol"] = 1,
+                ["endLine"] = endLine, ["endCol"] = 1,
+                ["newText"] = newText
+            }));
+        }
+
+        [TestCase("startLine", false)]
+        [TestCase("startCol", false)]
+        [TestCase("endLine", false)]
+        [TestCase("endCol", false)]
+        [TestCase("newText", false)]
+        [TestCase("startLine", true)]
+        [TestCase("startCol", true)]
+        [TestCase("endLine", true)]
+        [TestCase("endCol", true)]
+        [TestCase("newText", true)]
+        public void MissingOrNullTextEditField_RejectsEntireBatchWithoutWriting(string missingField, bool explicitNull)
+        {
+            var invalid = new JObject
+            {
+                ["startLine"] = 4, ["startCol"] = 1,
+                ["endLine"] = 5, ["endCol"] = 1,
+                ["newText"] = "    public void A() { int n = 1; }\n"
+            };
+            if (explicitNull) invalid[missingField] = JValue.CreateNull();
+            else invalid.Remove(missingField);
+            var bytes = File.ReadAllBytes(_path);
+            var modified = File.GetLastWriteTimeUtc(_path);
+            var response = Apply(new JArray(new JObject
+            {
+                ["startLine"] = 5, ["startCol"] = 1, ["endLine"] = 5, ["endCol"] = 1,
+                ["newText"] = "    // valid first edit\n"
+            }, invalid));
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("requires startLine/startCol/endLine/endCol", response.Value<string>("error"));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+            Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
+        }
+
+        [TestCase("null")]
+        [TestCase("true")]
+        [TestCase("123")]
+        [TestCase("{}")]
+        [TestCase("[]")]
+        public void NonStringReplacement_RejectsWithoutWriting(string json)
+        {
+            var edit = new JObject
+            {
+                ["startLine"] = 4, ["startCol"] = 1, ["endLine"] = 5, ["endCol"] = 1,
+                ["newText"] = JToken.Parse(json)
+            };
+            var response = Apply(new JArray(edit));
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual(Original, File.ReadAllText(_path));
+        }
+
+        [Test]
+        public void EmptyReplacement_DeletesRequestedRange()
+        {
+            var response = Apply(string.Empty, endLine: 5);
+
+            Assert.IsTrue(response.Value<bool>("success"));
+            Assert.AreEqual(Original.Replace("    public void A() { }\n", string.Empty), File.ReadAllText(_path));
+        }
+
+        [TestCase("basic")]
+        [TestCase("standard")]
+        public void PublicValidation_RejectsCrossedDelimiters(string level)
+        {
+            File.WriteAllText(_path, Original.Replace("public void A() { }", "public void A() { ([)] }"), new UTF8Encoding(false));
+            var bytes = File.ReadAllBytes(_path);
+            var response = JObject.FromObject(ManageScript.HandleCommand(new JObject
+            {
+                ["action"] = "validate", ["name"] = "ContractEditProbe", ["path"] = _folder,
+                ["level"] = level
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual("error", response["data"]["diagnostics"][0].Value<string>("severity"));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+        }
+
+        [TestCase("apply_text_edits")]
+        [TestCase("preview_text_edits")]
+        public void CrossedDelimiters_RejectWithoutWriting(string action)
+        {
+            var bytes = File.ReadAllBytes(_path);
+            var modified = File.GetLastWriteTimeUtc(_path);
+            var response = Apply(new JArray(new JObject
+            {
+                ["startLine"] = 4, ["startCol"] = 1, ["endLine"] = 4, ["endCol"] = 1,
+                ["newText"] = "    ([)]\n"
+            }), action);
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual("unbalanced_braces", response["data"]["status"].Value<string>());
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(_path));
+            Assert.AreEqual(modified, File.GetLastWriteTimeUtc(_path));
+        }
+
+        private JObject Apply(JArray edits, string action = "apply_text_edits")
+        {
             string hash;
             using (var sha = SHA256.Create())
                 hash = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Original))).Replace("-", string.Empty).ToLowerInvariant();
             return JObject.FromObject(ManageScript.HandleCommand(new JObject
             {
-                ["action"] = "apply_text_edits",
+                ["action"] = action,
                 ["name"] = "ContractEditProbe",
                 ["path"] = _folder,
                 ["precondition_sha256"] = hash,
-                ["edits"] = new JArray(new JObject
-                {
-                    ["startLine"] = 4, ["startCol"] = 1,
-                    ["endLine"] = endLine, ["endCol"] = 1,
-                    ["newText"] = newText
-                }),
+                ["edits"] = edits,
                 ["options"] = new JObject { ["refresh"] = "deferred", ["validate"] = "syntax" }
             }));
         }

@@ -562,6 +562,12 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
+                    if (!(e is JObject edit)
+                        || new[] { "startLine", "startCol", "endLine", "endCol", "newText" }
+                            .Any(field => edit[field] == null || edit[field].Type == JTokenType.Null)
+                        || edit["newText"].Type != JTokenType.String)
+                        return new ErrorResponse("Invalid edit payload: requires startLine/startCol/endLine/endCol and a string newText (empty for deletion).");
+
                     int sl = Math.Max(1, e.Value<int>("startLine"));
                     int sc = Math.Max(1, e.Value<int>("startCol"));
                     int el = Math.Max(1, e.Value<int>("endLine"));
@@ -1107,9 +1113,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool CheckBalancedDelimiters(string text, out int line, out char expected)
         {
-            var braceStack = new Stack<int>();
-            var parenStack = new Stack<int>();
-            var bracketStack = new Stack<int>();
+            var delimiters = new Stack<(char closing, int line)>();
             line = 1; expected = '\0';
 
             var lexer = new CSharpLexer(text);
@@ -1119,27 +1123,29 @@ namespace MCPForUnity.Editor.Tools
 
                 switch (c)
                 {
-                    case '{': braceStack.Push(lexer.Line); break;
+                    case '{': delimiters.Push(('}', lexer.Line)); break;
+                    case '(': delimiters.Push((')', lexer.Line)); break;
+                    case '[': delimiters.Push((']', lexer.Line)); break;
                     case '}':
-                        if (braceStack.Count == 0) { line = lexer.Line; expected = '{'; return false; }
-                        braceStack.Pop();
-                        break;
-                    case '(': parenStack.Push(lexer.Line); break;
                     case ')':
-                        if (parenStack.Count == 0) { line = lexer.Line; expected = '('; return false; }
-                        parenStack.Pop();
-                        break;
-                    case '[': bracketStack.Push(lexer.Line); break;
                     case ']':
-                        if (bracketStack.Count == 0) { line = lexer.Line; expected = '['; return false; }
-                        bracketStack.Pop();
+                        if (delimiters.Count == 0)
+                        {
+                            line = lexer.Line;
+                            expected = c == '}' ? '{' : c == ')' ? '(' : '[';
+                            return false;
+                        }
+                        var opening = delimiters.Pop();
+                        if (c != opening.closing) { line = lexer.Line; expected = opening.closing; return false; }
                         break;
                 }
             }
 
-            if (braceStack.Count > 0) { line = braceStack.Peek(); expected = '}'; return false; }
-            if (parenStack.Count > 0) { line = parenStack.Peek(); expected = ')'; return false; }
-            if (bracketStack.Count > 0) { line = bracketStack.Peek(); expected = ']'; return false; }
+            if (delimiters.Count > 0)
+            {
+                var opening = delimiters.Peek();
+                line = opening.line; expected = opening.closing; return false;
+            }
 
             return true;
         }

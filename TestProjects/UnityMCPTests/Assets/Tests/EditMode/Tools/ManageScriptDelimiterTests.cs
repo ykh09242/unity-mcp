@@ -166,6 +166,36 @@ public class PlayerHUD : MonoBehaviour
                 "Real-world Unity script with interpolated/verbatim strings should pass");
         }
 
+        [TestCase("([)]", ']')]
+        [TestCase("[(])", ')')]
+        [TestCase("{(})", ')')]
+        [TestCase("({)}", '}')]
+        [TestCase("{[}]", ']')]
+        [TestCase("[{]}", '}')]
+        public void CheckBalancedDelimiters_CrossedPairs_ReturnsExpectedCloser(string text, char closer)
+        {
+            Assert.IsFalse(CallCheckBalancedDelimiters("\n" + text, out int line, out char expected));
+            Assert.AreEqual(2, line);
+            Assert.AreEqual(closer, expected);
+        }
+
+        [TestCase("{([])}")]
+        [TestCase("class C { string s = \"([)]\"; char c = ')'; }")]
+        [TestCase("class C { /* {[}] */ // ({)}\n void M() { } }")]
+        [TestCase("class C { string s = @\"{[}]\"; }")]
+        public void CheckBalancedDelimiters_OrderedPairsAndNonCode_ReturnsTrue(string text)
+        {
+            Assert.IsTrue(CallCheckBalancedDelimiters(text, out _, out _));
+        }
+
+        [Test]
+        public void CheckBalancedDelimiters_UnclosedNestedPair_ReportsInnermostOpening()
+        {
+            Assert.IsFalse(CallCheckBalancedDelimiters("{\n[\n(", out int line, out char expected));
+            Assert.AreEqual(3, line);
+            Assert.AreEqual(')', expected);
+        }
+
         // ── IndexOfClassToken ────────────────────────────────────────────
 
         [Test]
