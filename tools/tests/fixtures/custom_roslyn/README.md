@@ -38,8 +38,8 @@ The companion probe omits `UNITY_EDITOR`, so its real `CompileInMemory` stops at
 the documented unsupported-compilation branch. It observes the real compiler's
 selected `targetGameObject` and history entry at that boundary, not successful
 static method execution. Missing explicit targets must return before compilation
-or history changes. The non-Editor branch emits existing unassigned-field
-warnings because its compiled assembly/type/method fields are Editor-only.
+or history changes. The Editor-only compiled assembly/type/method caches start
+at null explicitly, so this branch does not emit unassigned-field warnings.
 
 API references (Context7 manual lookup followed by exact official API fallback):
 [GameObject.Find](https://docs.unity3d.com/ScriptReference/GameObject.Find.html)

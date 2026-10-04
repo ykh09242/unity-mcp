@@ -65,9 +65,9 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     public int maxHistoryEntries = 20;
 
     // compiled assembly & method cache
-    private Assembly compiledAssembly;
-    private MethodInfo entryMethod;
-    private Type entryType;
+    private Assembly compiledAssembly = null;
+    private MethodInfo entryMethod = null;
+    private Type entryType = null;
     private Component attachedComponent; // Track dynamically attached component
 
     public bool HasCompiledAssembly => compiledAssembly != null;

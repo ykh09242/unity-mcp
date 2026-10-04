@@ -31,11 +31,11 @@ namespace MCPForUnity.Editor.Tools
         
         private class LoadedAssemblyInfo
         {
-            public string Name;
-            public Assembly Assembly;
-            public string DllPath;
-            public DateTime LoadedAt;
-            public List<string> TypeNames;
+            public string Name { get; set; }
+            public Assembly Assembly { get; set; }
+            public string DllPath { get; set; }
+            public DateTime LoadedAt { get; set; }
+            public List<string> TypeNames { get; set; }
         }
         
         public static object HandleCommand(JObject @params)
