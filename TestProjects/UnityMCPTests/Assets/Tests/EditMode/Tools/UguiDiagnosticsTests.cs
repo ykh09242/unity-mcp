@@ -136,6 +136,11 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(Has(result, "layout_driver_conflict", child));
             var element = Add(child, "UnityEngine.UI.LayoutElement"); Set(element, "ignoreLayout", true);
             Assert.IsFalse(Has(Diagnose(), "layout_driver_conflict", child));
+            ((Behaviour)element).enabled = false;
+            Assert.IsFalse(Has(Diagnose(), "layout_driver_conflict", child), "LayoutGroup still evaluates disabled ILayoutIgnorer components.");
+            ((Behaviour)element).enabled = true;
+            var otherElement = Add(child, "UnityEngine.UI.LayoutElement"); Set(otherElement, "ignoreLayout", false);
+            Assert.IsTrue(Has(Diagnose(), "layout_driver_conflict", child), "A child participates if any ILayoutIgnorer returns false.");
         }
 
         [TestCase(2, 0, 1, false)]
@@ -295,6 +300,192 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(Has(result, "clipped_by_mask", outside));
             Assert.IsTrue(Has(result, "zero_size", zero));
             Assert.IsFalse(Has(result, "zero_size", inactive));
+        }
+
+        [TestCase("UnityEngine.UI.RectMask2D")]
+        [TestCase("UnityEngine.UI.Mask")]
+        public void MaskableFalseGraphicIsNotClippedByAncestorMasks(string maskType)
+        {
+            var mask = Child("Mask");
+            Add(mask, "UnityEngine.UI.Image"); Add(mask, maskType);
+            var outside = Child("UnmaskedGraphic", mask);
+            outside.GetComponent<RectTransform>().anchoredPosition = new Vector2(150, 0);
+            var graphic = Add(outside, "UnityEngine.UI.Image"); Set(graphic, "maskable", false);
+            var result = Diagnose();
+            Assert.IsFalse(Has(result, "clipped_by_mask", outside), "MaskableGraphic.maskable=false opts out of render clipping and mask raycast filters.");
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == outside.GetInstanceID());
+            Assert.AreEqual(100, rect["visibleRect"].Value<float>("width"), 0.1f);
+        }
+
+        [Test]
+        public void RectMaskPaddingShrinksEvaluatedVisibleRectangle()
+        {
+            var mask = Child("PaddedMask"); mask.GetComponent<RectTransform>().sizeDelta = new Vector2(100, 100);
+            var component = Add(mask, "UnityEngine.UI.RectMask2D");
+            Set(component, "padding", new Vector4(10, 20, 30, 40));
+            var child = Child("PaddedContent", mask); child.GetComponent<RectTransform>().sizeDelta = new Vector2(100, 100);
+            Add(child, "UnityEngine.UI.Image");
+            var result = Diagnose();
+            Assert.IsTrue(Has(result, "clipped_by_mask", child));
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceID());
+            Assert.AreEqual(60, rect["visibleRect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(40, rect["visibleRect"].Value<float>("height"), 0.1f);
+        }
+
+        [TestCase("UnityEngine.UI.RectMask2D")]
+        [TestCase("UnityEngine.UI.Mask")]
+        public void OverrideSortingCanvasStopsAncestorMaskClipping(string maskType)
+        {
+            var mask = Child("OuterMask"); Add(mask, "UnityEngine.UI.Image"); Add(mask, maskType);
+            var isolated = Child("IndependentCanvas", mask); var canvas = isolated.AddComponent<Canvas>();
+            canvas.overrideSorting = true;
+            var outside = Child("IndependentGraphic", isolated);
+            outside.GetComponent<RectTransform>().anchoredPosition = new Vector2(150, 0);
+            Add(outside, "UnityEngine.UI.Image");
+            Assert.IsFalse(Has(Diagnose(), "clipped_by_mask", outside), "overrideSorting creates an independent mask/raycast-filter boundary.");
+            canvas.overrideSorting = false;
+            Assert.IsTrue(Has(Diagnose(), "clipped_by_mask", outside));
+        }
+
+        [Test]
+        public void OverrideSortingCanvasStopsAncestorRaycastGroupsButNotReceiverInteractionGroups()
+        {
+            root.AddComponent<CanvasGroup>().blocksRaycasts = false;
+            var isolated = Child("IndependentCanvas"); var canvas = isolated.AddComponent<Canvas>();
+            canvas.overrideSorting = true;
+            var first = Button("First"); first.transform.SetParent(isolated.transform, false);
+            var second = Button("Second"); second.transform.SetParent(isolated.transform, false);
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Graphic.Raycast stops ancestor filters at overrideSorting Canvas.");
+            canvas.overrideSorting = false;
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"));
+            canvas.overrideSorting = true;
+            root.GetComponent<CanvasGroup>().interactable = false;
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "Selectable interaction groups still traverse ancestors independently of Graphic.Raycast.");
+        }
+
+        [Test]
+        public void InvalidRootCanvasAspectFitterDoesNotResizePreviewScreen()
+        {
+            var aspect = Add(root, "UnityEngine.UI.AspectRatioFitter");
+            Set(aspect, "aspectMode", 1); Set(aspect, "aspectRatio", 2f);
+            var result = Diagnose(); Findings(result);
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == root.GetInstanceID());
+            Assert.AreEqual(800, rect["rect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(600, rect["rect"].Value<float>("height"), 0.1f, "AspectRatioFitter is invalid on a root screen-space Canvas and must remain inert in the preview.");
+        }
+
+        [Test]
+        public void ImageLayoutPreferredSizeHonorsCanvasReferencePixelsPerUnit()
+        {
+            root.GetComponent<Canvas>().referencePixelsPerUnit = 200;
+            var group = Add(root, "UnityEngine.UI.HorizontalLayoutGroup");
+            Set(group, "childControlWidth", true); Set(group, "childForceExpandWidth", false);
+            var child = Child("SpriteSized"); var image = Add(child, "UnityEngine.UI.Image");
+            var texture = new Texture2D(20, 20);
+            var sprite = Sprite.Create(texture, new Rect(0, 0, 20, 20), new Vector2(0.5f, 0.5f), 100);
+            try
+            {
+                Set(image, "sprite", sprite);
+                var result = Diagnose(); Findings(result);
+                var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceID());
+                Assert.AreEqual(40, rect["rect"].Value<float>("width"), 0.1f, "Image preferred width depends on sprite pixelsPerUnit / Canvas.referencePixelsPerUnit.");
+            }
+            finally
+            {
+                Set(image, "sprite", null);
+                UnityEngine.Object.DestroyImmediate(sprite); UnityEngine.Object.DestroyImmediate(texture);
+            }
+        }
+
+        [Test]
+        public void InactiveTargetBeyondPreviewBudgetReturnsExplicitError()
+        {
+            for (int i = 0; i < 1000; i++) Child("Context" + i);
+            var target = Child("InactiveTargetBeyondBudget"); target.SetActive(false);
+            var result = Diagnose(target, includeInactive: true, maxNodes: 1);
+            Assert.IsFalse(result.Value<bool>("success"), "An omitted inactive target must not return a successful empty diagnostic result.");
+            Assert.AreEqual("preview_limit_exceeded", result.Value<string>("code"));
+        }
+
+        [TestCase(true, false)]
+        [TestCase(false, false)]
+        [TestCase(true, true)]
+        public void NestedLayoutRootsAndDisabledParentOrPlainGapsAdaptAcrossResolutions(bool parentEnabled, bool plainGap)
+        {
+            var host = Child("Host"); var hostRect = host.GetComponent<RectTransform>();
+            hostRect.anchorMin = Vector2.zero; hostRect.anchorMax = Vector2.one; hostRect.sizeDelta = Vector2.zero;
+            var parentGroup = Add(host, "UnityEngine.UI.HorizontalLayoutGroup");
+            Set(parentGroup, "childControlWidth", true); Set(parentGroup, "childForceExpandWidth", true);
+            ((Behaviour)parentGroup).enabled = parentEnabled;
+            var parent = host;
+            if (plainGap)
+            {
+                parent = Child("PlainGap", host); var rect = parent.GetComponent<RectTransform>();
+                rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.sizeDelta = Vector2.zero;
+            }
+            var nested = Child("Nested", parent); var nestedRect = nested.GetComponent<RectTransform>();
+            nestedRect.anchorMin = Vector2.zero; nestedRect.anchorMax = Vector2.one; nestedRect.sizeDelta = Vector2.zero;
+            var nestedGroup = Add(nested, "UnityEngine.UI.VerticalLayoutGroup");
+            Set(nestedGroup, "childControlWidth", true); Set(nestedGroup, "childForceExpandWidth", true);
+            var leaf = Child("Leaf", nested);
+            string before = EditorJsonUtility.ToJson(leaf.GetComponent<RectTransform>());
+            var sizes = Sizes(1920, 1080); sizes.Add(new JObject { ["width"] = 960, ["height"] = 1080 });
+            var result = Diagnose(sizes: sizes); Findings(result);
+            var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == leaf.GetInstanceID()).ToArray();
+            Assert.AreEqual(1920, rects[0]["rect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(960, rects[1]["rect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(leaf.GetComponent<RectTransform>()));
+        }
+
+        [TestCase(0, 1.41421356f)]
+        [TestCase(1, 1f)]
+        [TestCase(2, 2f)]
+        public void PreviewCanvasDensityContextPreservesCanvasScalerMath(int matchMode, float expectedScale)
+        {
+            var scaler = Add(root, "UnityEngine.UI.CanvasScaler");
+            Set(scaler, "uiScaleMode", 1); Set(scaler, "referenceResolution", new Vector2(800, 600));
+            Set(scaler, "screenMatchMode", matchMode); Set(scaler, "matchWidthOrHeight", 0.5f);
+            var child = Child("FixedSize");
+            var result = Diagnose(sizes: Sizes(1600, 600)); Findings(result);
+            Assert.AreEqual(expectedScale, result["data"]["resolutions"][0]["resolution"].Value<float>("scaleFactor"), 0.001f);
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceID());
+            Assert.AreEqual(100 * expectedScale, rect["rect"].Value<float>("width"), 0.1f);
+        }
+
+        [Test]
+        public void DisabledNestedCanvasFallsBackToActiveRootForChildGraphics()
+        {
+            var container = Child("DisabledNestedCanvas"); container.AddComponent<Canvas>().enabled = false;
+            var first = Button("First"); first.transform.SetParent(container.transform, false);
+            var second = Button("Second"); second.transform.SetParent(container.transform, false);
+            var graphic = first.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
+            Assert.AreSame(root.GetComponent<Canvas>(), graphic.GetType().GetProperty("canvas").GetValue(graphic), "Graphic.CacheCanvas selects the nearest enabled Canvas.");
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Disabling a nested Canvas does not disable child Graphics that fall back to the active root.");
+        }
+
+        [Test]
+        public void ParentLayoutGroupAndChildAspectFitterConflictOnlyOnSharedSizeAxis()
+        {
+            var group = Add(root, "UnityEngine.UI.HorizontalLayoutGroup");
+            Set(group, "childControlWidth", true); Set(group, "childControlHeight", false);
+            var child = Child("AspectSizedChild"); var aspect = Add(child, "UnityEngine.UI.AspectRatioFitter");
+            Set(aspect, "aspectMode", 1); Set(aspect, "aspectRatio", 2f);
+            Assert.IsFalse(Has(Diagnose(), "layout_driver_conflict", child), "Parent width control and child WidthControlsHeight are orthogonal.");
+            Set(group, "childControlHeight", true);
+            Assert.IsTrue(Has(Diagnose(), "layout_driver_conflict", child), "Both the group and WidthControlsHeight now drive the child's height.");
+        }
+
+        [Test]
+        public void DisabledIgnoreParentGroupStillStopsSelectableGroupsButNotGraphicRaycastGroups()
+        {
+            root.AddComponent<CanvasGroup>().interactable = false;
+            var container = Child("DisabledBoundaryGroup"); var group = container.AddComponent<CanvasGroup>();
+            group.ignoreParentGroups = true; group.enabled = false;
+            var first = Button("First"); first.transform.SetParent(container.transform, false);
+            var second = Button("Second"); second.transform.SetParent(container.transform, false);
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Selectable.ParentGroupAllowsInteraction honors ignoreParentGroups even when that group is disabled.");
+            root.GetComponent<CanvasGroup>().blocksRaycasts = false;
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "Graphic.Raycast skips disabled groups and still evaluates the ancestor's blocksRaycasts.");
         }
 
         [Test]
