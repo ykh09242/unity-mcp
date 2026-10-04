@@ -6,7 +6,9 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
+    "prebuild": "node --test scripts/dependency-contracts.test.mjs",
     "build": "docusaurus build",
+    "test:dependencies": "node --test scripts/dependency-contracts.test.mjs",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
@@ -35,6 +37,7 @@
   "overrides": {
     "copy-webpack-plugin": "^14.0.0",
     "css-minimizer-webpack-plugin": "^8.0.0",
+    "update-notifier": "^7.3.1",
     "webpack-dev-server": "^6.0.0"
   },
   "browserslist": {
