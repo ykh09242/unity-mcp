@@ -59,7 +59,11 @@ def detect_repo_root(explicit: str | None) -> pathlib.Path:
 
 
 def detect_branch(repo: pathlib.Path) -> str:
-    return run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    branch = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    # Detached HEAD must pin the checkout, not the remote's default HEAD.
+    if branch == "HEAD":
+        return run_git(repo, "rev-parse", "--verify", "HEAD")
+    return branch
 
 
 def detect_origin(repo: pathlib.Path) -> str:
@@ -91,23 +95,24 @@ def write_json(path: pathlib.Path, data: dict) -> None:
         f.write("\n")
 
 
-def build_options(repo_root: pathlib.Path, branch: str, origin_https: str):
+def build_options(repo_root: pathlib.Path, branch: str | None, origin_https: str | None):
     upstream_main = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
     upstream_beta = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#beta"
-    # Ensure origin is https
-    origin = origin_https
-    # If origin is a local file path or non-https, try to coerce to https github if possible
-    if origin.startswith("file:"):
-        # Not meaningful for remote option; keep upstream
-        origin_remote = upstream_main
+    if origin_https and origin_https.startswith("file:"):
+        # The upstream fallback already includes its path and revision.
+        remote_label = "[3] Upstream main (local origin)"
+        remote_source = upstream_main
+    elif origin_https and branch:
+        remote_label = f"[3] Remote {branch}"
+        remote_source = f"{origin_https}?path=/{BRIDGE_SUBPATH}#{branch}"
     else:
-        origin_remote = origin
+        remote_label = "[3] Remote (unavailable: origin or revision missing)"
+        remote_source = None
     return [
         ("[1] Upstream main", upstream_main),
         ("[2] Upstream beta", upstream_beta),
-        (f"[3] Remote {branch}",
-         f"{origin_remote}?path=/{BRIDGE_SUBPATH}#{branch}"),
-        (f"[4] Local {branch}",
+        (remote_label, remote_source),
+        (f"[4] Local {branch or 'workspace'}",
          f"file:{(repo_root / BRIDGE_SUBPATH).as_posix()}"),
     ]
 
@@ -127,11 +132,19 @@ def main() -> None:
     args = parse_args()
     try:
         repo_root = detect_repo_root(args.repo)
-        branch = detect_branch(repo_root)
-        origin = detect_origin(repo_root)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Only the current remote choice requires Git metadata.
+    try:
+        branch = detect_branch(repo_root)
+    except (RuntimeError, OSError):
+        branch = None
+    try:
+        origin = detect_origin(repo_root)
+    except (RuntimeError, OSError):
+        origin = None
 
     options = build_options(repo_root, branch, origin)
 
@@ -156,6 +169,9 @@ def main() -> None:
 
     idx = int(choice) - 1
     _, chosen = options[idx]
+    if chosen is None:
+        print("Error: Remote source requires an origin and a checked-out revision.", file=sys.stderr)
+        sys.exit(1)
 
     data = read_json(manifest_path)
     deps = data.get("dependencies", {})
