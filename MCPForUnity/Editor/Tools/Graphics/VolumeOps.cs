@@ -771,7 +771,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (targetType == typeof(Texture2D) || targetType == typeof(Texture))
             {
                 string path = value.ToString();
-                return AssetDatabase.LoadAssetAtPath<Texture2D>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
+                var texture = AssetDatabase.LoadAssetAtPath<Texture>(AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true));
+                if (texture == null || !targetType.IsInstanceOfType(texture))
+                    throw new ArgumentException($"Texture at '{path}' was not found or is not a {targetType.Name}.");
+                return texture;
             }
 
             // Fallback: try Convert

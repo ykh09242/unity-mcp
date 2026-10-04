@@ -211,5 +211,102 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(2, RenderSettings.reflectionBounces);
             Assert.AreEqual(originalMode, RenderSettings.defaultReflectionMode);
         }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MissingVolumeTexture_DoesNotClearValueOrEnableOverride(bool texture2DOnly)
+        {
+            var original = new Texture2D(2, 2);
+            try
+            {
+                var effect = CreateTextureEffect(original, texture2DOnly);
+                string missingPath = "Assets/GraphicsContractMissing_" + System.Guid.NewGuid().ToString("N") + ".asset";
+                Assert.IsFalse(VolumeOps.SetVolumeParameter(effect, "texture", new JValue(missingPath)));
+                Assert.AreSame(original, effect.texture.GetType().GetProperty("value").GetValue(effect.texture));
+                Assert.IsFalse((bool)effect.texture.GetType().GetProperty("overrideState").GetValue(effect.texture));
+            }
+            finally
+            {
+                Object.DestroyImmediate(original);
+            }
+        }
+
+        [Test]
+        public void WrongTypeVolumeTexture_DoesNotClearValueOrEnableOverride()
+        {
+            string path = "Assets/GraphicsContractCube_" + System.Guid.NewGuid().ToString("N") + ".asset";
+            var original = new Texture2D(2, 2);
+            var cube = new Cubemap(2, TextureFormat.RGBA32, false);
+            try
+            {
+                var effect = CreateTextureEffect(original, true);
+                AssetDatabase.CreateAsset(cube, path);
+                Assert.IsFalse(VolumeOps.SetVolumeParameter(effect, "texture", new JValue(path)));
+                Assert.AreSame(original, effect.texture.GetType().GetProperty("value").GetValue(effect.texture));
+                Assert.IsFalse((bool)effect.texture.GetType().GetProperty("overrideState").GetValue(effect.texture));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+                if (cube != null) Object.DestroyImmediate(cube);
+                Object.DestroyImmediate(original);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ValidVolumeTexture_AssignsAssetAndEnablesOverride(bool cubemap)
+        {
+            string path = "Assets/GraphicsContractTexture_" + System.Guid.NewGuid().ToString("N") + ".asset";
+            Texture texture = cubemap ? (Texture)new Cubemap(2, TextureFormat.RGBA32, false) : new Texture2D(2, 2);
+            try
+            {
+                var effect = CreateTextureEffect(null, !cubemap);
+                AssetDatabase.CreateAsset(texture, path);
+                Assert.IsTrue(VolumeOps.SetVolumeParameter(effect, "texture", new JValue(path)));
+                Assert.AreSame(texture, effect.texture.GetType().GetProperty("value").GetValue(effect.texture));
+                Assert.IsTrue((bool)effect.texture.GetType().GetProperty("overrideState").GetValue(effect.texture));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+                if (texture != null) Object.DestroyImmediate(texture);
+            }
+        }
+
+        [Test]
+        public void NullVolumeTexture_ClearsValueAndEnablesOverride()
+        {
+            var original = new Texture2D(2, 2);
+            try
+            {
+                var effect = CreateTextureEffect(original, false);
+                Assert.IsTrue(VolumeOps.SetVolumeParameter(effect, "texture", JValue.CreateNull()));
+                Assert.IsNull(effect.texture.GetType().GetProperty("value").GetValue(effect.texture));
+                Assert.IsTrue((bool)effect.texture.GetType().GetProperty("overrideState").GetValue(effect.texture));
+            }
+            finally
+            {
+                Object.DestroyImmediate(original);
+            }
+        }
+
+        private sealed class TextureEffect
+        {
+            public object texture;
+        }
+
+        private static TextureEffect CreateTextureEffect(Texture value, bool texture2DOnly)
+        {
+            var genericParameter = System.Type.GetType("UnityEngine.Rendering.VolumeParameter`1, Unity.RenderPipelines.Core.Runtime");
+            if (genericParameter == null) Assert.Ignore("Volume system not available.");
+            var parameterType = genericParameter.MakeGenericType(texture2DOnly ? typeof(Texture2D) : typeof(Texture));
+            return new TextureEffect
+            {
+                texture = System.Activator.CreateInstance(parameterType,
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+                    null, new object[] { value, false }, null)
+            };
+        }
     }
 }
