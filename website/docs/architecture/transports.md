@@ -3,95 +3,41 @@ id: transports
 slug: /architecture/transports
 title: Transport Modes
 sidebar_label: Transport Modes
-description: HTTP versus stdio — when to use each, what the trade-offs are, and how multi-agent isolation works.
+description: Separate client-server transport, Unity bridge transport, authentication, and MCP session behavior.
 ---
 
 # Transport Modes
 
-MCP for Unity supports two transports between the MCP client and the Python server. The choice affects multi-agent capability, configuration shape, and a few subtle behaviors around instance routing.
+The MCP client connects to a Python server; that server connects to Unity. Transport choice does not by itself determine whether the MCP protocol is stateful.
 
-## Quick decision
+| Mode | Client to Python | Python to Unity | Typical use |
+|---|---|---|---|
+| Local HTTP | Shared HTTP MCP endpoint | Unity plugin WebSocket | Multiple clients/Editors on one trusted host. |
+| Stdio | Dedicated process over stdin/stdout | Legacy Unity TCP bridge | Clients configured for stdio; one bridge client at a time. |
+| Hosted HTTP | HTTPS MCP endpoint through a proxy | Authenticated WSS plugin connection | Operator-managed user-isolated service. |
 
-| If you want… | Use |
-|---|---|
-| Multiple MCP clients sharing one Unity instance | **HTTP** |
-| Multiple Unity instances driven from one client | either |
-| Lowest setup friction | **stdio** (Claude Desktop default) |
-| Remote-hosted server (cloud, Docker) | **HTTP** |
+## Local HTTP
 
-## HTTP (default)
+The endpoint is normally `http://localhost:8080/mcp`; Unity connects to `/hub/plugin`. All local control traffic needs the per-launch `X-Unity-MCP-Token`. Start the server before configuring clients, and reconfigure/reconnect HTTP MCP clients after restarting it. Only `GET /health` is public.
 
-**Architecture:** one Python process, one shared WebSocket hub at `/hub/plugin`, multiple MCP clients can connect concurrently. Each client gets a `client_id` and session-keyed state.
+Multiple MCP clients can share the server, but transient targets and identities are scoped to requests. Stateful legacy connections can retain session defaults; sessionless MCP 2 requests cannot. `client_id` is not an isolation key. Shared access also does not provide transaction isolation for simultaneous writes to one Editor.
 
-**Endpoint:** `http://localhost:8080/mcp`
-
-**MCP client config:**
-
-```json
-{
-  "mcpServers": {
-    "unityMCP": { "url": "http://localhost:8080/mcp" }
-  }
-}
-```
-
-**What you gain:**
-- Multi-agent: Claude Code and Cursor open at the same time, both seeing the same Unity Editor
-- Session isolation: each client's active instance, tool-group visibility, and middleware state are independent
-- Remote hosting: the server can run on a different machine or in a container
-
-**What you give up:**
-- Port-number shorthand for `set_active_instance` (HTTP enforces `Name@hash`)
-- A small amount of setup complexity if you bind to LAN — see [Security](https://github.com/ykh09242/unity-mcp/blob/beta/SECURITY.md)
+Use [manual configuration](../getting-started/clients.md#manual-client-configuration) instead of copying an unauthenticated URL-only example. Keep the local listener on loopback. Editor LAN-bind/insecure-remote opt-ins are deliberate exceptions, not settings needed for normal setup.
 
 ## Stdio
 
-**Architecture:** the MCP client spawns a dedicated Python process via `stdio`, communicating over stdin/stdout. The Python process talks to Unity over a legacy TCP bridge.
+Each MCP client launches `mcp-for-unity` from the installed package's immutable `mcpServerSource`. No local HTTP token header is involved. The legacy Unity bridge permits one client at a time; concurrent stdio processes targeting that bridge can replace a connection. Prefer shared HTTP for concurrent agents.
 
-**MCP client config (macOS/Linux):** replace `<mcpServerSource>` with the installed Unity package's pinned Git URL, as described in [installation](../getting-started/install.md).
+Selectors can include the legacy port shorthand; do not carry a port selector into HTTP. The package's Claude Desktop configurator chooses stdio regardless of global transport settings. This describes package behavior, not the vendor's complete current capabilities.
 
-```json
-{
-  "mcpServers": {
-    "unityMCP": {
-      "command": "uvx",
-      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
-    }
-  }
-}
-```
+## Hosted HTTP
 
-**What you gain:**
-- Lowest configuration friction; works without HTTP port allocation
-- Port-number shorthand: `set_active_instance(instance="6401")`
-- Claude Desktop only supports stdio — that's why MCP for Unity silently selects stdio when configuring Claude Desktop, even if you have HTTP picked elsewhere
+Keep the Python backend private behind actual HTTPS/WSS termination. Hosted mode requires an HTTPS key validator and the explicit `--http-behind-tls-proxy` assertion. This flag does not enable TLS. Every protected request authenticates before parsing; public exceptions are `GET /health` and `GET /api/auth/login-url`.
 
-**What you give up:**
-- Single-agent: a new MCP client connection replaces the previous one
-- No native session isolation: switching the active Unity instance in one client affects what the next client sees
-- Cannot host remotely
+Plugin registrations, catalogs and routing are scoped to authenticated users. Hosted clients must explicitly target their Editor. Host-local REST/CLI operations, file scanning/recovery, tool sync and focus nudges are unavailable. See [Remote Server Auth](../guides/remote-server-auth.md).
 
-## What "instance" means in each mode
+## Change modes safely
 
-- **HTTP**: instance state is keyed by `client_id` in middleware. Two clients can hold different active instances concurrently against the same Unity Editor pool.
-- **Stdio**: instance state is process-local. Since there's one Python process per client, isolation is implicit — but switching processes loses the old state.
+Change transport in **Window > Unity MCP (ykh09242)**, ensure the intended server/bridge is running, then regenerate client configuration and reconnect. Discover the new Editor ID; identifiers can differ across transport/project location. Keep secrets out of shared configuration and logs.
 
-See [Multi-Instance Routing](/guides/multi-instance) for the routing API.
-
-## Switching transport
-
-In the Unity Editor: **Window → Unity MCP (ykh09242) → Settings**, pick `HTTP` or `stdio`, click **Configure All Detected Clients**. The configurator rewrites each client's MCP config to match.
-
-Claude Desktop is the exception — it's always written as stdio regardless of your selection, because it doesn't support HTTP.
-
-## Network security (HTTP only)
-
-By default, HTTP binds to loopback (`127.0.0.1` / `::1`). Binding to all interfaces (`0.0.0.0` / `::`) requires explicit opt-in: **Advanced Settings → Allow LAN Bind (HTTP Local)**.
-
-Remote endpoints require `https://`. To allow plaintext `http://` for a remote URL, opt in via **Allow Insecure Remote HTTP**. Both guards are fail-closed: if you don't flip the switch, the server refuses the unsafe configuration.
-
-## Where this is implemented
-
-- Python: `Server/src/transport/` (plugin hub, websocket transport, legacy stdio bridge)
-- C#: `MCPForUnity/Editor/Services/` (transport clients, server management, stdio bridge host)
-- v8 migration notes: [/migrations/v8](/migrations/v8) — the architectural story of HTTP arriving
+See [Instance Routing](./instance-routing.md), [Tool Groups](../guides/tool-groups.md) and [Security And Consent](../guides/security.md). [Upstream v8 migration](../migrations/v8.md) records the historical introduction of HTTP, not the complete current security contract.

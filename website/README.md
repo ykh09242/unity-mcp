@@ -32,9 +32,9 @@ See [Docs Workflow](docs/contributing/docs.md#deploy) for setup and verification
 ```
 website/
   docs/                    Markdown content
-    getting-started/       Overview, install, setup wizard, first prompt
-    guides/                How-to content (migrated in M2)
-    reference/             Tool & resource reference (auto-generated in M3)
+    getting-started/       Overview, install, migration, clients, first prompt
+    guides/                Task-focused routing, security, CLI and setup guides
+    reference/             Generated tool/resource schemas and authored examples
     architecture/          System design notes
     contributing/          Dev setup, testing, releases
     migrations/            Version-upgrade guides
@@ -54,6 +54,12 @@ URL slugs must NOT contain `mcp-for-unity` or `unity-mcp`. The brand name lives 
 
 Never rename a published slug without adding an entry to `plugin-client-redirects` in `docusaurus.config.js`. External backlinks must keep working.
 
-## Tool reference (M3+)
+## Content ownership and validation
 
 Files under `docs/reference/tools/` and `docs/reference/resources/` are **generated** from the Python `@mcp_for_unity_tool` and `@mcp_for_unity_resource` registries by `tools/generate_docs_reference.py`. Do not hand-edit those files outside the `<!-- examples:start --><!-- examples:end -->` blocks — the generator will overwrite them.
+
+Use [Install](docs/getting-started/install.md), [Migration](docs/getting-started/migrate.md), [Security And Consent](docs/guides/security.md), and [Troubleshooting](docs/guides/troubleshooting.md) as canonical user guides. Component READMEs point to these instead of maintaining parallel tool catalogs. Preserve published slugs and add redirects deliberately when changing routes.
+
+For Markdown changes, check links, JSON/command examples and manifest pins without launching Unity or the MCP server. For site presentation changes, verify the rendered experience at desktop/mobile sizes as well as the build. Reference freshness, site build, local browser inspection and a successful Pages deployment are separate checks; report only the ones actually performed.
+
+Stable release documentation must distinguish the fixed `ykh09242-v1.0.0` snapshot from moving `beta` content. `/releases` and historical migration pages retain upstream versions/services, not current fork installation claims. See [Docs Workflow](docs/contributing/docs.md) for generation/deployment boundaries.

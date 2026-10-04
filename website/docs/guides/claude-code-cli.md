@@ -69,4 +69,4 @@ On macOS, Unity launched from Finder / Hub may not inherit your shell PATH. If `
 ## Related troubleshooting
 
 - macOS dyld ICU library errors: see [Common Setup Problems → macOS Claude CLI dyld error](/guides/troubleshooting#macos-claude-cli-fails-to-start-dyld-icu-library-not-loaded)
-- "Claude Not Found" in the Register button: see the FAQ in [Common Setup Problems](/guides/troubleshooting#faq--claude-code)
+- "Claude Not Found" in the Register button: see [Client executable paths](./troubleshooting.md#client-executable-paths).

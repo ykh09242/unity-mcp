@@ -2,61 +2,47 @@
 id: first-prompt
 slug: /getting-started/first-prompt
 title: Your First Prompt
-sidebar_label: Your First Prompt
-description: End-to-end walkthrough — from typing a prompt to seeing the result in your Unity scene.
+sidebar_label: First Prompt
+description: Discover the right Editor, inspect a saved scene, make one small change, and verify it.
 ---
 
 # Your First Prompt
 
-You've installed the package and connected a client. Here's what to actually say.
+Finish [Install And Connect](./install.md), then open a disposable or saved scene. Start with inspection rather than code execution or a large generated scene.
 
-## Prerequisites
+## 1. Confirm the project
 
-- [Install](./install) is complete
-- The MCP for Unity status panel reads `Connected`
-- Your scene is open in the Unity Editor (any scene will do — even an empty one)
+> Read `mcpforunity://instances` and show the Editor IDs. Use the ID I choose on every subsequent tool call and resource read. Read its project info and active scene; do not modify anything yet.
 
-## The prompt
+Confirm that the project and scene are the ones you intend. Tool calls use `unity_instance`; resource reads use `_meta.unity_instance`. These selectors apply to the current request. See [routing](../guides/multi-instance.md) if several Editors are open.
 
-In your MCP client (Claude Desktop, Cursor, etc.), say:
+## 2. Make one small change
 
-> Create a red, blue, and yellow cube in the current scene, spaced one unit apart on the X axis.
+> In that Editor, create one GameObject named `MCP_FirstCube` using the Cube primitive at position (0, 0, 0). Do not create scripts, change packages, enter Play mode, or save the scene. Return its instance ID and hierarchy path.
 
-The assistant should:
+The assistant should call `manage_gameobject` with the chosen target. Confirm the cube appears in Unity's Hierarchy and Scene view. A tool response is useful evidence, but inspect the Editor before repeating a timed-out write.
 
-1. Call `manage_scene` (or `find_gameobjects`) to inspect the active scene
-2. Call `manage_gameobject` three times to create cubes
-3. Call `manage_material` to create or assign colored materials
-4. Call `manage_components` to attach the material to each cube's MeshRenderer
+## 3. Verify the result
 
-Total round trip is usually 5–15 seconds depending on your network and the client.
+> Read back `MCP_FirstCube` by the returned instance ID and confirm its name, transform and components. Report any mismatch; do not create another cube.
 
-## What you should see in Unity
+Keep the object, delete it through an explicit request, or revert the disposable scene. Do not assume every operation provides a complete rollback; review changes before saving.
 
-Three cubes appear in the **Hierarchy** panel. Switch to the Scene view to see them laid out. If the materials are correct, they'll render red, blue, and yellow.
+## Continue deliberately
 
-If the cubes appear but materials are missing (gray), your project may be using URP/HDRP — the LLM should detect this from `manage_graphics` but sometimes guesses Standard. Tell it explicitly: *"This project uses URP, please use the URP/Lit shader."*
+- Add a material using the project's actual rendering pipeline instead of assuming the Standard shader.
+- Enable an optional group only when needed: [Tool Groups](../guides/tool-groups.md).
+- Before script, package, build, menu, code or batch work, review [Security And Consent](../guides/security.md).
+- For scripting, request read-only edit preparation first when reviewing a candidate; native-file application needs separate local provenance and exact-byte checks.
 
-## Stretching it
+## Diagnose failures
 
-Try escalating prompts in the same session:
+| Result | What to do |
+|---|---|
+| No Editors | Check Unity compile errors and bridge/server status. |
+| Multiple Editors | Supply a returned `Name@hash`; do not repeatedly call session selection from a sessionless client. |
+| Missing/disabled tool | Inspect `manage_tools(action="list_groups")` and the Editor tool controls. |
+| Consent denied | Review and grant only the capability you intend in the Editor. |
+| Timeout after mutation dispatch | Inspect actual state before retrying. |
 
-> Add a directional light if there isn't one, and a perspective camera positioned at (0, 2, -5) looking at the cubes.
-
-> Write a C# script that makes the red cube oscillate up and down by 0.5 units, attach it to the red cube, and enter Play mode.
-
-> Run all tests in EditMode and report which ones fail.
-
-Each of these uses a different tool group — `core` for objects/scripts, `core` again for editor mode control, `testing` for test runs (you may need to activate the `testing` group first; see [Tool Groups](/guides/tool-groups)).
-
-## When something goes wrong
-
-- **"I couldn't find any Unity instance"** — the server isn't reachable. Check the status panel.
-- **"Multiple Unity instances detected"** — you have more than one Editor open. See [Multi-Instance Routing](/guides/multi-instance).
-- **Tool calls succeed but nothing happens in the scene** — your client may be in dry-run mode, or you might have hit an MCP visibility toggle for the relevant tool. Ask the assistant to call `manage_tools` action `list_groups`.
-
-## What to read next
-
-- [Choosing an MCP Client](./clients) — capability differences across clients
-- [Tool Groups](/guides/tool-groups) — enabling vfx, animation, ui, testing, etc.
-- [Tool reference](/reference/tools) — every available tool with parameters
+See [Troubleshooting](../guides/troubleshooting.md) and the [generated tool reference](../reference/tools/index.md) for exact parameters. No fixed execution-time guarantee is implied.

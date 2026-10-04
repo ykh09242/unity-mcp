@@ -7,9 +7,9 @@ This Git-only fork is maintained by ykh09242. Contributions are welcome: bug fix
 1. **Fork** this repo and **clone** your fork.
 2. Branch off `beta` (not `main`):
    ```bash
-   git checkout -b feat/your-idea upstream/beta
+   git switch -c feat/your-idea origin/beta
    ```
-3. Install the dev environment (see [Dev Setup](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/contributing/dev-setup.md)).
+3. Use the remote that actually points to the fork's `beta` branch (the example assumes `origin`). Prepare only the environment needed for your change: [Dev Setup](website/docs/contributing/dev-setup.md).
 4. Make your change with tests.
 5. Open a PR against `beta`. PRs against `main` will be redirected.
 
@@ -22,18 +22,9 @@ This Git-only fork is maintained by ykh09242. Contributions are welcome: bug fix
 
 ## Before You Push
 
-```bash
-# Python tests
-cd Server && uv run pytest tests/ -v
+Use checks proportional to the change. For Python behavior, run focused tests from `Server/` with warnings as errors; for tooling, run the relevant `tools/tests` modules from the repository root. For Unity API/shim changes, use the affected version compile checks and state separately whether licensed EditMode/PlayMode execution ran. See [Testing](website/docs/contributing/testing.md).
 
-# Unity multi-version compile check (matches CI)
-tools/check-unity-versions.sh
-
-# Pre-commit hook for docs reference (one-time setup)
-tools/install-hooks.sh
-```
-
-The pre-commit hook regenerates `website/docs/reference/` whenever you touch a tool/resource module — saves you a CI round trip.
+Markdown-only changes need link, example/schema and manifest-pin checks, not a Unity/server launch. Site layout changes also need rendered desktop/mobile verification. Generated references must be refreshed through `tools/generate_docs_reference.py`, not hand-edited; optional hooks live in `tools/install-hooks.sh`. Return to the repository root before running root-level tools.
 
 ## Pull Request Checklist
 
@@ -41,7 +32,7 @@ The pre-commit hook regenerates `website/docs/reference/` whenever you touch a t
 - [ ] New or updated tests
 - [ ] Docs updated (the auto-gen handles the tool reference; narrative docs under `website/docs/` are hand-written)
 - [ ] No commented-out code, no `// removed for X` markers, no `_unused` renames
-- [ ] PR description explains the **why**, not just the **what**
+- [ ] PR description explains the **why**, exact checks, and any unverified runtime/platform claims
 
 ## Code Style
 

@@ -1,337 +1,82 @@
 # Unity MCP (ykh09242) Server
 
-[![MCP](https://badge.mcpx.dev?status=on 'MCP Enabled')](https://modelcontextprotocol.io/introduction)
-[![python](https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
-[![License](https://img.shields.io/badge/License-MIT-red.svg 'MIT License')](https://opensource.org/licenses/MIT)
+Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The Git-distributed package is `ykh09242-unity-mcp-server`; executable names remain `mcp-for-unity` (server) and `unity-mcp` (local HTTP CLI). Python **3.10+**, FastMCP 4 and MCP SDK 2 are required.
 
-Model Context Protocol server for Unity Editor integration. Control Unity through natural language using AI assistants like Claude, Cursor, and more.
+Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` server baseline. Git source selects the implementation, not the version label alone. No fork PyPI distribution or prebuilt Docker image is advertised.
 
-The server uses FastMCP 4 and MCP SDK 2, supporting Python 3.10 and newer.
-Stateful MCP clients can use `set_active_instance` to select a Unity Editor for their session.
-Clients using the modern sessionless protocol must pass `unity_instance` on each tool call
-and `_meta.unity_instance` on each resource read for remote hosting or when local
-auto-selection is ambiguous;
-`set_active_instance` returns an explanatory error instead of reporting a selection that cannot persist.
-When using FastMCP's Python client and session selection is needed, connect with `Client(..., mode="legacy")`.
-The `activate`, `deactivate`, and `reset` actions of `manage_tools` also require a stateful handshake.
-Sessionless clients can list groups and, on local servers, use `sync` to refresh server defaults
-from Unity's tool toggles.
-Remote-hosted clients of either protocol see and can call the built-in tools enabled in their
-authenticated Unity plugin's catalog, including optional groups. Without a catalog, only
-server-side helper tools are available. Remote `sync` is unavailable because Unity pushes its catalog.
+## Choose your task
 
-For example, with FastMCP's Python client:
+| Task | Guide |
+|---|---|
+| Connect Unity and an MCP client | [Install And Connect](../website/docs/getting-started/install.md) |
+| Review manual HTTP/stdio config | [MCP Clients](../website/docs/getting-started/clients.md) |
+| Replace upstream | [Migration](../website/docs/getting-started/migrate.md) |
+| Understand tokens, consent and budgets | [Security And Consent](../website/docs/guides/security.md) |
+| Target the correct Editor | [Multi-Instance Routing](../website/docs/guides/multi-instance.md) |
+| Use terminal commands | [CLI](../website/docs/guides/cli.md) |
+| Host behind HTTPS/API-key auth | [Remote Server Auth](../website/docs/guides/remote-server-auth.md) |
+| Change/test the implementation | [Development](../website/docs/contributing/dev-setup.md) and [Testing](../website/docs/contributing/testing.md) |
 
-```python
-await client.read_resource(
-    "mcpforunity://project/info", meta={"unity_instance": "MyGame@abc123"}
-)
-```
+## Run the released server manually
 
-The equivalent MCP `resources/read` request parameters are:
-
-```json
-{
-  "uri": "mcpforunity://project/info",
-  "_meta": { "unity_instance": "MyGame@abc123" }
-}
-```
-
-These selectors apply only to the current request. Clients that cannot attach resource
-metadata can use a stateful protocol and `set_active_instance` for a persistent default.
-
-**Fork maintained by [ykh09242](https://github.com/ykh09242)**, based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original MIT copyright and authorship are retained. This project is not affiliated with Unity Technologies.
-
-This fork has an independent release sequence, starting with stable `1.0.0`. The Python server distribution also reports `1.0.0`. Upstream `10.3.0` identifies the source baseline, not the fork's release version. Use the immutable server source recorded in the matching Unity package; the Git commit selects the server implementation independently of its version label.
-
-**Required:** Install the [Unity MCP Plugin](../README.md#quickstart) to connect Unity Editor with this MCP server. You also need `uvx` (requires [uv](https://docs.astral.sh/uv/)) to run the server.
-
----
-
-## Installation
-
-### Option 1: Immutable Git source
-
-This Git-only fork uses the distribution name `ykh09242-unity-mcp-server`. It is not advertised on PyPI. Use the immutable Git URL in `mcpServerSource` from [`MCPForUnity/package.json`](../MCPForUnity/package.json), so the server matches the Unity package. The commands and JSON below use `<mcpServerSource>` as a value to replace with that exact URL; do not pass the placeholder literally. Executables and MCP protocol identifiers retain their original names.
-
-**Run Server (HTTP):**
+Normally the Editor manages launch/configuration. For manual stable `1.0.0` use, the matching source is the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json):
 
 ```bash
-uvx --from "<mcpServerSource>" mcp-for-unity --transport http --http-url http://localhost:8080
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
-**MCP Client Configuration (HTTP):**
+Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving Git branch. First launch can require dependency downloads; a Git pin is not an offline-install guarantee.
 
-```json
-{
-  "mcpServers": {
-    "UnityMCP": {
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
-    }
-  }
-}
-```
+For stdio, use the same `uvx --from` source with `mcp-for-unity --transport stdio`. Each client launches its own process. See [manual configuration](../website/docs/getting-started/clients.md#stdio) for a complete JSON example.
 
-**MCP Client Configuration (stdio):**
+## Local HTTP authentication
 
-```json
-{
-  "mcpServers": {
-    "UnityMCP": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "<mcpServerSource>",
-        "mcp-for-unity",
-        "--transport",
-        "stdio"
-      ]
-    }
-  }
-}
-```
+Start the HTTP server **before configuring MCP clients**. Every launch creates a fresh `X-Unity-MCP-Token`, stored privately in `~/.unity-mcp/auth/token-<port>` (Windows: `%USERPROFILE%\.unity-mcp\auth\token-<port>`). Generated client configuration includes the current header. After restart, reconfigure and reconnect HTTP MCP clients. Native CLI and Unity connections read the current token automatically.
 
-### Option 2: Local Docker build
+Only local `GET /health` is public. MCP, REST and plugin WebSocket requests require authentication. Browser-origin requests are rejected; mutating HTTP requests require JSON content type. Automatic token lookup sends credentials only to loopback; use an explicit securely transferred token and trusted tunnel across machines. Never commit/share the token or token-bearing configs.
 
-Build from this checkout's `Server/` directory. No pre-built fork image is advertised.
+`UNITY_MCP_LOCAL_AUTH_TOKEN_FILE` changes the server's output/native lookup path; the server still generates a new token. `UNITY_MCP_LOCAL_AUTH_TOKEN` supplies an explicit client token, not a server reuse instruction. See the [full local authentication contract](../website/docs/guides/security.md#local-http-authentication).
+
+## Targeting and tool visibility
+
+Discover `mcpforunity://instances`. Modern sessionless calls use `unity_instance` for tools and `_meta.unity_instance` for resources. Explicit targeting is required for ambiguous local selection and all hosted calls. Legacy stateful clients can persist selection with `set_active_instance`; sessionless requests cannot.
+
+`manage_tools` activation/deactivation/reset also require a stateful handshake. Local clients can use `sync` to refresh selected-Editor toggles. Hosted catalogs are pushed by authenticated Unity plugins; remote `sync` is unavailable. See [Tool Groups](../website/docs/guides/tool-groups.md).
+
+## CLI and environment reference
 
 ```bash
-docker build -t unity-mcp-server .
-docker run -p 8080:8080 unity-mcp-server --transport http --http-url http://0.0.0.0:8080
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server" mcp-for-unity --help
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server" unity-mcp --help
 ```
 
-Configure your MCP client with `"url": "http://localhost:8080/mcp"`.
+The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).
 
-### Option 3: Local Development
+| Server setting | Purpose |
+|---|---|
+| `UNITY_MCP_TRANSPORT` | `stdio` or `http`. |
+| `UNITY_MCP_HTTP_URL`, `UNITY_MCP_HTTP_HOST`, `UNITY_MCP_HTTP_PORT` | HTTP address/bind overrides. |
+| `UNITY_MCP_DEFAULT_INSTANCE` | Server default selector; not a substitute for hosted per-request targeting. |
+| `UNITY_MCP_SKIP_STARTUP_CONNECT=1` | Skip initial Unity connection attempt. |
+| `UNITY_MCP_LOG_DIR` | Override rotating server log directory. |
+| `UNITY_MCP_DISABLE_FOCUS_NUDGE=1` | Disable local test-focus nudges. |
 
-For contributing or modifying the server code:
+Hosted mode requires an HTTPS validator and private HTTPS/WSS proxy plus `--http-behind-tls-proxy`; this assertion does not enable TLS. Its flags, environment variables and deployment examples live in [Remote Server Auth](../website/docs/guides/remote-server-auth.md). Local REST/CLI control is unavailable in hosted mode.
 
-```bash
-# Clone the repository
-git clone --branch beta https://github.com/ykh09242/unity-mcp.git
-cd unity-mcp/Server
+## Privacy, limits and diagnosis
 
-# Run with uv
-uv run src/main.py --transport stdio
-```
+Telemetry has no default endpoint: without explicit configuration, no collector worker or persistence starts. `DISABLE_TELEMETRY=1`, `UNITY_MCP_DISABLE_TELEMETRY=1`, or `MCP_DISABLE_TELEMETRY=1` opt out. See [Telemetry](../website/docs/architecture/telemetry.md) for explicit endpoint/timeout configuration. Provider tools can still contact external services when invoked.
 
----
+Requests, results, polling, regex work and authoring/import operations have budgets. Reduce work or use supported job polling instead of bypassing checks. A timeout after dispatch does not prove a mutation was canceled; inspect actual state before retrying.
 
-## Configuration
+Check Unity compilation and bridge status, then current authentication and selected instance. Server launch logs are under `Library/MCPForUnity/Logs/server-launch-<port>.log`; never share credentials or raw private payloads. See [Troubleshooting](../website/docs/guides/troubleshooting.md).
 
-The server connects to Unity Editor automatically when both are running. Most users do not need to change any settings.
+## Local development and containers
 
-### Local HTTP authentication
+Clone the fork's `beta` branch for development and run from `Server` with `uv run --locked src/main.py --transport stdio`. An Editor **Server Source Override** can point to this local `Server` directory; **Dev Mode** is an explicit fresh-install setting. Neither changes the published release/pin.
 
-Every local HTTP server launch generates a fresh 256-bit token. REST (`/api/*`),
-MCP (`/mcp`, including session requests), and the plugin WebSocket (`/hub/plugin`)
-require the `X-Unity-MCP-Token` header. Only `GET /health` is public. Local control
-requests with an `Origin` or `Sec-Fetch-Site` header are rejected, even with a valid
-token; browser clients are not supported. POST/PUT/PATCH requests must use
-`Content-Type: application/json`.
+Local Docker builds are optional, not the normal onboarding path. Build from this checkout's `Server` directory. If exposing local-token HTTP from a container, authorized clients need access to its private current token; a bare port mapping is not a complete client setup. For hosted deployment use the private-network/proxy configuration in [Remote Server Auth](../website/docs/guides/remote-server-auth.md).
 
-The token is written atomically to `~/.unity-mcp/auth/token-<port>` (on Windows,
-`%USERPROFILE%\.unity-mcp\auth\token-<port>`), with owner-only file permissions on
-POSIX and the user directory's inherited ACL on Windows. The token is never served
-over HTTP or printed in server logs. A clean shutdown removes it, and every restart
-replaces it. Do not commit or share this file.
+## Attribution and support
 
-Start the server **before configuring MCP clients** in the Unity window. Unity's
-WebSocket and the `unity-mcp` CLI read the current token on each new connection or
-request. Generated JSON, Codex TOML, and Claude Code configurations include the
-header. After restarting the server, configure your HTTP MCP clients again and
-reconnect them so they use the new token. For manual configuration, use the current
-file contents as the header value; Codex calls this setting `http_headers`.
-
-Set `UNITY_MCP_LOCAL_AUTH_TOKEN_FILE` to an absolute private file path to change
-the server's output location and the native clients' lookup location. The server
-always generates its own token; it does not reuse a pre-existing file. For a client
-on another machine, explicitly provide the current token through
-`UNITY_MCP_LOCAL_AUTH_TOKEN`, a securely transferred token file, or the MCP header.
-Automatic file discovery only sends credentials to local hosts. Local HTTP is
-unencrypted; use a trusted tunnel across machines. For Docker, share a private token
-file/directory with authorized clients, or use remote-hosted authentication.
-
-Stdio and remote-hosted API key authentication keep their existing behavior.
-
-### CLI options
-
-These options apply to the `mcp-for-unity` command (whether run via `uvx`, Docker, or `python src/main.py`).
-
-- `--transport {stdio,http}` - Transport protocol (default: `stdio`)
-- `--http-url URL` - Base URL used to derive host/port defaults (default: `http://localhost:8080`)
-- `--http-host HOST` - Override HTTP bind host (overrides URL host)
-- `--http-port PORT` - Override HTTP bind port (overrides URL port)
-- `--http-remote-hosted` - Treat HTTP transport as remotely hosted
-  - Requires API key authentication (see below)
-  - Disables local/CLI-only HTTP routes (`/api/command`, `/api/instances`, `/api/custom-tools`)
-  - Forces explicit Unity instance selection for MCP tool/resource calls
-  - Isolates Unity sessions per user
-- `--http-behind-tls-proxy` - Required for remote HTTP; confirms the backend is private behind an HTTPS/WSS proxy. This flag does not enable TLS itself.
-- `--api-key-validation-url URL` - External endpoint to validate API keys (required when `--http-remote-hosted` is set)
-- `--api-key-login-url URL` - URL where users can obtain/manage API keys (served by `/api/auth/login-url`)
-- `--api-key-cache-ttl SECONDS` - Cache duration for validated keys (default: `300`)
-- `--api-key-service-token-header HEADER` - Header name for server-to-auth-service authentication (e.g. `X-Service-Token`)
-- `--api-key-service-token TOKEN` - Token value sent to the auth service for server authentication
-- `--default-instance INSTANCE` - Default Unity instance to target (project name, hash, or `Name@hash`)
-- `--project-scoped-tools` - Keep custom tools scoped to the active Unity project and enable the custom tools resource
-- `--unity-instance-token TOKEN` - Optional per-launch token set by Unity for deterministic lifecycle management
-- `--pidfile PATH` - Optional path where the server writes its PID on startup (used by Unity-managed terminal launches)
-
-### Environment variables
-
-- `UNITY_MCP_TRANSPORT` - Transport protocol: `stdio` or `http`
-- `UNITY_MCP_HTTP_URL` - HTTP server URL (default: `http://localhost:8080`)
-- `UNITY_MCP_HTTP_HOST` - HTTP bind host (overrides URL host)
-- `UNITY_MCP_HTTP_PORT` - HTTP bind port (overrides URL port)
-- `UNITY_MCP_HTTP_REMOTE_HOSTED` - Enable remote-hosted mode (`true`, `1`, or `yes`)
-- `UNITY_MCP_HTTP_BEHIND_TLS_PROXY` - Confirm the remote HTTP backend is private behind an HTTPS/WSS proxy
-- `UNITY_MCP_DEFAULT_INSTANCE` - Default Unity instance to target (project name, hash, or `Name@hash`)
-- `UNITY_MCP_SKIP_STARTUP_CONNECT=1` - Skip initial Unity connection attempt on startup
-- `UNITY_MCP_LOG_DIR` - Override the rotating server log directory. Default: `%LOCALAPPDATA%\UnityMCP\Logs` (Windows), `~/Library/Application Support/UnityMCP/Logs` (macOS), `$XDG_STATE_HOME/UnityMCP/Logs` (Linux/BSD, defaults to `~/.local/state/UnityMCP/Logs`).
-
-API key authentication (remote-hosted mode):
-
-- `UNITY_MCP_API_KEY_VALIDATION_URL` - External endpoint to validate API keys
-- `UNITY_MCP_API_KEY_LOGIN_URL` - URL where users can obtain/manage API keys
-- `UNITY_MCP_API_KEY_CACHE_TTL` - Cache TTL for validated keys in seconds (default: `300`)
-- `UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER` - Header name for server-to-auth-service authentication
-- `UNITY_MCP_API_KEY_SERVICE_TOKEN` - Token value sent to the auth service for server authentication
-
-Telemetry:
-
-The fork has no destination by default. Telemetry requires a validated explicit `UNITY_MCP_TELEMETRY_ENDPOINT` and the existing enabled gate; without a configured endpoint it starts no worker or persistence. See [telemetry](../website/docs/architecture/telemetry.md).
-
-- `DISABLE_TELEMETRY=1` - Disable anonymous telemetry (opt-out)
-- `UNITY_MCP_DISABLE_TELEMETRY=1` - Same as `DISABLE_TELEMETRY`
-- `MCP_DISABLE_TELEMETRY=1` - Same as `DISABLE_TELEMETRY`
-- `UNITY_MCP_TELEMETRY_ENDPOINT` - Override telemetry endpoint URL
-- `UNITY_MCP_TELEMETRY_TIMEOUT` - Override telemetry request timeout (seconds)
-
-### Examples
-
-**Stdio (default):**
-
-```bash
-uvx --from "<mcpServerSource>" mcp-for-unity --transport stdio
-```
-
-**HTTP (local):**
-
-```bash
-uvx --from "<mcpServerSource>" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
-```
-
-**Remote HTTPS (private backend behind a TLS proxy, with API key auth):**
-
-Configure the proxy first using the [HTTPS deployment guide](../website/docs/guides/remote-server-auth.md#https-deployment). Bind the Python backend to loopback when the proxy is on the same host:
-
-```bash
-uvx --from "<mcpServerSource>" mcp-for-unity \
-  --transport http \
-  --http-host 127.0.0.1 \
-  --http-port 8080 \
-  --http-remote-hosted \
-  --http-behind-tls-proxy \
-  --api-key-validation-url https://auth.example.com/api/validate-key \
-  --api-key-login-url https://app.example.com/api-keys
-```
-
-**Disable telemetry:**
-
-```bash
-DISABLE_TELEMETRY=1 uvx --from "<mcpServerSource>" mcp-for-unity --transport stdio
-```
-
----
-
-## Remote-Hosted Mode
-
-When deploying the server as a shared remote service for a team, enable `--http-remote-hosted` to activate API key authentication and per-user session isolation.
-
-**Requirements:**
-
-- A trusted HTTPS reverse proxy for MCP requests and WSS plugin connections. Keep the HTTP backend on loopback or an unpublished container network; never expose it directly. `--http-behind-tls-proxy` (or `UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true`) explicitly confirms this boundary and is required at startup. `--http-url https://...` alone does not configure TLS.
-- An external HTTPS endpoint that validates API keys. The server POSTs `{"api_key": "..."}` and expects `{"valid": true, "user_id": "..."}` or `{"valid": false}` in response.
-- `--api-key-validation-url` must be provided (or `UNITY_MCP_API_KEY_VALIDATION_URL`). The server exits with code 1 if this is missing.
-- The validation URL must be absolute HTTPS without embedded credentials or a fragment. Plaintext URLs, including loopback, are rejected before authentication starts. Validation redirects are not followed. HTTPX honors proxy and certificate environment settings, so only use trusted proxies and CA configuration on the server host.
-
-**What changes in remote-hosted mode:**
-
-- Every MCP HTTP request (including initialization and catalogs) and Unity plugin WebSocket upgrade requires exactly one valid `X-API-Key` header. Authentication failures are rejected before dispatch.
-- Each user only sees Unity instances that connected with their API key (session isolation).
-- Auto-selection of a sole Unity instance is disabled; users must explicitly call `set_active_instance`.
-- CLI REST routes (`/api/command`, `/api/instances`, `/api/custom-tools`) are disabled.
-- `/health` and `/api/auth/login-url` remain accessible without authentication.
-
-**MCP client config with API key:**
-
-```json
-{
-  "mcpServers": {
-    "UnityMCP": {
-      "url": "https://mcp.example.com/mcp",
-      "headers": {
-        "X-API-Key": "<your-api-key>"
-      }
-    }
-  }
-}
-```
-
-For full details, see [Remote Server Auth Guide](../website/docs/guides/remote-server-auth.md) and [Architecture Reference](../website/docs/architecture/remote-auth.md). The repository's `docker-compose.remote.yml` provides a Caddy HTTPS proxy with an unpublished backend.
-
----
-
-## MCP Resources
-
-The server provides read-only MCP resources for querying Unity Editor state. Resources provide up-to-date information about your Unity project without modifying it.
-
-**Accessing Resources:**
-
-Resources are accessed by their URI (not their name). Always use `ListMcpResources` to get the correct URI format.
-
-**Example URIs:**
-- `mcpforunity://editor/state` - Editor readiness snapshot
-- `mcpforunity://project/tags` - All project tags
-- `mcpforunity://scene/gameobject/{instance_id}` - GameObject details by ID
-- `mcpforunity://prefab/{encoded_path}` - Prefab info by asset path
-
-**Important:** Resource names use underscores (e.g., `editor_state`) but URIs use slashes/hyphens (e.g., `mcpforunity://editor/state`). Always use the URI from `ListMcpResources()` when reading resources.
-
-**All resource descriptions now include their URI** for easy reference. List available resources to see the complete catalog with URIs.
-
----
-
-## Example Prompts
-
-Once connected, try these commands in your AI assistant:
-
-- "Create a 3D player controller with WASD movement"
-- "Add a rotating cube to the scene with a red material"
-- "Create a simple platformer level with obstacles"
-- "Generate a shader that creates a holographic effect"
-- "List all GameObjects in the current scene"
-
----
-
-## Documentation
-
-For complete documentation, troubleshooting, and advanced usage:
-
-📖 **[Full Documentation](https://ykh09242.github.io/unity-mcp/)**
-
----
-
-## Requirements
-
-- **Python:** 3.10 or newer
-- **Unity Editor:** 2021.3 LTS or newer
-- **uv:** Python package manager ([Installation Guide](https://docs.astral.sh/uv/getting-started/installation/))
-
----
-
-## License
-
-MIT License - See [LICENSE](https://github.com/ykh09242/unity-mcp/blob/beta/LICENSE)
+Maintained by [ykh09242](https://github.com/ykh09242), based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp). Original authorship and full MIT notice are retained in [LICENSE](LICENSE). Report fork issues at [ykh09242/unity-mcp/issues](https://github.com/ykh09242/unity-mcp/issues). Not affiliated with Unity Technologies.

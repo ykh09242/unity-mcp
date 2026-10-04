@@ -14,10 +14,10 @@ Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp that bridges AI a
 
 ## What you get
 
-- **40+ Unity Editor tools** exposed over MCP — `manage_scene`, `manage_script`, `manage_gameobject`, `manage_material`, `manage_physics`, `run_tests`, and more.
-- **25+ read-only resources** for state introspection — `editor_state`, `gameobject_components`, `project_info`, `unity_instances`, etc.
+- **Editor tools** exposed over MCP — scene/object/asset authoring, scripting, physics, tests, and more. The [generated reference](../reference/tools/index.md) is the current inventory, not a fixed feature count.
+- **Read-only resources** for state introspection — editor state, components, project capabilities, connected instances, and more.
 - **Auto-configuration** for popular MCP clients — Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Cline, Codex, Qwen, Gemini CLI, Copilot CLI, OpenClaw.
-- **Multi-instance support** — drive several Unity Editors from a single session via `set_active_instance`.
+- **Multi-instance support** — explicitly target each tool/resource request; persistent selection is available only on stateful legacy connections.
 - **Two transports** — HTTP (multi-agent, default) and stdio (single-agent legacy).
 
 ## When you'd use it
@@ -32,7 +32,10 @@ Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp that bridges AI a
 - **[Install](./install.md)** — Add the Unity package, install the Python server, and connect your first MCP client.
 - **[Your First Prompt](./first-prompt.md)** — End-to-end "build me a red cube" tutorial.
 - **[Choosing an MCP Client](./clients.md)** — A capability matrix across all supported clients.
-- **Setup Wizard** *(coming soon)* — Walk through the first-run experience.
+- **[Migration](./migrate.md)** — Replace upstream without co-installing shared assemblies/GUIDs; understand stable release versus development branch.
+- **[Security And Consent](../guides/security.md)** — Local authentication, high-impact tools, credentials, budgets, and retry limits.
+
+Stable fork `1.0.0` follows its own release series. [Fork release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0) list the exact tested versions and limits. [Upstream history](../releases.md) is retained separately and is not the fork's latest release.
 
 ---
 

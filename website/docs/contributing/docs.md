@@ -18,16 +18,18 @@ The documentation site you're reading is built with **Docusaurus 3** and lives u
 | **Tool reference** (`/reference/tools/**`) | generated from `Server/src/services/tools/` | `tools/generate_docs_reference.py` |
 | **Resource catalog** (`/reference/resources/`) | generated from `Server/src/services/resources/` | same generator |
 
-The generator owns everything inside the front-matter banner. The **examples block** between `<!-- examples:start -->` and `<!-- examples:end -->` is hand-written and **preserved across regenerations**.
+The generator owns tool/resource page metadata and reference content outside authored markers. Only the **examples block** between `<!-- examples:start -->` and `<!-- examples:end -->` is hand-written and preserved across regenerations. Do not infer that a generated section is safe to edit because it has no visible banner.
 
 ## Editing a hand-written page
 
 1. Find the file under `website/docs/`.
 2. Edit the markdown.
-3. Local preview: `cd website && npm run start` → http://localhost:3000/unity-mcp/
+3. Check relative links, route anchors, JSON/command examples and manifest pins. Pure Markdown does not need a Unity/MCP launch. For presentation changes, preview from `website/` with `npm run start` at http://localhost:3000/unity-mcp/ and inspect desktop/mobile layouts.
 4. Commit and PR against `beta`.
 
 CI runs `npm run build` on every PR via `.github/workflows/docs-deploy.yml`. The PR check fails if the build fails, so dead links and missing pages surface before merge.
+
+Keep task instructions canonical: installation/client setup in Getting Started; routing, consent and troubleshooting in Guides; schemas in generated Reference. Use short README pointers rather than copying inventories. Current maintained content describes the fork; retained upstream release/migration snapshots must stay clearly labeled historical. Do not change published release tags or source pins for a docs-only improvement.
 
 ## Adding examples to a generated tool page
 

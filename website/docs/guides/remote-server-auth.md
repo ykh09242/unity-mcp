@@ -4,6 +4,8 @@ When running the MCP for Unity server as a shared remote service, API key authen
 
 This guide covers how to configure, deploy, and use the feature.
 
+This is operator-managed hosting, not a fork-provided service. For same-machine setup use [Install And Connect](../getting-started/install.md) and its local token authentication instead. High-impact Editor consent remains separate from API-key authentication; see [Security And Consent](./security.md).
+
 ## Prerequisites
 
 ### External Auth Service
@@ -175,7 +177,7 @@ The ASGI server may report a pre-acceptance rejection as HTTP `403` during the W
 
 ### Session Isolation
 
-Each user can only see and interact with their own Unity instances. When User A calls `set_active_instance` or lists instances, they only see Unity editors that connected with User A's API key. User B's sessions are invisible to User A.
+Each user can only see and interact with their authorized Unity instances. Hosted requests must explicitly select the Editor with `unity_instance` for tools or `_meta.unity_instance` for resources. `set_active_instance` is available only on stateful legacy connections; modern sessionless callers cannot persist selection. Plugin and client keys must resolve to the same user identity. See [Multi-Instance Routing](./multi-instance.md).
 
 ### Auto-Select Disabled
 
@@ -183,7 +185,7 @@ In local mode, the server automatically selects the sole connected Unity instanc
 
 ### CLI Routes Disabled
 
-The following REST endpoints are disabled in remote-hosted mode to prevent unauthenticated access:
+The following host-local REST endpoints are unavailable in remote-hosted mode, even to authenticated clients:
 
 - `POST /api/command`
 - `GET /api/instances`

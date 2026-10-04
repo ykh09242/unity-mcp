@@ -1,99 +1,33 @@
-# Unity MCP (ykh09242) - Editor Plugin Guide
+# Unity MCP (ykh09242) - Editor Plugin
 
-This Git-only fork is maintained by [ykh09242](https://github.com/ykh09242), based on CoplayDev/unity-mcp. Install `com.ykh09242.unity-mcp` using the [fork quickstart](https://ykh09242.github.io/unity-mcp/getting-started/install). Fork versions start at `1.0.0`, independently of upstream versions. The package's `mcpServerSource` pins its Python server to immutable Git source; see the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Open the Editor menu at `Window > Unity MCP (ykh09242)`. CLI executables and MCP protocol identifiers retain their existing names. See the package-local [license and upstream attribution](Documentation~/LICENSE.md).
+`com.ykh09242.unity-mcp` connects the Unity Editor to MCP clients through a commit-pinned Python server. Stable fork versions begin at `1.0.0`, independently of upstream versions.
 
-Use this guide to configure and run Unity MCP (ykh09242) inside the Unity Editor. Installation is covered elsewhere; this document focuses on the Editor window, client configuration, and troubleshooting.
+## Install and connect
 
-## Open the window
-- Unity menu: Window > Unity MCP (ykh09242)
+Use [Install And Connect](https://ykh09242.github.io/unity-mcp/getting-started/install). Remove `com.coplaydev.unity-mcp` first: the packages share assembly names and asset GUIDs and must not coexist.
 
-The window has four areas: Server Status, Unity Bridge, MCP Client Configuration, and Script Validation.
+1. Let the package import and resolve compilation errors.
+2. Open **Window > Unity MCP (ykh09242)** and complete dependency checks.
+3. For local HTTP, start the server before configuring clients, then connect the Unity bridge. Stdio clients launch their own server process.
+4. Configure the intended client, reconnect it, and read `mcpforunity://instances` to verify the Editor identity.
+5. Try [a small first change](https://ykh09242.github.io/unity-mcp/getting-started/first-prompt) in a saved or disposable scene.
 
----
+Local HTTP uses a fresh token each launch. Reconfigure HTTP MCP clients after restarting the server. Keep token files and generated client configs private.
 
-## Quick start
-1. Open Window > Unity MCP (ykh09242).
-2. Click “Auto-Setup”.
-3. If prompted:
-   - Select the packaged server folder (`Server`) if you want to run the bundled implementation.
-   - Install Python and/or uv/uvx if missing so the server can be managed locally.
-   - For Claude Code, ensure the `claude` CLI is installed.
-4. Click “Start Bridge” if the Unity Bridge shows “Stopped”.
-5. Use your MCP client (Cursor, VS Code, OpenClaw, Claude Code) to connect.
+## Choose the right guide
 
----
+| Task | Guide |
+|---|---|
+| Replace an upstream installation | [Migration](https://ykh09242.github.io/unity-mcp/getting-started/migrate) |
+| Configure an MCP client manually | [MCP Clients](https://ykh09242.github.io/unity-mcp/getting-started/clients) |
+| Select one of several Editors | [Multi-Instance Routing](https://ykh09242.github.io/unity-mcp/guides/multi-instance) |
+| Enable a needed tool/group | [Tool Groups](https://ykh09242.github.io/unity-mcp/guides/tool-groups) |
+| Review high-impact permissions | [Security And Consent](https://ykh09242.github.io/unity-mcp/guides/security) |
+| Diagnose connection problems | [Troubleshooting](https://ykh09242.github.io/unity-mcp/guides/troubleshooting) |
+| Validate scripts with optional Roslyn | [Roslyn](https://ykh09242.github.io/unity-mcp/guides/roslyn) |
 
-## Server Status
-- Status dot and label:
-  - Installed / Installed (Embedded) / Not Installed.
-- Mode and ports:
-  - Mode: Auto or Standard.
-  - Ports: Unity (varies; shown in UI), MCP 6500.
-- Actions:
-  - Auto-Setup: Registers/updates your selected MCP client(s), ensures bridge connectivity. Shows “Connected ✓” after success.
-  - Rebuild MCP Server: Rebuilds the Python based MCP server
-  - Select server folder…: Choose the local `Server` folder (dev only; usually not needed when using uvx).
-  - Verify again: Re-checks server presence.
-  - If Python isn’t detected, use “Open Install Instructions”.
-- HTTP Server Command foldout:
-  - Expands to display the exact `uvx` command Unity will run.
-  - Includes a copy button and the “Start Local HTTP Server” action so you can launch or reuse the command elsewhere.
+## Server source and development
 
----
+The package's `mcpServerSource` records immutable Git source for the matching `Server` implementation; the UPM revision and server SHA need not be identical. Keep the default pin for released use. **Server Source Override** and **Dev Mode** are explicit development settings, not requirements for normal setup. See the [Server README](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md) and [development guide](https://ykh09242.github.io/unity-mcp/contributing/dev-setup).
 
-## Unity Bridge
-- Shows Running or Stopped with a status dot.
-- Start/Stop Bridge button toggles the Unity bridge process used by MCP clients to talk to Unity.
-- Tip: After Auto-Setup, the bridge may auto-start in Auto mode.
-
----
-
-## MCP Client Configuration
-- Select Client: Choose your target MCP client (e.g., Cursor, VS Code, Windsurf, Claude Code).
-- Per-client actions:
-  - Cursor / VS Code / Windsurf:
-    - Auto Configure: Writes/updates your config to launch the server via `uvx` with the package's pinned `mcpServerSource`:
-      - Command: uvx (or your overridden path)
-      - Args: --from <git-url> mcp-for-unity
-    - Manual Setup: Opens a window with a pre-filled JSON snippet to copy/paste into your client config.
-    - Choose UV Install Location: If uv/uvx isn’t on PATH, select the executable.
-    - A compact “Config:” line shows the resolved config file name once uv/server are detected.
-  - Claude Code:
-    - Register with Claude Code / Unregister MCP for Unity with Claude Code.
-    - If the CLI isn’t found, click “Choose Claude Install Location”.
-    - The window displays the resolved Claude CLI path when detected.
-  - OpenClaw:
-    - Uses `~/.openclaw/openclaw.json` and the `openclaw-mcp-bridge` plugin.
-    - MCP for Unity writes `plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP`.
-    - OpenClaw follows the currently selected MCP for Unity transport (`HTTP` or `stdio`).
-    - The bridge exposes a proxy tool such as `unityMCP__call`.
-
-Notes:
-- The UI shows a status dot and a short status text (e.g., “Configured”, “uv Not Found”, “Claude Not Found”).
-- Use “Auto Configure” for one-click setup; use “Manual Setup” when you prefer to review/copy config.
-
----
-
-## Script Validation
-- Validation Level options:
-  - Basic — Only syntax checks
-  - Standard — Syntax + Unity practices
-  - Comprehensive — All checks + semantic analysis
-  - Strict — Full semantic validation (requires Roslyn)
-- Pick a level based on your project’s needs. A description is shown under the dropdown.
-
----
-
-## Troubleshooting
-- Python or `uv` not found:
-  - Help: [uv setup](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/guides/uv-setup.md)
-- Claude CLI not found:
-  - Help: [Client configuration](https://github.com/ykh09242/unity-mcp/blob/beta/website/docs/guides/client-configurators.md)
-
----
-
-## Tips
-- Use Cmd+Shift+M (macOS) / Ctrl+Shift+M (Windows, Linux) to toggle the Unity MCP (ykh09242) window.
-- Enable “Show Debug Logs” in the header for more details in the Console when diagnosing issues.
-
----
+Existing executable names, MCP tool/resource identifiers, C# namespaces and assembly identities are retained. Original authorship and MIT notices are preserved; see [license and upstream attribution](Documentation~/LICENSE.md). Maintained by [ykh09242](https://github.com/ykh09242), based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp); not affiliated with Unity Technologies.

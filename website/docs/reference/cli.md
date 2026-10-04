@@ -3,96 +3,53 @@ id: cli
 slug: /reference/cli
 title: CLI Reference
 sidebar_label: CLI
-description: The mcp-for-unity command-line interface — invocation, global flags, command groups, and how each maps to the equivalent MCP tool.
+description: Distinguish the server executable from the local HTTP CLI, inspect options, and discover registered command groups.
 ---
 
 # CLI Reference
 
-Replace `<mcpServerSource>` in the examples with the immutable Git URL from the installed Unity package's `package.json`. See [fork installation](/getting-started/install); this fork is not installed from PyPI.
+This page is authored, not the generated MCP tool schema. Follow [CLI setup](../guides/cli.md) before using the shorter commands below.
 
-The `mcp-for-unity` CLI is a developer-facing terminal for the same Unity automations the MCP tools expose. Both invoke the same C# `HandleCommand` methods on the Unity side — see [Three-Layer Python Design](/architecture/python-layers) for why both layers exist.
+## Two different executables
 
-## Invocation
+| Executable | Purpose |
+|---|---|
+| `mcp-for-unity` | Run the Python MCP server; accepts server transport/bind/auth flags. |
+| `unity-mcp` | Send Editor-control commands to an already-running local HTTP server. |
 
-```bash
-# Run via uvx (no install)
-uvx --from "<mcpServerSource>" mcp-for-unity <command> [args]
+They are **not aliases for one another**. Both are installed from the matching immutable `mcpServerSource`; neither should implicitly install an upstream PyPI distribution. Stdio and hosted HTTP do not provide the local REST interface used by `unity-mcp`.
 
-# Run from a Server checkout
-cd Server && uv run mcp-for-unity <command> [args]
+## Global CLI options
 
-# Run via the dedicated CLI entry point (alias)
-uvx --from "<mcpServerSource>" unity-mcp <command> [args]
-```
-
-## How it talks to Unity
-
-The CLI uses **HTTP** to the Python server (default `http://127.0.0.1:8080`), regardless of how your MCP clients are configured. The Python server in turn talks to the connected Unity Editor via WebSocket. MCP tools take a similar path via WebSocket directly; CLI commands take HTTP.
-
-## Global flags
-
-| Flag | Default | Meaning |
+| Option | Default | Meaning |
 |---|---|---|
-| `--host` | `127.0.0.1` | Python server host to connect to |
-| `--port` | `8080` | Python server port |
-| `--instance` | (auto) | Target Unity instance (`Name@hash`, hash prefix, or port number) |
-| `--format` | `text` | Output format: `text` or `json` |
-| `--verbose / -v` | off | Print full request/response payloads |
-| `--version` | — | Print CLI version and exit |
-| `--help` | — | Show command help |
+| `--host` | `127.0.0.1` | Local HTTP server host. |
+| `--port` | `8080` | HTTP port, 1-65535. |
+| `--timeout` | `30` | Positive timeout in seconds. |
+| `--instance` | auto-select one local Editor | Explicit discovered Editor ID; no persistent session selection. |
+| `--format` | `text` | `text`, `json`, or `table`. |
+| `--verbose` | off | Enable CLI verbose mode; not a promise of full payload logging. |
+| `--version` | - | Installed fork distribution version. |
+| `--help` | - | Options and command help. |
 
-For multi-instance setups, see [Multi-Instance Routing](/guides/multi-instance).
+Place global options before subcommands. HTTP tokens are discovered automatically only for loopback; see [Authentication](../guides/security.md#local-http-authentication).
 
 ## Command groups
 
-The CLI mirrors the MCP tool catalog. Each command group wraps one or more `manage_*` tools.
+Registered groups include `instance`, `scene`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `prefab`, `material`, `lighting`, `animation`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `physics`, `profiler`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
 
-| Group | What it does | Equivalent MCP tool |
-|---|---|---|
-| `mcp-for-unity instance` | List instances, check connection, set active | [`set_active_instance`](/reference/tools/core/set_active_instance) |
-| `mcp-for-unity scene` | Load/save/query/edit scenes | [`manage_scene`](/reference/tools/core/manage_scene) |
-| `mcp-for-unity gameobject` | Create/transform/delete GameObjects | [`manage_gameobject`](/reference/tools/core/manage_gameobject) |
-| `mcp-for-unity component` | Add/remove/configure components | [`manage_components`](/reference/tools/core/manage_components) |
-| `mcp-for-unity script` | Create/read/modify C# scripts | [`manage_script`](/reference/tools/core/manage_script) |
-| `mcp-for-unity asset` | Asset import/create/modify/search | [`manage_asset`](/reference/tools/core/manage_asset) |
-| `mcp-for-unity material` | Material CRUD + shader props | [`manage_material`](/reference/tools/core/manage_material) |
-| `mcp-for-unity prefab` | Prefab create/instantiate/unpack | [`manage_prefabs`](/reference/tools/core/manage_prefabs) |
-| `mcp-for-unity texture` | Texture create + patterns/gradients | [`manage_texture`](/reference/tools/vfx/manage_texture) |
-| `mcp-for-unity shader` | Shader CRUD | [`manage_shader`](/reference/tools/vfx/manage_shader) |
-| `mcp-for-unity vfx` | VFX, particle systems, trails | [`manage_vfx`](/reference/tools/vfx/manage_vfx) |
-| `mcp-for-unity camera` | Camera + Cinemachine presets | [`manage_camera`](/reference/tools/core/manage_camera) |
-| `mcp-for-unity graphics` | Volumes, post-processing, light bake | [`manage_graphics`](/reference/tools/core/manage_graphics) |
-| `mcp-for-unity lighting` | Lighting-specific operations | (subset of graphics) |
-| `mcp-for-unity physics` | 3D + 2D physics, joints, queries | [`manage_physics`](/reference/tools/core/manage_physics) |
-| `mcp-for-unity audio` | Audio operations | (subset of asset) |
-| `mcp-for-unity animation` | Animator + AnimationClip | [`manage_animation`](/reference/tools/animation/manage_animation) |
-| `mcp-for-unity ui` | UI Toolkit — UXML/USS/UIDocument | [`manage_ui`](/reference/tools/ui/manage_ui) |
-| `mcp-for-unity build` | Player builds across platforms | [`manage_build`](/reference/tools/core/manage_build) |
-| `mcp-for-unity editor` | Editor state, play mode, undo/redo | [`manage_editor`](/reference/tools/core/manage_editor) |
-| `mcp-for-unity packages` | UPM install/remove/embed | [`manage_packages`](/reference/tools/core/manage_packages) |
-| `mcp-for-unity probuilder` | ProBuilder meshes | [`manage_probuilder`](/reference/tools/probuilder/manage_probuilder) |
-| `mcp-for-unity profiler` | Profiler session + counters + snapshots | [`manage_profiler`](/reference/tools/profiling/manage_profiler) |
-| `mcp-for-unity code` | Execute arbitrary C# in the Editor | [`execute_code`](/reference/tools/scripting_ext/execute_code) |
-| `mcp-for-unity batch` | Run multiple operations atomically | [`batch_execute`](/reference/tools/core/batch_execute) |
-| `mcp-for-unity tool` | Activate/deactivate tool groups | [`manage_tools`](/reference/tools/core/manage_tools) |
-| `mcp-for-unity reflect` | Inspect Unity APIs via reflection | [`unity_reflect`](/reference/tools/docs/unity_reflect) |
-| `mcp-for-unity docs` | Fetch Unity docs (ScriptReference, Manual) | [`unity_docs`](/reference/tools/docs/unity_docs) |
-
-## Discovering subcommands and flags
-
-Every group supports `--help`:
+CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
 ```bash
-mcp-for-unity scene --help
-mcp-for-unity scene load --help
+unity-mcp --help
+unity-mcp scene --help
+unity-mcp scene load --help
 ```
 
-The help text is the authoritative per-command reference — flags, choices, and defaults all live there because the CLI is built on Click and self-describes.
+Root commands also include `status`, `instances`, and `raw`. Raw parameters must be a JSON object. Tool discovery, request targeting, consent and budgets still apply. `instance set` deliberately cannot persist a target; `batch` is not a universal atomic transaction or rollback mechanism.
 
-## Examples
+## Output and failures
 
-See [CLI Examples](/guides/cli-examples) for end-to-end walkthroughs and the [CLI Usage Guide](/guides/cli) for narrative context (when to use the CLI vs an MCP client).
+JSON mode emits a machine-readable stdout document; diagnostics belong on stderr. Explicit Unity failures return nonzero status and preserve native diagnostic payloads. Check child results/jobs as well as the outer response. A timeout after dispatch does not prove cancellation: inspect state before retrying writes.
 
-## Source
-
-CLI command definitions: [`Server/src/cli/commands/`](https://github.com/ykh09242/unity-mcp/tree/beta/Server/src/cli/commands). Entry point: [`Server/src/cli/main.py`](https://github.com/ykh09242/unity-mcp/blob/beta/Server/src/cli/main.py).
+See [worked CLI examples](../guides/cli-examples.md), [generated MCP tool reference](./tools/index.md), and [Python layers](../architecture/python-layers.md). Definitions live in [CLI commands](https://github.com/ykh09242/unity-mcp/tree/beta/Server/src/cli/commands) and [CLI main](https://github.com/ykh09242/unity-mcp/blob/beta/Server/src/cli/main.py).

@@ -42,7 +42,7 @@
 
 ## 它能做什么
 
-用自然语言从任意 MCP 客户端操作 Unity 编辑器：搭场景、建 GameObject、写改 C# 脚本、调材质和着色器、跑测试、看性能、出包。47 个 MCP 工具入口，任意客户端可用，免费、MIT 开源。
+通过 MCP 客户端操作 Unity 编辑器：查看场景、创建 GameObject、管理资源、编辑脚本、运行测试、分析性能和构建。工具是否可用取决于编辑器开关、依赖和明确授权；当前工具清单以生成的参考文档为准。此 fork 改进了继承的工具实现，不代表这些工具类别全部由 fork 新增。
 
 **[查看完整工具目录 →](../../website/docs/reference/tools/index.md)**
 
@@ -56,8 +56,12 @@
 
 1. **安装** —— 在 Unity 里打开 Package Manager，从 git URL 添加：
    `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0`
-2. **配置客户端** —— `Window → Unity MCP (ykh09242) → Configure All Detected Clients`，一键搞定所有检测到的客户端。
-3. **发个提示试试** —— *"在原点放一个立方体，加个 Rigidbody。"* 立方体几秒就出现在场景里了。
+2. **连接** —— 打开 `Window > Unity MCP (ykh09242)`。使用本地 HTTP 时，先启动服务器，再配置客户端并连接 Unity bridge。
+3. **验证** —— 读取 `mcpforunity://instances`，选择目标编辑器，先确认项目和场景，再尝试一个小改动。
+
+本地 HTTP 每次启动都会生成新 token；重启服务器后需重新配置并连接 HTTP MCP 客户端。现代无会话调用通过工具参数 `unity_instance` 和资源元数据 `_meta.unity_instance` 选择目标；远程托管必须显式指定目标。脚本、代码执行、菜单、包、构建和批处理等高影响操作需要编辑器中的明确授权。
+
+当前英文操作指南：[安装与连接](../../website/docs/getting-started/install.md)、[迁移到 fork](../../website/docs/getting-started/migrate.md)、[安全与授权](../../website/docs/guides/security.md)、[故障排查](../../website/docs/guides/troubleshooting.md)。完整运行验证的限制见 [fork 1.0.0 发布说明](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0)。
 
 此 fork 从稳定版本 `1.0.0` 开始独立管理版本，不沿用上游的 `10.3.x`。`ykh09242-v1.0.0` 是稳定发布标签，前缀用于区分上游历史标签；如需不可变安装，请使用完整 commit SHA。`#beta` 仅用于跟踪移动开发分支，分支名称不决定发布是否为测试版。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
 
@@ -66,9 +70,9 @@
 
 如果自动配置不生效，把下面的内容加到你的 MCP 客户端配置文件里：
 
-**HTTP（默认 —— 适用于 Claude Desktop、Cursor、Windsurf）：**
+**本地 HTTP（使用支持该配置格式的客户端；包内 Claude Desktop 配置器使用 stdio）：**
 
-For local HTTP, start the server first and replace <current launch token> with the private token file value. Reconfigure clients after each server restart.
+先启动本地 HTTP 服务器，再把 `<current launch token>` 替换为私有 token 文件中的当前值。每次重启服务器后重新配置客户端。不要把 token 或包含 token 的配置提交到 Git。
 ```json
 {
   "mcpServers": {

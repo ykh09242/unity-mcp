@@ -18,7 +18,8 @@ If private reporting is unavailable, contact the maintainer through a contact me
 
 | Version | Supported |
 |---------|-----------|
-| current fork preview (`beta`) | Development focus; no support SLA |
+| stable fork `1.0.0` | Published baseline; no support SLA |
+| moving development branch (`beta`) | Development focus; not an immutable release |
 | inherited upstream tags / older commits | Upstream history; no fork support guarantee |
 
 ## Network Defaults (Safe by Default)
@@ -26,6 +27,7 @@ If private reporting is unavailable, contact the maintainer through a contact me
 MCP for Unity is intentionally fail-closed:
 
 - **HTTP Local** binds to loopback only by default (`127.0.0.1`, `localhost`, `::1`). LAN bind (`0.0.0.0`, `::`) requires explicit opt-in via **Allow LAN Bind (HTTP Local)** in Advanced Settings.
+- Local HTTP/WebSocket control requires a fresh per-launch `X-Unity-MCP-Token`; only local `GET /health` is public. Browser-origin requests are rejected. Keep token files and generated client configuration private; reconfigure HTTP MCP clients after restarting the server. See [Security And Consent](website/docs/guides/security.md).
 - **HTTP Remote** requires `https://` by default. Plaintext `http://` for remote endpoints requires explicit opt-in via **Allow Insecure Remote HTTP**.
 - Remote-hosted mode requires API key authentication on every MCP HTTP request, including initialization and catalogs. Only `GET /health` and `GET /api/auth/login-url` are public. Missing, duplicate, invalid, or unverifiable credentials fail closed before protocol dispatch.
 - Remote HTTP startup requires an explicit `--http-behind-tls-proxy` deployment assertion. The backend must stay on loopback or an unpublished container network behind HTTPS/WSS; the flag itself does not enable TLS. The remote Compose example publishes only the HTTPS proxy. See [Remote Server Auth](website/docs/guides/remote-server-auth.md).
@@ -36,7 +38,7 @@ If you find a way to bypass any of these guards, that qualifies as a security vu
 
 - Hosted plugin catalogs are scoped to the authenticated user. Accepted WebSockets, including sockets awaiting registration, share limits of 32 per user and 256 overall. Registration must be the first message and complete within 10 seconds; each socket registers once. A reconnect needs an available connection slot and replaces the same user's prior project session. Catalogs allow 256 tools / 512 KiB of metadata per plugin.
 - Custom-tool polling has a server-owned 600-second deadline covering the initial command, polling commands, and sleeps. At most 16 polling executions are active per selected project, 32 per user, and 256 overall; capacity is retained until the execution exits, including cancellation cleanup.
-- Remote-hosted operations cannot use the host-local legacy Unity connection pool, scan host files for external changes, or focus host Unity windows. Script reads, edit hashes, and writes route through the authenticated user's selected plugin session. Host-local `manage_tools sync` is unavailable remotely. Text-edit previews do not write files; structured/mixed previews are rejected before dispatch.
+- Remote-hosted operations cannot use the host-local legacy Unity connection pool, scan host files for external changes, or focus host Unity windows. Script reads, edit hashes, and writes route through the authenticated user's selected plugin session. Host-local `manage_tools sync` is unavailable remotely. Supported text or structural previews do not write files; mixed text/structural preview is rejected. A remote proposal does not establish local native-file applicability.
 - `execute_code`, `execute_menu_item`, `manage_script`, `manage_packages`, `manage_build`, and `batch_execute` require explicit enablement in the Editor's tool settings. Previously implicit enabled preferences do not grant this consent. The `manage_script` permission covers all script aliases, including reads, hashes, validation, and previews, as well as asset operations that can introduce or change compiler inputs or plug-ins. Incomplete folder classification requires consent. `AutoRegister` controls registration separately from this permission.
 - HTTP request bodies are limited to 64 MiB before parsing, including chunked bodies and missing or misleading size headers. The remote Caddy example applies the same ceiling. Per-command and tool-specific limits still apply within that envelope.
 - Plugin WebSocket messages are limited to 32 MiB before JSON decoding, with depth and node-count guards. Command results and final MCP output are independently limited to 32 MiB, 64 levels, and 100,000 nodes. Final MCP accounting includes both text and structured output. HTTP/SSE responses retain their result reservations through queued and blocked delivery; estimated retained-result budgets are 256 MiB per plugin session, 512 MiB per user, and 1 GiB globally. These bounds do not guarantee total process memory usage.

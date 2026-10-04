@@ -37,7 +37,7 @@ MCP tools call Unity via WebSocket (`send_with_unity_instance`). CLI commands ca
 ### Transport Modes
 
 - **Stdio**: Single-agent only. Separate Python process per client. Legacy TCP bridge to Unity. New connections stomp old ones.
-- **HTTP**: Multi-agent ready. Single shared Python server. WebSocket hub at `/hub/plugin`. Session isolation via `client_id`.
+- **HTTP**: Shared Python server and WebSocket hub at `/hub/plugin`. Local traffic requires a per-launch token. Explicit selectors and authenticated identities are request-scoped; only stateful legacy connections retain session defaults. Never key selection by client-supplied `client_id`. Hosted catalogs and routing are authenticated-user scoped.
 
 ## Code Philosophy
 
@@ -82,7 +82,7 @@ async def manage_something(
     return response
 ```
 
-The `group` parameter controls tool visibility. Only `"core"` is enabled by default. Non-core groups (vfx, animation, etc.) start disabled and are toggled via `manage_tools`.
+The `group` parameter controls visibility. Local defaults begin with `core`; Editor toggles and local `sync` can change visible inventory. Session activation/deactivation/reset require a stateful legacy handshake. Hosted visibility comes from the authenticated Unity catalog, not global group defaults; remote `sync` is unavailable. Tool visibility does not grant high-impact Editor consent.
 
 ### Python CLI Error Handling
 CLI commands (not MCP tools) use the `@handle_unity_errors` decorator:
@@ -151,14 +151,14 @@ When you touch a shim or anything else gated by `#if UNITY_*_OR_NEWER`, run `too
 
 ### Running Tests
 ```bash
-# Python (all tests)
-cd Server && uv run pytest tests/ -v
+# Python (all tests; run from Server)
+uv run --locked --extra dev pytest tests/ -v -W error
 
 # Python (single test file)
-cd Server && uv run pytest tests/test_manage_material.py -v
+uv run --locked --extra dev pytest tests/test_manage_material.py -v -W error
 
 # Python (single test by name)
-cd Server && uv run pytest tests/ -k "test_create_material" -v
+uv run --locked --extra dev pytest tests/ -k "test_create_material" -v -W error
 
 # Unity - open TestProjects/UnityMCPTests in Unity, use Test Runner window
 
@@ -174,6 +174,8 @@ UNITY_DATA=/path/to/Editor/Data UNITY_VERSION=2021.3.45f2 EXTRA_REFS=/path/to/re
 ```
 
 #### Local headless test harness
+
+This harness starts Unity and requires explicit runtime-test scope. Do not run it, product servers, or builds solely for Markdown edits. For docs, inspect links, command/schema examples and current pins; for source, run focused checks and report compile-only versus runtime evidence separately.
 One command boots a headless Hub-licensed Editor against `TestProjects/UnityMCPTests` and runs the smoke + EditMode + PlayMode legs over the bridge — the same entrypoint CI uses (`.github/workflows/e2e-bridge.yml`):
 
 ```bash

@@ -1,133 +1,76 @@
 ---
 id: install
 slug: /getting-started/install
-title: Install
+title: Install And Connect
 sidebar_label: Install
-description: Add MCP for Unity to your Unity project and connect an MCP client.
+description: Install the stable fork, authenticate a client, and verify the Unity connection.
 ---
 
-# Install
+# Install And Connect
 
-Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp. Install the Unity package from this fork and use its pinned Git server source. No fork Asset Store, OpenUPM, or PyPI distribution is advertised.
+Install stable **Unity MCP (ykh09242) 1.0.0**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
-## Prerequisites
+## Before you start
 
-- **Unity 2021.3 LTS or newer** — [Download Unity](https://unity.com/download)
-- **Python 3.10+** with [`uv`](https://docs.astral.sh/uv/getting-started/installation/) — the setup wizard guides you through both if missing
-- **An MCP client** — [Claude Desktop](https://claude.ai/download), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Cursor](https://www.cursor.com/), [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli), [Windsurf](https://windsurf.com/), [Cline](https://cline.bot/), [OpenClaw](https://openclaw.ai/), and more
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0).
+- Git available to Unity Package Manager.
+- Python **3.10+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
+- An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
 
-## Git URL
+**Coming from upstream?** First follow [Migrate To The Fork](./migrate.md). Never co-install `com.coplaydev.unity-mcp` and `com.ykh09242.unity-mcp`: assembly names and asset GUIDs are shared.
 
-If the original `com.coplaydev.unity-mcp` package is already installed, remove it in Package Manager before adding this fork. Both packages retain the same assembly names and asset GUIDs and must not coexist. Reconfigure your MCP clients after installation so they use the fork's pinned server source.
+## 1. Install the Unity package
 
-This path needs `git` on your PATH (the Package Manager runs it). If it reports `Error when executing git command`, see [troubleshooting](../guides/troubleshooting.md#package-manager-error-when-executing-git-command--not-in-a-git-directory).
-
-In Unity, open **Window → Package Manager**, click the **`+`** button, choose **Add package from git URL...**, and paste:
+In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
 https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0
 ```
 
-`ykh09242-v1.0.0` identifies the stable `1.0.0` fork release. The prefix separates [Fork Releases](https://github.com/ykh09242/unity-mcp/releases) from inherited upstream tags. Fork component versions follow their own SemVer series, independently of upstream versions. Use a full commit SHA instead of a tag for immutable installation. The UPM name is `com.ykh09242.unity-mcp`.
+This tag identifies stable `1.0.0`. For a commit-addressed install, use the released full SHA:
 
-For development only, replace the tag with `#beta` to follow the moving source branch. The branch name does not make a tagged GitHub release a prerelease.
-
-The Unity package's `mcpServerSource` field in [`MCPForUnity/package.json`](https://github.com/ykh09242/unity-mcp/blob/beta/MCPForUnity/package.json) specifies the immutable Git URL for the matching Python distribution, `ykh09242-unity-mcp-server`. Use that value for `uvx --from`; executable names remain `mcp-for-unity` and `unity-mcp`. See the [server guide](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md).
-
-## Start the server and connect
-
-After import, MCP for Unity opens a **setup wizard** automatically.
-
-1. Confirm Python and `uv` are installed — the wizard guides you through both if missing.
-2. Click **Done**. Once dependencies are green, a list of MCP clients detected on your machine appears.
-3. Pick the clients you want to configure and click **Configure Selected**.
-
-You can return to this UI anytime via **Window → Unity MCP (ykh09242)** to start/stop the server, switch transport (HTTP vs stdio), or reconfigure clients. The status panel reads `Connected` when everything is wired up.
-
-### First prompt
-
-Try one of these in your MCP client:
-
-> Create a red, blue, and yellow cube in the current scene.
-
-> Build a simple player controller with WASD movement and a double-jump.
-
-> List every script in `Assets/Scripts` and tell me which ones reference `Rigidbody`.
-
-## Per-client notes
-
-- **Claude Desktop** only supports stdio. MCP for Unity will silently configure it that way even if you have HTTP selected elsewhere.
-- **Cursor, Antigravity, OpenClaw** still require enabling an MCP toggle or plugin in their own settings after auto-configuration.
-- **OpenClaw** also needs the `openclaw-mcp-bridge` plugin enabled and follows the currently selected MCP for Unity transport.
-- **Claude Code, VS Code, Windsurf, Cline, and the CLI clients** auto-connect after configuration.
-
-Detailed per-client setup lives in the [MCP Client Configurators guide](/guides/client-configurators).
-
-## Manual MCP client configuration
-
-If auto-configuration doesn't work for your client, add this to your client's MCP config file. In the stdio examples, replace `<mcpServerSource>` with the exact value from the installed package's `package.json` before running. For local HTTP, start the server before configuring clients; include the current launch token from its private token file.
-
-### HTTP (default — Cursor, Windsurf, Antigravity, VS Code, Cline, etc.)
-
-```json
-{
-  "mcpServers": {
-    "unityMCP": {
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
-    }
-  }
-}
+```text
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#7daf87b908643d8e2a325d077abd16a3c3559b61
 ```
 
-### VS Code
+`#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
 
-```json
-{
-  "servers": {
-    "unityMCP": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
-    }
-  }
-}
-```
+## 2. Start the local connection
 
-### Stdio (Claude Desktop, or any client without HTTP)
+1. Let the package import and fix any Unity compilation errors first.
+2. Open **Window > Unity MCP (ykh09242)**. Complete the dependency checks if the setup window appears.
+3. Select local **HTTP** for a shared server, or **stdio** when your client needs a separate server process. Keep local HTTP on loopback unless deliberately configuring a trusted tunnel.
+4. For HTTP, start the local server and wait for it to be reachable **before configuring clients**. Connect the Unity bridge to that server. Stdio clients launch their own Python process from the generated configuration.
 
-**macOS / Linux:**
+The Unity bridge and the MCP client are separate connections. A running Python process alone does not mean an Editor is connected.
 
-```json
-{
-  "mcpServers": {
-    "unityMCP": {
-      "command": "uvx",
-      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
-    }
-  }
-}
-```
+## 3. Configure your client
 
-**Windows:**
+Use the Editor window's client configuration section for the selected client, or configure the detected clients together. Review the result, then reconnect or restart the client if it has not reloaded its configuration.
 
-```json
-{
-  "mcpServers": {
-    "unityMCP": {
-      "command": "C:/Users/YOUR_USERNAME/AppData/Local/Microsoft/WinGet/Links/uvx.exe",
-      "args": ["--from", "<mcpServerSource>", "mcp-for-unity", "--transport", "stdio"]
-    }
-  }
-}
-```
+Local HTTP requires a fresh `X-Unity-MCP-Token` each server launch. Generated configurations include the current token. **After restarting HTTP, reconfigure and reconnect HTTP MCP clients.** Native CLI and Unity connections look up the current token automatically. Never commit token files or token-bearing client configurations.
 
-## Troubleshooting
+For unsupported clients, use [Manual Client Configuration](./clients.md#manual-client-configuration). For a manually launched Python server, see [Server README](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Hosted HTTPS/API-key deployment is a different mode: [Remote Server Auth](../guides/remote-server-auth.md).
 
-- **Unity Bridge not connecting** — Open **Window → Unity MCP (ykh09242)** and check the status panel. Restart Unity if needed.
-- **Server not starting** — Verify `uv --version` works in your terminal. Check the MCP for Unity log for errors.
-- **Client not connecting** — Confirm the HTTP server is running on `localhost:8080` and the URL in your client config matches.
+## 4. Verify before editing
 
-For runtime and client setup, see [uv setup](../guides/uv-setup.md) and [troubleshooting](../guides/troubleshooting.md).
+Ask your assistant:
 
-Still stuck? [Open an issue](https://github.com/ykh09242/unity-mcp/issues) for this fork.
+> Read `mcpforunity://instances`, show the available Editor IDs, and read the project info and active scene for the Editor I choose. Do not modify anything yet.
+
+Use the returned `Name@hash` as `unity_instance` on each tool call and `_meta.unity_instance` on each resource read. Stateful legacy sessions can retain a default; modern sessionless clients cannot. See [Multi-Instance Routing](../guides/multi-instance.md).
+
+Then try [Your First Prompt](./first-prompt.md) in a disposable or saved scene. Enable only the needed tools and review [consent and safe operation](../guides/security.md).
+
+## If a step fails
+
+| Symptom | Next check |
+|---|---|
+| Package Manager rejects the Git URL | Git/PATH and the exact URL; [Git troubleshooting](../guides/troubleshooting.md#package-manager-error-when-executing-git-command--not-in-a-git-directory). |
+| Python server does not start | Dependency paths and `Library/MCPForUnity/Logs/server-launch-<port>.log`. |
+| HTTP returns 401 | Current launch token; reconfigure after restart. |
+| HTTP returns 403 | Browser-origin headers are unsupported; use a native client. |
+| Server responds but no Editor is listed | Unity compile errors, bridge status, matching transport/endpoint. |
+| Multiple Editors are listed | Send the chosen `unity_instance` explicitly. |
+
+Continue with [Troubleshooting](../guides/troubleshooting.md); report fork issues at [ykh09242/unity-mcp](https://github.com/ykh09242/unity-mcp/issues).

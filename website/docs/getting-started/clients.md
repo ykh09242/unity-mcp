@@ -1,56 +1,87 @@
 ---
 id: clients
 slug: /getting-started/clients
-title: Choosing an MCP Client
-sidebar_label: Choosing a Client
-description: Capability matrix across every MCP client MCP for Unity auto-configures.
+title: Connect Your MCP Client
+sidebar_label: MCP Clients
+description: Use the Editor configurator or review local HTTP and pinned stdio configuration examples.
 ---
 
-# Choosing an MCP Client
+# Connect Your MCP Client
 
-MCP for Unity auto-configures every client the package detects on your machine. The differences below decide which one fits your workflow.
+Use the client that fits your workflow. This package configures MCP connections; it does not supply model access, subscriptions, provider accounts, or a hosted server. Vendor pricing and client capabilities change independently of the fork.
 
-## Capability matrix
+## Use the Editor configurator
 
-| Client | Transport | Auto-config | Streaming reasoning | Free tier | Notes |
-|---|---|---|---|---|---|
-| **Claude Desktop** | stdio only | yes | yes | yes (rate-limited) | Easiest setup. Stdio is silently chosen even if HTTP is selected globally. |
-| **Claude Code** | HTTP | yes | yes | needs Anthropic plan | First-party. Strong with multi-tool workflows. |
-| **Cursor** | HTTP | yes | yes | partial | Requires an MCP toggle in Cursor's own settings after auto-config. |
-| **VS Code (Copilot)** | HTTP | yes | yes | with Copilot | Configures under `servers` (not `mcpServers`). |
-| **Windsurf** | HTTP | yes | yes | yes | Auto-connects after config. |
-| **Cline** | HTTP | yes | yes | yes | Auto-connects after config. |
-| **GitHub Copilot CLI** | HTTP | yes | yes | with Copilot | Terminal-based agent. |
-| **Codex** | HTTP | yes | yes | with OpenAI | Auto-connects. |
-| **Qwen Code** | HTTP | yes | yes | yes | Auto-connects. |
-| **Gemini CLI** | HTTP | yes | yes | yes | Auto-connects. |
-| **OpenClaw** | HTTP / stdio | yes | yes | yes | Requires `openclaw-mcp-bridge` plugin enabled. Follows MCP for Unity's transport choice. |
-| **Antigravity** | HTTP | yes | yes | varies | Requires an MCP toggle in Antigravity settings. |
-| **Pi** | stdio / HTTP | yes | yes | yes | Needs an MCP extension (Pi ships no MCP client of its own): `pi install npm:pi-mcp-adapter`. Writes the shared `~/.config/mcp/mcp.json`. |
+Open **Window > Unity MCP (ykh09242)** and select the client in its configuration section. For local HTTP, start the server first so configuration includes its current token. Configure the selected client or detected clients together, inspect failures, then reconnect.
 
-## How to pick
+The [Client Configurators](../guides/client-configurators.md) guide documents the package's supported config formats and special cases:
 
-- **You want it to just work**: Claude Desktop. Stdio means no port conflicts and no firewall prompts.
-- **You're building a multi-agent or remote workflow**: anything HTTP. Multiple clients can share one Python server; see [Multi-Instance Routing](/guides/multi-instance).
-- **You're already in your IDE**: Cursor, VS Code Copilot, or Cline — keeps you in flow.
-- **You want a terminal**: Claude Code, Copilot CLI, Codex, Gemini CLI, Qwen Code, or Pi.
+- The package configures Claude Desktop through stdio regardless of the globally selected transport. This describes the configurator, not every transport the vendor may support.
+- VS Code uses `servers` rather than `mcpServers`.
+- Codex uses TOML and `http_headers` for HTTP authentication.
+- OpenClaw requires its MCP bridge plugin; Pi requires an MCP extension. A config write cannot install or enable those integrations.
+- Some clients need an MCP toggle or restart. Successful configuration is not proof of a live connection.
 
-## Manual configuration
+## Manual client configuration
 
-If auto-config doesn't run (offline machine, sandboxed install, etc.), copy the snippet under **Manual MCP client configuration** in [Install](./install) into your client's MCP config file.
+These are connection shapes, not universal file paths. Use your client's format, preserve unrelated settings, and never commit token-bearing configuration.
 
-## Per-client toggle locations
+### Local HTTP
 
-A few clients need an MCP toggle flipped on after the configurator writes their config. Find it here:
+Start the server. Replace the token placeholder privately with the contents of `~/.unity-mcp/auth/token-8080` for that launch and port:
 
-- **Cursor** → Settings → MCP → enable the `unityMCP` server
-- **Antigravity** → Settings → MCP servers → enable
-- **OpenClaw** → enable the `openclaw-mcp-bridge` plugin
-- **Pi** → install an MCP extension first (`pi install npm:pi-mcp-adapter`) and restart Pi; Pi has no
-  built-in MCP client, so the config file alone does nothing
+```json
+{
+  "mcpServers": {
+    "unityMCP": {
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
+    }
+  }
+}
+```
 
-Everything else just connects on next launch.
+For VS Code:
 
-## When you update the package
+```json
+{
+  "servers": {
+    "unityMCP": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "X-Unity-MCP-Token": "<current launch token>" }
+    }
+  }
+}
+```
 
-Run **Window → Unity MCP (ykh09242) → Configure All Detected Clients** any time. It's safe to re-run — the configurator writes idempotently.
+Reconfigure and reconnect HTTP MCP clients after each restart; an old token produces 401 errors. See [Local Authentication](../guides/security.md#local-http-authentication).
+
+### Stdio
+
+For stable `1.0.0`, use the matching immutable server source:
+
+```json
+{
+  "mcpServers": {
+    "unityMCP": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/ykh09242/unity-mcp.git@5693c13936932338bcd82dbb40fb26cc304813a4#subdirectory=Server",
+        "mcp-for-unity",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+If `uvx` is not on the client's PATH, use its verified absolute path. For another package revision, use **that installed package's** `mcpServerSource`; do not retain this release's pin accidentally. Stdio does not use the local HTTP token header.
+
+## Confirm the connection and target
+
+List the client's tools/resources, then read `mcpforunity://instances`. Include a returned Editor ID on calls as described in [Multi-Instance Routing](../guides/multi-instance.md). A config file, tool list, or health response alone does not establish an Editor connection.
+
+For a shared remote service, use [Remote Server Auth](../guides/remote-server-auth.md), not the local-token example. Asset-generation provider credentials are separate from MCP authentication.

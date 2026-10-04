@@ -38,7 +38,7 @@ uv --version        # should print a version like "uv 0.x"
 # Option A: Official installer (recommended)
 # Download from https://www.python.org/downloads/
 
-# Option B: Homebrew (3.12 is the latest LTS as of writing; 3.10 also works)
+# Option B: Homebrew example (choose a Python version supported by this project)
 brew install python@3.12
 ```
 

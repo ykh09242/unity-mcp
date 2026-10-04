@@ -1,116 +1,70 @@
 ---
 id: testing
 slug: /contributing/testing
-title: Testing
+title: Testing And Evidence
 sidebar_label: Testing
-description: How to run Python and Unity tests locally, what CI runs, and how to add new tests.
+description: Choose focused checks and distinguish fixture tests, compilation, live Editor execution, and skipped jobs.
 ---
 
-# Testing
+# Testing And Evidence
 
-Three test suites cover MCP for Unity: Python unit tests, Unity EditMode/PlayMode tests, and a multi-version Unity compile matrix. CI runs all three; you should run the two relevant to your change locally before pushing.
+Choose checks that observe the changed contract. Markdown-only work needs links, command/schema examples and pins checked, not a product launch. Website presentation needs rendered desktop/mobile checks. Behavior changes need focused regressions, broadening when shared contracts are affected.
 
-## Python tests
+## Python and tooling
 
-Location: `Server/tests/`
+Prepare the locked development environment as described in [Dev Setup](./dev-setup.md). From `Server/`:
 
 ```bash
-# All tests
-cd Server && uv run pytest tests/ -v
-
-# Single file
-cd Server && uv run pytest tests/test_manage_material.py -v
-
-# Single test by name pattern
-cd Server && uv run pytest tests/ -k "test_create_material" -v
+uv run --locked --extra dev pytest tests/test_manage_material.py -v -W error
+uv run --locked --extra dev pytest tests/ -v -W error
 ```
 
-CI workflow: `.github/workflows/python-tests.yml`. Coverage is uploaded to Codecov on every run.
+From the repository root, using that prepared environment:
 
-### Adding a Python test
+```bash
+uv run --directory Server --locked --extra dev pytest ../tools/tests/test_update_versions.py -v -W error
+```
 
-For a new tool `manage_<domain>`, add `Server/tests/test_manage_<domain>.py`. Existing tests are the best template — most are integration-style: they spin up a fake Unity bridge, call the tool, and assert on the dispatched payload.
+CI tests the Python 3.10 support floor and a newer interpreter with locked dependencies. Most Server tests exercise controlled fixtures; a directory named `integration` does not prove live Unity/provider execution. Keep external scenarios explicit and secrets out of test output. Coverage upload is upstream-only; fork jobs retain test artifacts instead.
 
-## Unity tests
+## Unity compile versus runtime
 
-Location: `TestProjects/UnityMCPTests/Assets/Tests/`
+| Evidence | What it establishes | What it does not establish |
+|---|---|---|
+| License-free reference compilation | Assemblies compile against selected Editor APIs/platform defines, including optional examples. | Native Editor import, Play mode, rendering, callbacks or provider behavior. |
+| Managed regression harness | Behavior of the exercised model/fixture and source contract. | All native Unity side effects. |
+| Licensed EditMode/PlayMode run | Executed tests in the named Editor/project. | Other versions/platforms or unexecuted workflows. |
+| Skipped license-gated job | No execution evidence. | A pass. |
 
-- **EditMode** (60+ files): tool validation, parser edge cases, scene paging, domain reload resilience, batch execution, AI property matching, scriptable objects, animation, physics, gameobject lifecycle
-- **PlayMode**: basic integration smoke tests
+The matrix's exact versions/profile roles live in `tools/unity-versions.json`; workflow triggers and permissions live in `.github/workflows/`. Record the actual run/revision rather than promising that every PR runs every job. Reference-only compilation is separate from licensed Unity tests.
 
-To run locally, open `TestProjects/UnityMCPTests` in Unity, then **Window → General → Test Runner**.
+## Local Unity tests
 
-CI runs both modes across a multi-Unity matrix via `.github/workflows/unity-tests.yml`.
+When native testing is deliberately in scope, prepare the local test project's package source as described in [Dev Setup](./dev-setup.md#connect-a-local-unity-package), open `TestProjects/UnityMCPTests`, and use **Window > General > Test Runner**. Add tests under its existing EditMode/PlayMode assemblies.
+
+Compatibility changes can use the repository-root version-check helpers:
+
+```bash
+tools/check-unity-versions.sh
+tools/check-unity-versions.sh --full
+```
+
+These helpers can launch installed Editors; `--full` runs native tests. Missing installations are not runtime passes. Inspect the helper's current flags and report exact versions that actually ran. [Unity compatibility](../architecture/unity-compat.md) documents shim policy.
 
 ### Local headless test harness
 
-One command boots a headless Hub-licensed Editor against `TestProjects/UnityMCPTests` and runs the smoke + EditMode + PlayMode legs over the bridge, then tears down:
+Only when intentionally testing native runtime behavior:
 
 ```bash
 python tools/local_harness.py
 ```
 
-This is the same entrypoint CI uses — `.github/workflows/e2e-bridge.yml` collapses its boot/wait/discover/run-smoke shell into this invocation.
+This boots a Hub-licensed Editor and runs selected smoke/EditMode/PlayMode legs. `--legs`, `--project-path`, `--reuse`, `--keep-alive`, and `--no-warmup` control the scenario. Exit codes: 0 pass, 1 blocking regression, 2 bridge/setup failure, 3 compile failure, 4 unavailable license, 5 missing Editor. Do not run it solely because a guide changed.
 
-Key flags:
+## Generated references and docs
 
-- `--legs smoke,editmode,playmode` — subset of legs to run.
-- `--project-path TestProjects/UnityMCPTests` — Unity project to boot (repo-relative or absolute).
-- `--reuse` — attach to an already-resident bridge instead of booting one.
-- `--keep-alive` — leave the Editor running after the legs (no teardown).
-- `--no-warmup` — skip the warm-up import phase.
+Tool/resource schemas are generated by `tools/generate_docs_reference.py`; do not hand-edit generated content outside authored example markers. [Docs Workflow](./docs.md) covers generation/check mode, page links and site validation. Optional `tools/install-hooks.sh` hooks are conveniences, not substitutes for reviewing the diff or reporting executed checks.
 
-Exit-code contract: `0` all blocking legs passed, `1` a blocking-leg regression, `2` bridge unreachable / setup failure, `3` project does not compile, `4` no Unity license / Hub seat, `5` Editor binary/version not found.
+## Report honest results
 
-It needs a Hub-activated Editor locally (no ULF/serial); none of the CI license staging applies.
-
-### Adding a Unity test
-
-Mirror the C# tool you're adding. For `ManageNavigation.cs` in `MCPForUnity/Editor/Tools/`, create `TestProjects/UnityMCPTests/Assets/Tests/EditMode/Editor/ManageNavigationTests.cs`. Use the existing assembly definition (`MCPForUnityTests.Editor.asmdef`) so the suite picks it up automatically.
-
-## Multi-version compile matrix
-
-This is the most common pre-push surprise: code that builds on your Unity version fails on another supported version because of an API rename. The local matrix check prevents that.
-
-```bash
-tools/check-unity-versions.sh           # compile-only across installed Unity Hub editors
-tools/check-unity-versions.sh --full    # full EditMode test run on each version
-```
-
-The matrix is `tools/unity-versions.json`. The script discovers Unity installations via Unity Hub's standard locations on macOS, Windows, and Linux.
-
-When you touch anything in `MCPForUnity/Runtime/Helpers/Unity*Compat.cs` or any `#if UNITY_*_OR_NEWER` block, run this. The [Unity Compat Shims](/architecture/unity-compat) doc explains the policy.
-
-## Pre-push hook
-
-`tools/install-hooks.sh` installs a pre-push hook that runs `check-unity-versions.sh` in compile-only mode when your push touches Unity-relevant paths. One-time setup:
-
-```bash
-tools/install-hooks.sh
-```
-
-To bypass for a single push: `git push --no-verify`. Use this when you're pushing docs-only or pure Python changes.
-
-## Pre-commit hook (docs reference)
-
-The same install script wires a pre-commit hook that regenerates `website/docs/reference/` whenever you stage a change under `Server/src/services/{tools,resources,registry}/`. CI fails if you skip this and the committed reference drifts — see `.github/workflows/docs-generate.yml`.
-
-## Stress / load testing
-
-Two scripts under `tools/`:
-
-- `stress_mcp.py` — concurrent MCP tool calls; surfaces middleware contention
-- `stress_editor_state.py` — hammers the `editor_state` resource; surfaces serialization hotspots
-
-These are not part of CI; run them when you change transport, middleware, or hot-path serialization.
-
-## What CI actually runs on every PR
-
-| Workflow | Trigger | Duration | What it asserts |
-|---|---|---|---|
-| `python-tests.yml` | `Server/**` changes | ~2 min | `pytest` clean, coverage uploaded |
-| `unity-tests.yml` | `MCPForUnity/**` / `TestProjects/**` changes | ~15 min × N versions | EditMode + PlayMode tests clean across the matrix |
-| `docs-deploy.yml` | `website/**`, `docs/**`, tool/resource registry changes | ~1 min (build) | Docusaurus build succeeds; on push to `beta`, deploys to GitHub Pages |
-| `docs-generate.yml` | same triggers as docs-deploy | ~1 min | Reference docs are not stale; decorator count matches MD count |
-
-Skip-equivalent: if the only files you changed are README, governance, or unrelated metadata, only the relevant subset of these fires.
+Include changed scope, exact commands, interpreter/Editor versions, source revision, results/skips and remaining limits. Do not hide external/vendor warnings or describe compile evidence as runtime certification. Load/stress/provider/Blender scenarios require deliberate execution scope and are not implicit prerequisites for every change. See the [stable release evidence](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0) for that immutable snapshot, not a guarantee for the moving branch.

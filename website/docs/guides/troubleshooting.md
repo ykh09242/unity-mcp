@@ -1,278 +1,89 @@
 ---
 id: troubleshooting
 slug: /guides/troubleshooting
-title: Common Setup Problems
-sidebar_label: Troubleshooting / FAQ
-description: Real-world fixes for the issues people actually hit — macOS dyld errors, WSL2 bridging, DLL version conflicts, and per-client FAQs.
+title: Troubleshooting
+sidebar_label: Troubleshooting
+description: Diagnose installation, authentication, bridge, target, consent, and timeout failures without destructive resets.
 ---
 
-# Common Setup Problems
-
-> Upstream history: linked CoplayDev issues and contributor credits document the original reports. For new reports about this fork, use https://github.com/ykh09242/unity-mcp/issues.
-
-## macOS: Claude CLI fails to start (dyld ICU library not loaded)
-
-**Symptoms:**
-- MCP for Unity error: *"Failed to start Claude CLI. dyld: Library not loaded: /usr/local/opt/icu4c/lib/libicui18n.71.dylib …"*
-- Running `claude` in Terminal fails with missing `libicui18n.xx.dylib`.
-
-**Cause:**
-Homebrew Node (or the `claude` binary) was linked against an ICU version that's no longer installed; dyld can't find that dylib.
-
-**Fix options (pick one):**
-
-**Reinstall Homebrew Node** (relinks to current ICU), then reinstall CLI:
-
-```bash
-brew update
-brew reinstall node
-npm uninstall -g @anthropic-ai/claude-code
-npm install -g @anthropic-ai/claude-code
-```
-
-**Use NVM Node** (avoids Homebrew ICU churn):
-
-```bash
-nvm install --lts
-nvm use --lts
-npm install -g @anthropic-ai/claude-code
-# Unity MCP → Claude Code → Choose Claude Location → ~/.nvm/versions/node/<ver>/bin/claude
-```
-
-**Use the native installer** (puts `claude` in a stable path):
-
-```bash
-# macOS / Linux
-curl -fsSL https://claude.ai/install.sh | bash
-# Unity MCP → Claude Code → Choose Claude Location → /opt/homebrew/bin/claude or ~/.local/bin/claude
-```
-
-**After fixing:** in MCP for Unity (Claude Code section), click **"Choose Claude Location"** and select the working `claude` binary, then **Register** again.
-
----
-
-## WSL2: Connecting Claude Code (Linux) to Unity (Windows)
-
-If you're running Claude Code from WSL2 and Unity on Windows, the MCP server runs on the Windows side but Claude Code needs to reach it from WSL. Here's how to bridge the two.
-
-*Contributed by [@aollivier82](https://github.com/CoplayDev/unity-mcp/issues/712).*
-
-### 1. Install the Unity package
-
-In Unity Package Manager, add by git URL:
-
-```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#beta
-```
-
-In the MCP for Unity settings, change the port to **8090** (or any free port — the default 8080 can conflict with other services like Tailscale).
-
-### 2. Install uv on Windows
-
-The MCP server requires `uv`. From an admin PowerShell:
-
-```powershell
-irm https://astral.sh/uv/install.ps1 | iex
-```
-
-### 3. Set up port forwarding from WSL to Windows
-
-WSL2 runs in a separate network namespace, so you need to forward the MCP port. From an admin PowerShell:
-
-```powershell
-netsh interface portproxy add v4tov4 listenport=8090 listenaddress=0.0.0.0 connectport=8090 connectaddress=127.0.0.1
-```
-
-Then add a firewall rule to allow it:
-
-```powershell
-New-NetFirewallRule -DisplayName "Unity MCP Server" -Direction Inbound -LocalPort 8090 -Protocol TCP -Action Allow
-```
-
-### 4. Find your WSL host IP
-
-From inside WSL:
-
-```bash
-cat /etc/resolv.conf | grep nameserver | awk '{print $2}'
-```
-
-This prints the Windows host IP as seen from WSL (e.g. `172.21.48.1`). It's a private address that varies per machine.
-
-### 5. Add the MCP server to Claude Code
-
-From WSL, using the IP from step 4:
-
-```bash
-claude mcp add --transport http UnityMCP http://<YOUR_WSL_HOST_IP>:8090/mcp
-```
-
-For example:
-
-```bash
-claude mcp add --transport http UnityMCP http://172.21.48.1:8090/mcp
-```
-
-Note: this uses **HTTP transport**, not stdio — since the server is running on the Windows side.
-
-### 6. Verify
-
-Start Unity, then start Claude Code. You should see `UnityMCP` listed as a connected MCP server. Test it by asking Claude to get your scene info.
-
-**Notes:**
-- If you restart your machine, the WSL host IP may change. Re-run step 4 and update the MCP config if needed.
-- The port proxy persists across reboots. To remove it later: `netsh interface portproxy delete v4tov4 listenport=8090 listenaddress=0.0.0.0`
-- If the connection fails, make sure Unity is running and the MCP server is started (check the MCP for Unity panel).
-
----
-
-## DLL reference mismatch with Unity AI Assistant package
-
-If you're using **Unity 6.3+** alongside the **Unity AI Assistant** package, you may encounter `System.Collections.Immutable` version conflicts.
-
-*Reported by [@rkroska](https://github.com/CoplayDev/unity-mcp/issues/557).*
-
-**Symptoms:**
-- Compilation errors referencing `System.Collections.Immutable` version mismatches
-- Errors appear after installing MCP for Unity in a project that has the Unity AI Assistant package
-
-**Cause:**
-Unity AI Assistant bundles `System.Collections.Immutable` v10, while MCP for Unity's CodeAnalysis dependency needs v9. Unity's built-in version may be v8. These conflict during assembly resolution.
-
-**Fix options:**
-
-- **Option A (recommended):** If you don't need Unity AI Assistant, remove it via Package Manager. Then install `System.Collections.Immutable` v9.0.0 as a DLL in `Assets/Plugins/`.
-- **Option B:** If you need both packages, install `System.Collections.Immutable` v9.0.0 in `Assets/Plugins/` to satisfy MCP's dependency. The AI Assistant's v10 reference should be forward-compatible.
-
-**Note:** This is a Unity assembly resolution issue, not specific to MCP for Unity. Unity doesn't have a NuGet-style dependency resolver, so DLL version conflicts must be resolved manually.
-
----
-
-## Unity 6.5: Editor hangs on load and the bridge never connects
-
-If Unity 6000.5.x spins at ~100% CPU on startup and never opens the Editor window, check `Packages/manifest.json` for `com.unity.ai.assistant` (and `com.unity.ai.inference`, `com.unity.asset-manager-for-unity`).
-
-**Symptoms:**
-- The Editor never finishes loading, so MCP for Unity never arms its bridge — which looks like an MCP connection failure
-- Stack traces sit inside `AssetDatabase::InitialRefresh` → `SourceAssetScanner::Refresh` → `GuidDB::ValidateChangedGUIDs`
-
-**Cause:**
-The pre-release AI packages can livelock `AssetDatabase::InitialRefresh`. This happens before any MCP for Unity assembly is loaded, so no MCP code is involved.
-
-**Fix:** remove those packages from `manifest.json`, **delete `Packages/packages-lock.json`** (it re-resolves them otherwise), then clear `Library/`. Disabling the package is not enough — the AI packages re-add each other.
-
-This is a Unity bug (UUM-132096), not an MCP for Unity one.
-
-*Reported by [@100yenadmin](https://github.com/CoplayDev/unity-mcp/issues/1219).*
-
----
-
-## Package Manager: "Error when executing git command" / "not in a git directory"
-
-Adding the package from a Git URL makes the Package Manager shell out to `git`. Two things make that fail:
-
-1. **git is not installed or not on PATH.** Install it from [git-scm.com](https://git-scm.com/downloads) and restart Unity so the Editor picks up the new PATH. The setup window (**Window → Unity MCP (ykh09242) → Local Setup Window**) shows a **Git (optional)** row so you can confirm the Editor sees it.
-2. **git refuses the folder.** Newer git versions decline to run inside a directory owned by a different user account (external drives, shared folders, projects created by another account). The Package Manager surfaces this as `fatal: not in a git directory`. Tell git the folder is yours:
-
-```bash
-# trust this one project
-git config --global --add safe.directory "/path/to/the/unity/project"
-
-# or trust every repository under a folder — the trailing /* is required
-git config --global --add safe.directory "/path/to/the/parent/folder/*"
-```
-
-A plain directory path only trusts that exact repository; the `/*` suffix is what extends it to the repositories underneath. Restart Unity and add the package again.
-
-Git is only needed for this install path; the bridge itself does not use it, so a missing git never blocks setup.
-
-*Reported by [@Cherrymocha](https://github.com/CoplayDev/unity-mcp/issues/1216).*
-
-## Codex: `resources/read failed: unknown MCP server`
-
-The `mcpforunity://` URI names the *resource*, not the server. Some clients take a separate server key on a resource read.
-
-In Codex, tools are exposed as `mcp__unityMCP__*`, but `resources/read` wants the discovery key on its own:
-
-```
-server: "unityMCP"
-uri: "mcpforunity://custom-tools"
-```
-
-If a read fails with an unknown-server error, list resources first and use the key exactly as returned.
-
-*Reported by [@drewclifton](https://github.com/CoplayDev/unity-mcp/issues/1220).*
-
----
+# Troubleshooting
+
+Work from package import to server, bridge, client, then target. Do not delete project caches or disable safeguards as a first step. [Install And Connect](../getting-started/install.md) is the current setup path.
+
+## Connection checklist
+
+| Symptom | Check and next action |
+|---|---|
+| Unity is in Safe Mode / package compile errors | Resolve compilation first. MCP cannot operate before its package loads. Capture the first relevant error and Editor/package versions. |
+| Local server fails to launch | Verify Unity can find Python and `uv`/`uvx`; inspect `Library/MCPForUnity/Logs/server-launch-<port>.log`. A shell PATH may differ from a Hub-launched Editor's PATH. |
+| Port is occupied | Identify its owner; stop only a process you own or choose a free port and reconfigure. The plugin does not terminate unrelated processes. |
+| HTTP 401 | Token missing/stale/duplicated: start the server, reconfigure clients, and reconnect. Server restarts rotate tokens. |
+| HTTP 403 | Browser-origin headers are unsupported; use a native client. |
+| HTTP 415 | Mutating requests need `Content-Type: application/json`. |
+| Hosted authentication fails | HTTPS/WSS proxy, private backend assertion, validator contract, API key and user catalog; [remote auth](./remote-server-auth.md). |
+| Client has no tools | Review its config format and enablement; reload/reconnect, then check Editor toggles. |
+| Server reachable, no Editors | Confirm bridge connection, matching endpoint/transport and no Unity compile/reload failure. |
+| Multiple Editors | Use a discovered `Name@hash` per request; [routing](./multi-instance.md). |
+| Tool present, operation denied | Review [consent](./security.md), permitted roots, values and work budgets. Visibility is not authorization. |
+
+`GET /health` checks only the process. Verify an Editor by reading `mcpforunity://instances` and its project info. Never share token-file contents, API keys or complete private payloads in diagnostics.
 
 ## "No Unity Instances Found"
 
-:::tip When in doubt, restart your client
-Clients like Claude Code or JetBrains Rider can get confused if you switch transport modes mid-session. Restart the client so it picks up the new configuration.
-:::
+Check bridge status and read `mcpforunity://instances`. A domain reload can temporarily remove a connection; let compilation/reconnection finish and rediscover. After transport/config changes, reconnect the client. Do not send a write to another Editor merely because the intended one is temporarily unavailable.
 
-If restarting doesn't fix it:
-- Check the MCP for Unity status panel — does it say `Connected`?
-- Open `mcpforunity://instances` in your client. If it returns an empty list, the Unity-side bridge isn't running.
-- Try **Window → Unity MCP (ykh09242) → Restart Server**.
+## Timeouts and budget errors
 
----
+Use smaller pages, fewer batch commands, lower capture resolution, or supported asynchronous job polling. Validation/budget rejection should not be worked around by bypassing checks. An error can follow partial writes in best-effort operations, and a timeout after dispatch can leave work running or applied. Inspect actual state before repeating mutations or starting another test/build job; do not assume failure rolled back the project.
+
+## Package Manager: "Error when executing git command" / "not in a git directory"
+
+Check `git --version` in a terminal and ensure Unity inherited the correct PATH. Verify the full [stable package URL](../getting-started/install.md#1-install-the-unity-package). If Git reports an ownership/safe-directory error, confirm who owns the exact project before trusting it; do not trust every repository globally. Keep the reported Git error for diagnosis.
+
+Original report: [@Cherrymocha, upstream #1216](https://github.com/CoplayDev/unity-mcp/issues/1216).
+
+## WSL2: Connecting Claude Code (Linux) to Unity (Windows)
+
+Windows and WSL may have different network namespaces, executable paths and token locations. Start with the same-machine configurator when possible. If bridging them, use a trusted tunnel or deliberately scoped private networking, provide the current local token explicitly, and update it after every server restart. Do not expose an unauthenticated all-interface port or broadly open the firewall to fix discovery.
+
+The earlier upstream port-forwarding recipe predates this fork's per-launch token contract. Its exact network commands are not a current default setup procedure. See [local authentication](./security.md#local-http-authentication) and [manual client configuration](../getting-started/clients.md#manual-client-configuration).
+
+Historical report: [@aollivier82, upstream #712](https://github.com/CoplayDev/unity-mcp/issues/712).
+
+## Codex: `resources/read failed: unknown MCP server`
+
+`mcpforunity://` names a resource, not the client's server registration. List resources first and use the server key exactly as returned by the client. Do not assume capitalization or an exposed tool prefix is the discovery key. Supply resource target metadata when supported; see [routing](./multi-instance.md).
+
+Historical report: [@drewclifton, upstream #1220](https://github.com/CoplayDev/unity-mcp/issues/1220).
 
 ## Unity takes focus while tests are running
 
-The server may briefly focus Unity when a running test has not reported progress,
-to help editors throttled in the background. To disable this behavior, set
-`UNITY_MCP_DISABLE_FOCUS_NUDGE=1` in the environment of the **Python MCP server**
-and restart that server. For a stdio client, add it to the server's `env` entry;
-for HTTP, set it in the environment that launches the shared server. The values
-`true`, `yes`, and `on` also disable nudges. Forced nudges respect this setting.
+Set `UNITY_MCP_DISABLE_FOCUS_NUDGE=1` in the **Python server's** environment and restart it to disable local nudges. For stdio, set the server's `env`; for shared HTTP, set the launch environment. Nudges are bounded, require selected-project provenance, and are unavailable in hosted mode. A nudge does not certify that a stuck test recovered.
 
-On Windows, the nudge now requires an absolute project path matching exactly one
-running `Unity.exe` process. Stdio sessions resolve that path from the selected
-instance's registry entry. If the path cannot be resolved, it skips activation.
-It restores the previous window by its saved HWND,
-so a changing window title does not prevent focus restoration. Windows can still
-deny an activation request, in which case the server reports failure.
+Related historical report: [upstream #1407](https://github.com/CoplayDev/unity-mcp/issues/1407).
 
-For [#1407](https://github.com/CoplayDev/unity-mcp/issues/1407), the server now skips
-nudges when the editor reports `run_in_background: true`. Otherwise, each test
-job has a budget of three attempts without newer test progress. Both immediate
-polls and `wait_timeout` polls share that budget, and only one nudge runs at a
-time per server. Each attempt uses the configured focus duration instead of
-escalating the duration after repeated polls.
+## Client executable paths
 
-When the budget is exhausted, `get_test_job` reports
-`progress.stuck_suspected: true` and
-`progress.focus_nudge_status: "attempt_limit_reached"`. The test itself keeps
-running; the server stops taking focus. Newer test progress renews that job's
-budget, while older replies cannot renew it. Older Unity packages that do not
-report `run_in_background` still use the bounded attempts.
+If Unity cannot find an executable that a terminal can, use the Editor's path selector with its verified absolute path and restart/reconfigure the client. This commonly affects GUI launch environments and version-manager installations. Use the vendor's current installation guidance for repairing their client; avoid copying an old global uninstall/reinstall recipe into an unrelated environment.
 
-Budgets belong to the running Python server and expire after an hour without a
-poll; separate stdio server processes maintain separate budgets. Disable nudges
-entirely when background tests already run reliably.
+See [uv setup](./uv-setup.md), [client configurators](./client-configurators.md), and [Claude Code CLI](./claude-code-cli.md).
 
----
+## Historical client and Editor reports
 
-## FAQ — Claude Code
+These upstream reports are retained as diagnostic context, not current fork compatibility guarantees or instructions to delete `Library`, replace DLLs, or remove lockfiles. Match the exact versions/error before changing dependencies, and back up the project first.
 
-**Q: Unity can't find `claude` even though Terminal can.**
-A: macOS apps launched from Finder / Hub don't inherit your shell PATH. In the Unity MCP (ykh09242) window, click **"Choose Claude Location"** and select the absolute path (e.g., `/opt/homebrew/bin/claude` or `~/.nvm/versions/node/<ver>/bin/claude`).
+### macOS: Claude CLI fails to start (dyld ICU library not loaded)
 
-**Q: I installed via NVM; where is `claude`?**
-A: Typically `~/.nvm/versions/node/<ver>/bin/claude`. The MCP for Unity UI also scans NVM versions and you can browse to it via **"Choose Claude Location"**.
+Historical Homebrew/ICU linkage report. Repair the affected client installation using its current vendor guidance, then select the working executable in Unity.
 
-**Q: The Register button says "Claude Not Found".**
-A: Install the CLI or set the path. Click the orange **[HELP]** link in the Unity MCP (ykh09242) window for step-by-step install instructions, then choose the binary location. See also: [Install or Repair Claude Code CLI](/guides/claude-code-cli).
+### DLL reference mismatch with Unity AI Assistant package
 
-## FAQ — VS Code
+Historical assembly-version conflict: [@rkroska, upstream #557](https://github.com/CoplayDev/unity-mcp/issues/557). Do not assume dropping another DLL into `Assets/Plugins` resolves the current package graph.
 
-**Q: When I first set up and start the MCP for Unity server in VS Code, I get a failed response that says `Canceled: Canceled`.**
-A: Start a new chat — the bad chat didn't pick up the MCP server configuration.
+### Unity 6.5: Editor hangs on load and the bridge never connects
 
-![Canceled error screenshot](https://github.com/user-attachments/assets/571e2aeb-c286-4235-ab2b-8285c0db3296)
+Historical pre-release package report: [@100yenadmin, upstream #1219](https://github.com/CoplayDev/unity-mcp/issues/1219). Failure before package load is not proof of an MCP defect; isolate the affected packages in a recoverable copy rather than deleting caches blindly.
 
-## FAQ — Cursor / Windsurf / VS Code (Windows uv path)
+## Report a reproducible fork issue
 
-**Q: My MCP client keeps failing to launch the server even though `uv` is installed.**
-A: Some Windows machines have multiple `uv.exe` locations. Auto-config sometimes picks a less stable path, causing the launch to fail or auto-rewrite on every restart. Use **"Choose UV Install Location"** in the Unity MCP (ykh09242) window and pin the **WinGet Links shim** path (`%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe`) — it's stable across uv upgrades.
+Include the fork package/server versions, installed Git revision, OS/Editor/client, transport, expected versus actual behavior, and minimal sanitized errors. State whether failure happened before dispatch, after mutation, or while polling a job. [Open a fork issue](https://github.com/ykh09242/unity-mcp/issues); use [private security reporting](https://github.com/ykh09242/unity-mcp/blob/beta/SECURITY.md) for vulnerabilities.

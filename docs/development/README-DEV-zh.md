@@ -15,7 +15,7 @@ python mcp_source.py --manifest TestProjects/UnityMCPTests/Packages/manifest.jso
 
 ## 贡献代码
 
-**从 `beta` 分支创建 PR**。这是此 fork 的移动预览分支，不代表已发布的稳定版本。
+**从 `beta` 分支创建 PR**。这是此 fork 的移动开发分支，与已发布的稳定 `1.0.0` 独立；发布标签和固定服务器来源不可因为文档更新而改变。当前验证边界见 [Testing（英文）](../../website/docs/contributing/testing.md)：编译通过不等于编辑器运行测试通过，纯 Markdown 修改无需启动 Unity 或服务器。
 
 在提出重大新功能之前，请先联系讨论——可能已有人在开发，或者该功能曾被讨论过。请通过 issue 或 discussion 进行协调。
 

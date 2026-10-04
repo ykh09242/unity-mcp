@@ -46,7 +46,7 @@ Full upstream history: [Release Notes](website/docs/releases.md).
 
 ## What it does
 
-Control the Unity Editor in natural language from any MCP client — create scenes & GameObjects, edit C# scripts, manage assets, run tests, profile, and build. 50 focused MCP tool entrypoints, any client, free & MIT.
+Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, manage assets, edit scripts, run tests, profile, and build. Tool availability depends on Editor toggles, installed dependencies, protocol mode, and explicit consent. The fork improves the inherited tool surface; see the [stable 1.0.0 release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0) for additions, fixes, and verification limits.
 
 **[Browse the full tool catalog →](website/docs/reference/tools/index.md)**
 
@@ -60,8 +60,12 @@ Control the Unity Editor in natural language from any MCP client — create scen
 
 1. **Install** — Unity → Package Manager → Add from git URL:
    `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0`
-2. **Configure** — `Window → Unity MCP (ykh09242) → Configure All Detected Clients`.
-3. **Prompt** — *"Create a cube at the origin and add a Rigidbody."* The cube appears in seconds.
+2. **Connect** — Open `Window > Unity MCP (ykh09242)`. For local HTTP, start the server before configuring clients, then connect the Unity bridge. Configure your selected client and reconnect it.
+3. **Verify** — Read `mcpforunity://instances`, choose the Editor, and inspect its project/scene before making [a small first change](website/docs/getting-started/first-prompt.md).
+
+**Start here:** [Install And Connect](website/docs/getting-started/install.md) · [Migrate From Upstream](website/docs/getting-started/migrate.md) · [Manual Client Configuration](website/docs/getting-started/clients.md) · [Troubleshooting](website/docs/guides/troubleshooting.md).
+
+Local HTTP creates a fresh token each launch: reconfigure HTTP MCP clients after restarting the server. Modern sessionless requests use `unity_instance` for tools and `_meta.unity_instance` for resources when selection is ambiguous; hosted requests always need a target. [Security And Consent](website/docs/guides/security.md) explains high-impact tool permissions, credential handling, and safe retries.
 
 `ykh09242-v1.0.0` is the fork's stable release tag. The prefix distinguishes fork releases from inherited upstream tags. Use a full commit SHA for immutable installation, or `#beta` only to follow the moving development branch. The branch name does not make a tagged release a beta. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the immutable Git server source in `mcpServerSource`. The Python distribution is `ykh09242-unity-mcp-server`, installed from Git, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted MCP service distribution is advertised.
 
@@ -83,6 +87,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Branch off `beta`. The full dev setup an
 - **Upstream v10 asset generation and upgrade notes** — [v10 Migration](website/docs/migrations/v10.md)
 - **Roslyn script validation** — [Roslyn Validation](website/docs/guides/roslyn.md)
 - **Remote-hosted server with auth** — [Remote Server Auth](website/docs/guides/remote-server-auth.md)
+- **Terminal workflows** — [CLI](website/docs/guides/cli.md)
 
 ## Citation
 
