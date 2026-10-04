@@ -308,6 +308,9 @@ namespace MCPForUnity.Editor.Tools.Animation
                 float vy = valArray[1].ToObject<float>();
                 float vz = valArray[2].ToObject<float>();
 
+                if (!IsFinite(time) || !IsFinite(vx) || !IsFinite(vy) || !IsFinite(vz))
+                    return new { success = false, message = "Vector keyframe time and values must be finite numbers" };
+
                 xKeys.Add(new Keyframe(time, vx));
                 yKeys.Add(new Keyframe(time, vy));
                 zKeys.Add(new Keyframe(time, vz));
@@ -462,6 +465,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                         // Shorthand: [time, value]
                         float time = pair[0].ToObject<float>();
                         float value = pair[1].ToObject<float>();
+                        if (!IsFinite(time) || !IsFinite(value))
+                            return null;
                         keyframes.Add(new Keyframe(time, value));
                     }
                     else if (item is JObject obj)
@@ -470,15 +475,35 @@ namespace MCPForUnity.Editor.Tools.Animation
                         float time = obj["time"]?.ToObject<float>() ?? 0f;
                         float value = obj["value"]?.ToObject<float>() ?? 0f;
 
+                        if (!IsFinite(time) || !IsFinite(value))
+                            return null;
+
                         var kf = new Keyframe(time, value);
                         if (obj["inTangent"] != null)
                             kf.inTangent = obj["inTangent"].ToObject<float>();
                         if (obj["outTangent"] != null)
                             kf.outTangent = obj["outTangent"].ToObject<float>();
                         if (obj["inWeight"] != null)
+                        {
                             kf.inWeight = obj["inWeight"].ToObject<float>();
+                            if (!IsFinite(kf.inWeight) || kf.inWeight < 0f || kf.inWeight > 1f)
+                                return null;
+                            kf.weightedMode |= WeightedMode.In;
+                        }
                         if (obj["outWeight"] != null)
+                        {
                             kf.outWeight = obj["outWeight"].ToObject<float>();
+                            if (!IsFinite(kf.outWeight) || kf.outWeight < 0f || kf.outWeight > 1f)
+                                return null;
+                            kf.weightedMode |= WeightedMode.Out;
+                        }
+                        if (obj["weightedMode"] != null)
+                        {
+                            var mode = obj["weightedMode"].ToObject<WeightedMode>();
+                            if (!Enum.IsDefined(typeof(WeightedMode), mode))
+                                return null;
+                            kf.weightedMode = mode;
+                        }
 
                         keyframes.Add(kf);
                     }
@@ -493,6 +518,8 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             return null;
         }
+
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
 
         private static Type ResolveType(string typeName)
         {
