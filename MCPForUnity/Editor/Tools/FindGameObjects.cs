@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Numerics;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -46,10 +48,15 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Pagination parameters using standard PaginationRequest
-            int requestedPageSize = ParamCoercion.CoerceInt(@params["page_size"] ?? @params["pageSize"], 50);
+            int requestedPageSize = CoercePaginationInt(@params["page_size"] ?? @params["pageSize"], 50);
             int clampedPageSize = requestedPageSize <= 0 ? 50 : Mathf.Clamp(requestedPageSize, 1, 500);
             var paginationParams = new JObject(@params);
             paginationParams["page_size"] = clampedPageSize;
+            if (@params["cursor"] != null)
+                paginationParams["cursor"] = CoercePaginationInt(@params["cursor"], 0);
+            var pageNumberToken = @params["page_number"] ?? @params["pageNumber"];
+            if (pageNumberToken != null)
+                paginationParams["page_number"] = CoercePaginationInt(pageNumberToken, 1);
             var pagination = PaginationRequest.FromParams(paginationParams, defaultPageSize: 50);
 
             // Search options (supports multiple parameter name variants)
@@ -79,6 +86,16 @@ namespace MCPForUnity.Editor.Tools
                 McpLog.Error($"[FindGameObjects] Error searching GameObjects: {ex.Message}");
                 return new ErrorResponse($"Error searching GameObjects: {ex.Message}");
             }
+        }
+
+        private static int CoercePaginationInt(JToken token, int defaultValue)
+        {
+            // Saturate whole numbers before Int32 conversion can reset paging to its defaults.
+            if (token != null && (token.Type == JTokenType.Integer || token.Type == JTokenType.String)
+                && BigInteger.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+                return (int)BigInteger.Min(BigInteger.Max(value, int.MinValue), int.MaxValue);
+
+            return ParamCoercion.CoerceInt(token, defaultValue);
         }
     }
 }
