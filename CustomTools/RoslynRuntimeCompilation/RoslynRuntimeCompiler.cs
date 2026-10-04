@@ -68,7 +68,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     private Assembly compiledAssembly = null;
     private MethodInfo entryMethod = null;
     private Type entryType = null;
-    private Component attachedComponent; // Track dynamically attached component
+    private readonly List<Component> attachedComponents = new List<Component>();
 
     public bool HasCompiledAssembly => compiledAssembly != null;
     public bool HasEntryMethod => entryMethod != null;
@@ -99,6 +99,9 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     // public wrapper so EditorWindow or other runtime UI can call compile/run
     public bool CompileInMemory(out string diagnostics)
     {
+        compiledAssembly = null;
+        entryType = null;
+        entryMethod = null;
 #if UNITY_EDITOR
         diagnostics = string.Empty;
         lastCompileDiagnostics = string.Empty;
@@ -148,10 +151,10 @@ public class RoslynRuntimeCompiler : MonoBehaviour
 
                 ms.Seek(0, SeekOrigin.Begin);
                 var assemblyData = ms.ToArray();
-                compiledAssembly = Assembly.Load(assemblyData);
+                var assembly = Assembly.Load(assemblyData);
 
                 // find entry type
-                var type = compiledAssembly.GetType(entryTypeName);
+                var type = assembly.GetType(entryTypeName);
                 if (type == null)
                 {
                     lastCompileDiagnostics = $"Type '{entryTypeName}' not found in compiled assembly.";
@@ -159,11 +162,11 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                     return false;
                 }
                 
-                entryType = type;
-
                 // Check if it's a MonoBehaviour
                 if (typeof(MonoBehaviour).IsAssignableFrom(type))
                 {
+                    compiledAssembly = assembly;
+                    entryType = type;
                     lastCompileDiagnostics = $"Compilation OK. Type '{entryTypeName}' is a MonoBehaviour and can be attached as a component.";
                     diagnostics = lastCompileDiagnostics;
                     Debug.Log(diagnostics);
@@ -171,8 +174,8 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                 }
 
                 // try various method signatures for non-MonoBehaviour types
-                entryMethod = type.GetMethod(entryMethodName, BindingFlags.Public | BindingFlags.Static);
-                if (entryMethod == null)
+                var method = type.GetMethod(entryMethodName, BindingFlags.Public | BindingFlags.Static);
+                if (method == null)
                 {
                     lastCompileDiagnostics = $"Static method '{entryMethodName}' not found on type '{entryTypeName}'.\n" +
                         $"For MonoBehaviour types, set 'attachAsComponent' to true instead.";
@@ -180,6 +183,9 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                     return false;
                 }
 
+                compiledAssembly = assembly;
+                entryType = type;
+                entryMethod = method;
                 lastCompileDiagnostics = "Compilation OK.";
                 diagnostics = lastCompileDiagnostics;
                 Debug.Log("Roslyn compilation successful.");
@@ -293,6 +299,30 @@ public class RoslynRuntimeCompiler : MonoBehaviour
         {
             // Check if component already exists
             var existing = host.GetComponent(entryType);
+            // Each successful recompile loads a new Type identity for the same class.
+            if (existing == null)
+                existing = attachedComponents.FirstOrDefault(component => component != null
+                    && component.gameObject == host && component.GetType().FullName == entryType.FullName);
+
+            // Preserve same-Type replacement order for DisallowMultipleComponent classes.
+            if (existing != null && existing.GetType() == entryType)
+            {
+                if (Application.isPlaying)
+                    Destroy(existing);
+                else
+                    DestroyImmediate(existing);
+                attachedComponents.Remove(existing);
+                existing = null;
+            }
+
+            // Keep an older compiled version if adding the replacement fails.
+            var addedComponent = host.AddComponent(entryType);
+            if (addedComponent == null)
+            {
+                runtimeError = "Failed to add component to GameObject.";
+                return false;
+            }
+
             if (existing != null)
             {
                 Debug.LogWarning($"Component '{entryType.Name}' already exists on '{host.name}'. Removing old instance.");
@@ -302,14 +332,8 @@ public class RoslynRuntimeCompiler : MonoBehaviour
                     DestroyImmediate(existing);
             }
 
-            // Add the component
-            attachedComponent = host.AddComponent(entryType);
-            
-            if (attachedComponent == null)
-            {
-                runtimeError = "Failed to add component to GameObject.";
-                return false;
-            }
+            attachedComponents.RemoveAll(component => component == null || component == existing);
+            attachedComponents.Add(addedComponent);
 
             Debug.Log($"Successfully attached '{entryType.Name}' to '{host.name}'");
             return true;
@@ -326,6 +350,11 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     /// Invokes a coroutine on the compiled type if it returns IEnumerator
     /// </summary>
     public bool InvokeCoroutine(MonoBehaviour host, out string runtimeError)
+    {
+        return InvokeCoroutine(host, host != null ? host.gameObject : null, out runtimeError);
+    }
+
+    private bool InvokeCoroutine(MonoBehaviour host, GameObject target, out string runtimeError)
     {
         runtimeError = null;
         
@@ -354,7 +383,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             {
                 var pType = parameters[0].ParameterType;
                 if (pType == typeof(GameObject))
-                    result = entryMethod.Invoke(null, new object[] { host.gameObject });
+                    result = entryMethod.Invoke(null, new object[] { target });
                 else if (typeof(MonoBehaviour).IsAssignableFrom(pType))
                     result = entryMethod.Invoke(null, new object[] { host });
                 else
@@ -400,6 +429,9 @@ public class RoslynRuntimeCompiler : MonoBehaviour
         out string errorMessage)
     {
         errorMessage = null;
+        compiledAssembly = null;
+        entryType = null;
+        entryMethod = null;
 
         // Validate inputs
         if (string.IsNullOrWhiteSpace(sourceCode))
@@ -462,7 +494,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
             if (entryMethod != null && typeof(System.Collections.IEnumerator).IsAssignableFrom(entryMethod.ReturnType))
             {
                 var host = target.GetComponent<MonoBehaviour>() ?? this;
-                if (!InvokeCoroutine(host, out string coroutineError))
+                if (!InvokeCoroutine(host, target, out string coroutineError))
                 {
                     errorMessage = $"Failed to start coroutine:\n{coroutineError}";
                     AddHistoryEntry(sourceCode, typeName, entryMethodName, false, coroutineError, target.name);
@@ -499,7 +531,7 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     public bool CompileAndExecute(string sourceCode, string typeName, GameObject targetObject, out string errorMessage)
     {
         // Auto-detect if it's a MonoBehaviour by checking the source
-        bool shouldAttach = sourceCode.Contains(": MonoBehaviour") || sourceCode.Contains(":MonoBehaviour");
+        bool shouldAttach = sourceCode != null && (sourceCode.Contains(": MonoBehaviour") || sourceCode.Contains(":MonoBehaviour"));
         return CompileAndExecute(sourceCode, typeName, "Run", targetObject, shouldAttach, out errorMessage);
     }
 
@@ -514,52 +546,11 @@ public class RoslynRuntimeCompiler : MonoBehaviour
     // helper: convenience method to compile + run on this.gameObject
     public void CompileAndRunOnSelf()
     {
-        if (CompileInMemory(out var diag))
-        {
-            if (!Application.isPlaying)
-                Debug.LogWarning("Running compiled code in Edit Mode. Some UnityEngine APIs may not behave as expected.");
+        if (!Application.isPlaying)
+            Debug.LogWarning("Running compiled code in Edit Mode. Some UnityEngine APIs may not behave as expected.");
 
-            GameObject target = targetGameObject != null ? targetGameObject : this.gameObject;
-
-            // Check if we should attach as component
-            if (attachAsComponent && entryType != null && typeof(MonoBehaviour).IsAssignableFrom(entryType))
-            {
-                if (AttachMonoBehaviour(target, out var attachErr))
-                {
-                    Debug.Log($"MonoBehaviour '{entryTypeName}' attached successfully to '{target.name}'.");
-                }
-                else
-                {
-                    Debug.LogError("Failed to attach MonoBehaviour: " + attachErr);
-                }
-            }
-            // Check if it's a coroutine
-            else if (entryMethod != null && typeof(System.Collections.IEnumerator).IsAssignableFrom(entryMethod.ReturnType))
-            {
-                var host = target.GetComponent<MonoBehaviour>() ?? this;
-                if (InvokeCoroutine(host, out var coroutineErr))
-                {
-                    Debug.Log("Coroutine started successfully.");
-                }
-                else
-                {
-                    Debug.LogError("Failed to start coroutine: " + coroutineErr);
-                }
-            }
-            // Regular static method invocation
-            else if (InvokeEntry(target, out var runtimeErr))
-            {
-                Debug.Log("Entry invoked successfully.");
-            }
-            else
-            {
-                Debug.LogError("Failed to invoke entry: " + runtimeErr);
-            }
-        }
-        else
-        {
-            Debug.LogError("Compile failed: " + lastCompileDiagnostics);
-        }
+        if (!CompileAndExecute(code, entryTypeName, entryMethodName, targetGameObject, attachAsComponent, out var error))
+            Debug.LogError("Compile and run failed: " + error);
     }
     
     /// <summary>
@@ -851,7 +842,8 @@ public static class RoslynMCPHelper
 // Editor window
 public class RoslynRuntimeCompilerWindow : EditorWindow
 {
-    private RoslynRuntimeCompiler helperInScene;
+    [SerializeField] private RoslynRuntimeCompiler helperInScene;
+    [SerializeField] private RoslynRuntimeCompiler ownedHelper;
     private Vector2 scrollPos;
     private Vector2 diagScroll;
     private Vector2 historyScroll;
@@ -876,12 +868,16 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
 
     void OnEnable()
     {
-        // try to find an existing helper in scene
-        helperInScene = FindFirstObjectByType<RoslynRuntimeCompiler>(FindObjectsInactive.Include);
+        // Preserve the same helper across repeated enables and script reloads.
+        if (helperInScene == null || helperInScene.gameObject == null)
+            helperInScene = ownedHelper != null && ownedHelper.gameObject != null
+                ? ownedHelper
+                : FindFirstObjectByType<RoslynRuntimeCompiler>(FindObjectsInactive.Include);
         if (helperInScene == null)
         {
             var go = new GameObject("RoslynRuntimeHelper");
             helperInScene = go.AddComponent<RoslynRuntimeCompiler>();
+            ownedHelper = helperInScene;
             // Don't save this helper into scene assets
             go.hideFlags = HideFlags.HideAndDontSave;
         }
@@ -911,12 +907,13 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
     
     void OnDestroy()
     {
-        // Clean up helper object when window is destroyed
-        if (helperInScene != null && helperInScene.gameObject != null)
+        // Only helpers created by this window belong to its cleanup lifecycle.
+        if (ownedHelper != null && ownedHelper.gameObject != null)
         {
-            DestroyImmediate(helperInScene.gameObject);
-            helperInScene = null;
+            DestroyImmediate(ownedHelper.gameObject);
         }
+        ownedHelper = null;
+        helperInScene = null;
     }
 
     void OnGUI()
@@ -932,6 +929,7 @@ public class RoslynRuntimeCompilerWindow : EditorWindow
             {
                 var go = new GameObject("RoslynRuntimeHelper");
                 helperInScene = go.AddComponent<RoslynRuntimeCompiler>();
+                ownedHelper = helperInScene;
                 go.hideFlags = HideFlags.HideAndDontSave;
                 
                 // Initialize with default values
