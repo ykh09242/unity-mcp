@@ -186,12 +186,15 @@ async def apply_text_edits(
 
         # Helper to map 0-based character index to 1-based line/col
         def line_col_from_index(idx: int) -> tuple[int, int]:
-            if idx <= 0:
-                return 1, 1
+            if not isinstance(contents, str) or idx < 0 or idx > len(contents):
+                raise ValueError("Text edit index is outside the document")
             for line in range(len(line_starts) - 1, -1, -1):
                 if idx >= line_starts[line]:
-                    return line + 1, idx - line_starts[line] + 1
-            return 1, idx + 1
+                    column = idx - line_starts[line]
+                    if column > len(source_lines[line]):
+                        raise ValueError("Text edit index is inside a CRLF newline")
+                    return line + 1, column + 1
+            raise ValueError("Text edit index is outside the document")
 
         for e in edits or []:
             e2 = dict(e)
@@ -251,8 +254,8 @@ async def apply_text_edits(
                     e2.pop("range", None)
                     normalized_edits.append(e2)
                     continue
-                except Exception:
-                    pass
+                except (ValueError, TypeError, OverflowError) as exc:
+                    return {"success": False, "code": "invalid_range", "message": str(exc)}
             # Could not normalize this edit
             return {
                 "success": False,

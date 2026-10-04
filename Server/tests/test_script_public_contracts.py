@@ -326,7 +326,7 @@ async def main():
                 ('a\n', [2, 2], (2, 1, 2, 1)),
                 ('a\r\n', [3, 3], (2, 1, 2, 1)),
                 ('a\r\nb', [1, 1], (1, 2, 1, 2)),
-                ('a\r\nb', [2, 2], (1, 3, 1, 3)),
+                ('a\r\nb', [3, 3], (2, 1, 2, 1)),
                 ('a\u0085b', [1, 2], (1, 2, 1, 3)),
             ):
                 source = text
@@ -336,9 +336,25 @@ async def main():
                     'options': {'validate': 'syntax'},
                     'edits': [{'range': bounds, 'newText': 'Z'}],
                 })
+                check(response and response.get('success') is True,
+                      'absolute index normalization ' + repr((mode, text, bounds)))
                 edit = wires[-1][2]['edits'][0]
                 actual = tuple(edit[key] for key in ('startLine', 'startCol', 'endLine', 'endCol'))
                 check(actual == expected, 'absolute index coordinates ' + repr((mode, text)))
+            for bounds in ([-1, -1], [-1, 1], [2, 2], [5, 5]):
+                source = 'a\r\nb'
+                response, wires = await invoke(client, 'apply_text_edits', {
+                    'uri': 'Assets/Fixture.cs',
+                    'precondition_sha256': hashlib.sha256(source.encode('utf-8')).hexdigest(),
+                    'options': {'validate': 'syntax'},
+                    'edits': [{'range': bounds, 'newText': 'Z'}],
+                })
+                label = repr((mode, bounds))
+                check(response and response.get('success') is False
+                      and response.get('code') == 'invalid_range',
+                      'invalid absolute index rejected ' + label)
+                check([row[2]['action'] for row in wires] == ['read'],
+                      'invalid absolute index read only ' + label)
             source = ''
             plain = 'class Fixture { string s = "😀"; }'
             raw = {'success': True, 'data': {

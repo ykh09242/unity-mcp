@@ -141,3 +141,65 @@ async def test_text_regex_timeout_does_not_block_event_loop(script_transport):
     assert responsive
     assert response["success"] is False
     writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("span", [[-1, -1], [-1, 1], [2, 2], [5, 5]])
+async def test_invalid_index_ranges_do_not_write(monkeypatch, span):
+    module = importlib.import_module("services.tools.manage_script")
+    monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={
+        "success": True, "data": {"contents": "a\r\nb"},
+    }))
+    writer = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(module, "send_mutation", writer)
+
+    response = await module.apply_text_edits(
+        AsyncMock(), "Assets/Scripts/Foo.cs", [{"range": span, "newText": "Z"}],
+    )
+
+    assert response["success"] is False
+    assert response["code"] == "invalid_range"
+    writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("contents,span,expected", [
+    ("a\r\nb", [1, 1], (1, 2, 1, 2)),
+    ("a\r\nb", [3, 4], (2, 1, 2, 2)),
+    ("\U0001f600x", [2, 1], (1, 2, 1, 3)),
+    ("", [0, 0], (1, 1, 1, 1)),
+])
+async def test_valid_index_ranges_preserve_codepoint_boundaries(monkeypatch, contents, span, expected):
+    module = importlib.import_module("services.tools.manage_script")
+    monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value={
+        "success": True, "data": {"contents": contents},
+    }))
+    writer = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(module, "send_mutation", writer)
+
+    response = await module.apply_text_edits(
+        AsyncMock(), "Assets/Scripts/Foo.cs", [{"range": span, "newText": "Z"}],
+    )
+
+    assert response["success"] is True
+    edit = writer.call_args.args[3]["edits"][0]
+    assert tuple(edit[field] for field in ("startLine", "startCol", "endLine", "endCol")) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", [[], [{"op": "append", "text": "Z"}], [
+    {"op": "insert_method", "replacement": "void M() {}"},
+]])
+async def test_unknown_script_operation_rejects_entire_batch(script_transport, prefix):
+    reader, writer = script_transport
+    response = await script_edits.script_apply_edits(
+        AsyncMock(), "Foo", "Assets/Scripts", [*prefix, {"op": "apend", "text": "X"}],
+    )
+
+    assert isinstance(response, dict)
+    assert response["success"] is False
+    assert response["code"] == "unsupported_op"
+    reader.assert_not_awaited()
+    writer.assert_not_awaited()

@@ -1145,6 +1145,9 @@ async def script_apply_edits(
               "insert_method", "anchor_delete", "anchor_replace", "anchor_insert"}
     TEXT = {"prepend", "append", "replace_range", "regex_replace"}
     ops_set = {(e.get("op") or "").lower() for e in edits or []}
+    unsupported = ops_set - STRUCT - TEXT
+    if unsupported:
+        return _err("unsupported_op", f"Unsupported edit op: {', '.join(sorted(unsupported))}", normalized=normalized_for_echo)
     all_struct = ops_set.issubset(STRUCT)
     all_text = ops_set.issubset(TEXT)
     mixed = not (all_struct or all_text)
