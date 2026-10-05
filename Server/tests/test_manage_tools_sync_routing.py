@@ -13,7 +13,7 @@ from services.tools.manage_tools import manage_tools
 async def test_manage_tools_sync_uses_the_request_selected_editor(monkeypatch):
     ctx = Mock()
     ctx.get_state = AsyncMock(return_value="EditorB@hash-b")
-    ctx.info = AsyncMock()
+    ctx.info = AsyncMock(side_effect=AssertionError("Sync must not require client logging"))
     sync = AsyncMock(return_value={"synced": True})
     monkeypatch.setattr(tools, "sync_tool_visibility_from_unity", sync)
 
@@ -21,6 +21,7 @@ async def test_manage_tools_sync_uses_the_request_selected_editor(monkeypatch):
 
     assert result["synced"] is True
     sync.assert_awaited_once_with(instance_id="EditorB@hash-b", notify=True)
+    ctx.info.assert_not_awaited()
 
 
 @pytest.mark.asyncio

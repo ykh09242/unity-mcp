@@ -1,4 +1,5 @@
 import base64
+import logging
 import os
 import re
 from typing import Annotated, Any, Literal
@@ -12,6 +13,8 @@ from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 # Strong references to fire-and-forget tasks to prevent GC before completion
 _background_tasks: set = set()
@@ -142,8 +145,7 @@ async def apply_text_edits(
                        "Optional options, used to pass additional options to the script editor"] | None = None,
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing apply_text_edits: {uri} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing apply_text_edits")
     name, directory = _split_uri(uri)
 
     # Normalize common aliases/misuses for resilience:
@@ -455,8 +457,7 @@ async def create_script(
     namespace: Annotated[str, "Namespace for the script"] | None = None,
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing create_script: {path} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing create_script")
     name = os.path.splitext(os.path.basename(path))[0]
     directory = os.path.dirname(path)
     # Local validation to avoid round-trips on obviously bad input
@@ -511,8 +512,7 @@ async def delete_script(
 ) -> dict[str, Any]:
     """Delete a C# script by URI."""
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing delete_script: {uri} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing delete_script")
     name, directory = _split_uri(uri)
     if not directory or directory.split("/")[0].lower() != "assets":
         return {"success": False, "code": "path_outside_assets", "message": "URI must resolve under 'Assets/'."}
@@ -552,8 +552,7 @@ async def validate_script(
                                    "Include full diagnostics and summary"] = False,
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing validate_script: {uri} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing validate_script")
     name, directory = _split_uri(uri)
     if not directory or directory.split("/")[0].lower() != "assets":
         return {"success": False, "code": "path_outside_assets", "message": "URI must resolve under 'Assets/'."}
@@ -602,8 +601,7 @@ async def manage_script(
     namespace: Annotated[str, "Namespace for the script"] | None = None,
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing manage_script: {action} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing manage_script")
     try:
         # Prepare parameters for Unity
         params = {
@@ -693,7 +691,7 @@ async def manage_script(
     ),
 )
 async def manage_script_capabilities(ctx: Context) -> dict[str, Any]:
-    await ctx.info("Processing manage_script_capabilities")
+    logger.info("Processing manage_script_capabilities")
     try:
         # Keep in sync with server/Editor ManageScript implementation
         ops = [
@@ -732,8 +730,7 @@ async def get_sha(
     uri: Annotated[str, "URI of the script to edit under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/..."],
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing get_sha: {uri} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing get_sha")
     try:
         name, directory = _split_uri(uri)
         params = {"action": "get_sha", "name": name, "path": directory}

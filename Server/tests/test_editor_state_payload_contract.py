@@ -156,7 +156,7 @@ def test_editor_state_reuses_inferred_instance_for_local_scanning():
     ''')
 
 
-def test_editor_state_keeps_native_snapshot_when_optional_discovery_info_fails():
+def test_editor_state_keeps_native_snapshot_when_optional_discovery_fails():
     _run_sdk_regression('''
         import json, sys
         import anyio
@@ -169,12 +169,13 @@ def test_editor_state_keeps_native_snapshot_when_optional_discovery_info_fails()
         from services.registry import get_registered_resources
 
         async def scenario():
-            # Given a valid native identity and unavailable optional discovery logging.
+            # Given a valid native identity and unavailable optional discovery.
             config.http_remote_hosted = False
             state.get_unity_instance_from_context = AsyncMock(return_value=None)
             state.unity_transport.send_with_unity_instance = AsyncMock(side_effect=lambda *args: {
                 "success": True, "data": {"unity": {"instance_id": "Native@fixture"}}})
             Context.info = AsyncMock(side_effect=RuntimeError("discovery logging unavailable"))
+            state.infer_single_instance_id = AsyncMock(side_effect=RuntimeError("discovery unavailable"))
             state.external_changes_scanner.update_and_get_async = AsyncMock(return_value={})
             metadata = [r for r in get_registered_resources() if r["name"] == "editor_state"]
             resources.discover_modules = lambda *args: []
@@ -188,7 +189,8 @@ def test_editor_state_keeps_native_snapshot_when_optional_discovery_info_fails()
                     # Then the native snapshot remains valid and no untrusted scan runs.
                     assert result["success"] is True, result
                     assert result["data"]["unity"]["instance_id"] == "Native@fixture", result
-                    assert Context.info.await_count == (1 if mode == "2026-07-28" else 2)
+                    assert state.infer_single_instance_id.await_count == (1 if mode == "2026-07-28" else 2)
+                    Context.info.assert_not_awaited()
                     state.external_changes_scanner.update_and_get_async.assert_not_awaited()
 
             # Cancellation remains control flow even during optional discovery.

@@ -16,7 +16,11 @@ def test_local_http_security_regressions(tmp_path):
         "UNITY_MCP_LOG_DIR": str(tmp_path / "logs"),
     }
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/http", "-q", "--tb=short"],
+        [
+            sys.executable, "-m", "pytest", "tests/http", "-q", "--tb=short",
+            "-W", "error", "--basetemp", str(tmp_path / "http-tmp"),
+            "-o", f"cache_dir={tmp_path / 'http-cache'}",
+        ],
         cwd=server_root,
         env=env,
         capture_output=True,

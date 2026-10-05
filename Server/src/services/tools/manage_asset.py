@@ -3,6 +3,7 @@ Defines the manage_asset tool for interacting with Unity assets.
 """
 import asyncio
 import json
+import logging
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -15,6 +16,8 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
 from services.tools.pagination import validate_page
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 @mcp_for_unity_tool(
@@ -61,7 +64,7 @@ async def manage_asset(
     # --- Normalize properties using robust module-level helper ---
     properties, parse_error = normalize_properties(properties)
     if parse_error:
-        await ctx.error(f"manage_asset: {parse_error}")
+        logger.error("manage_asset: invalid properties")
         return {"success": False, "message": parse_error}
 
     unity_instance = await get_unity_instance_from_context(ctx)
@@ -90,13 +93,13 @@ async def manage_asset(
         if (not search_pattern) and raw_path.startswith("t:"):
             search_pattern = raw_path
             path = "Assets"
-            await ctx.info("manage_asset(search): normalized query from `path` into `search_pattern` and set path='Assets'")
+            logger.info("manage_asset(search): normalized query from `path` into `search_pattern` and set path='Assets'")
 
         # If the caller used `asset_type` to mean a search filter, map it to filter_type.
         # (In Unity, filterType becomes `t:<filterType>`.)
         if (not filter_type) and asset_type and isinstance(asset_type, str):
             filter_type = asset_type
-            await ctx.info("manage_asset(search): mapped `asset_type` into `filter_type` for safer server-side filtering")
+            logger.info("manage_asset(search): mapped `asset_type` into `filter_type` for safer server-side filtering")
 
     # Prepare parameters for the C# handler
     params_dict = {

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 import os
 import re
 from typing import Annotated, Any
@@ -13,6 +14,8 @@ from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 def _split_uri(uri: str) -> tuple[str, str]:
@@ -91,8 +94,7 @@ async def find_in_file(
 ) -> dict[str, Any]:
     # project_root is currently unused but kept for interface consistency
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing find_in_file: {uri} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing find_in_file")
 
     try:
         name, directory = _split_uri(uri)

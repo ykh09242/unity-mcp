@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 import functools
 import inspect
+import logging
 import re
 import threading
 import time
@@ -15,6 +16,8 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 ALL_ACTIONS = ["get_doc", "get_manual", "get_package_doc", "lookup"]
 MAX_QUERIES = 8
@@ -640,11 +643,7 @@ async def _search_assets(ctx: Any, query: str) -> dict[str, Any] | None:
     except ImportError:
         pass  # Unity transport not available — skip asset search
     except Exception as e:
-        try:
-            if hasattr(ctx, 'warning'):
-                await ctx.warning(f"Asset search failed: {e}")
-        except Exception:
-            pass  # ctx might not be usable
+        logger.warning("Asset search failed (%s)", type(e).__name__)
     return None
 
 

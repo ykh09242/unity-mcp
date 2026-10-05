@@ -9,6 +9,7 @@ from fastmcp import Client, FastMCP
 
 from core.config import config
 from models.models import ToolDefinitionModel, ToolParameterModel
+from services.registry import DEFAULT_ENABLED_GROUPS, get_group_tool_names
 from services.tools import sync_tool_visibility_from_unity
 from services.tools.set_active_instance import set_active_instance
 from services.tools.manage_tools import manage_tools
@@ -37,10 +38,18 @@ async def test_legacy_group_selection_persists_and_isolated_between_clients(grou
         assert "effect_probe" not in {tool.name for tool in await first.list_tools()}
         result = await first.call_tool("manage_tools", {"action": "activate", "group": "vfx"})
         assert result.structured_content["activated"] == "vfx"
+        assert result.structured_content["tools"] == get_group_tool_names().get("vfx", [])
         assert "effect_probe" in {tool.name for tool in await first.list_tools()}
         assert "effect_probe" not in {tool.name for tool in await second.list_tools()}
-        await first.call_tool("manage_tools", {"action": "deactivate", "group": "vfx"})
+        result = await first.call_tool("manage_tools", {"action": "deactivate", "group": "vfx"})
+        assert result.structured_content["deactivated"] == "vfx"
         assert "effect_probe" not in {tool.name for tool in await first.list_tools()}
+        await first.call_tool("manage_tools", {"action": "activate", "group": "vfx"})
+        result = await first.call_tool("manage_tools", {"action": "reset"})
+        assert result.structured_content["reset"] is True
+        assert result.structured_content["default_groups"] == sorted(DEFAULT_ENABLED_GROUPS)
+        assert "effect_probe" not in {tool.name for tool in await first.list_tools()}
+        assert "effect_probe" not in {tool.name for tool in await second.list_tools()}
 
 
 @pytest.mark.asyncio

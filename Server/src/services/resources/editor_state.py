@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from pathlib import Path
@@ -14,6 +15,8 @@ from services.state.external_changes_scanner import external_changes_scanner
 import transport.unity_transport as unity_transport
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.plugin_hub import PluginHub
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 class EditorStateUnity(BaseModel):
@@ -138,7 +141,7 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
     Best-effort: if exactly one Unity instance is connected, return its Name@hash id.
     This makes editor_state outputs self-describing even when no explicit active instance is set.
     """
-    await ctx.info("If exactly one Unity instance is connected, return its Name@hash id.")
+    logger.info("If exactly one Unity instance is connected, return its Name@hash id.")
 
     transport = (config.transport_mode or "stdio").lower()
 

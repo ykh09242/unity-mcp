@@ -10,6 +10,7 @@ requests can inspect groups and sync the server's Unity-provided defaults.
 Hosted remote availability follows the authenticated user's Unity catalog;
 session group activation cannot grant access to a Unity-disabled tool.
 """
+import logging
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -22,6 +23,8 @@ from services.registry import (
     DEFAULT_ENABLED_GROUPS,
     get_group_tool_names,
 )
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 @mcp_for_unity_tool(
@@ -73,7 +76,7 @@ async def manage_tools(
 
     if action == "activate":
         tag = f"group:{group}"
-        await ctx.info(f"Activating tool group: {group}")
+        logger.info("Activating tool group: %s", group)
         await ctx.enable_components(tags={tag}, components={"tool"})
         return {
             "activated": group,
@@ -83,7 +86,7 @@ async def manage_tools(
 
     if action == "deactivate":
         tag = f"group:{group}"
-        await ctx.info(f"Deactivating tool group: {group}")
+        logger.info("Deactivating tool group: %s", group)
         await ctx.disable_components(tags={tag}, components={"tool"})
         return {
             "deactivated": group,
@@ -92,7 +95,7 @@ async def manage_tools(
         }
 
     if action == "sync":
-        await ctx.info("Syncing tool visibility from Unity Editor...")
+        logger.info("Syncing tool visibility from Unity Editor...")
         from services.tools import get_unity_instance_from_context, sync_tool_visibility_from_unity
         instance_id = await get_unity_instance_from_context(ctx)
         result = await sync_tool_visibility_from_unity(instance_id=instance_id, notify=True)
@@ -123,7 +126,7 @@ async def manage_tools(
         }
 
     if action == "reset":
-        await ctx.info("Resetting tool visibility to defaults")
+        logger.info("Resetting tool visibility to defaults")
         await ctx.reset_visibility()
         return {
             "reset": True,

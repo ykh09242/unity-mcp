@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import logging
 import re
 from bisect import bisect_right
 from pathlib import PurePosixPath, PureWindowsPath
@@ -19,6 +20,8 @@ from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 _REGEX_WORKERS = BoundedSemaphore(2)
@@ -942,8 +945,7 @@ async def script_apply_edits(
                          "Namespace of the script to edit"] | None = None,
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
-    await ctx.info(
-        f"Processing script_apply_edits: {name} (unity_instance={unity_instance or 'default'})")
+    logger.info("Processing script_apply_edits")
 
     # Parse edits if they came as a stringified JSON
     edits = parse_json_payload(edits)

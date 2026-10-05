@@ -10,6 +10,7 @@ Actions:
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from typing import Annotated, Any, Literal
@@ -22,6 +23,8 @@ from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_bool, parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 def _array_numeric_error(patches: list[Any]) -> str | None:
@@ -145,5 +148,5 @@ async def manage_scriptable_object(
         "manage_scriptable_object",
         params,
     )
-    await ctx.info(f"Response {response}")
+    logger.info("manage_scriptable_object response received")
     return response if isinstance(response, dict) else {"success": False, "message": "Unexpected response from Unity."}

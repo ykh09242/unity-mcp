@@ -1,6 +1,7 @@
 """
 Resource to list all available Unity Editor instances.
 """
+import logging
 from typing import Any
 
 from fastmcp import Context
@@ -8,6 +9,8 @@ from services.registry import mcp_for_unity_resource
 from transport.legacy.unity_connection import get_unity_connection_pool
 from transport.plugin_hub import PluginHub
 from core.config import config
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 
 @mcp_for_unity_resource(
@@ -33,7 +36,7 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
     Returns:
         Dictionary containing list of instances and metadata
     """
-    await ctx.info("Listing Unity instances")
+    logger.info("Listing Unity instances")
 
     try:
         transport = (config.transport_mode or "stdio").lower()
@@ -116,7 +119,7 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
             return result
 
     except Exception as e:
-        await ctx.error(f"Error listing Unity instances: {e}")
+        logger.error("Error listing Unity instances (%s)", type(e).__name__)
         return {
             "success": False,
             "error": f"Failed to list Unity instances: {str(e)}",
