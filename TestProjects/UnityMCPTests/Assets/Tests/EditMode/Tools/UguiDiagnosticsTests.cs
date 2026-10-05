@@ -893,6 +893,41 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(Has(Diagnose(), "interactive_overlap", first));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RectMaskCullingUsesMaskBoundsInsteadOfCanvasBounds(bool shiftedClip)
+        {
+            var rootRect = root.GetComponent<RectTransform>();
+            rootRect.sizeDelta = new Vector2(800, 600);
+            rootRect.position = new Vector3(400, 300, 0);
+            var mask = Child("OffsetClippingMask");
+            var maskRect = mask.GetComponent<RectTransform>();
+            maskRect.localScale = new Vector3(shiftedClip ? 1 : 2, 1, 1);
+            maskRect.anchoredPosition = new Vector2(shiftedClip ? 0 : -530, 0);
+            var rectMask = Add(mask, "UnityEngine.UI.RectMask2D");
+            Set(rectMask, "padding", shiftedClip ? new Vector4(150, 0, -200, 0) : new Vector4(0, 0, -20, 0));
+            var first = Button("MaskedButton");
+            first.transform.SetParent(mask.transform, false);
+            var firstRect = first.GetComponent<RectTransform>();
+            firstRect.sizeDelta = new Vector2(20, 20);
+            firstRect.anchoredPosition = new Vector2(shiftedClip ? 150 : 65, 0);
+            var second = Button("UnmaskedControlButton");
+            var secondRect = second.GetComponent<RectTransform>();
+            secondRect.sizeDelta = new Vector2(10, 20);
+            secondRect.anchoredPosition = new Vector2(shiftedClip ? 150 : -395, 0);
+            var performClipping = rectMask.GetType().GetMethod("PerformClipping", BindingFlags.Instance | BindingFlags.Public);
+            performClipping.Invoke(rectMask, null);
+            performClipping.Invoke(rectMask, null);
+            bool nativeCulled = first.GetComponent<CanvasRenderer>().cull;
+            Assert.AreEqual(shiftedClip, nativeCulled, "Native clipping compares the compound clip against the mask's own bounds in root Canvas coordinates.");
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            Vector2 point = ScreenPoint(secondRect, Vector3.zero);
+            Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null));
+            Assert.IsTrue(NativeGraphicRaycast(first.GetComponent(imageType), point));
+            Assert.IsTrue(NativeGraphicRaycast(second.GetComponent(imageType), point));
+            Assert.AreEqual(!nativeCulled, Has(Diagnose(), "interactive_overlap", first));
+        }
+
         [Test]
         public void MaskableFalseBypassesAncestorMaskWithoutBypassingCanvasGroup()
         {

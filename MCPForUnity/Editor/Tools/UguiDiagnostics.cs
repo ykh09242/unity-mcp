@@ -53,6 +53,7 @@ namespace MCPForUnity.Editor.Tools
             public MaskChain VisualMasks;
             public MaskChain PointerMasks;
             public bool NeedsPointerMaskBounds;
+            public Rect UnpaddedMaskBounds;
             public Rect VisualMaskBounds;
             public Rect PointerMaskBounds;
         }
@@ -341,6 +342,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         Rect rawBounds = Bounds(mask.Preview, previewCanvas, scale, size);
                         Rect clipBounds = mask.RectMask ? RectMaskBounds(mask.Preview, previewCanvas, scale, size) : rawBounds;
+                        mask.UnpaddedMaskBounds = clipBounds;
                         Vector4 padding = mask.MaskPadding * scale;
                         mask.VisualMaskBounds = mask.RectMask
                             ? new Rect(
@@ -365,6 +367,7 @@ namespace MCPForUnity.Editor.Tools
                         node.Bounds = Bounds(node.Preview, previewCanvas, scale, size);
                         node.HitBounds = Intersect(node.Bounds, canvasBounds);
                         Rect rectangularClip = default;
+                        Rect rectangularMaskBounds = default;
                         bool hasRectangularClip = false;
                         for (var filter = node.VisualMasks; filter != null; filter = filter.Parent)
                         {
@@ -372,6 +375,8 @@ namespace MCPForUnity.Editor.Tools
                             node.HitBounds = Intersect(node.HitBounds, mask.VisualMaskBounds);
                             if (mask.RectMask)
                             {
+                                if (!hasRectangularClip)
+                                    rectangularMaskBounds = mask.UnpaddedMaskBounds;
                                 rectangularClip = hasRectangularClip
                                     ? Intersect(rectangularClip, mask.VisualMaskBounds)
                                     : mask.VisualMaskBounds;
@@ -397,8 +402,11 @@ namespace MCPForUnity.Editor.Tools
                             // Native RectMask2D culling rejects the whole renderer before pointer filters.
                             // Same-object masks and stencil-only approximations do not apply this gate.
                             // Native renderer overlap can retain zero-area rects with expanded pointer padding.
+                            // The nearest mask compares the clip to its own rect in root Canvas coordinates.
                             bool rectMaskCulled = node.UsesRectMaskCulling && hasRectangularClip
-                                && (!Overlaps(rectangularClip, canvasBounds) || !rectangularClip.Overlaps(node.Bounds, true));
+                                && (rectangularClip.width <= 0 || rectangularClip.height <= 0
+                                    || !rectangularClip.Overlaps(rectangularMaskBounds, true)
+                                    || !rectangularClip.Overlaps(node.Bounds, true));
                             if (rectMaskCulled)
                                 node.RaycastBounds = new Rect();
                             else
