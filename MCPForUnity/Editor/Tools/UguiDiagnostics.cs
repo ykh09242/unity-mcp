@@ -46,6 +46,7 @@ namespace MCPForUnity.Editor.Tools
             public Rect HitBounds;
             public Rect RaycastBounds;
             public Vector4 RaycastPadding;
+            public bool UsesRectMaskCulling;
             public bool RectMask;
             public bool StencilMask;
             public Vector4 MaskPadding;
@@ -179,6 +180,7 @@ namespace MCPForUnity.Editor.Tools
                         node.RaycastPadding = Read(graphic, "raycastPadding", Vector4.zero);
                         var maskableGraphic = maskableGraphicType == null ? null : source.GetComponent(maskableGraphicType);
                         bool maskable = Read(maskableGraphic, "maskable", true);
+                        node.UsesRectMaskCulling = maskableGraphic != null && maskable;
                         var rectMask = rectMaskType == null ? null : source.GetComponent(rectMaskType);
                         node.RectMask = source.gameObject.activeInHierarchy && Enabled(rectMask);
                         node.StencilMask = source.gameObject.activeInHierarchy && maskType != null && Enabled(source.GetComponent(maskType));
@@ -338,13 +340,14 @@ namespace MCPForUnity.Editor.Tools
                     foreach (var mask in maskNodes)
                     {
                         Rect rawBounds = Bounds(mask.Preview, previewCanvas, scale, size);
+                        Rect clipBounds = mask.RectMask ? RectMaskBounds(mask.Preview, previewCanvas, scale, size) : rawBounds;
                         Vector4 padding = mask.MaskPadding * scale;
                         mask.VisualMaskBounds = mask.RectMask
                             ? new Rect(
-                                rawBounds.xMin + padding.x,
-                                rawBounds.yMin + padding.y,
-                                Mathf.Max(0, rawBounds.width - padding.x - padding.z),
-                                Mathf.Max(0, rawBounds.height - padding.y - padding.w)
+                                clipBounds.xMin + padding.x,
+                                clipBounds.yMin + padding.y,
+                                Mathf.Max(0, clipBounds.width - padding.x - padding.z),
+                                Mathf.Max(0, clipBounds.height - padding.y - padding.w)
                             )
                             : rawBounds;
                         if (mask.NeedsPointerMaskBounds)
@@ -361,10 +364,19 @@ namespace MCPForUnity.Editor.Tools
                     {
                         node.Bounds = Bounds(node.Preview, previewCanvas, scale, size);
                         node.HitBounds = Intersect(node.Bounds, canvasBounds);
+                        Rect rectangularClip = default;
+                        bool hasRectangularClip = false;
                         for (var filter = node.VisualMasks; filter != null; filter = filter.Parent)
                         {
                             Node mask = filter.Mask;
                             node.HitBounds = Intersect(node.HitBounds, mask.VisualMaskBounds);
+                            if (mask.RectMask)
+                            {
+                                rectangularClip = hasRectangularClip
+                                    ? Intersect(rectangularClip, mask.VisualMaskBounds)
+                                    : mask.VisualMaskBounds;
+                                hasRectangularClip = true;
+                            }
                             if (node.Visible && !Contains(mask.VisualMaskBounds, node.Bounds))
                                 Add(
                                     findings,
@@ -382,11 +394,21 @@ namespace MCPForUnity.Editor.Tools
                         // Pointer padding is local to each filter; rendering padding remains canvas-space.
                         if (node.PointerActive && node.Raycast)
                         {
-                            node.RaycastBounds = node.RaycastPadding == Vector4.zero
-                                ? Intersect(node.Bounds, canvasBounds)
-                                : Intersect(PaddedBounds(node.Preview, previewCanvas, scale, size, node.RaycastPadding), canvasBounds);
-                            for (var filter = node.PointerMasks; filter != null; filter = filter.Parent)
-                                node.RaycastBounds = Intersect(node.RaycastBounds, filter.Mask.PointerMaskBounds);
+                            // Native RectMask2D culling rejects the whole renderer before pointer filters.
+                            // Same-object masks and stencil-only approximations do not apply this gate.
+                            // Native renderer overlap can retain zero-area rects with expanded pointer padding.
+                            bool rectMaskCulled = node.UsesRectMaskCulling && hasRectangularClip
+                                && (!Overlaps(rectangularClip, canvasBounds) || !rectangularClip.Overlaps(node.Bounds, true));
+                            if (rectMaskCulled)
+                                node.RaycastBounds = new Rect();
+                            else
+                            {
+                                node.RaycastBounds = node.RaycastPadding == Vector4.zero
+                                    ? Intersect(node.Bounds, canvasBounds)
+                                    : Intersect(PaddedBounds(node.Preview, previewCanvas, scale, size, node.RaycastPadding), canvasBounds);
+                                for (var filter = node.PointerMasks; filter != null; filter = filter.Parent)
+                                    node.RaycastBounds = Intersect(node.RaycastBounds, filter.Mask.PointerMaskBounds);
+                            }
                         }
 
                         geometry.Add(new JObject
@@ -605,6 +627,16 @@ namespace MCPForUnity.Editor.Tools
             return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
         }
 
+        private static Rect RectMaskBounds(RectTransform rect, RectTransform canvas, float scale, Vector2 size)
+        {
+            // RectangularVertexClipper retains signed corner0-to-corner2 extents for rendering.
+            var corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            Vector2 first = (Vector2)canvas.InverseTransformPoint(corners[0]) * scale + size * 0.5f;
+            Vector2 last = (Vector2)canvas.InverseTransformPoint(corners[2]) * scale + size * 0.5f;
+            return new Rect(first, last - first);
+        }
+
         private static Rect PaddedBounds(RectTransform rect, RectTransform canvas, float scale, Vector2 size, Vector4 padding)
         {
             if (padding == Vector4.zero)
@@ -614,8 +646,7 @@ namespace MCPForUnity.Editor.Tools
             float bottom = local.yMin + padding.y;
             float right = local.xMax - padding.z;
             float top = local.yMax - padding.w;
-            if (right <= left || top <= bottom)
-                return new Rect();
+            // Native hit testing accepts reversed padded edges; transformed corners normalize their bounds.
             var corners = new[]
             {
                 new Vector3(left, bottom, 0),

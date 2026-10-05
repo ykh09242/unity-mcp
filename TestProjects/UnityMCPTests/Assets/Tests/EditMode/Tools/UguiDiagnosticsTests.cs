@@ -737,6 +737,191 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(before, EditorJsonUtility.ToJson(maskRect));
         }
 
+        [TestCase(false, 1f)]
+        [TestCase(false, -1f)]
+        [TestCase(true, 1f)]
+        [TestCase(true, -1f)]
+        public void OversizedPointerPaddingMatchesNativeReversedEndpoints(bool selfMask, float horizontalScale)
+        {
+            var first = Button("OversizedPaddingButton");
+            var second = Button("ReversedStripButton");
+            var firstRect = first.GetComponent<RectTransform>();
+            var secondRect = second.GetComponent<RectTransform>();
+            firstRect.localScale = new Vector3(horizontalScale, 1, 1);
+            secondRect.sizeDelta = new Vector2(20, 20);
+            secondRect.anchoredPosition = new Vector2(80 * horizontalScale, 0);
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var firstImage = first.GetComponent(imageType);
+            var secondImage = second.GetComponent(imageType);
+            var graphicPadding = selfMask ? new Vector4(0, 0, -60, 0) : new Vector4(160, 0, 0, 0);
+            Set(firstImage, "raycastPadding", graphicPadding);
+            if (selfMask)
+                Set(Add(first, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(160, 0, 0, 0));
+            bool nativeOverlap = true;
+            foreach (float localX in new[] { 75f, 80f, 85f })
+            {
+                Vector2 point = ScreenPoint(firstRect, new Vector3(localX, 0, 0));
+                Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null));
+                Assert.IsTrue(NativeGraphicRaycast(secondImage, point));
+                nativeOverlap &= RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, graphicPadding)
+                    && NativeGraphicRaycast(firstImage, point);
+            }
+
+            var result = Diagnose();
+            Assert.AreEqual(nativeOverlap, Has(result, "interactive_overlap", first), "Candidate bounds must agree with native hit testing in the reversed-endpoint strip, including mirrored transforms.");
+        }
+
+        [TestCase(-100f, 0f)]
+        [TestCase(-100f, 10f)]
+        [TestCase(0f, 0f)]
+        public void NonPositiveRectWidthMatchesNativePointerGeometry(float width, float leftPadding)
+        {
+            var first = Button("NonPositiveWidthButton");
+            var second = Button("NativeControlButton");
+            var firstRect = first.GetComponent<RectTransform>();
+            var secondRect = second.GetComponent<RectTransform>();
+            firstRect.sizeDelta = new Vector2(width, 40);
+            secondRect.sizeDelta = new Vector2(20, 20);
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var firstImage = first.GetComponent(imageType);
+            var secondImage = second.GetComponent(imageType);
+            var padding = new Vector4(leftPadding, 0, 0, 0);
+            Set(firstImage, "raycastPadding", padding);
+            bool nativeOverlap = true;
+            foreach (float localX in new[] { -5f, 0f, 5f })
+            {
+                Vector2 point = ScreenPoint(firstRect, new Vector3(localX, 0, 0));
+                Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null));
+                Assert.IsTrue(NativeGraphicRaycast(secondImage, point));
+                nativeOverlap &= RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, padding)
+                    && NativeGraphicRaycast(firstImage, point);
+            }
+
+            Assert.AreEqual(nativeOverlap, Has(Diagnose(), "interactive_overlap", first));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SortingBoundaryRetainsOwnMaskAndStopsOuterMask(bool overrideSorting)
+        {
+            var outer = Child("OuterMask");
+            Set(Add(outer, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(80, 0, 0, 0));
+            var nested = Child("NestedSortingCanvas", outer);
+            nested.AddComponent<Canvas>().overrideSorting = overrideSorting;
+            var innerMask = Add(nested, "UnityEngine.UI.RectMask2D");
+            Set(innerMask, "padding", new Vector4(0, 0, 20, 0));
+            var first = Button("LeftButton");
+            var second = Button("RightButton");
+            first.transform.SetParent(nested.transform, false);
+            second.transform.SetParent(nested.transform, false);
+            first.GetComponent<RectTransform>().anchoredPosition = new Vector2(-25, 0);
+            second.GetComponent<RectTransform>().anchoredPosition = new Vector2(25, 0);
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var firstImage = first.GetComponent(imageType);
+            var secondImage = second.GetComponent(imageType);
+            Vector2 point = ScreenPoint(nested.GetComponent<RectTransform>(), Vector3.zero);
+            Assert.AreEqual(overrideSorting, NativeGraphicRaycast(firstImage, point));
+            Assert.AreEqual(overrideSorting, NativeGraphicRaycast(secondImage, point));
+            Assert.AreEqual(overrideSorting, Has(Diagnose(), "interactive_overlap", first));
+            Set(innerMask, "padding", new Vector4(0, 0, 80, 0));
+            Assert.IsFalse(NativeGraphicRaycast(firstImage, point));
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap", first), "A sorting boundary keeps its own mask active while excluding masks above it.");
+            Set(firstImage, "maskable", false);
+            Set(secondImage, "maskable", false);
+            Assert.IsTrue(NativeGraphicRaycast(firstImage, point));
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap", first));
+        }
+
+        [TestCase(1f)]
+        [TestCase(-1f)]
+        public void MirroredRectMaskMatchesNativeRendererCulling(float horizontalScale)
+        {
+            var mask = Child("NativeClippingMask");
+            mask.GetComponent<RectTransform>().localScale = new Vector3(horizontalScale, 1, 1);
+            var rectMask = Add(mask, "UnityEngine.UI.RectMask2D");
+            var first = Button("MaskedButton");
+            first.transform.SetParent(mask.transform, false);
+            var second = Button("UnmaskedControlButton");
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var firstImage = first.GetComponent(imageType);
+            var secondImage = second.GetComponent(imageType);
+            var performClipping = rectMask.GetType().GetMethod("PerformClipping", BindingFlags.Instance | BindingFlags.Public);
+            performClipping.Invoke(rectMask, null);
+            performClipping.Invoke(rectMask, null);
+            bool nativeCulled = first.GetComponent<CanvasRenderer>().cull;
+            Vector2 point = ScreenPoint(first.GetComponent<RectTransform>(), Vector3.zero);
+            Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(second.GetComponent<RectTransform>(), point, null));
+            Assert.IsTrue(NativeGraphicRaycast(secondImage, point));
+            if (horizontalScale > 0)
+                Assert.IsFalse(nativeCulled, "The ordinary mask control must have registered and retained its child's renderer.");
+            bool nativeOverlap = !nativeCulled
+                && RectTransformUtility.RectangleContainsScreenPoint(first.GetComponent<RectTransform>(), point, null)
+                && NativeGraphicRaycast(firstImage, point);
+            var result = Diagnose();
+            Assert.AreEqual(nativeOverlap, Has(result, "interactive_overlap", first), "GraphicRaycaster excludes native mask-culled renderers even when their rectangular pointer filters accept the point.");
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceID());
+            Assert.AreEqual(nativeCulled ? 0 : 100, output["visibleRect"].Value<float>("width"), 0.1f);
+        }
+
+        [Test]
+        public void ExpandedPointerPaddingOnZeroWidthGraphicMatchesNativeMaskCulling()
+        {
+            var mask = Child("NativeClippingMask");
+            var rectMask = Add(mask, "UnityEngine.UI.RectMask2D");
+            var first = Button("ZeroWidthMaskedButton");
+            first.transform.SetParent(mask.transform, false);
+            var firstRect = first.GetComponent<RectTransform>();
+            firstRect.sizeDelta = new Vector2(0, 40);
+            var second = Button("UnmaskedControlButton");
+            second.GetComponent<RectTransform>().sizeDelta = new Vector2(20, 20);
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var firstImage = first.GetComponent(imageType);
+            var padding = new Vector4(-20, 0, -20, 0);
+            Set(firstImage, "raycastPadding", padding);
+            var performClipping = rectMask.GetType().GetMethod("PerformClipping", BindingFlags.Instance | BindingFlags.Public);
+            performClipping.Invoke(rectMask, null);
+            performClipping.Invoke(rectMask, null);
+            Assert.IsFalse(first.GetComponent<CanvasRenderer>().cull, "Native rectangular culling retains a zero-width renderer inside a valid clip.");
+            foreach (float localX in new[] { -5f, 0f, 5f })
+            {
+                Vector2 point = ScreenPoint(firstRect, new Vector3(localX, 0, 0));
+                Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, padding));
+                Assert.IsTrue(NativeGraphicRaycast(firstImage, point));
+                Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(second.GetComponent<RectTransform>(), point, null));
+            }
+
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap", first));
+        }
+
+        [Test]
+        public void MaskableFalseBypassesAncestorMaskWithoutBypassingCanvasGroup()
+        {
+            var mask = Child("MirroredMask");
+            mask.GetComponent<RectTransform>().localScale = new Vector3(-1, 1, 1);
+            var rectMask = Add(mask, "UnityEngine.UI.RectMask2D");
+            Set(rectMask, "padding", new Vector4(80, 0, 0, 0));
+            var first = Button("MaskOptOutButton");
+            first.transform.SetParent(mask.transform, false);
+            Button("UnmaskedControlButton");
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var image = first.GetComponent(imageType);
+            Vector2 point = ScreenPoint(first.GetComponent<RectTransform>(), Vector3.zero);
+            var performClipping = rectMask.GetType().GetMethod("PerformClipping", BindingFlags.Instance | BindingFlags.Public);
+            performClipping.Invoke(rectMask, null);
+            performClipping.Invoke(rectMask, null);
+            Assert.IsTrue(first.GetComponent<CanvasRenderer>().cull);
+            Assert.IsFalse(NativeGraphicRaycast(image, point));
+            Set(image, "maskable", false);
+            image.GetType().GetMethod("RecalculateClipping", BindingFlags.Instance | BindingFlags.Public).Invoke(image, null);
+            performClipping.Invoke(rectMask, null);
+            Assert.IsFalse(first.GetComponent<CanvasRenderer>().cull);
+            Assert.IsTrue(NativeGraphicRaycast(image, point), "The installed MaskableGraphic passes ignoreMasks=true to Graphic.Raycast when maskable=false.");
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap", first));
+            mask.AddComponent<CanvasGroup>().blocksRaycasts = false;
+            Assert.IsFalse(NativeGraphicRaycast(image, point));
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap", first), "Mask opt-out does not bypass independent CanvasGroup filters.");
+        }
+
         [Test]
         public void BudgetReturnsTruncationAndNullResolutionExplainsCurrentMode()
         {
