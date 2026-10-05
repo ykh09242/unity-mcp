@@ -185,10 +185,13 @@ async def manage_ugui(
         if properties is not None:
             properties = _PROPERTIES.validate_python(properties)
             _validate_unicode_strings(properties)
+        for value in (target, parent, name):
+            if isinstance(value, str):
+                value.encode("utf-8")
     except UnicodeEncodeError:
         return {
             "success": False,
-            "message": "properties keys and string values must contain valid Unicode; remove unpaired surrogate escapes or provide a complete character.",
+            "message": "target, parent, name and properties keys/string values must contain valid Unicode; remove unpaired surrogate escapes or provide a complete character.",
         }
     except (RecursionError, ValidationError):
         return {

@@ -422,18 +422,30 @@ async def test_preserves_finite_extremes_in_json_properties(boundary: Boundary) 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "properties",
+    "options",
     [
-        '{"text":"\\ud800"}',
-        '{"text":"\\udc00"}',
-        '{"\\ud800":0}',
-        '{"nested":[{"\\udc00":0}]}',
+        {"properties": '{"text":"\\ud800"}'},
+        {"properties": '{"text":"\\udc00"}'},
+        {"properties": '{"\\ud800":0}'},
+        {"properties": '{"nested":[{"\\udc00":0}]}'},
+        *[
+            {"action": "get_hierarchy", "target": value}
+            for value in ("\ud800", "\udc00")
+        ],
+        *[
+            {"action": "create", "element_type": "text", "parent": value}
+            for value in ("\ud800", "\udc00")
+        ],
+        *[
+            {"action": "create", "element_type": "canvas", "name": value}
+            for value in ("\ud800", "\udc00")
+        ],
     ],
 )
 async def test_rejects_unpaired_surrogates_before_http_encoding(
     boundary: Boundary,
     monkeypatch: pytest.MonkeyPatch,
-    properties: str,
+    options: dict[str, JsonValue],
 ) -> None:
     # Given: WebSocket text must be encodable as UTF-8 at the ASGI transport sink.
     async def send_as_utf8(message):
@@ -456,15 +468,19 @@ async def test_rejects_unpaired_surrogates_before_http_encoding(
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
     monkeypatch.setattr(
+        "services.tools.manage_ugui.send_with_unity_instance",
+        send_with_unity_instance,
+    )
+    monkeypatch.setattr(
         "transport.plugin_hub.PluginHub.send_command_for_instance", http_send
     )
     server = FastMCP("ugui-unicode-json")
     server.tool()(manage_ugui)
-    # When: escaped input passes the MCP envelope, then becomes a surrogate on decode.
+    # When: the MCP envelope accepts strings that cannot reach the UTF-8 sink.
     async with Client(server) as client:
         response = await client.call_tool(
             "manage_ugui",
-            {"action": "set_text", "target": "Label", "properties": properties},
+            {"action": "set_text", "target": "Label", **options},
         )
     result = response.structured_content
     # Then: malformed characters are an input error rather than a retryable send failure.
@@ -474,6 +490,36 @@ async def test_rejects_unpaired_surrogates_before_http_encoding(
     assert len(result["message"]) < 300
     for seam in (http_send, boundary.preflight, boundary.instance):
         seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "options,mutation",
+    [
+        ({"action": "get_hierarchy", "target": "Canvas/한글😀"}, False),
+        ({"action": "create", "element_type": "text", "parent": "Canvas/한글😀"}, True),
+        ({"action": "create", "element_type": "canvas", "name": "한글😀"}, True),
+    ],
+)
+async def test_preserves_unicode_in_gameobject_identifiers(
+    boundary: Boundary,
+    options: dict[str, JsonValue],
+    mutation: bool,
+) -> None:
+    # Given: hierarchy identifiers can contain complete Unicode characters.
+    server = FastMCP("ugui-unicode-identifiers")
+    server.tool()(manage_ugui)
+    # When
+    async with Client(server) as client:
+        response = await client.call_tool("manage_ugui", options)
+    # Then: preserve identifiers exactly so existing GameObjects remain resolvable.
+    assert response.structured_content["success"] is True
+    sender = boundary.mutate if mutation else boundary.read
+    assert sender.await_args.args[3] == {
+        "include_inactive": False,
+        "max_nodes": 200,
+        **options,
+    }
 
 
 @pytest.mark.asyncio
