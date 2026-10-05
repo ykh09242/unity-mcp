@@ -50,7 +50,9 @@ class Resolution(BaseModel):
 _RESOLUTIONS: Final = TypeAdapter(
     Annotated[list[Resolution], Field(min_length=1, max_length=8)]
 )
-_PROPERTIES: Final = TypeAdapter(dict[str, JsonValue])
+_PROPERTIES: Final = TypeAdapter(
+    dict[str, JsonValue], config=ConfigDict(allow_inf_nan=False)
+)
 
 
 @mcp_for_unity_tool(
@@ -166,7 +168,7 @@ async def manage_ugui(
     except (RecursionError, ValidationError):
         return {
             "success": False,
-            "message": "properties must contain supported JSON values with bounded nesting; reduce the property structure.",
+            "message": "properties must contain supported JSON values with finite numbers and bounded nesting; check numbers and reduce the property structure.",
         }
     if properties_error:
         return {"success": False, "message": properties_error}

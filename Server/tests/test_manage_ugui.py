@@ -8,6 +8,7 @@ import pytest
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import JsonValue
+from starlette.websockets import WebSocket
 
 from core.config import config
 from models import MCPResponse
@@ -301,6 +302,122 @@ async def test_rejects_coercion_when_called_through_sdk(
         with pytest.raises(ToolError):
             await client.call_tool("manage_ugui", {"action": "get_hierarchy", **options})
     boundary.read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+async def test_rejects_nonfinite_json_before_http_transport(
+    boundary: Boundary,
+    monkeypatch: pytest.MonkeyPatch,
+    number: str,
+) -> None:
+    # Given: the HTTP encoder emits nonstandard JSON for non-finite numbers.
+    websocket = WebSocket(
+        {"type": "websocket"},
+        receive=AsyncMock(return_value={"type": "websocket.connect"}),
+        send=AsyncMock(),
+    )
+    await websocket.accept()
+
+    async def encode_request(instance, command, params, **kwargs):
+        await websocket.send_json({"params": params})
+        return {"success": True}
+
+    http_send = AsyncMock(side_effect=encode_request)
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(
+        "services.tools.manage_ugui.send_with_unity_instance",
+        send_with_unity_instance,
+    )
+    monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
+    monkeypatch.setattr(
+        "transport.plugin_hub.PluginHub.send_command_for_instance", http_send
+    )
+    server = FastMCP("ugui-finite-json")
+    server.tool()(manage_ugui)
+    # When: embedded JSON accepts nonstandard constants and numeric overflow.
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_ugui",
+            {
+                "action": "set_rect",
+                "target": "Canvas",
+                "properties": '{"anchorMin":[' + number + ',0]}',
+            },
+        )
+    result = response.structured_content
+    # Then: return an input error before readiness or transport, without a retry hint.
+    assert result["success"] is False
+    assert result.get("hint") != "retry"
+    assert "JSON" in result["message"]
+    assert "finite" in result["message"]
+    for seam in (http_send, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), -float("inf")])
+async def test_rejects_nested_nonfinite_dictionary_before_editor_access(
+    boundary: Boundary,
+    number: float,
+) -> None:
+    # Given: direct dictionary values use the same JSON-value validation.
+    properties = {"anchoredPosition": {"x": number, "y": 0}}
+    # When
+    result = await manage_ugui(
+        SimpleNamespace(),
+        action="set_rect",
+        target="Canvas",
+        properties=properties,
+    )
+    # Then
+    assert result["success"] is False
+    assert "finite" in result["message"]
+    for seam in (boundary.mutate, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preserves_finite_numbers_and_nonfinite_words_in_text(
+    boundary: Boundary,
+) -> None:
+    # Given: the same words are valid text, and ordinary finite numbers stay numeric.
+    properties = '{"text":"NaN Infinity -Infinity 1e400","fontSize":24.5}'
+    server = FastMCP("ugui-finite-text")
+    server.tool()(manage_ugui)
+    # When
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_ugui",
+            {"action": "set_text", "target": "Label", "properties": properties},
+        )
+    # Then
+    assert response.structured_content["success"] is True
+    assert boundary.mutate.await_args.args[3]["properties"] == {
+        "text": "NaN Infinity -Infinity 1e400",
+        "fontSize": 24.5,
+    }
+
+
+@pytest.mark.asyncio
+async def test_preserves_finite_extremes_in_json_properties(boundary: Boundary) -> None:
+    # Given: representable finite values need no additional magnitude restrictions.
+    properties = '{"anchoredPosition":[-3.4e38,3.4e38],"sizeDelta":[1e-38,0]}'
+    server = FastMCP("ugui-finite-extremes")
+    server.tool()(manage_ugui)
+    # When
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_ugui",
+            {"action": "set_rect", "target": "Canvas", "properties": properties},
+        )
+    # Then
+    assert response.structured_content["success"] is True
+    assert boundary.mutate.await_args.args[3]["properties"] == {
+        "anchoredPosition": [-3.4e38, 3.4e38],
+        "sizeDelta": [1e-38, 0],
+    }
 
 
 @pytest.mark.asyncio
