@@ -364,10 +364,12 @@ namespace MCPForUnity.Editor.Tools
                     }
                 }
 
+                var previewRootCanvas = previewRoot.GetComponent<Canvas>();
                 foreach (Vector2 size in sizes)
                 {
                     float scale = current ? Mathf.Max(0.0001f, canvas.scaleFactor) : Scale(scaler, canvas.scaleFactor, size);
-                    previewRoot.GetComponent<Canvas>().scaleFactor = scale;
+                    previewRootCanvas.scaleFactor = scale;
+                    scale = previewRootCanvas.scaleFactor;
                     previewCanvas.sizeDelta = size / scale;
                     Rebuild(previewRects, componentTypes, anyTypes);
                     var resolution = new JObject

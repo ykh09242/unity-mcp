@@ -838,6 +838,54 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(nativeScale, canvas.scaleFactor, 0.001f);
         }
 
+        [TestCase(1, false)]
+        [TestCase(2, false)]
+        [TestCase(1, true)]
+        [TestCase(2, true)]
+        public void SignedReferenceResolutionPreviewMatchesNativeCanvasScale(int matchMode, bool negativeWidth)
+        {
+            var canvas = root.GetComponent<Canvas>();
+            var scaler = Add(root, "UnityEngine.UI.CanvasScaler");
+            Set(scaler, "uiScaleMode", 1);
+            var reference = new Vector2(negativeWidth ? -800 : 800, 600);
+            Set(scaler, "referenceResolution", reference);
+            Set(scaler, "screenMatchMode", matchMode);
+            Assert.AreEqual(reference, scaler.GetType().GetProperty("referenceResolution").GetValue(scaler), "Native CanvasScaler preserves the sign of nonzero reference dimensions.");
+            var child = Child("SignedReferenceChild");
+            var rect = child.GetComponent<RectTransform>();
+            var handle = scaler.GetType().GetMethod("HandleScaleWithScreenSize", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(handle);
+            handle.Invoke(scaler, null);
+            Canvas.ForceUpdateCanvases();
+            var displayProperty = typeof(Canvas).GetProperty("renderingDisplaySize");
+            Assert.IsNotNull(displayProperty);
+            var display = (Vector2)displayProperty.GetValue(canvas);
+            int width = Mathf.RoundToInt(display.x);
+            int height = Mathf.RoundToInt(display.y);
+            Assert.AreEqual(new Vector2(width, height), display);
+            Assert.That(width, Is.InRange(64, 8192));
+            Assert.That(height, Is.InRange(64, 8192));
+            float nativeScale = canvas.scaleFactor;
+            Assert.IsFalse(float.IsNaN(nativeScale) || float.IsInfinity(nativeScale));
+            Assert.AreNotEqual(0, nativeScale);
+            var corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            float nativeWidth = Mathf.Abs(RectTransformUtility.WorldToScreenPoint(null, corners[2]).x
+                - RectTransformUtility.WorldToScreenPoint(null, corners[0]).x);
+            Assert.AreEqual(rect.rect.width * Mathf.Abs(nativeScale), nativeWidth, 0.1f, "Native overlay geometry must apply the stored Canvas scale before comparing the preview.");
+            string canvasBefore = EditorJsonUtility.ToJson(canvas);
+            string scalerBefore = EditorJsonUtility.ToJson(scaler);
+            string rectBefore = EditorJsonUtility.ToJson(rect);
+            var result = Diagnose(sizes: Sizes(width, height));
+            Findings(result);
+            Assert.AreEqual(nativeScale, result["data"]["resolutions"][0]["resolution"].Value<float>("scaleFactor"), 0.00001f);
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
+            Assert.AreEqual(nativeWidth, output["rect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(canvasBefore, EditorJsonUtility.ToJson(canvas));
+            Assert.AreEqual(scalerBefore, EditorJsonUtility.ToJson(scaler));
+            Assert.AreEqual(rectBefore, EditorJsonUtility.ToJson(rect));
+        }
+
         [Test]
         public void DisabledNestedCanvasFallsBackToActiveRootForChildGraphics()
         {
