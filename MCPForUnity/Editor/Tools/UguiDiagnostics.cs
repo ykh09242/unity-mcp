@@ -461,7 +461,10 @@ namespace MCPForUnity.Editor.Tools
                             if (i == j || !second.PointerActive || !second.Raycast)
                                 continue;
                             pairs++;
-                            if ((first.Receiver != null && first.Receiver == second.Receiver) || first.Source.IsChildOf(second.Source) || second.Source.IsChildOf(first.Source) || !Overlaps(first.RaycastBounds, second.RaycastBounds))
+                            if ((first.Receiver != null && first.Receiver == second.Receiver)
+                                || !Overlaps(first.RaycastBounds, second.RaycastBounds)
+                                || first.Source.IsChildOf(second.Source)
+                                || second.Source.IsChildOf(first.Source))
                                 continue;
                             if (second.Interactive && j > i)
                                 Add(
