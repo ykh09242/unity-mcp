@@ -423,7 +423,23 @@ namespace MCPForUnity.Editor.Tools
                 return;
             Undo.RecordObject(component, "Edit uGUI properties");
             foreach (var value in values)
+            {
                 value.Property.SetValue(component, value.Value);
+                if (value.Property.Name == "fontSize"
+                    && value.Property.DeclaringType?.FullName == "TMPro.TMP_Text"
+                    && !(bool)component.GetType().GetProperty("enableAutoSizing").GetValue(component))
+                {
+                    // TMP skips its authored base update when the requested size equals the computed size.
+                    var serialized = new SerializedObject(component);
+                    var authoredSize = serialized.FindProperty("m_fontSizeBase")
+                        ?? throw new ArgumentException("TMP authored font size is unavailable in this Unity version.");
+                    if (authoredSize.floatValue != (float)value.Value)
+                    {
+                        authoredSize.floatValue = (float)value.Value;
+                        serialized.ApplyModifiedPropertiesWithoutUndo();
+                    }
+                }
+            }
             Dirty(component);
         }
 

@@ -1163,6 +1163,101 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase(true, false)]
         [TestCase(false, true)]
         [TestCase(true, true)]
+        public void TmpComputedSizeCanBecomeAuthoredSizeAcrossAutoSizingTransitions(bool fontSizeFirst, bool enableAutoSizing)
+        {
+            var textType = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
+            var settings = UnityTypeResolver.ResolveAny("TMPro.TMP_Settings");
+            UnityEngine.Object font = null;
+            try
+            {
+                font = settings?.GetProperty("defaultFontAsset")?.GetValue(null) as UnityEngine.Object;
+            }
+            catch (TargetInvocationException e)when (e.InnerException is NullReferenceException)
+            { /* TMP settings resource is absent. */
+            }
+
+            if (textType == null || font == null)
+                Assert.Ignore("TMP/default font must be configured for the positive text case.");
+            var root = Root(true);
+            var created = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "text",
+                ["parent"] = root.GetInstanceIDCompat(),
+                ["properties"] = new JObject
+                {
+                    ["text"] = "Size",
+                    ["fontSize"] = 24,
+                    ["sizeDelta"] = new JArray(500, 500)
+                }
+            }));
+            Success(created);
+            var go = GameObjectLookup.FindById(created["data"]["instance_id"].Value<int>());
+            var text = go.GetComponent(textType);
+            var size = textType.GetProperty("fontSize");
+            var autoSize = textType.GetProperty("enableAutoSizing");
+            var meshUpdate = textType.GetMethod("ForceMeshUpdate");
+            autoSize.SetValue(text, false);
+            size.SetValue(text, 25f);
+            size.SetValue(text, 24f);
+            autoSize.SetValue(text, true);
+            meshUpdate.Invoke(text, new object[] { false, false });
+            float computed = (float)size.GetValue(text);
+            var serialized = new SerializedObject(text);
+            Assert.That(computed, Is.GreaterThan(24f), "Native auto-sizing must produce a size different from the authored base.");
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(24f));
+            autoSize.SetValue(text, false);
+            size.SetValue(text, computed);
+            serialized.Update();
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(24f), "The native same-value setter returns before updating the authored base.");
+            size.SetValue(text, computed - 1f);
+            size.SetValue(text, computed);
+            serialized.Update();
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(computed), "A changed native size updates the authored base while auto-sizing is disabled.");
+            size.SetValue(text, 24f);
+            autoSize.SetValue(text, true);
+            meshUpdate.Invoke(text, new object[] { false, false });
+            Assert.That(size.GetValue(text), Is.EqualTo(computed));
+            serialized.Update();
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(24f));
+            if (enableAutoSizing)
+                autoSize.SetValue(text, false);
+            Undo.ClearAll();
+            var properties = fontSizeFirst
+                ? new JObject { ["fontSize"] = computed, ["enableAutoSizing"] = enableAutoSizing }
+                : new JObject { ["enableAutoSizing"] = enableAutoSizing, ["fontSize"] = computed };
+            Success(Call("set_text", go, properties));
+            serialized.Update();
+            Assert.That(autoSize.GetValue(text), Is.EqualTo(enableAutoSizing));
+            if (!enableAutoSizing)
+                Assert.That(size.GetValue(text), Is.EqualTo(computed));
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(computed), "An explicitly requested size must become the authored value during the transition even when it equals the computed size.");
+            Success(Call("set_text", go, properties));
+            serialized.Update();
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(computed));
+            Undo.PerformUndo();
+            serialized.Update();
+            Assert.That(autoSize.GetValue(text), Is.EqualTo(!enableAutoSizing));
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(24f));
+            Undo.PerformRedo();
+            serialized.Update();
+            Assert.That(autoSize.GetValue(text), Is.EqualTo(enableAutoSizing));
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(computed));
+            // Match the native TMP Inspector's auto-size toggle using its serialized properties.
+            serialized.FindProperty("m_enableAutoSizing").boolValue = true;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            meshUpdate.Invoke(text, new object[] { false, false });
+            serialized.Update();
+            serialized.FindProperty("m_enableAutoSizing").boolValue = false;
+            serialized.FindProperty("m_fontSize").floatValue = serialized.FindProperty("m_fontSizeBase").floatValue;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+            Assert.That(size.GetValue(text), Is.EqualTo(computed), "The native Inspector's later toggle must restore the explicitly authored fixed size.");
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
         public void TmpAutoSizingTransitionAndFontSizeEditPersistIdenticallyInEitherPropertyOrder(bool fontSizeFirst, bool enableAutoSizing)
         {
             var textType = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
