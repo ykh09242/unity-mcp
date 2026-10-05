@@ -592,6 +592,124 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "Graphic.Raycast skips disabled groups and still evaluates the ancestor's blocksRaycasts.");
         }
 
+        private static Vector2 ScreenPoint(RectTransform rect, Vector3 localPoint)
+        {
+            return RectTransformUtility.WorldToScreenPoint(null, rect.TransformPoint(localPoint));
+        }
+
+        private static bool NativeGraphicRaycast(Component graphic, Vector2 point)
+        {
+            var method = graphic.GetType().GetMethod("Raycast", new[] { typeof(Vector2), typeof(Camera) });
+            return (bool)method.Invoke(graphic, new object[] { point, null });
+        }
+
+        [TestCase(1f)]
+        [TestCase(2f)]
+        public void GraphicRaycastPaddingSeparatesOverlappingVisualsAtNativeTransformScale(float horizontalScale)
+        {
+            var first = Button("LeftPaddedButton");
+            var second = Button("RightPaddedButton");
+            var firstRect = first.GetComponent<RectTransform>();
+            var secondRect = second.GetComponent<RectTransform>();
+            firstRect.anchoredPosition = new Vector2(-25, 0);
+            secondRect.anchoredPosition = new Vector2(25, 0);
+            firstRect.localScale = new Vector3(horizontalScale, 1, 1);
+            secondRect.localScale = new Vector3(horizontalScale, 1, 1);
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var firstPadding = new Vector4(0, 0, 60, 0);
+            var secondPadding = new Vector4(60, 0, 0, 0);
+            Set(first.GetComponent(imageType), "raycastPadding", firstPadding);
+            Set(second.GetComponent(imageType), "raycastPadding", secondPadding);
+            Vector2 point = (ScreenPoint(firstRect, Vector3.zero) + ScreenPoint(secondRect, Vector3.zero)) * 0.5f;
+            Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null));
+            Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null));
+            Assert.IsFalse(RectTransformUtility.RectangleContainsScreenPoint(firstRect, point, null, firstPadding));
+            Assert.IsFalse(RectTransformUtility.RectangleContainsScreenPoint(secondRect, point, null, secondPadding));
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "Raycast padding shrinks pointer regions without shrinking the overlapping rendered rectangles.");
+        }
+
+        [Test]
+        public void GraphicRaycastPaddingPreventsFalseBlockerCandidate()
+        {
+            var button = Button("Button");
+            var overlay = Child("Overlay");
+            overlay.GetComponent<RectTransform>().anchoredPosition = new Vector2(40, 0);
+            var image = Add(overlay, "UnityEngine.UI.Image");
+            var padding = new Vector4(70, 0, 0, 0);
+            Set(image, "raycastPadding", padding);
+            Vector2 point = ScreenPoint(button.GetComponent<RectTransform>(), new Vector3(45, 0, 0));
+            Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(overlay.GetComponent<RectTransform>(), point, null));
+            Assert.IsFalse(RectTransformUtility.RectangleContainsScreenPoint(overlay.GetComponent<RectTransform>(), point, null, padding));
+            Assert.IsFalse(Has(Diagnose(), "raycast_blocker"));
+        }
+
+        [Test]
+        public void SameObjectRectMaskFiltersPointerBoundsWithoutClippingOwnVisual()
+        {
+            var first = Button("LeftSelfMaskedButton");
+            var second = Button("RightSelfMaskedButton");
+            first.GetComponent<RectTransform>().anchoredPosition = new Vector2(-25, 0);
+            second.GetComponent<RectTransform>().anchoredPosition = new Vector2(25, 0);
+            Set(Add(first, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(0, 0, 80, 0));
+            Set(Add(second, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(80, 0, 0, 0));
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            Vector2 point = (ScreenPoint(first.GetComponent<RectTransform>(), Vector3.zero)
+                + ScreenPoint(second.GetComponent<RectTransform>(), Vector3.zero)) * 0.5f;
+            Assert.IsFalse(NativeGraphicRaycast(first.GetComponent(imageType), point));
+            Assert.IsFalse(NativeGraphicRaycast(second.GetComponent(imageType), point));
+            var result = Diagnose();
+            Assert.IsFalse(Has(result, "interactive_overlap"));
+            var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceID());
+            Assert.AreEqual(100, firstOutput["visibleRect"].Value<float>("width"), 0.1f, "A RectMask2D does not clip its own Graphic's rendered rectangle.");
+            Set(first.GetComponent(imageType), "maskable", false);
+            Set(second.GetComponent(imageType), "maskable", false);
+            Assert.IsTrue(NativeGraphicRaycast(first.GetComponent(imageType), point));
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "Maskable=false opts out of same-object mask raycast filters too.");
+        }
+
+        [Test]
+        public void ScaledRectMaskUsesLocalPaddingForPointersAndCanvasPaddingForVisuals()
+        {
+            var mask = Child("ScaledMask");
+            mask.GetComponent<RectTransform>().localScale = new Vector3(2, 1, 1);
+            Set(Add(mask, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(80, 0, 0, 0));
+            var first = Button("MaskedButton");
+            first.transform.SetParent(mask.transform, false);
+            var second = Button("OutsideButton");
+            second.GetComponent<RectTransform>().anchoredPosition = new Vector2(-25, 0);
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            Vector2 point = ScreenPoint(first.GetComponent<RectTransform>(), Vector3.zero);
+            Assert.IsFalse(NativeGraphicRaycast(first.GetComponent(imageType), point));
+            Assert.IsTrue(NativeGraphicRaycast(second.GetComponent(imageType), point));
+            var result = Diagnose();
+            Assert.IsFalse(Has(result, "interactive_overlap"), "RectMask2D pointer padding is evaluated in its local transformed rectangle, unlike canvas-space render clipping padding.");
+            var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceID());
+            Assert.AreEqual(120, firstOutput["visibleRect"].Value<float>("width"), 0.1f);
+        }
+
+        [Test]
+        public void DisabledChildSelectableDoesNotHideActiveAncestorPointerReceiver()
+        {
+            var parent = Button("ParentReceiver");
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            Set(parent.GetComponent(imageType), "raycastTarget", false);
+            var child = Button("DisabledChildButton");
+            child.transform.SetParent(parent.transform, false);
+            var buttonType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Button");
+            var childButton = child.GetComponent(buttonType);
+            ((Behaviour)childButton).enabled = false;
+            Button("OtherButton");
+            var executeEvents = UnityTypeResolver.ResolveAny("UnityEngine.EventSystems.ExecuteEvents");
+            var clickHandler = UnityTypeResolver.ResolveAny("UnityEngine.EventSystems.IPointerClickHandler");
+            var method = executeEvents.GetMethods().Single(m => m.Name == "GetEventHandler" && m.IsGenericMethodDefinition);
+            Assert.AreSame(parent, method.MakeGenericMethod(clickHandler).Invoke(null, new object[] { child }));
+            Assert.IsTrue(Has(Diagnose(), "interactive_overlap"), "ExecuteEvents skips disabled child handlers and continues to the active ancestor Button.");
+            ((Behaviour)childButton).enabled = true;
+            Set(childButton, "interactable", false);
+            Assert.AreSame(child, method.MakeGenericMethod(clickHandler).Invoke(null, new object[] { child }));
+            Assert.IsFalse(Has(Diagnose(), "interactive_overlap"), "An enabled non-interactable child receives and consumes its own pointer event instead of forwarding to the parent.");
+        }
+
         [Test]
         public void BudgetReturnsTruncationAndNullResolutionExplainsCurrentMode()
         {

@@ -44,6 +44,7 @@ namespace MCPForUnity.Editor.Tools
             public Component PreviewText;
             public Rect Bounds;
             public Rect HitBounds;
+            public Rect RaycastBounds;
         }
 
         internal static object Diagnose(GameObject root, JArray resolutions, bool includeInactive, int maxNodes = 200)
@@ -284,6 +285,11 @@ namespace MCPForUnity.Editor.Tools
                     {
                         node.Bounds = Bounds(node.Preview, previewCanvas, scale, size);
                         node.HitBounds = Intersect(node.Bounds, canvasBounds);
+                        var graphic = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.Graphic");
+                        node.RaycastBounds = Intersect(
+                            PaddedBounds(node.Preview, previewCanvas, scale, size, Read(graphic, "raycastPadding", Vector4.zero)),
+                            canvasBounds
+                        );
                         var maskableGraphic = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.MaskableGraphic");
                         var ownCanvas = node.Source.GetComponent<Canvas>();
                         var ancestors = Read(maskableGraphic, "maskable", true) && !(ownCanvas != null && ownCanvas.overrideSorting)
@@ -324,6 +330,26 @@ namespace MCPForUnity.Editor.Tools
                             ancestors = boundary != null && boundary.overrideSorting ? null : ancestors.parent;
                         }
 
+                        // Graphic.Raycast checks filters on the Graphic itself as well as its ancestors.
+                        // Pointer padding is local to each filter; rendering padding remains canvas-space.
+                        for (Transform filter = Read(maskableGraphic, "maskable", true) ? node.Source : null; filter != null;)
+                        {
+                            if (filter is RectTransform filterRect && bySource.TryGetValue(filterRect, out Node filterNode) && filter.gameObject.activeInHierarchy)
+                            {
+                                var rectMask = ComponentNamed(filter.gameObject, "UnityEngine.UI.RectMask2D");
+                                if (Enabled(rectMask))
+                                    node.RaycastBounds = Intersect(
+                                        node.RaycastBounds,
+                                        PaddedBounds(filterNode.Preview, previewCanvas, scale, size, Read(rectMask, "padding", Vector4.zero))
+                                    );
+                                if (Enabled(ComponentNamed(filter.gameObject, "UnityEngine.UI.Mask")))
+                                    node.RaycastBounds = Intersect(node.RaycastBounds, Bounds(filterNode.Preview, previewCanvas, scale, size));
+                            }
+
+                            var boundary = filter.GetComponent<Canvas>();
+                            filter = boundary != null && boundary.overrideSorting ? null : filter.parent;
+                        }
+
                         geometry.Add(new JObject
                         {
                             ["path"] = node.Path,
@@ -331,6 +357,7 @@ namespace MCPForUnity.Editor.Tools
                             ["resolution"] = resolution.DeepClone(),
                             ["rect"] = RectJson(node.Bounds),
                             ["visibleRect"] = RectJson(node.HitBounds),
+                            ["raycastRect"] = node.PointerActive && node.Raycast ? RectJson(node.RaycastBounds) : null,
                             ["active"] = node.Source.gameObject.activeInHierarchy,
                             ["visible"] = node.Visible
                         });
@@ -373,7 +400,7 @@ namespace MCPForUnity.Editor.Tools
                             if (i == j || !second.PointerActive || !second.Raycast)
                                 continue;
                             pairs++;
-                            if ((first.Receiver != null && first.Receiver == second.Receiver) || first.Source.IsChildOf(second.Source) || second.Source.IsChildOf(first.Source) || !Overlaps(first.HitBounds, second.HitBounds))
+                            if ((first.Receiver != null && first.Receiver == second.Receiver) || first.Source.IsChildOf(second.Source) || second.Source.IsChildOf(first.Source) || !Overlaps(first.RaycastBounds, second.RaycastBounds))
                                 continue;
                             if (second.Interactive && j > i)
                                 Add(
@@ -539,6 +566,36 @@ namespace MCPForUnity.Editor.Tools
             return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
         }
 
+        private static Rect PaddedBounds(RectTransform rect, RectTransform canvas, float scale, Vector2 size, Vector4 padding)
+        {
+            if (padding == Vector4.zero)
+                return Bounds(rect, canvas, scale, size);
+            Rect local = rect.rect;
+            float left = local.xMin + padding.x;
+            float bottom = local.yMin + padding.y;
+            float right = local.xMax - padding.z;
+            float top = local.yMax - padding.w;
+            if (right <= left || top <= bottom)
+                return new Rect();
+            var corners = new[]
+            {
+                new Vector3(left, bottom, 0),
+                new Vector3(left, top, 0),
+                new Vector3(right, top, 0),
+                new Vector3(right, bottom, 0)
+            };
+            Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+            Vector2 max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+            foreach (var corner in corners)
+            {
+                Vector2 point = (Vector2)canvas.InverseTransformPoint(rect.TransformPoint(corner)) * scale + size * 0.5f;
+                min = Vector2.Min(min, point);
+                max = Vector2.Max(max, point);
+            }
+
+            return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
+        }
+
         private static bool IsActiveForCanvas(RectTransform rect)
         {
             if (!rect.gameObject.activeInHierarchy || FindActiveCanvas(rect) == null)
@@ -617,9 +674,9 @@ namespace MCPForUnity.Editor.Tools
             for (Transform t = source; t != null; t = t.parent)
             {
                 var selectable = ComponentNamed(t.gameObject, "UnityEngine.UI.Selectable");
-                if (selectable == null)
+                if (!Enabled(selectable) || !t.gameObject.activeInHierarchy)
                     continue;
-                return Enabled(selectable) && t.gameObject.activeInHierarchy && Read(selectable, "interactable", true) ? t : null;
+                return Read(selectable, "interactable", true) ? t : null;
             }
 
             return null;
