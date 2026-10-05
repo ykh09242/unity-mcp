@@ -492,6 +492,41 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(nativeAlpha, child.GetComponent<CanvasRenderer>().GetInheritedAlpha(), 0.001f);
         }
 
+        [TestCase(0f)]
+        [TestCase(1f)]
+        public void CurrentCanvasRendererAlphaControlsVisibilityWithoutDisablingPointers(float rendererAlpha)
+        {
+            Button("RendererAlphaControlButton");
+            var overlay = Child("RendererAlphaOverlay");
+            var image = Add(overlay, "UnityEngine.UI.Image");
+            var group = overlay.AddComponent<CanvasGroup>();
+            group.alpha = 0.5f;
+            var renderer = overlay.GetComponent<CanvasRenderer>();
+            Canvas.ForceUpdateCanvases();
+            renderer.SetAlpha(rendererAlpha);
+            Canvas.ForceUpdateCanvases();
+            Assert.AreEqual(1, ((Color)image.GetType().GetProperty("color").GetValue(image)).a);
+            Assert.AreEqual(rendererAlpha, renderer.GetAlpha(), 0.001f, "The native current renderer state must differ from the Graphic's vertex alpha.");
+            float nativeAlpha = renderer.GetInheritedAlpha();
+            Assert.AreEqual(group.alpha, nativeAlpha, 0.001f, "Native inherited alpha reports the CanvasGroup multiplier independently of this renderer's own alpha.");
+            Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(overlay.GetComponent<RectTransform>(), Vector3.zero)), "Renderer transparency does not disable pointer filters.");
+            string imageBefore = EditorJsonUtility.ToJson(image);
+            string groupBefore = EditorJsonUtility.ToJson(group);
+            string rendererBefore = EditorJsonUtility.ToJson(renderer);
+            string rectBefore = EditorJsonUtility.ToJson(overlay.GetComponent<RectTransform>());
+            var result = Diagnose();
+            Findings(result);
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == overlay.GetInstanceIDCompat());
+            Assert.AreEqual(nativeAlpha * renderer.GetAlpha() > 0.001f, output.Value<bool>("visible"));
+            Assert.IsTrue(Findings(result).Any(f => (string)f["code"] == "raycast_blocker" && (int?)f["relatedTarget"]?["instanceID"] == overlay.GetInstanceIDCompat()));
+            Assert.AreEqual(imageBefore, EditorJsonUtility.ToJson(image));
+            Assert.AreEqual(groupBefore, EditorJsonUtility.ToJson(group));
+            Assert.AreEqual(rendererBefore, EditorJsonUtility.ToJson(renderer));
+            Assert.AreEqual(rectBefore, EditorJsonUtility.ToJson(overlay.GetComponent<RectTransform>()));
+            Assert.AreEqual(rendererAlpha, renderer.GetAlpha(), 0.001f);
+            Assert.AreEqual(nativeAlpha, renderer.GetInheritedAlpha(), 0.001f);
+        }
+
         [TestCase(false, false)]
         [TestCase(false, true)]
         [TestCase(true, false)]

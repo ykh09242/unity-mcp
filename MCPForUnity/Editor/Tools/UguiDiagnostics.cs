@@ -780,6 +780,9 @@ namespace MCPForUnity.Editor.Tools
                 return true;
             if (!Enabled(graphic) || !(Read(graphic, "color", Color.white).a > 0.001f))
                 return false;
+            var renderer = rect.GetComponent<CanvasRenderer>();
+            if (renderer != null && !(renderer.GetAlpha() > 0.001f))
+                return false;
             var mask = ComponentNamed(rect.gameObject, "UnityEngine.UI.Mask", componentTypes);
             return !Enabled(mask) || Read(mask, "showMaskGraphic", true);
         }
