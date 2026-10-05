@@ -45,6 +45,21 @@ namespace MCPForUnity.Editor.Tools
             public Rect Bounds;
             public Rect HitBounds;
             public Rect RaycastBounds;
+            public Vector4 RaycastPadding;
+            public bool RectMask;
+            public bool StencilMask;
+            public Vector4 MaskPadding;
+            public MaskChain VisualMasks;
+            public MaskChain PointerMasks;
+            public bool NeedsPointerMaskBounds;
+            public Rect VisualMaskBounds;
+            public Rect PointerMaskBounds;
+        }
+
+        private sealed class MaskChain
+        {
+            public Node Mask;
+            public MaskChain Parent;
         }
 
         internal static object Diagnose(GameObject root, JArray resolutions, bool includeInactive, int maxNodes = 200)
@@ -111,6 +126,13 @@ namespace MCPForUnity.Editor.Tools
                 SceneManager.MoveGameObjectToScene(previewRoot, scene);
                 var nodes = new List<Node>();
                 var bySource = new Dictionary<RectTransform, Node>();
+                var maskChains = new Dictionary<Transform, MaskChain>();
+                var maskNodes = new List<Node>();
+                // Keep missing optional types local too: the shared resolver caches successful lookups only.
+                var graphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Graphic");
+                var maskableGraphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.MaskableGraphic");
+                var rectMaskType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.RectMask2D");
+                var maskType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Mask");
                 var stack = new Stack<KeyValuePair<Transform, Transform>>();
                 stack.Push(new KeyValuePair<Transform, Transform>(canvasRect, null));
                 int scanned = 0;
@@ -119,6 +141,13 @@ namespace MCPForUnity.Editor.Tools
                     var entry = stack.Pop();
                     scanned++;
                     Transform source = entry.Key;
+                    MaskChain inheritedMasks = null;
+                    if (source.parent != null)
+                        maskChains.TryGetValue(source.parent, out inheritedMasks);
+                    var sourceCanvasBoundary = source.GetComponent<Canvas>();
+                    if (sourceCanvasBoundary != null && sourceCanvasBoundary.overrideSorting)
+                        inheritedMasks = null;
+                    MaskChain pointerMasks = inheritedMasks;
                     GameObject clone;
                     if (source == canvasRect)
                         clone = previewRoot;
@@ -146,6 +175,26 @@ namespace MCPForUnity.Editor.Tools
                             Order = scanned
                         };
                         bySource.Add(rect, node);
+                        var graphic = graphicType == null ? null : source.GetComponent(graphicType);
+                        node.RaycastPadding = Read(graphic, "raycastPadding", Vector4.zero);
+                        var maskableGraphic = maskableGraphicType == null ? null : source.GetComponent(maskableGraphicType);
+                        bool maskable = Read(maskableGraphic, "maskable", true);
+                        var rectMask = rectMaskType == null ? null : source.GetComponent(rectMaskType);
+                        node.RectMask = source.gameObject.activeInHierarchy && Enabled(rectMask);
+                        node.StencilMask = source.gameObject.activeInHierarchy && maskType != null && Enabled(source.GetComponent(maskType));
+                        node.MaskPadding = Read(rectMask, "padding", Vector4.zero);
+                        node.VisualMasks = maskable ? inheritedMasks : null;
+                        if (node.RectMask || node.StencilMask)
+                        {
+                            pointerMasks = new MaskChain
+                            {
+                                Mask = node,
+                                Parent = inheritedMasks
+                            };
+                            maskNodes.Add(node);
+                        }
+
+                        node.PointerMasks = maskable ? pointerMasks : null;
                         foreach (var component in source.GetComponents<Component>())
                         {
                             if (component == null)
@@ -194,6 +243,8 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
 
+                    // Plain Transform containers share the inherited chain without adding a filter.
+                    maskChains.Add(source, pointerMasks);
                     // Keep inactive objects inactive so the normal layout exclusion rules still apply.
                     if (source != canvasRect)
                         clone.SetActive(source.gameObject.activeSelf);
@@ -225,6 +276,9 @@ namespace MCPForUnity.Editor.Tools
                     node.Receiver = FindInteractiveReceiver(node.Source);
                     node.Interactive = node.Receiver != null && GroupsAllow(node.Receiver, true);
                     hasInteractions |= node.PointerActive && node.Interactive && node.Raycast;
+                    if (node.PointerActive && node.Raycast)
+                        for (var filter = node.PointerMasks; filter != null; filter = filter.Parent)
+                            filter.Mask.NeedsPointerMaskBounds = true;
                     LayoutFindings(node, findings, ref truncated);
                 }
 
@@ -281,73 +335,58 @@ namespace MCPForUnity.Editor.Tools
                     };
                     Rect canvasBounds = new Rect(Vector2.zero, size);
                     int before = findings.Count;
+                    foreach (var mask in maskNodes)
+                    {
+                        Rect rawBounds = Bounds(mask.Preview, previewCanvas, scale, size);
+                        Vector4 padding = mask.MaskPadding * scale;
+                        mask.VisualMaskBounds = mask.RectMask
+                            ? new Rect(
+                                rawBounds.xMin + padding.x,
+                                rawBounds.yMin + padding.y,
+                                Mathf.Max(0, rawBounds.width - padding.x - padding.z),
+                                Mathf.Max(0, rawBounds.height - padding.y - padding.w)
+                            )
+                            : rawBounds;
+                        if (mask.NeedsPointerMaskBounds)
+                        {
+                            mask.PointerMaskBounds = mask.RectMask && mask.MaskPadding != Vector4.zero
+                                ? PaddedBounds(mask.Preview, previewCanvas, scale, size, mask.MaskPadding)
+                                : rawBounds;
+                            if (mask.StencilMask)
+                                mask.PointerMaskBounds = Intersect(mask.PointerMaskBounds, rawBounds);
+                        }
+                    }
+
                     foreach (var node in nodes)
                     {
                         node.Bounds = Bounds(node.Preview, previewCanvas, scale, size);
                         node.HitBounds = Intersect(node.Bounds, canvasBounds);
-                        var graphic = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.Graphic");
-                        node.RaycastBounds = Intersect(
-                            PaddedBounds(node.Preview, previewCanvas, scale, size, Read(graphic, "raycastPadding", Vector4.zero)),
-                            canvasBounds
-                        );
-                        var maskableGraphic = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.MaskableGraphic");
-                        var ownCanvas = node.Source.GetComponent<Canvas>();
-                        var ancestors = Read(maskableGraphic, "maskable", true) && !(ownCanvas != null && ownCanvas.overrideSorting)
-                            ? node.Source.parent
-                            : null;
-                        while (ancestors != null)
+                        for (var filter = node.VisualMasks; filter != null; filter = filter.Parent)
                         {
-                            if (ancestors is RectTransform maskRect && bySource.TryGetValue(maskRect, out Node maskNode) && ActiveMask(ancestors.gameObject))
-                            {
-                                Rect maskBounds = Bounds(maskNode.Preview, previewCanvas, scale, size);
-                                var rectMask = ComponentNamed(ancestors.gameObject, "UnityEngine.UI.RectMask2D");
-                                if (Enabled(rectMask))
-                                {
-                                    Vector4 padding = Read(rectMask, "padding", Vector4.zero) * scale;
-                                    maskBounds = new Rect(
-                                        maskBounds.xMin + padding.x,
-                                        maskBounds.yMin + padding.y,
-                                        Mathf.Max(0, maskBounds.width - padding.x - padding.z),
-                                        Mathf.Max(0, maskBounds.height - padding.y - padding.w)
-                                    );
-                                }
-
-                                node.HitBounds = Intersect(node.HitBounds, maskBounds);
-                                if (node.Visible && !Contains(maskBounds, node.Bounds))
-                                    Add(
-                                        findings,
-                                        "clipped_by_mask",
-                                        "candidate",
-                                        node,
-                                        "Bounds extend beyond an enabled ancestor Mask/RectMask2D. Review scrolling and intentional clipping; stencil masks are approximated by their rectangle.",
-                                        maskNode,
-                                        resolution,
-                                        ref truncated
-                                    );
-                            }
-
-                            var boundary = ancestors.GetComponent<Canvas>();
-                            ancestors = boundary != null && boundary.overrideSorting ? null : ancestors.parent;
+                            Node mask = filter.Mask;
+                            node.HitBounds = Intersect(node.HitBounds, mask.VisualMaskBounds);
+                            if (node.Visible && !Contains(mask.VisualMaskBounds, node.Bounds))
+                                Add(
+                                    findings,
+                                    "clipped_by_mask",
+                                    "candidate",
+                                    node,
+                                    "Bounds extend beyond an enabled ancestor Mask/RectMask2D. Review scrolling and intentional clipping; stencil masks are approximated by their rectangle.",
+                                    mask,
+                                    resolution,
+                                    ref truncated
+                                );
                         }
 
                         // Graphic.Raycast checks filters on the Graphic itself as well as its ancestors.
                         // Pointer padding is local to each filter; rendering padding remains canvas-space.
-                        for (Transform filter = Read(maskableGraphic, "maskable", true) ? node.Source : null; filter != null;)
+                        if (node.PointerActive && node.Raycast)
                         {
-                            if (filter is RectTransform filterRect && bySource.TryGetValue(filterRect, out Node filterNode) && filter.gameObject.activeInHierarchy)
-                            {
-                                var rectMask = ComponentNamed(filter.gameObject, "UnityEngine.UI.RectMask2D");
-                                if (Enabled(rectMask))
-                                    node.RaycastBounds = Intersect(
-                                        node.RaycastBounds,
-                                        PaddedBounds(filterNode.Preview, previewCanvas, scale, size, Read(rectMask, "padding", Vector4.zero))
-                                    );
-                                if (Enabled(ComponentNamed(filter.gameObject, "UnityEngine.UI.Mask")))
-                                    node.RaycastBounds = Intersect(node.RaycastBounds, Bounds(filterNode.Preview, previewCanvas, scale, size));
-                            }
-
-                            var boundary = filter.GetComponent<Canvas>();
-                            filter = boundary != null && boundary.overrideSorting ? null : filter.parent;
+                            node.RaycastBounds = node.RaycastPadding == Vector4.zero
+                                ? Intersect(node.Bounds, canvasBounds)
+                                : Intersect(PaddedBounds(node.Preview, previewCanvas, scale, size, node.RaycastPadding), canvasBounds);
+                            for (var filter = node.PointerMasks; filter != null; filter = filter.Parent)
+                                node.RaycastBounds = Intersect(node.RaycastBounds, filter.Mask.PointerMaskBounds);
                         }
 
                         geometry.Add(new JObject
@@ -688,7 +727,6 @@ namespace MCPForUnity.Editor.Tools
             return Enabled(graphic) && Read(graphic, "raycastTarget", false);
         }
 
-        private static bool ActiveMask(GameObject go) => go.activeInHierarchy && (Enabled(ComponentNamed(go, "UnityEngine.UI.RectMask2D")) || Enabled(ComponentNamed(go, "UnityEngine.UI.Mask")));
         private static void LayoutFindings(Node node, JArray findings, ref bool truncated)
         {
             if (!node.Source.gameObject.activeInHierarchy)

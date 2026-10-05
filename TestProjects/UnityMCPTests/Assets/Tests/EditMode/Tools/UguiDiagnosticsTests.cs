@@ -711,6 +711,33 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void MaskGeometryRefreshesAcrossResolutionsThroughPlainTransformGap()
+        {
+            var mask = Child("ResponsiveMask");
+            var maskRect = mask.GetComponent<RectTransform>();
+            maskRect.anchorMin = Vector2.zero;
+            maskRect.anchorMax = Vector2.one;
+            maskRect.sizeDelta = new Vector2(-200, -200);
+            Set(Add(mask, "UnityEngine.UI.RectMask2D"), "padding", new Vector4(100, 0, 100, 0));
+            var gap = new GameObject("PlainTransformGap");
+            gap.transform.SetParent(mask.transform, false);
+            var button = Button("ClippedButton");
+            button.transform.SetParent(gap.transform, false);
+            button.GetComponent<RectTransform>().sizeDelta = new Vector2(600, 100);
+            string before = EditorJsonUtility.ToJson(maskRect);
+            var sizes = Sizes(800, 600);
+            sizes.Add(Sizes(1200, 600)[0]);
+            sizes.Add(Sizes(800, 600)[0]);
+            var result = Diagnose(sizes: sizes);
+            Findings(result);
+            var outputs = result["data"]["rects"].Where(r => (int)r["instanceID"] == button.GetInstanceID()).ToArray();
+            CollectionAssert.AreEqual(new[] { 400f, 600f, 400f }, outputs.Select(r => r["visibleRect"].Value<float>("width")).ToArray());
+            CollectionAssert.AreEqual(new[] { 400f, 600f, 400f }, outputs.Select(r => r["raycastRect"].Value<float>("width")).ToArray());
+            CollectionAssert.AreEqual(new[] { 200f, 300f, 200f }, outputs.Select(r => r["raycastRect"].Value<float>("x")).ToArray());
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(maskRect));
+        }
+
+        [Test]
         public void BudgetReturnsTruncationAndNullResolutionExplainsCurrentMode()
         {
             Child("One");
