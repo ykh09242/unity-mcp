@@ -594,9 +594,9 @@ namespace MCPForUnity.Editor.Tools
             ? null
             : c.GetType().GetProperty(key)?.GetValue(c) as float?;
 
-        private static bool IsDriven(RectTransform rt)
+        private static bool IsDriven(RectTransform rt, Dictionary<string, Type> types = null)
         {
-            Type fitterType = TypeOf(Ui + "ContentSizeFitter");
+            Type fitterType = TypeOf(Ui + "ContentSizeFitter", types);
             var driven = typeof(RectTransform).GetProperty("drivenByObject");
             if (driven?.GetValue(rt) is UnityEngine.Object owner && owner != null)
             {
@@ -621,7 +621,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (rt.parent == null || !rt.gameObject.activeInHierarchy)
                 return false;
-            Type ignorer = UnityTypeResolver.ResolveAny(Ui + "ILayoutIgnorer");
+            Type ignorer = TypeOf(Ui + "ILayoutIgnorer", types, false);
             if (ignorer != null)
             {
                 var components = rt.GetComponents(ignorer);
@@ -631,7 +631,7 @@ namespace MCPForUnity.Editor.Tools
                     return false;
             }
 
-            return Enabled(Find(rt.parent.gameObject, Ui + "LayoutGroup"));
+            return Enabled(Find(rt.parent.gameObject, Ui + "LayoutGroup", types));
         }
 
         private static bool Enabled(Component c) => c != null && (!(c is Behaviour b) || b.isActiveAndEnabled);
@@ -654,13 +654,21 @@ namespace MCPForUnity.Editor.Tools
             return font;
         }
 
-        private static Component Find(GameObject go, string name)
+        private static Component Find(GameObject go, string name, Dictionary<string, Type> types = null)
         {
-            Type type = TypeOf(name);
+            Type type = TypeOf(name, types);
             return type == null ? null : go.GetComponent(type);
         }
 
-        private static Type TypeOf(string name) => UnityTypeResolver.ResolveComponent(name);
+        private static Type TypeOf(string name, Dictionary<string, Type> types = null, bool component = true)
+        {
+            if (types != null && types.TryGetValue(name, out Type cached))
+                return cached;
+            Type type = component ? UnityTypeResolver.ResolveComponent(name) : UnityTypeResolver.ResolveAny(name);
+            if (types != null)
+                types[name] = type;
+            return type;
+        }
 
         private static Type RequireType(string name) => TypeOf(name) ?? throw new ArgumentException(
             "Required optional component is unavailable: " + name + ". Install/enable the corresponding uGUI or TMP package.");
@@ -759,6 +767,9 @@ namespace MCPForUnity.Editor.Tools
         private static object Hierarchy(GameObject root, bool includeInactive, int maxNodes)
         {
             var nodes = new JArray();
+            // Missing optional types are cached only for this read; the shared resolver
+            // deliberately retains successful lookups only.
+            var types = new Dictionary<string, Type>(StringComparer.Ordinal);
             bool truncated = false;
             foreach (var go in Descendants(root, includeInactive))
             {
@@ -769,7 +780,7 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 var rt = go.transform as RectTransform;
-                var c = Find(go, Tmp) ?? Find(go, Ui + "Text");
+                var c = Find(go, Tmp, types) ?? Find(go, Ui + "Text", types);
                 var node = new JObject
                 {
                     ["instance_id"] = go.GetInstanceIDCompat(),
@@ -789,7 +800,7 @@ namespace MCPForUnity.Editor.Tools
                         ["sizeDelta"] = Vec(rt.sizeDelta),
                         ["width"] = rt.rect.width,
                         ["height"] = rt.rect.height,
-                        ["layout_driven"] = IsDriven(rt)
+                        ["layout_driven"] = IsDriven(rt, types)
                     };
                 if (c != null)
                     node["text"] = c.GetType().GetProperty("text")?.GetValue(c)?.ToString();

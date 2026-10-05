@@ -556,6 +556,48 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void MissingOptionalUiPackagesStillReadHierarchyToTheRequestedNodeLimit()
+        {
+            if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Text") != null
+                || UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI") != null)
+                Assert.Ignore("This case verifies absent uGUI and TMP.");
+            var root = Root();
+            var expected = new List<GameObject> { root };
+            for (int i = 0; i < 200; i++)
+            {
+                var child = new GameObject("Child" + i, typeof(RectTransform));
+                child.transform.SetParent(root.transform, false);
+                expected.Add(child);
+            }
+
+            var p = new JObject
+            {
+                ["action"] = "get_hierarchy",
+                ["target"] = root.GetInstanceIDCompat(),
+                ["max_nodes"] = 200
+            };
+            var capped = JObject.FromObject(ManageUGUI.HandleCommand(p));
+            Success(capped);
+            Assert.That(capped["data"]["count"].Value<int>(), Is.EqualTo(200));
+            Assert.That(capped["data"]["truncated"].Value<bool>(), Is.True);
+            p["max_nodes"] = 1000;
+            var complete = JObject.FromObject(ManageUGUI.HandleCommand(p));
+            Success(complete);
+            var nodes = (JArray)complete["data"]["nodes"];
+            Assert.That(nodes.Count, Is.EqualTo(expected.Count));
+            Assert.That(complete["data"]["truncated"].Value<bool>(), Is.False);
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                Assert.That(nodes[i]["instance_id"].Value<int>(), Is.EqualTo(expected[i].GetInstanceIDCompat()));
+                Assert.That(nodes[i]["path"].ToString(), Is.EqualTo(i == 0 ? root.name : root.name + "/" + expected[i].name));
+                Assert.That(nodes[i]["rect"]["layout_driven"].Value<bool>(), Is.False);
+                Assert.That(nodes[i]["text"], Is.Null);
+                if (i < 200)
+                    Assert.That(capped["data"]["nodes"][i]["instance_id"].Value<int>(), Is.EqualTo(expected[i].GetInstanceIDCompat()));
+            }
+        }
+
+        [Test]
         public void CanvasCreationProvidesScalerAndRaycasterAndCanBeUndone()
         {
             if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler") == null)
