@@ -181,6 +181,30 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(conflict, Has(Diagnose(), "layout_driver_conflict", child));
         }
 
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void LaterActiveContentFitterIsIncludedInAxisConflictDiagnostics(bool firstEnabled, bool ownAspect)
+        {
+            var child = Child("MultipleContentFitters");
+            var first = Add(child, "UnityEngine.UI.ContentSizeFitter");
+            ((Behaviour)first).enabled = firstEnabled;
+            var second = Add(child, "UnityEngine.UI.ContentSizeFitter");
+            Set(second, "horizontalFit", 2);
+            if (ownAspect)
+                Set(Add(child, "UnityEngine.UI.AspectRatioFitter"), "aspectMode", 2);
+            else
+                Set(Add(root, "UnityEngine.UI.HorizontalLayoutGroup"), "childControlWidth", true);
+            Assert.AreEqual(2, child.GetComponents(first.GetType()).Length);
+            Assert.IsTrue(((Behaviour)second).isActiveAndEnabled);
+            string before = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
+            Assert.IsTrue(Has(Diagnose(), "layout_driver_conflict", child), "A disabled or unconstrained first fitter must not hide a later active size controller.");
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(child.GetComponent<RectTransform>()));
+            ((Behaviour)second).enabled = false;
+            Assert.IsFalse(Has(Diagnose(), "layout_driver_conflict", child), "Unconstrained/disabled fitters do not drive a size axis.");
+        }
+
         [Test]
         public void DifferentAspectRatiosProduceDifferentRectsAndOffCanvasCandidates()
         {

@@ -774,9 +774,11 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!node.Source.gameObject.activeInHierarchy)
                 return;
-            var fitter = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.ContentSizeFitter");
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            var fitters = fitterType == null ? Array.Empty<Component>() : node.Source.GetComponents(fitterType);
             var aspect = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.AspectRatioFitter");
-            bool fitsX = Fit(fitter, "horizontalFit"), fitsY = Fit(fitter, "verticalFit");
+            bool fitsX = fitters.Any(fitter => Fit(fitter, "horizontalFit"));
+            bool fitsY = fitters.Any(fitter => Fit(fitter, "verticalFit"));
             int aspectMode = Enabled(aspect) && AspectEligible(aspect) ? EnumValue(aspect, "aspectMode") : 0;
             bool aspectX = aspectMode == 2 || aspectMode == 3 || aspectMode == 4;
             bool aspectY = aspectMode == 1 || aspectMode == 3 || aspectMode == 4;
