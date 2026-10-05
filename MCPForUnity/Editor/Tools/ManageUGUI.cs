@@ -596,14 +596,29 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool IsDriven(RectTransform rt)
         {
+            Type fitterType = TypeOf(Ui + "ContentSizeFitter");
             var driven = typeof(RectTransform).GetProperty("drivenByObject");
             if (driven?.GetValue(rt) is UnityEngine.Object owner && owner != null)
-                return true;
-            var fitter = Find(rt.gameObject, Ui + "ContentSizeFitter");
-            if (Enabled(fitter)
-                && (Convert.ToInt32(fitter.GetType().GetProperty("horizontalFit").GetValue(fitter)) != 0
-                    || Convert.ToInt32(fitter.GetType().GetProperty("verticalFit").GetValue(fitter)) != 0))
-                return true;
+            {
+                if (owner.GetType() != fitterType)
+                    return true;
+                // An unconstrained built-in fitter can retain ownership without driving any property.
+                // Stale flags still require a normal layout pass before edits can preserve Undo.
+                var flags = typeof(RectTransform).GetProperty("drivenProperties", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (!(flags?.GetValue(rt) is DrivenTransformProperties properties) || properties != DrivenTransformProperties.None)
+                    return true;
+            }
+            if (fitterType != null)
+            {
+                foreach (var fitter in rt.GetComponents(fitterType))
+                {
+                    if (Enabled(fitter)
+                        && (Convert.ToInt32(fitter.GetType().GetProperty("horizontalFit").GetValue(fitter)) != 0
+                            || Convert.ToInt32(fitter.GetType().GetProperty("verticalFit").GetValue(fitter)) != 0))
+                        return true;
+                }
+            }
+
             if (rt.parent == null)
                 return false;
             Type ignorer = UnityTypeResolver.ResolveAny(Ui + "ILayoutIgnorer");

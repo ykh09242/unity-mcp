@@ -240,6 +240,106 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(((RectTransform)child.transform).sizeDelta, Is.EqualTo(new Vector2(240, 90)));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LaterActiveContentSizeFitterRejectsRectEditsBeforeLayoutRuns(bool disableFirst)
+        {
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
+            if (fitterType == null || elementType == null)
+                Assert.Ignore("uGUI is not installed.");
+            if (fitterType.IsDefined(typeof(DisallowMultipleComponent), true))
+                Assert.Ignore("Installed uGUI disallows multiple ContentSizeFitters.");
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            var element = go.AddComponent(elementType);
+            elementType.GetProperty("preferredWidth").SetValue(element, 310f);
+            var first = go.AddComponent(fitterType);
+            if (disableFirst)
+                ((Behaviour)first).enabled = false;
+            var later = go.AddComponent(fitterType);
+            var horizontalFit = fitterType.GetProperty("horizontalFit");
+            horizontalFit.SetValue(later, Enum.Parse(horizontalFit.PropertyType, "PreferredSize"));
+            Assert.That(go.GetComponents(fitterType).Length, Is.EqualTo(2));
+            var drivenProperty = typeof(RectTransform).GetProperty("drivenByObject");
+            Assert.That(drivenProperty?.GetValue(rect), Is.Null, "The requested edit occurs before the first native layout pass.");
+            Vector2 before = rect.sizeDelta;
+            var r = Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) });
+            Vector2 afterCommand = rect.sizeDelta;
+            fitterType.GetMethod("SetLayoutHorizontal").Invoke(later, null);
+            Assert.That(rect.sizeDelta.x, Is.EqualTo(310f), "The later active fitter controls native preferred width.");
+            Failure(r);
+            StringAssert.Contains("layout-driven", r["error"].ToString());
+            Assert.That(afterCommand, Is.EqualTo(before), "An active later fitter must not be hidden by an inactive first component.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OnlyUnconstrainedOrDisabledContentSizeFittersAllowRectEdits(bool disableLater)
+        {
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            if (fitterType == null)
+                Assert.Ignore("uGUI is not installed.");
+            if (fitterType.IsDefined(typeof(DisallowMultipleComponent), true))
+                Assert.Ignore("Installed uGUI disallows multiple ContentSizeFitters.");
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            var first = go.AddComponent(fitterType);
+            var later = go.AddComponent(fitterType);
+            if (disableLater)
+            {
+                var horizontalFit = fitterType.GetProperty("horizontalFit");
+                horizontalFit.SetValue(later, Enum.Parse(horizontalFit.PropertyType, "PreferredSize"));
+                ((Behaviour)later).enabled = false;
+            }
+            Vector2 before = rect.sizeDelta;
+            fitterType.GetMethod("SetLayoutHorizontal").Invoke(first, null);
+            Assert.That(rect.sizeDelta, Is.EqualTo(before), "The unconstrained active fitter leaves size unchanged.");
+            rect.sizeDelta = new Vector2(270, 95);
+            fitterType.GetMethod("SetLayoutHorizontal").Invoke(first, null);
+            if (((Behaviour)later).isActiveAndEnabled)
+                fitterType.GetMethod("SetLayoutHorizontal").Invoke(later, null);
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(270, 95)), "Active unconstrained layout preserves direct native size edits.");
+            rect.sizeDelta = before;
+            Success(Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+            Undo.PerformUndo();
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+        }
+
+        [Test]
+        public void UnconstrainedFitterTransitionRejectsEditsUntilLayoutPreservesUndo()
+        {
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
+            if (fitterType == null || elementType == null)
+                Assert.Ignore("uGUI is not installed.");
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            var element = go.AddComponent(elementType);
+            elementType.GetProperty("preferredWidth").SetValue(element, 310f);
+            var fitter = go.AddComponent(fitterType);
+            var horizontalFit = fitterType.GetProperty("horizontalFit");
+            var layout = fitterType.GetMethod("SetLayoutHorizontal");
+            horizontalFit.SetValue(fitter, Enum.Parse(horizontalFit.PropertyType, "PreferredSize"));
+            layout.Invoke(fitter, null);
+            Assert.That(rect.sizeDelta.x, Is.EqualTo(310f));
+            horizontalFit.SetValue(fitter, Enum.Parse(horizontalFit.PropertyType, "Unconstrained"));
+            Vector2 before = rect.sizeDelta;
+            Undo.ClearAll();
+            var rejected = Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) });
+            Failure(rejected);
+            StringAssert.Contains("layout-driven", rejected["error"].ToString());
+            Assert.That(rect.sizeDelta, Is.EqualTo(before), "Reject edits while native layout still owns the size.");
+            layout.Invoke(fitter, null);
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+            Success(Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) }));
+            layout.Invoke(fitter, null);
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+            Undo.PerformUndo();
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+        }
+
         [Test]
         public void RectEditIsUndoable()
         {
@@ -251,6 +351,50 @@ namespace MCPForUnityTests.EditMode.Tools
             Undo.PerformUndo();
             Assert.That(rect.sizeDelta, Is.EqualTo(before));
             Assert.That(rect.pivot, Is.EqualTo(new Vector2(.5f, .5f)));
+        }
+
+        [Test]
+        public void MixedRectAnchorsOffsetsAndScaleMatchNativeSettersAndUndo()
+        {
+            var parent = Root();
+            var go = new GameObject("Edited", typeof(RectTransform));
+            go.transform.SetParent(parent.transform, false);
+            var twin = new GameObject("NativeControl", typeof(RectTransform));
+            twin.transform.SetParent(parent.transform, false);
+            var rect = (RectTransform)go.transform;
+            var native = (RectTransform)twin.transform;
+            Vector2 beforeSize = rect.sizeDelta;
+            Vector2 beforePosition = rect.anchoredPosition;
+            var r = Call("set_rect", go, new JObject
+            {
+                ["offsetMax"] = new JArray(31, 29),
+                ["localScale"] = new JArray(-1, 0, 2),
+                ["pivot"] = new JArray(.25f, .75f),
+                ["anchorMax"] = new JArray(.9f, .8f),
+                ["offsetMin"] = new JArray(-17, -13),
+                ["localEulerAngles"] = new JArray(0, 0, 30),
+                ["anchorMin"] = new JArray(.1f, .2f)
+            });
+            Success(r);
+            native.anchorMax = new Vector2(.9f, .8f);
+            native.anchorMin = new Vector2(.1f, .2f);
+            native.pivot = new Vector2(.25f, .75f);
+            native.localScale = new Vector3(-1, 0, 2);
+            native.localEulerAngles = new Vector3(0, 0, 30);
+            native.offsetMax = new Vector2(31, 29);
+            native.offsetMin = new Vector2(-17, -13);
+            Assert.That(rect.sizeDelta, Is.EqualTo(native.sizeDelta));
+            Assert.That(rect.anchoredPosition, Is.EqualTo(native.anchoredPosition));
+            Assert.That(rect.localScale, Is.EqualTo(native.localScale));
+            Assert.That(Quaternion.Angle(rect.localRotation, native.localRotation), Is.LessThan(.001f));
+            Undo.PerformUndo();
+            Assert.That(rect.sizeDelta, Is.EqualTo(beforeSize));
+            Assert.That(rect.anchoredPosition, Is.EqualTo(beforePosition));
+            Assert.That(rect.anchorMin, Is.EqualTo(new Vector2(.5f, .5f)));
+            Assert.That(rect.anchorMax, Is.EqualTo(new Vector2(.5f, .5f)));
+            Assert.That(rect.pivot, Is.EqualTo(new Vector2(.5f, .5f)));
+            Assert.That(rect.localScale, Is.EqualTo(Vector3.one));
+            Assert.That(Quaternion.Angle(rect.localRotation, Quaternion.identity), Is.LessThan(.001f));
         }
 
         [Test]
