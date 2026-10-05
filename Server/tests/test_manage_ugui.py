@@ -421,6 +421,110 @@ async def test_preserves_finite_extremes_in_json_properties(boundary: Boundary) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "properties",
+    [
+        '{"text":"\\ud800"}',
+        '{"text":"\\udc00"}',
+        '{"\\ud800":0}',
+        '{"nested":[{"\\udc00":0}]}',
+    ],
+)
+async def test_rejects_unpaired_surrogates_before_http_encoding(
+    boundary: Boundary,
+    monkeypatch: pytest.MonkeyPatch,
+    properties: str,
+) -> None:
+    # Given: WebSocket text must be encodable as UTF-8 at the ASGI transport sink.
+    async def send_as_utf8(message):
+        if "text" in message:
+            message["text"].encode("utf-8")
+
+    websocket = WebSocket(
+        {"type": "websocket"},
+        receive=AsyncMock(return_value={"type": "websocket.connect"}),
+        send=send_as_utf8,
+    )
+    await websocket.accept()
+
+    async def encode_request(instance, command, params, **kwargs):
+        await websocket.send_json({"params": params})
+        return {"success": True}
+
+    http_send = AsyncMock(side_effect=encode_request)
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
+    monkeypatch.setattr(
+        "transport.plugin_hub.PluginHub.send_command_for_instance", http_send
+    )
+    server = FastMCP("ugui-unicode-json")
+    server.tool()(manage_ugui)
+    # When: escaped input passes the MCP envelope, then becomes a surrogate on decode.
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_ugui",
+            {"action": "set_text", "target": "Label", "properties": properties},
+        )
+    result = response.structured_content
+    # Then: malformed characters are an input error rather than a retryable send failure.
+    assert result["success"] is False
+    assert result.get("hint") != "retry"
+    assert "Unicode" in result["message"]
+    assert len(result["message"]) < 300
+    for seam in (http_send, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "properties,expected",
+    [
+        ('{"text":"\\ud83d\\ude00"}', {"text": "😀"}),
+        ('{"text":"한글 Ελληνικά العربية"}', {"text": "한글 Ελληνικά العربية"}),
+        ('{"text":"\\ufffd"}', {"text": "�"}),
+    ],
+)
+async def test_preserves_valid_unicode_in_json_properties(
+    boundary: Boundary,
+    properties: str,
+    expected: dict[str, JsonValue],
+) -> None:
+    # Given: complete surrogate pairs and ordinary Unicode characters encode as UTF-8.
+    server = FastMCP("ugui-valid-unicode")
+    server.tool()(manage_ugui)
+    # When
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_ugui",
+            {"action": "set_text", "target": "Label", "properties": properties},
+        )
+    # Then: preserve text instead of normalizing, escaping, or replacing characters.
+    assert response.structured_content["success"] is True
+    assert boundary.mutate.await_args.args[3]["properties"] == expected
+
+
+@pytest.mark.asyncio
+async def test_rejects_nested_unpaired_surrogate_in_dictionary(
+    boundary: Boundary,
+) -> None:
+    # Given: direct dictionaries use the same validation as decoded object strings.
+    properties = {"nested": [{"text": "\ud800"}]}
+    # When
+    result = await manage_ugui(
+        SimpleNamespace(),
+        action="set_text",
+        target="Label",
+        properties=properties,
+    )
+    # Then
+    assert result["success"] is False
+    assert "Unicode" in result["message"]
+    for seam in (boundary.mutate, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_accepts_full_resolution_budget_when_at_bounds(boundary: Boundary) -> None:
     # Given
     resolutions = [{"width": 64, "height": 8192}] * 8

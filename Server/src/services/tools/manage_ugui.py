@@ -13,6 +13,7 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
 )
+from typing_extensions import assert_never
 
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
@@ -53,6 +54,24 @@ _RESOLUTIONS: Final = TypeAdapter(
 _PROPERTIES: Final = TypeAdapter(
     dict[str, JsonValue], config=ConfigDict(allow_inf_nan=False)
 )
+
+
+def _validate_unicode_strings(value: JsonValue) -> None:
+    # JsonValue validation has already bounded nesting and excluded reference cycles.
+    match value:
+        case str():
+            value.encode("utf-8")
+        case dict():
+            for key, item in value.items():
+                key.encode("utf-8")
+                _validate_unicode_strings(item)
+        case list():
+            for item in value:
+                _validate_unicode_strings(item)
+        case None | bool() | int() | float():
+            pass
+        case _:
+            assert_never(value)
 
 
 @mcp_for_unity_tool(
@@ -165,6 +184,12 @@ async def manage_ugui(
         properties, properties_error = normalize_properties(properties)
         if properties is not None:
             properties = _PROPERTIES.validate_python(properties)
+            _validate_unicode_strings(properties)
+    except UnicodeEncodeError:
+        return {
+            "success": False,
+            "message": "properties keys and string values must contain valid Unicode; remove unpaired surrogate escapes or provide a complete character.",
+        }
     except (RecursionError, ValidationError):
         return {
             "success": False,
