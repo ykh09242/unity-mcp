@@ -242,6 +242,52 @@ namespace MCPForUnityTests.EditMode.Tools
 
         [TestCase(false)]
         [TestCase(true)]
+        public void InactiveChildExcludedByParentLayoutAllowsRectEditsAndUndo(bool previouslyLaidOut)
+        {
+            var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.VerticalLayoutGroup");
+            if (groupType == null)
+                Assert.Ignore("uGUI is not installed.");
+            var root = Root();
+            var group = root.AddComponent(groupType);
+            var child = new GameObject("InactiveChild", typeof(RectTransform));
+            child.transform.SetParent(root.transform, false);
+            var rect = (RectTransform)child.transform;
+            var calculate = groupType.GetMethod("CalculateLayoutInputHorizontal");
+            if (previouslyLaidOut)
+            {
+                calculate.Invoke(group, null);
+                groupType.GetMethod("SetLayoutHorizontal").Invoke(group, null);
+                groupType.GetMethod("SetLayoutVertical").Invoke(group, null);
+            }
+
+            child.SetActive(false);
+            calculate.Invoke(group, null);
+            var children = (System.Collections.IList)groupType.GetProperty("rectChildren", BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(group);
+            Assert.That(children.Count, Is.EqualTo(0), "Installed uGUI excludes inactive children from parent layout.");
+            Assert.That(typeof(RectTransform).GetProperty("drivenByObject")?.GetValue(rect), Is.Null, "A normal layout calculation releases any previous native ownership.");
+            Vector2 before = rect.sizeDelta;
+            Undo.ClearAll();
+            var p = new JObject
+            {
+                ["action"] = "set_rect",
+                ["target"] = child.GetInstanceIDCompat(),
+                ["include_inactive"] = true,
+                ["properties"] = new JObject { ["sizeDelta"] = new JArray(240, 90) }
+            };
+            Success(JObject.FromObject(ManageUGUI.HandleCommand(p)));
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+            p["action"] = "get_hierarchy";
+            p.Remove("properties");
+            var hierarchy = JObject.FromObject(ManageUGUI.HandleCommand(p));
+            Success(hierarchy);
+            Assert.That(hierarchy["data"]["nodes"][0]["rect"]["layout_driven"].Value<bool>(), Is.False);
+            Undo.PerformUndo();
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void LaterActiveContentSizeFitterRejectsRectEditsBeforeLayoutRuns(bool disableFirst)
         {
             var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");

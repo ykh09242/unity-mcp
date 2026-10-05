@@ -619,7 +619,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            if (rt.parent == null)
+            if (rt.parent == null || !rt.gameObject.activeInHierarchy)
                 return false;
             Type ignorer = UnityTypeResolver.ResolveAny(Ui + "ILayoutIgnorer");
             if (ignorer != null)
