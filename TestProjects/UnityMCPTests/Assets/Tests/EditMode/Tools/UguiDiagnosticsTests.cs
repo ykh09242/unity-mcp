@@ -423,6 +423,54 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(100, rect["visibleRect"].Value<float>("width"), 0.1f);
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void CoLocatedStencilAndExpandedRectMaskKeepIndependentRenderBounds(bool stencilEnabled, bool outsideStencil)
+        {
+            var host = Child("CombinedMask");
+            var hostImage = Add(host, "UnityEngine.UI.Image");
+            Set(hostImage, "raycastTarget", false);
+            var stencil = Add(host, "UnityEngine.UI.Mask");
+            ((Behaviour)stencil).enabled = stencilEnabled;
+            var rectangular = Add(host, "UnityEngine.UI.RectMask2D");
+            Set(rectangular, "padding", new Vector4(-100, 0, -100, 0));
+            var child = Button("CombinedMaskButton");
+            child.transform.SetParent(host.transform, false);
+            var rect = child.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(outsideStencil ? 50 : 300, 20);
+            rect.anchoredPosition = new Vector2(outsideStencil ? 100 : 0, 0);
+            var image = child.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
+            var padding = outsideStencil ? new Vector4(-100, 0, 0, 0) : Vector4.zero;
+            Set(image, "raycastPadding", padding);
+            var control = Button("UnmaskedControlButton");
+            control.GetComponent<RectTransform>().sizeDelta = new Vector2(20, 20);
+            var performClipping = rectangular.GetType().GetMethod("PerformClipping");
+            performClipping.Invoke(rectangular, null);
+            performClipping.Invoke(rectangular, null);
+            Assert.IsFalse(child.GetComponent<CanvasRenderer>().cull, "Native rectangular culling uses the expanded clip independently of the stencil rectangle.");
+            var material = (Material)image.GetType().GetProperty("materialForRendering").GetValue(image);
+            Assert.AreEqual(stencilEnabled ? 1 : 0, material.GetInt("_Stencil"));
+            Assert.AreEqual((int)(stencilEnabled ? UnityEngine.Rendering.CompareFunction.Equal : UnityEngine.Rendering.CompareFunction.Always), material.GetInt("_StencilComp"));
+            Vector2 point = ScreenPoint(control.GetComponent<RectTransform>(), Vector3.zero);
+            Assert.IsTrue(RectTransformUtility.RectangleContainsScreenPoint(rect, point, null, padding));
+            Assert.IsTrue(NativeGraphicRaycast(image, point), "Expanded Graphic padding can accept points within the stencil even when the renderer lies outside it.");
+            string rectBefore = EditorJsonUtility.ToJson(rect);
+            string stencilBefore = EditorJsonUtility.ToJson(stencil);
+            string materialBefore = EditorJsonUtility.ToJson(material);
+            var result = Diagnose();
+            Assert.IsTrue(Has(result, "interactive_overlap", child));
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
+            float expectedVisible = outsideStencil ? (stencilEnabled ? 0 : 50) : (stencilEnabled ? 100 : 300);
+            float expectedPointer = outsideStencil ? (stencilEnabled ? 75 : 150) : (stencilEnabled ? 100 : 300);
+            Assert.AreEqual(expectedVisible, output["visibleRect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(expectedPointer, output["raycastRect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(rectBefore, EditorJsonUtility.ToJson(rect));
+            Assert.AreEqual(stencilBefore, EditorJsonUtility.ToJson(stencil));
+            Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(material));
+        }
+
         [Test]
         public void RectMaskPaddingShrinksEvaluatedVisibleRectangle()
         {

@@ -56,6 +56,7 @@ namespace MCPForUnity.Editor.Tools
             public MaskChain PointerMasks;
             public bool NeedsPointerMaskBounds;
             public Rect UnpaddedMaskBounds;
+            public Rect RectangularClipBounds;
             public Rect VisualMaskBounds;
             public Rect PointerMaskBounds;
         }
@@ -384,7 +385,7 @@ namespace MCPForUnity.Editor.Tools
                         Rect clipBounds = mask.RectMask ? RectMaskBounds(mask.Preview, previewCanvas, scale, size) : rawBounds;
                         mask.UnpaddedMaskBounds = clipBounds;
                         Vector4 padding = mask.MaskPadding * scale;
-                        mask.VisualMaskBounds = mask.RectMask
+                        mask.RectangularClipBounds = mask.RectMask
                             ? new Rect(
                                 clipBounds.xMin + padding.x,
                                 clipBounds.yMin + padding.y,
@@ -392,6 +393,9 @@ namespace MCPForUnity.Editor.Tools
                                 Mathf.Max(0, clipBounds.height - padding.y - padding.w)
                             )
                             : rawBounds;
+                        mask.VisualMaskBounds = mask.RectangularClipBounds;
+                        if (mask.RectMask && mask.StencilMask)
+                            mask.VisualMaskBounds = Intersect(mask.VisualMaskBounds, rawBounds);
                         if (mask.NeedsPointerMaskBounds)
                         {
                             mask.PointerMaskBounds = mask.RectMask && mask.MaskPadding != Vector4.zero
@@ -420,8 +424,8 @@ namespace MCPForUnity.Editor.Tools
                                 if (!hasRectangularClip)
                                     rectangularMaskBounds = mask.UnpaddedMaskBounds;
                                 rectangularClip = hasRectangularClip
-                                    ? Intersect(rectangularClip, mask.VisualMaskBounds)
-                                    : mask.VisualMaskBounds;
+                                    ? Intersect(rectangularClip, mask.RectangularClipBounds)
+                                    : mask.RectangularClipBounds;
                                 hasRectangularClip = true;
                             }
                             if (node.Visible && !Contains(mask.VisualMaskBounds, node.Bounds))
