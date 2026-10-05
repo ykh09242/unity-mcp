@@ -66,6 +66,13 @@ namespace MCPForUnity.Editor.Tools
             public MaskChain Parent;
         }
 
+        private sealed class PreviewBranch
+        {
+            public Transform Source;
+            public Transform Preview;
+            public int NextChild;
+        }
+
         internal static object Diagnose(GameObject root, JArray resolutions, bool includeInactive, int maxNodes = 200)
         {
             if (root == null || !(root.transform is RectTransform))
@@ -94,7 +101,9 @@ namespace MCPForUnity.Editor.Tools
             var canvasRect = canvas.transform as RectTransform;
             if (canvasRect == null)
                 return new ErrorResponse("invalid_canvas", new { message = "Canvas has no RectTransform." });
-            var scaler = ComponentNamed(canvas.gameObject, "UnityEngine.UI.CanvasScaler");
+            var componentTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
+            var anyTypes = new Dictionary<string, Type>(StringComparer.Ordinal);
+            var scaler = ComponentNamed(canvas.gameObject, "UnityEngine.UI.CanvasScaler", componentTypes);
             if (Enabled(scaler) && EnumValue(scaler, "uiScaleMode") == 2)
                 return new ErrorResponse("unsupported_physical_scaling", new { message = "Constant Physical Size depends on actual device DPI, which a resolution alone does not supply." });
             bool current = resolutions == null;
@@ -133,18 +142,18 @@ namespace MCPForUnity.Editor.Tools
                 var maskChains = new Dictionary<Transform, MaskChain>();
                 var maskNodes = new List<Node>();
                 // Keep missing optional types local too: the shared resolver caches successful lookups only.
-                var graphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Graphic");
-                var maskableGraphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.MaskableGraphic");
-                var rectMaskType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.RectMask2D");
-                var maskType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Mask");
-                var stack = new Stack<KeyValuePair<Transform, Transform>>();
-                stack.Push(new KeyValuePair<Transform, Transform>(canvasRect, null));
+                var graphicType = ResolveType("UnityEngine.UI.Graphic", componentTypes, true);
+                var maskableGraphicType = ResolveType("UnityEngine.UI.MaskableGraphic", componentTypes, true);
+                var rectMaskType = ResolveType("UnityEngine.UI.RectMask2D", componentTypes, true);
+                var maskType = ResolveType("UnityEngine.UI.Mask", componentTypes, true);
+                var branches = new Stack<PreviewBranch>();
+                Transform nextSource = canvasRect;
+                Transform previewParent = null;
                 int scanned = 0;
-                while (stack.Count > 0 && scanned < PreviewLimit)
+                while (nextSource != null && scanned < PreviewLimit)
                 {
-                    var entry = stack.Pop();
                     scanned++;
-                    Transform source = entry.Key;
+                    Transform source = nextSource;
                     MaskChain inheritedMasks = null;
                     if (source.parent != null)
                         maskChains.TryGetValue(source.parent, out inheritedMasks);
@@ -160,7 +169,7 @@ namespace MCPForUnity.Editor.Tools
                         clone = new GameObject(source.name, source is RectTransform ? typeof(RectTransform) : typeof(Transform));
                         clone.hideFlags = HideFlags.HideAndDontSave;
                         clone.SetActive(false);
-                        clone.transform.SetParent(entry.Value, false);
+                        clone.transform.SetParent(previewParent, false);
                         clone.transform.localPosition = source.localPosition;
                         clone.transform.localRotation = source.localRotation;
                         clone.transform.localScale = source.localScale;
@@ -211,7 +220,7 @@ namespace MCPForUnity.Editor.Tools
                             {
                                 // A root screen-space Canvas makes AspectRatioFitter inert. The preview
                                 // deliberately uses WorldSpace, so preserve the source's eligibility.
-                                if (name == "UnityEngine.UI.AspectRatioFitter" && !AspectEligible(component))
+                                if (name == "UnityEngine.UI.AspectRatioFitter" && !AspectEligible(component, componentTypes))
                                     continue;
                                 var copy = clone.AddComponent(component.GetType());
                                 EditorUtility.CopySerialized(component, copy);
@@ -255,11 +264,38 @@ namespace MCPForUnity.Editor.Tools
                     // Keep inactive objects inactive so the normal layout exclusion rules still apply.
                     if (source != canvasRect)
                         clone.SetActive(source.gameObject.activeSelf);
-                    for (int i = source.childCount - 1; i >= 0; i--)
-                        stack.Push(new KeyValuePair<Transform, Transform>(source.GetChild(i), clone.transform));
+                    // Advance depth-first on demand so the preview limit also bounds sibling lookups.
+                    if (source.childCount > 0)
+                    {
+                        branches.Push(new PreviewBranch
+                        {
+                            Source = source,
+                            Preview = clone.transform,
+                            NextChild = 1
+                        });
+                        nextSource = source.GetChild(0);
+                        previewParent = clone.transform;
+                    }
+                    else
+                    {
+                        nextSource = null;
+                        while (branches.Count > 0)
+                        {
+                            var branch = branches.Peek();
+                            if (branch.NextChild >= branch.Source.childCount)
+                            {
+                                branches.Pop();
+                                continue;
+                            }
+
+                            nextSource = branch.Source.GetChild(branch.NextChild++);
+                            previewParent = branch.Preview;
+                            break;
+                        }
+                    }
                 }
 
-                if (stack.Count > 0)
+                if (nextSource != null)
                 {
                     truncated = true;
                     limitations.Add("Preview context exceeded 1000 transforms; omitted siblings/children can change layout. Rerun on a smaller Canvas.");
@@ -277,21 +313,21 @@ namespace MCPForUnity.Editor.Tools
                 bool hasInteractions = false;
                 foreach (var node in nodes)
                 {
-                    node.Visible = IsVisible(node.Source);
-                    node.PointerActive = IsActiveForCanvas(node.Source);
-                    node.Raycast = IsRaycastGraphic(node.Source.gameObject) && GroupsAllow(node.Source, false);
-                    node.Receiver = FindInteractiveReceiver(node.Source);
+                    node.Visible = IsVisible(node.Source, componentTypes);
+                    node.PointerActive = IsActiveForCanvas(node.Source, componentTypes);
+                    node.Raycast = IsRaycastGraphic(node.Source.gameObject, componentTypes) && GroupsAllow(node.Source, false);
+                    node.Receiver = FindInteractiveReceiver(node.Source, componentTypes);
                     node.Interactive = node.Receiver != null && GroupsAllow(node.Receiver, true);
                     hasInteractions |= node.PointerActive && node.Interactive && node.Raycast;
                     if (node.PointerActive && node.Raycast)
                         for (var filter = node.PointerMasks; filter != null; filter = filter.Parent)
                             filter.Mask.NeedsPointerMaskBounds = true;
-                    LayoutFindings(node, findings, ref truncated);
+                    LayoutFindings(node, findings, componentTypes, anyTypes, ref truncated);
                 }
 
                 if (hasInteractions)
                 {
-                    Type eventType = UnityTypeResolver.ResolveComponent("UnityEngine.EventSystems.EventSystem");
+                    Type eventType = ResolveType("UnityEngine.EventSystems.EventSystem", componentTypes, true);
                     bool eventSystem = eventType != null && UnityEngine.Resources.FindObjectsOfTypeAll(eventType)
                         .OfType<Component>()
                         .Any(c => c.gameObject.scene.IsValid()
@@ -313,7 +349,7 @@ namespace MCPForUnity.Editor.Tools
                     foreach (var node in nodes.Where(n => n.PointerActive && n.Interactive && n.Raycast))
                     {
                         var ownCanvas = FindActiveCanvas(node.Source);
-                        if (ownCanvas != null && reportedCanvases.Add(ownCanvas) && !Enabled(ComponentNamed(ownCanvas.gameObject, "UnityEngine.UI.GraphicRaycaster")))
+                        if (ownCanvas != null && reportedCanvases.Add(ownCanvas) && !Enabled(ComponentNamed(ownCanvas.gameObject, "UnityEngine.UI.GraphicRaycaster", componentTypes)))
                             Add(
                                 findings,
                                 "missing_graphic_raycaster",
@@ -332,7 +368,7 @@ namespace MCPForUnity.Editor.Tools
                     float scale = current ? Mathf.Max(0.0001f, canvas.scaleFactor) : Scale(scaler, canvas.scaleFactor, size);
                     previewRoot.GetComponent<Canvas>().scaleFactor = scale;
                     previewCanvas.sizeDelta = size / scale;
-                    Rebuild(previewRects);
+                    Rebuild(previewRects, componentTypes, anyTypes);
                     var resolution = new JObject
                     {
                         ["width"] = size.x,
@@ -563,9 +599,20 @@ namespace MCPForUnity.Editor.Tools
             target.anchoredPosition3D = source.anchoredPosition3D;
         }
 
-        private static Component ComponentNamed(GameObject go, string name)
+        private static Type ResolveType(string name, Dictionary<string, Type> types, bool component)
         {
-            Type type = UnityTypeResolver.ResolveComponent(name);
+            if (!types.TryGetValue(name, out Type type))
+            {
+                type = component ? UnityTypeResolver.ResolveComponent(name) : UnityTypeResolver.ResolveAny(name);
+                types.Add(name, type);
+            }
+
+            return type;
+        }
+
+        private static Component ComponentNamed(GameObject go, string name, Dictionary<string, Type> componentTypes)
+        {
+            Type type = ResolveType(name, componentTypes, true);
             return type == null ? null : go.GetComponent(type);
         }
 
@@ -601,12 +648,12 @@ namespace MCPForUnity.Editor.Tools
             return Mathf.Pow(2, Mathf.Lerp(Mathf.Log(x, 2), Mathf.Log(y, 2), Read(scaler, "matchWidthOrHeight", 0f)));
         }
 
-        private static void Rebuild(RectTransform[] rects)
+        private static void Rebuild(RectTransform[] rects, Dictionary<string, Type> componentTypes, Dictionary<string, Type> anyTypes)
         {
-            var type = UnityTypeResolver.ResolveAny("UnityEngine.UI.LayoutRebuilder");
+            var type = ResolveType("UnityEngine.UI.LayoutRebuilder", anyTypes, false);
             var method = type?.GetMethod("ForceRebuildLayoutImmediate", BindingFlags.Public | BindingFlags.Static);
-            var controllerType = UnityTypeResolver.ResolveAny("UnityEngine.UI.ILayoutController");
-            var groupType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutGroup");
+            var controllerType = ResolveType("UnityEngine.UI.ILayoutController", anyTypes, false);
+            var groupType = ResolveType("UnityEngine.UI.LayoutGroup", componentTypes, true);
             if (method == null || controllerType == null || groupType == null)
                 return;
             var roots = new List<RectTransform>();
@@ -683,11 +730,11 @@ namespace MCPForUnity.Editor.Tools
             return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
         }
 
-        private static bool IsActiveForCanvas(RectTransform rect)
+        private static bool IsActiveForCanvas(RectTransform rect, Dictionary<string, Type> componentTypes)
         {
             if (!rect.gameObject.activeInHierarchy || FindActiveCanvas(rect) == null)
                 return false;
-            var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic");
+            var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
             return graphic == null || Enabled(graphic);
         }
 
@@ -704,9 +751,9 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static bool IsVisible(RectTransform rect)
+        private static bool IsVisible(RectTransform rect, Dictionary<string, Type> componentTypes)
         {
-            if (!IsActiveForCanvas(rect))
+            if (!IsActiveForCanvas(rect, componentTypes))
                 return false;
             for (Transform t = rect; t != null; t = t.parent)
             {
@@ -715,7 +762,7 @@ namespace MCPForUnity.Editor.Tools
                         return false;
             }
 
-            var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic");
+            var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
             return graphic == null || (Enabled(graphic) && Read(graphic, "color", Color.white).a > 0.001f);
         }
 
@@ -755,12 +802,12 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        private static Transform FindInteractiveReceiver(Transform source)
+        private static Transform FindInteractiveReceiver(Transform source, Dictionary<string, Type> componentTypes)
         {
             // targetGraphic selects transition visuals; raycast Graphics can be on this object or a child.
             for (Transform t = source; t != null; t = t.parent)
             {
-                var selectable = ComponentNamed(t.gameObject, "UnityEngine.UI.Selectable");
+                var selectable = ComponentNamed(t.gameObject, "UnityEngine.UI.Selectable", componentTypes);
                 if (!Enabled(selectable) || !t.gameObject.activeInHierarchy)
                     continue;
                 return Read(selectable, "interactable", true) ? t : null;
@@ -769,22 +816,22 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static bool IsRaycastGraphic(GameObject go)
+        private static bool IsRaycastGraphic(GameObject go, Dictionary<string, Type> componentTypes)
         {
-            var graphic = ComponentNamed(go, "UnityEngine.UI.Graphic");
+            var graphic = ComponentNamed(go, "UnityEngine.UI.Graphic", componentTypes);
             return Enabled(graphic) && Read(graphic, "raycastTarget", false);
         }
 
-        private static void LayoutFindings(Node node, JArray findings, ref bool truncated)
+        private static void LayoutFindings(Node node, JArray findings, Dictionary<string, Type> componentTypes, Dictionary<string, Type> anyTypes, ref bool truncated)
         {
             if (!node.Source.gameObject.activeInHierarchy)
                 return;
-            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            var fitterType = ResolveType("UnityEngine.UI.ContentSizeFitter", componentTypes, true);
             var fitters = fitterType == null ? Array.Empty<Component>() : node.Source.GetComponents(fitterType);
-            var aspect = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.AspectRatioFitter");
+            var aspect = ComponentNamed(node.Source.gameObject, "UnityEngine.UI.AspectRatioFitter", componentTypes);
             bool fitsX = fitters.Any(fitter => Fit(fitter, "horizontalFit"));
             bool fitsY = fitters.Any(fitter => Fit(fitter, "verticalFit"));
-            int aspectMode = Enabled(aspect) && AspectEligible(aspect) ? EnumValue(aspect, "aspectMode") : 0;
+            int aspectMode = Enabled(aspect) && AspectEligible(aspect, componentTypes) ? EnumValue(aspect, "aspectMode") : 0;
             bool aspectX = aspectMode == 2 || aspectMode == 3 || aspectMode == 4;
             bool aspectY = aspectMode == 1 || aspectMode == 3 || aspectMode == 4;
             if ((fitsX && aspectX) || (fitsY && aspectY))
@@ -800,11 +847,11 @@ namespace MCPForUnity.Editor.Tools
                 );
             if (node.Source.parent == null)
                 return;
-            if (IgnoredByParentLayout(node.Source))
+            if (IgnoredByParentLayout(node.Source, anyTypes))
                 return;
             var parent = node.Source.parent.gameObject;
-            var grid = ComponentNamed(parent, "UnityEngine.UI.GridLayoutGroup");
-            var group = ComponentNamed(parent, "UnityEngine.UI.HorizontalOrVerticalLayoutGroup");
+            var grid = ComponentNamed(parent, "UnityEngine.UI.GridLayoutGroup", componentTypes);
+            var group = ComponentNamed(parent, "UnityEngine.UI.HorizontalOrVerticalLayoutGroup", componentTypes);
             bool parentX = Enabled(grid) || (Enabled(group) && Read(group, "childControlWidth", false));
             bool parentY = Enabled(grid) || (Enabled(group) && Read(group, "childControlHeight", false));
             if (((fitsX || aspectX) && parentX) || ((fitsY || aspectY) && parentY))
@@ -820,9 +867,9 @@ namespace MCPForUnity.Editor.Tools
                 );
         }
 
-        private static bool IgnoredByParentLayout(RectTransform rect)
+        private static bool IgnoredByParentLayout(RectTransform rect, Dictionary<string, Type> anyTypes)
         {
-            var type = UnityTypeResolver.ResolveAny("UnityEngine.UI.ILayoutIgnorer");
+            var type = ResolveType("UnityEngine.UI.ILayoutIgnorer", anyTypes, false);
             var property = type?.GetProperty("ignoreLayout");
             if (property == null)
                 return false;
@@ -840,12 +887,12 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private static bool Fit(Component component, string property) => Enabled(component) && EnumValue(component, property) != 0;
-        private static bool AspectEligible(Component component)
+        private static bool AspectEligible(Component component, Dictionary<string, Type> componentTypes)
         {
             if (component == null)
                 return false;
             // Invoke only the exact built-in type, never a user subclass's hidden method.
-            var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.AspectRatioFitter");
+            var type = ResolveType("UnityEngine.UI.AspectRatioFitter", componentTypes, true);
             var method = type?.GetMethod("IsComponentValidOnObject", BindingFlags.Public | BindingFlags.Instance);
             if (component.GetType() == type && method != null && method.ReturnType == typeof(bool))
                 return (bool)method.Invoke(component, null);

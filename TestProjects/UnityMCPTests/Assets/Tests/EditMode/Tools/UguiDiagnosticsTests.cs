@@ -529,6 +529,37 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("preview_limit_exceeded", result.Value<string>("code"));
         }
 
+        [Test]
+        public void PreviewBudgetPreservesDepthFirstSiblingOrderAndSelectedDescendantScope()
+        {
+            var branch = Child("FirstBranch");
+            var descendants = Enumerable.Range(0, 500).Select(i => Child("Descendant" + i, branch)).ToArray();
+            var siblings = Enumerable.Range(0, 500).Select(i => Child("Sibling" + i)).ToArray();
+            var expected = new[] { root, branch }.Concat(descendants).Concat(siblings.Take(498))
+                .Select(go => go.GetInstanceIDCompat()).ToArray();
+            var result = Diagnose(maxNodes: 1000);
+            Findings(result);
+            CollectionAssert.AreEqual(expected, result["data"]["rects"].Select(r => (int)r["instanceID"]).ToArray());
+            Assert.IsTrue(result["data"].Value<bool>("truncated"));
+            var scoped = Diagnose(branch, maxNodes: 1000);
+            Findings(scoped);
+            CollectionAssert.AreEqual(new[] { branch }.Concat(descendants).Select(go => go.GetInstanceIDCompat()).ToArray(),
+                scoped["data"]["rects"].Select(r => (int)r["instanceID"]).ToArray());
+            Assert.IsTrue(scoped["data"].Value<bool>("truncated"), "Omitted Canvas context still makes the selected descendant preview incomplete.");
+        }
+
+        [TestCase(999, false)]
+        [TestCase(1000, true)]
+        public void PreviewContextTruncationRequiresAnOmittedTransform(int children, bool truncated)
+        {
+            for (int i = 0; i < children; i++)
+                Child("Context" + i);
+            var result = Diagnose(maxNodes: 1000);
+            Findings(result);
+            Assert.AreEqual(1000, result["data"]["rects"].Count());
+            Assert.AreEqual(truncated, result["data"].Value<bool>("truncated"));
+        }
+
         [TestCase(true, false)]
         [TestCase(false, false)]
         [TestCase(true, true)]
