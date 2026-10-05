@@ -68,7 +68,7 @@ This beta checkout uses the following immutable server source. Published stable 
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/ykh09242/unity-mcp.git@873cec606eed52e6fe2ba898764169456ab6d15f#subdirectory=Server",
+        "git+https://github.com/ykh09242/unity-mcp.git@bd63a46cc2b7beec84178d45a29104384eebe1a2#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
