@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -80,7 +81,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static bool Has(JObject response, string code, GameObject go = null)
         {
-            return Findings(response).Any(f => (string)f["code"] == code && (go == null || (int)f["instanceID"] == go.GetInstanceID()));
+            return Findings(response).Any(f => (string)f["code"] == code && (go == null || (int)f["instanceID"] == go.GetInstanceIDCompat()));
         }
 
         [TestCase(63, 600)]
@@ -193,7 +194,7 @@ namespace MCPForUnityTests.Editor.Tools
             });
             var result = Diagnose(sizes: sizes);
             Assert.IsTrue(Has(result, "off_canvas", child));
-            var findings = Findings(result).Where(f => (string)f["code"] == "off_canvas" && (int)f["instanceID"] == child.GetInstanceID()).ToArray();
+            var findings = Findings(result).Where(f => (string)f["code"] == "off_canvas" && (int)f["instanceID"] == child.GetInstanceIDCompat()).ToArray();
             Assert.AreEqual(1, findings.Length);
             Assert.AreEqual(400, findings[0]["resolution"].Value<int>("width"));
         }
@@ -226,7 +227,7 @@ namespace MCPForUnityTests.Editor.Tools
             });
             var result = Diagnose(sizes: sizes);
             Findings(result);
-            var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == first.GetInstanceID()).ToArray();
+            var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == first.GetInstanceIDCompat()).ToArray();
             Assert.AreEqual(2, rects.Length);
             Assert.AreEqual(960, rects[0]["rect"].Value<float>("width"), 0.1f);
             Assert.AreEqual(480, rects[1]["rect"].Value<float>("width"), 0.1f);
@@ -242,7 +243,7 @@ namespace MCPForUnityTests.Editor.Tools
             rect.anchorMax = new Vector2(1, 0.5f);
             rect.sizeDelta = new Vector2(-40, 30);
             var text = Add(child, "UnityEngine.UI.Text");
-            Set(text, "font", Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"));
+            Set(text, "font", UnityEngine.Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"));
             Set(text, "fontSize", 20);
             Set(text, "text", "Responsive text needs enough horizontal room to wrap properly");
             var sizes = Sizes(1600, 600);
@@ -297,7 +298,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Set(graphic, "color", new Color(1, 1, 1, 0));
             var result = Diagnose();
             Assert.IsTrue(Has(result, "raycast_blocker"), "Visual alpha does not disable GraphicRaycaster hits.");
-            Assert.IsFalse(result["data"]["rects"].Single(r => (int)r["instanceID"] == overlay.GetInstanceID()).Value<bool>("visible"));
+            Assert.IsFalse(result["data"]["rects"].Single(r => (int)r["instanceID"] == overlay.GetInstanceIDCompat()).Value<bool>("visible"));
             var group = overlay.GetComponent<CanvasGroup>();
             if (!group)
                 group = overlay.AddComponent<CanvasGroup>();
@@ -370,7 +371,7 @@ namespace MCPForUnityTests.Editor.Tools
             Set(graphic, "maskable", false);
             var result = Diagnose();
             Assert.IsFalse(Has(result, "clipped_by_mask", outside), "MaskableGraphic.maskable=false opts out of render clipping and mask raycast filters.");
-            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == outside.GetInstanceID());
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == outside.GetInstanceIDCompat());
             Assert.AreEqual(100, rect["visibleRect"].Value<float>("width"), 0.1f);
         }
 
@@ -386,7 +387,7 @@ namespace MCPForUnityTests.Editor.Tools
             Add(child, "UnityEngine.UI.Image");
             var result = Diagnose();
             Assert.IsTrue(Has(result, "clipped_by_mask", child));
-            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceID());
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
             Assert.AreEqual(60, rect["visibleRect"].Value<float>("width"), 0.1f);
             Assert.AreEqual(40, rect["visibleRect"].Value<float>("height"), 0.1f);
         }
@@ -436,7 +437,7 @@ namespace MCPForUnityTests.Editor.Tools
             Set(aspect, "aspectRatio", 2f);
             var result = Diagnose();
             Findings(result);
-            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == root.GetInstanceID());
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == root.GetInstanceIDCompat());
             Assert.AreEqual(800, rect["rect"].Value<float>("width"), 0.1f);
             Assert.AreEqual(600, rect["rect"].Value<float>("height"), 0.1f, "AspectRatioFitter is invalid on a root screen-space Canvas and must remain inert in the preview.");
         }
@@ -457,7 +458,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Set(image, "sprite", sprite);
                 var result = Diagnose();
                 Findings(result);
-                var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceID());
+                var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
                 Assert.AreEqual(40, rect["rect"].Value<float>("width"), 0.1f, "Image preferred width depends on sprite pixelsPerUnit / Canvas.referencePixelsPerUnit.");
             }
             finally
@@ -522,7 +523,7 @@ namespace MCPForUnityTests.Editor.Tools
             });
             var result = Diagnose(sizes: sizes);
             Findings(result);
-            var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == leaf.GetInstanceID()).ToArray();
+            var rects = result["data"]["rects"].Where(r => (int)r["instanceID"] == leaf.GetInstanceIDCompat()).ToArray();
             Assert.AreEqual(1920, rects[0]["rect"].Value<float>("width"), 0.1f);
             Assert.AreEqual(960, rects[1]["rect"].Value<float>("width"), 0.1f);
             Assert.AreEqual(before, EditorJsonUtility.ToJson(leaf.GetComponent<RectTransform>()));
@@ -542,7 +543,7 @@ namespace MCPForUnityTests.Editor.Tools
             var result = Diagnose(sizes: Sizes(1600, 600));
             Findings(result);
             Assert.AreEqual(expectedScale, result["data"]["resolutions"][0]["resolution"].Value<float>("scaleFactor"), 0.001f);
-            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceID());
+            var rect = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
             Assert.AreEqual(100 * expectedScale, rect["rect"].Value<float>("width"), 0.1f);
         }
 
@@ -659,7 +660,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(NativeGraphicRaycast(second.GetComponent(imageType), point));
             var result = Diagnose();
             Assert.IsFalse(Has(result, "interactive_overlap"));
-            var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceID());
+            var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceIDCompat());
             Assert.AreEqual(100, firstOutput["visibleRect"].Value<float>("width"), 0.1f, "A RectMask2D does not clip its own Graphic's rendered rectangle.");
             Set(first.GetComponent(imageType), "maskable", false);
             Set(second.GetComponent(imageType), "maskable", false);
@@ -683,7 +684,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(NativeGraphicRaycast(second.GetComponent(imageType), point));
             var result = Diagnose();
             Assert.IsFalse(Has(result, "interactive_overlap"), "RectMask2D pointer padding is evaluated in its local transformed rectangle, unlike canvas-space render clipping padding.");
-            var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceID());
+            var firstOutput = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceIDCompat());
             Assert.AreEqual(120, firstOutput["visibleRect"].Value<float>("width"), 0.1f);
         }
 
@@ -730,7 +731,7 @@ namespace MCPForUnityTests.Editor.Tools
             sizes.Add(Sizes(800, 600)[0]);
             var result = Diagnose(sizes: sizes);
             Findings(result);
-            var outputs = result["data"]["rects"].Where(r => (int)r["instanceID"] == button.GetInstanceID()).ToArray();
+            var outputs = result["data"]["rects"].Where(r => (int)r["instanceID"] == button.GetInstanceIDCompat()).ToArray();
             CollectionAssert.AreEqual(new[] { 400f, 600f, 400f }, outputs.Select(r => r["visibleRect"].Value<float>("width")).ToArray());
             CollectionAssert.AreEqual(new[] { 400f, 600f, 400f }, outputs.Select(r => r["raycastRect"].Value<float>("width")).ToArray());
             CollectionAssert.AreEqual(new[] { 200f, 300f, 200f }, outputs.Select(r => r["raycastRect"].Value<float>("x")).ToArray());
@@ -859,7 +860,7 @@ namespace MCPForUnityTests.Editor.Tools
                 && NativeGraphicRaycast(firstImage, point);
             var result = Diagnose();
             Assert.AreEqual(nativeOverlap, Has(result, "interactive_overlap", first), "GraphicRaycaster excludes native mask-culled renderers even when their rectangular pointer filters accept the point.");
-            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceID());
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == first.GetInstanceIDCompat());
             Assert.AreEqual(nativeCulled ? 0 : 100, output["visibleRect"].Value<float>("width"), 0.1f);
         }
 

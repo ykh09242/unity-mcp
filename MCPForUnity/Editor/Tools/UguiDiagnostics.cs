@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -422,7 +423,7 @@ namespace MCPForUnity.Editor.Tools
                         geometry.Add(new JObject
                         {
                             ["path"] = node.Path,
-                            ["instanceID"] = node.Source.gameObject.GetInstanceID(),
+                            ["instanceID"] = node.Source.gameObject.GetInstanceIDCompat(),
                             ["resolution"] = resolution.DeepClone(),
                             ["rect"] = RectJson(node.Bounds),
                             ["visibleRect"] = RectJson(node.HitBounds),
@@ -930,12 +931,12 @@ namespace MCPForUnity.Editor.Tools
                 ["severity"] = severity,
                 ["status"] = severity == "candidate" ? "candidate" : "observed",
                 ["path"] = node.Path,
-                ["instanceID"] = node.Source.gameObject.GetInstanceID(),
+                ["instanceID"] = node.Source.gameObject.GetInstanceIDCompat(),
                 ["description"] = description,
                 ["relatedTarget"] = related == null ? null : new JObject
                 {
                     ["path"] = related.Path,
-                    ["instanceID"] = related.Source.gameObject.GetInstanceID()
+                    ["instanceID"] = related.Source.gameObject.GetInstanceIDCompat()
                 },
                 ["resolution"] = resolution?.DeepClone()
             });
