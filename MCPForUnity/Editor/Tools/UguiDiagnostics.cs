@@ -32,9 +32,19 @@ namespace MCPForUnity.Editor.Tools
         };
         private sealed class Node
         {
+            private string path;
+
             public RectTransform Source;
             public RectTransform Preview;
-            public string Path;
+            public string Path
+            {
+                get
+                {
+                    if (path == null)
+                        path = UguiDiagnostics.Path(Source);
+                    return path;
+                }
+            }
             public int Order;
             public bool Visible;
             public bool PointerActive;
@@ -185,7 +195,6 @@ namespace MCPForUnity.Editor.Tools
                         {
                             Source = rect,
                             Preview = preview,
-                            Path = Path(source),
                             Order = scanned
                         };
                         bySource.Add(rect, node);
