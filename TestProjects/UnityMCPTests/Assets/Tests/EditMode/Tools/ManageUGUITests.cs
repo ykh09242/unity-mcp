@@ -1159,6 +1159,73 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
         }
 
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void TmpAutoSizingTransitionAndFontSizeEditPersistIdenticallyInEitherPropertyOrder(bool fontSizeFirst, bool enableAutoSizing)
+        {
+            var textType = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
+            var settings = UnityTypeResolver.ResolveAny("TMPro.TMP_Settings");
+            UnityEngine.Object font = null;
+            try
+            {
+                font = settings?.GetProperty("defaultFontAsset")?.GetValue(null) as UnityEngine.Object;
+            }
+            catch (TargetInvocationException e)when (e.InnerException is NullReferenceException)
+            { /* TMP settings resource is absent. */
+            }
+
+            if (textType == null || font == null)
+                Assert.Ignore("TMP/default font must be configured for the positive text case.");
+            var root = Root(true);
+            var created = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "text",
+                ["parent"] = root.GetInstanceIDCompat(),
+                ["properties"] = new JObject { ["fontSize"] = 24 }
+            }));
+            Success(created);
+            var go = GameObjectLookup.FindById(created["data"]["instance_id"].Value<int>());
+            var text = go.GetComponent(textType);
+            var size = textType.GetProperty("fontSize");
+            var autoSize = textType.GetProperty("enableAutoSizing");
+            autoSize.SetValue(text, true);
+            size.SetValue(text, 40f);
+            var serialized = new SerializedObject(text);
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(24f), "The native font setter leaves the authored base unchanged while auto-sizing is enabled.");
+            autoSize.SetValue(text, false);
+            size.SetValue(text, 24f);
+            size.SetValue(text, 41f);
+            serialized.Update();
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(41f), "Disabling native auto-sizing before setting font size updates the persistent authored base.");
+            size.SetValue(text, 24f);
+            autoSize.SetValue(text, !enableAutoSizing);
+            Undo.ClearAll();
+            var properties = fontSizeFirst
+                ? new JObject { ["fontSize"] = 40, ["enableAutoSizing"] = enableAutoSizing }
+                : new JObject { ["enableAutoSizing"] = enableAutoSizing, ["fontSize"] = 40 };
+            Success(Call("set_text", go, properties));
+            serialized.Update();
+            if (!enableAutoSizing)
+                Assert.That(size.GetValue(text), Is.EqualTo(40f));
+            Assert.That(autoSize.GetValue(text), Is.EqualTo(enableAutoSizing));
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(40f), "Equivalent property objects must preserve the same authored size for the native Inspector's auto-sizing toggle.");
+            Undo.PerformUndo();
+            serialized.Update();
+            if (enableAutoSizing)
+                Assert.That(size.GetValue(text), Is.EqualTo(24f));
+            Assert.That(autoSize.GetValue(text), Is.EqualTo(!enableAutoSizing));
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(24f));
+            Undo.PerformRedo();
+            serialized.Update();
+            if (!enableAutoSizing)
+                Assert.That(size.GetValue(text), Is.EqualTo(40f));
+            Assert.That(autoSize.GetValue(text), Is.EqualTo(enableAutoSizing));
+            Assert.That(serialized.FindProperty("m_fontSizeBase").floatValue, Is.EqualTo(40f));
+        }
+
         [Test]
         public void TmpTextCreationAndEditingUseConfiguredFontAndSupportUndo()
         {

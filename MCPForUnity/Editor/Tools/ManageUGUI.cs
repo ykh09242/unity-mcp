@@ -399,7 +399,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Offsets depend on anchors and pivot, irrespective of JSON property order.
-            return values.OrderBy(v => RectOrder(v.Property.Name)).ToList();
+            // Set TMP fontSize while auto-sizing is disabled so its setter updates the authored base.
+            return values.OrderBy(v =>
+                v.Property.Name == "enableAutoSizing" && v.Value is bool autoSize
+                    ? autoSize ? 3 : 1
+                    : RectOrder(v.Property.Name)).ToList();
         }
 
         private static int RectOrder(string key)
