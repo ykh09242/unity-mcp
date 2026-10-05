@@ -642,7 +642,7 @@ namespace MCPForUnity.Editor.Tools
             if (mode == 0)
                 return Mathf.Max(0.0001f, Read(scaler, "scaleFactor", 1f));
             Vector2 reference = Read(scaler, "referenceResolution", new Vector2(800, 600));
-            float x = size.x / Mathf.Max(1, reference.x), y = size.y / Mathf.Max(1, reference.y);
+            float x = size.x / reference.x, y = size.y / reference.y;
             object matchValue = scaler.GetType().GetProperty("screenMatchMode")?.GetValue(scaler);
             int match = matchValue == null ? 0 : Convert.ToInt32(matchValue);
             if (match == 1)
