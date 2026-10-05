@@ -332,3 +332,115 @@ async def test_send_mutation_keeps_error_when_verify_returns_none(monkeypatch):
     ctx = DummyContext()
     resp = await send_mutation(ctx, None, "manage_script", {}, verify_after_disconnect=fake_verify)
     assert resp.get("success") is False
+
+
+@pytest.mark.asyncio
+async def test_send_mutation_returns_selection_failure_without_readiness_wait(monkeypatch):
+    # Given: selection failed before dispatch, so no Unity instance can become ready.
+    from services.tools import refresh_unity as mod
+    from unittest.mock import AsyncMock
+
+    response = {
+        "success": False,
+        "error": "Multiple Unity instances are connected.",
+        "hint": "select_instance",
+        "data": {"reason": "instance_selection_required", "available_instances": ["A", "B"]},
+    }
+    send = AsyncMock(return_value=response)
+    ready = AsyncMock(return_value=(False, 0.0))
+    verify = AsyncMock()
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+    # When
+    result = await send_mutation(
+        DummyContext(), None, "manage_ugui", {"action": "create"},
+        verify_after_disconnect=verify,
+    )
+    # Then: return the exact payload after one attempt, without recovery or mutation replay.
+    assert result is response
+    assert send.await_count == 1
+    assert send.await_args.kwargs["retry_on_reload"] is False
+    ready.assert_not_awaited()
+    verify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_mutation_keeps_initial_reload_wait_when_retry_requires_selection(monkeypatch):
+    # Given: a safe reload rejection is followed by a selection refusal before replay.
+    from services.tools import refresh_unity as mod
+    from unittest.mock import AsyncMock
+
+    response = {
+        "success": False,
+        "hint": "select_instance",
+        "data": {"reason": "instance_selection_required", "available_instances": ["A", "B"]},
+    }
+    send = AsyncMock(side_effect=[
+        {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
+        response,
+    ])
+    ready = AsyncMock(return_value=(True, 0.0))
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+    # When
+    ctx = DummyContext()
+    result = await send_mutation(ctx, None, "manage_ugui", {"action": "create"})
+    # Then: retain the first recovery wait, but no further wait or third dispatch.
+    assert result is response
+    assert send.await_count == 2
+    assert all(call.kwargs["retry_on_reload"] is False for call in send.await_args_list)
+    ready.assert_awaited_once_with(ctx)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"success": True},
+        {"success": False, "error": "busy", "hint": "retry", "data": {"reason": "tests_running"}},
+        {"success": False, "error": "timeout", "hint": "retry"},
+        {"success": False, "hint": "retry", "data": {"reason": "instance_selection_required"}},
+        {"success": False, "hint": "select_instance"},
+        {"success": False, "hint": "select_instance", "data": {"reason": "other"}},
+        {"success": True, "hint": "select_instance", "data": {"reason": "instance_selection_required"}},
+    ],
+)
+async def test_send_mutation_preserves_readiness_wait_outside_selection_contract(monkeypatch, response):
+    # Given: success, transient failures and partial selection markers retain the existing contract.
+    from services.tools import refresh_unity as mod
+    from unittest.mock import AsyncMock
+
+    send = AsyncMock(return_value=response)
+    ready = AsyncMock(return_value=(True, 0.0))
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+    # When
+    ctx = DummyContext()
+    result = await send_mutation(ctx, None, "manage_ugui", {"action": "create"})
+    # Then: no broad error shortcut or extra mutation attempt.
+    assert result is response
+    assert send.await_count == 1
+    ready.assert_awaited_once_with(ctx)
+
+
+@pytest.mark.asyncio
+async def test_send_mutation_keeps_disconnect_verification_and_readiness_waits(monkeypatch):
+    # Given: a connection loss may follow a successful mutation and still needs verification.
+    from services.tools import refresh_unity as mod
+    from unittest.mock import AsyncMock
+
+    response = {"success": True, "message": "Verified!"}
+    send = AsyncMock(return_value={"success": False, "error": "Connection closed"})
+    ready = AsyncMock(return_value=(True, 0.0))
+    verify = AsyncMock(return_value=response)
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+    # When
+    result = await send_mutation(
+        DummyContext(), None, "manage_script", {}, verify_after_disconnect=verify,
+    )
+    # Then: preserve both readiness waits and verification without replay.
+    assert result is response
+    assert send.await_count == 1
+    assert ready.await_count == 2
+    verify.assert_awaited_once_with()

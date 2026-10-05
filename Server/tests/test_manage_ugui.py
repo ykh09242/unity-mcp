@@ -670,3 +670,50 @@ async def test_bounds_error_when_resolution_keys_are_invalid(boundary: Boundary)
     assert result["success"] is False
     assert len(result["message"]) < 1000
     boundary.read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_returns_instance_selection_failure_without_waiting_for_editor(
+    boundary: Boundary,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: production selection refuses two sessions before any command can run.
+    from services.tools.preflight import preflight
+    from transport.plugin_hub import InstanceSelectionRequiredError, PluginHub
+
+    registry = SimpleNamespace(
+        list_sessions=AsyncMock(
+            return_value={
+                "A": SimpleNamespace(project_name="SceneA", project_hash="hashA"),
+                "B": SimpleNamespace(project_name="SceneB", project_hash="hashB"),
+            }
+        )
+    )
+    send = AsyncMock()
+    ready = AsyncMock(return_value=(False, 0.0))
+    boundary.instance.return_value = None
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(PluginHub, "_registry", registry)
+    monkeypatch.setattr(PluginHub, "send_command", send)
+    monkeypatch.setattr("services.tools.manage_ugui.preflight", preflight)
+    monkeypatch.setattr("services.tools.preflight._in_pytest", lambda: False)
+    monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
+    monkeypatch.setattr("services.tools.refresh_unity.wait_for_editor_ready", ready)
+    server = FastMCP("ugui-instance-selection")
+    server.tool()(manage_ugui)
+    # When: execute the public mutation using both production routing helpers.
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_ugui", {"action": "create", "element_type": "canvas"}
+        )
+    # Then: preserve the transport's actionable refusal without polling readiness.
+    assert response.structured_content == MCPResponse(
+        success=False,
+        error=InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
+        hint="select_instance",
+        data={"reason": "instance_selection_required", "available_instances": []},
+    ).model_dump()
+    send.assert_not_awaited()
+    ready.assert_not_awaited()
+    assert registry.list_sessions.await_count == 3

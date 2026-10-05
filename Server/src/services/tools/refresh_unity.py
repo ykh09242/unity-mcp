@@ -134,6 +134,15 @@ async def send_mutation(
             params,
             retry_on_reload=False,
         )
+    if (
+        isinstance(resp, dict)
+        and resp.get("success") is False
+        and resp.get("hint") == "select_instance"
+        and isinstance(resp.get("data"), dict)
+        and resp["data"].get("reason") == "instance_selection_required"
+    ):
+        # Selection failed before dispatch; polling cannot select an instance.
+        return resp
     if is_connection_lost_after_send(resp) and verify_after_disconnect:
         await wait_for_editor_ready(ctx)
         verified = await verify_after_disconnect()
