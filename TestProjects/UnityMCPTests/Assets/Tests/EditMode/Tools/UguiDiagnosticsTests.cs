@@ -463,6 +463,39 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
+        public void CanvasGroupVisibilityMatchesNativeInheritedAlphaAtIgnoreBoundary(bool ignoreParents, bool boundaryEnabled)
+        {
+            root.AddComponent<CanvasGroup>().alpha = 0;
+            var boundary = Child("AlphaBoundary");
+            var group = boundary.AddComponent<CanvasGroup>();
+            group.alpha = 1;
+            group.ignoreParentGroups = ignoreParents;
+            group.enabled = boundaryEnabled;
+            var child = Button("AlphaControlButton");
+            child.transform.SetParent(boundary.transform, false);
+            var other = Button("OtherAlphaControlButton");
+            other.transform.SetParent(boundary.transform, false);
+            Canvas.ForceUpdateCanvases();
+            float nativeAlpha = child.GetComponent<CanvasRenderer>().GetInheritedAlpha();
+            Assert.AreEqual(ignoreParents && boundaryEnabled ? 1 : 0, nativeAlpha, 0.001f, "Native inherited alpha must establish that this batch surface evaluates the group boundary.");
+            var image = child.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
+            Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(child.GetComponent<RectTransform>(), Vector3.zero)), "Inherited transparency does not disable pointer filtering.");
+            string groupBefore = EditorJsonUtility.ToJson(group);
+            string rectBefore = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
+            var result = Diagnose();
+            Findings(result);
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
+            Assert.AreEqual(nativeAlpha > 0.001f, output.Value<bool>("visible"));
+            Assert.IsTrue(Has(result, "interactive_overlap", child));
+            Assert.AreEqual(groupBefore, EditorJsonUtility.ToJson(group));
+            Assert.AreEqual(rectBefore, EditorJsonUtility.ToJson(child.GetComponent<RectTransform>()));
+            Assert.AreEqual(nativeAlpha, child.GetComponent<CanvasRenderer>().GetInheritedAlpha(), 0.001f);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
         public void CoLocatedStencilAndExpandedRectMaskKeepIndependentRenderBounds(bool stencilEnabled, bool outsideStencil)
         {
             var host = Child("CombinedMask");

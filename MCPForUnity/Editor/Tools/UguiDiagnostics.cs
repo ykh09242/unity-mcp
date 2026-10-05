@@ -761,9 +761,18 @@ namespace MCPForUnity.Editor.Tools
                 return false;
             for (Transform t = rect; t != null; t = t.parent)
             {
+                bool ignoreParents = false;
                 foreach (var group in t.GetComponents<CanvasGroup>())
-                    if (group.enabled && group.alpha <= 0.001f)
+                {
+                    if (!group.enabled)
+                        continue;
+                    if (group.alpha <= 0.001f)
                         return false;
+                    ignoreParents |= group.ignoreParentGroups;
+                }
+
+                if (ignoreParents)
+                    break;
             }
 
             var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
