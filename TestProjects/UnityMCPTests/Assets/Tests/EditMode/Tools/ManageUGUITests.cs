@@ -386,6 +386,98 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(rect.sizeDelta, Is.EqualTo(before));
         }
 
+        [TestCase("WidthControlsHeight", 240, 120)]
+        [TestCase("HeightControlsWidth", 180, 90)]
+        public void AspectFitterStillRejectsRectEditsAfterUnconstrainedFitterTakesTrackerOwnership(string mode, float nativeWidth, float nativeHeight)
+        {
+            var aspectType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.AspectRatioFitter");
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            if (aspectType == null || fitterType == null)
+                Assert.Ignore("uGUI is not installed.");
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            var aspect = go.AddComponent(aspectType);
+            var aspectMode = aspectType.GetProperty("aspectMode");
+            aspectMode.SetValue(aspect, Enum.Parse(aspectMode.PropertyType, mode));
+            aspectType.GetProperty("aspectRatio").SetValue(aspect, 2f);
+            Vector2 before = rect.sizeDelta;
+            rect.sizeDelta = new Vector2(240, 90);
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(nativeWidth, nativeHeight)), "The active native aspect fitter rewrites a direct dimension edit.");
+            rect.sizeDelta = before;
+            var fitter = go.AddComponent(fitterType);
+            fitterType.GetMethod("SetLayoutHorizontal").Invoke(fitter, null);
+            fitterType.GetMethod("SetLayoutVertical").Invoke(fitter, null);
+            Assert.That(typeof(RectTransform).GetProperty("drivenByObject").GetValue(rect), Is.SameAs(fitter), "The unconstrained fitter is now the native tracker owner.");
+            Assert.That(typeof(RectTransform).GetProperty("drivenProperties", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).GetValue(rect), Is.EqualTo(DrivenTransformProperties.None));
+            Assert.That(((Behaviour)aspect).isActiveAndEnabled, Is.True);
+            Undo.ClearAll();
+            var previous = Root();
+            var previousRect = (RectTransform)previous.transform;
+            Vector2 previousSize = previousRect.sizeDelta;
+            Success(Call("set_rect", previous, new JObject { ["sizeDelta"] = new JArray(310, 95) }));
+            var rejected = Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(240, 90) });
+            Failure(rejected);
+            StringAssert.Contains("layout-driven", rejected["error"].ToString());
+            Assert.That(rect.sizeDelta, Is.EqualTo(before), "The rejected edit must leave both size axes unchanged.");
+            var hierarchy = Call("get_hierarchy", go);
+            Success(hierarchy);
+            Assert.That(hierarchy["data"]["nodes"][0]["rect"]["layout_driven"].Value<bool>(), Is.True);
+            Undo.PerformUndo();
+            Assert.That(previousRect.sizeDelta, Is.EqualTo(previousSize), "A rejected edit must not insert an Undo operation.");
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+        }
+
+        [TestCase("None", true, false)]
+        [TestCase("WidthControlsHeight", false, false)]
+        [TestCase("FitInParent", true, false)]
+        [TestCase("EnvelopeParent", true, false)]
+        [TestCase("WidthControlsHeight", true, true)]
+        public void InertAspectFitterWithUnconstrainedFitterAllowsRectEditsAndUndo(string mode, bool enabled, bool screenSpaceRoot)
+        {
+            var aspectType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.AspectRatioFitter");
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            if (aspectType == null || fitterType == null)
+                Assert.Ignore("uGUI is not installed.");
+            if (screenSpaceRoot && aspectType.GetMethod("IsComponentValidOnObject") == null)
+                Assert.Ignore("Installed uGUI does not exclude root screen-space Canvases from aspect fitting.");
+            var go = Root(screenSpaceRoot);
+            if (screenSpaceRoot)
+            {
+                var canvas = go.GetComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                Assert.That(canvas.isRootCanvas, Is.True);
+            }
+            var rect = (RectTransform)go.transform;
+            var aspect = go.AddComponent(aspectType);
+            if (screenSpaceRoot)
+                Assert.That(aspectType.GetMethod("IsComponentValidOnObject").Invoke(aspect, null), Is.False, "Native uGUI excludes this root screen-space Canvas from aspect fitting.");
+            var aspectMode = aspectType.GetProperty("aspectMode");
+            aspectMode.SetValue(aspect, Enum.Parse(aspectMode.PropertyType, mode));
+            aspectType.GetProperty("aspectRatio").SetValue(aspect, 2f);
+            ((Behaviour)aspect).enabled = enabled;
+            var fitter = go.AddComponent(fitterType);
+            var horizontal = fitterType.GetMethod("SetLayoutHorizontal");
+            var vertical = fitterType.GetMethod("SetLayoutVertical");
+            horizontal.Invoke(fitter, null);
+            vertical.Invoke(fitter, null);
+            Vector2 before = rect.sizeDelta;
+            rect.sizeDelta = new Vector2(240, 90);
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(240, 90)), "The inert native aspect fitter preserves direct dimension edits.");
+            rect.sizeDelta = before;
+            horizontal.Invoke(fitter, null);
+            vertical.Invoke(fitter, null);
+            Assert.That(typeof(RectTransform).GetProperty("drivenByObject").GetValue(rect), Is.SameAs(fitter));
+            Assert.That(typeof(RectTransform).GetProperty("drivenProperties", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).GetValue(rect), Is.EqualTo(DrivenTransformProperties.None));
+            Undo.ClearAll();
+            Success(Call("set_rect", go, new JObject { ["sizeDelta"] = new JArray(270, 95) }));
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(270, 95)));
+            var hierarchy = Call("get_hierarchy", go);
+            Success(hierarchy);
+            Assert.That(hierarchy["data"]["nodes"][0]["rect"]["layout_driven"].Value<bool>(), Is.False);
+            Undo.PerformUndo();
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+        }
+
         [Test]
         public void RectEditIsUndoable()
         {

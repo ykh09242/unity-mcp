@@ -622,6 +622,18 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
+            // Another fitter can replace the native tracker owner without stopping aspect callbacks.
+            Type aspectType = TypeOf(Ui + "AspectRatioFitter", types);
+            var aspect = aspectType == null ? null : rt.GetComponent(aspectType);
+            if (Enabled(aspect))
+            {
+                int mode = Convert.ToInt32(aspect.GetType().GetProperty("aspectMode").GetValue(aspect));
+                bool controlsSize = mode == 1 || mode == 2 || ((mode == 3 || mode == 4) && rt.parent != null);
+                var valid = aspectType.GetMethod("IsComponentValidOnObject", BindingFlags.Public | BindingFlags.Instance);
+                if (controlsSize && (aspect.GetType() != aspectType || valid == null || (bool)valid.Invoke(aspect, null)))
+                    return true;
+            }
+
             if (rt.parent == null || !rt.gameObject.activeInHierarchy)
                 return false;
             Type ignorer = TypeOf(Ui + "ILayoutIgnorer", types, false);
