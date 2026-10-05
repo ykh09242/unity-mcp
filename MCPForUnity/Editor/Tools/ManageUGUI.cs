@@ -269,6 +269,9 @@ namespace MCPForUnity.Editor.Tools
             var sv = scalerProps.Count == 0 ? new List<Assignment>() : Prepare(scaler.GetType(), scalerProps, scalerKeys);
             return Mutate("Set uGUI canvas", () =>
             {
+                // Native mode changes can resize and reposition the Canvas rectangle.
+                if (cv.Any(value => value.Property.Name == "renderMode" && (RenderMode)value.Value != canvas.renderMode))
+                    Undo.RegisterCompleteObjectUndo(canvas.transform, "Set uGUI canvas");
                 Apply(canvas, cv);
                 if (scaler != null && sv.Count > 0)
                     Apply(scaler, sv);

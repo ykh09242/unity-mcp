@@ -760,6 +760,55 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CanvasRenderModeUndoRestoresAuthoredWorldSpaceRect()
+        {
+            var go = Root(true);
+            var canvas = go.GetComponent<Canvas>();
+            var rect = (RectTransform)go.transform;
+            canvas.renderMode = RenderMode.WorldSpace;
+            rect.anchorMin = new Vector2(.2f, .3f);
+            rect.anchorMax = new Vector2(.7f, .8f);
+            rect.pivot = new Vector2(.25f, .75f);
+            rect.sizeDelta = new Vector2(320, 180);
+            rect.anchoredPosition3D = new Vector3(30, -40, 12);
+            rect.localScale = new Vector3(.01f, .02f, .03f);
+            rect.localRotation = Quaternion.Euler(0, 0, 25);
+            Vector2 beforeMin = rect.anchorMin;
+            Vector2 beforeMax = rect.anchorMax;
+            Vector2 beforePivot = rect.pivot;
+            Vector2 beforeSize = rect.sizeDelta;
+            Vector3 beforePosition = rect.anchoredPosition3D;
+            Vector3 beforeScale = rect.localScale;
+            Quaternion beforeRotation = rect.localRotation;
+            Undo.ClearAll();
+            Success(Call("set_canvas", go, new JObject
+            {
+                ["renderMode"] = "ScreenSpaceOverlay",
+                ["sortingOrder"] = 15
+            }));
+            Canvas.ForceUpdateCanvases();
+            Assert.That(canvas.renderMode, Is.EqualTo(RenderMode.ScreenSpaceOverlay));
+            Assert.That(rect.sizeDelta, Is.Not.EqualTo(beforeSize), "Native screen-space rendering resizes the root Canvas rectangle.");
+            Vector2 overlaySize = rect.sizeDelta;
+            Undo.PerformUndo();
+            Canvas.ForceUpdateCanvases();
+            Assert.That(canvas.renderMode, Is.EqualTo(RenderMode.WorldSpace));
+            Assert.That(canvas.sortingOrder, Is.EqualTo(0));
+            Assert.That(rect.anchorMin, Is.EqualTo(beforeMin));
+            Assert.That(rect.anchorMax, Is.EqualTo(beforeMax));
+            Assert.That(rect.pivot, Is.EqualTo(beforePivot));
+            Assert.That(rect.sizeDelta, Is.EqualTo(beforeSize));
+            Assert.That(rect.anchoredPosition3D, Is.EqualTo(beforePosition));
+            Assert.That(rect.localScale, Is.EqualTo(beforeScale));
+            Assert.That(Quaternion.Angle(rect.localRotation, beforeRotation), Is.LessThan(.001f));
+            Undo.PerformRedo();
+            Canvas.ForceUpdateCanvases();
+            Assert.That(canvas.renderMode, Is.EqualTo(RenderMode.ScreenSpaceOverlay));
+            Assert.That(canvas.sortingOrder, Is.EqualTo(15));
+            Assert.That(rect.sizeDelta, Is.EqualTo(overlaySize));
+        }
+
+        [Test]
         public void InvalidCanvasAndResolutionPayloadsDoNotChangeState()
         {
             var go = Root(true);
