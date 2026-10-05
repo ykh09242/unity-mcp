@@ -55,15 +55,15 @@
 **环境要求：** Unity **2021.3 LTS → 6.x** · Python **3.10+**（用 [`uv`](https://docs.astral.sh/uv/) 管理）。兼容**任意 MCP 客户端**——Claude Desktop 与 Claude Code、Cursor、VS Code、Windsurf、Cline、Gemini CLI 等等。
 
 1. **安装** —— 在 Unity 里打开 Package Manager，从 git URL 添加：
-   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0`
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.0`
 2. **连接** —— 打开 `Window > Unity MCP (ykh09242)`。使用本地 HTTP 时，先启动服务器，再配置客户端并连接 Unity bridge。
 3. **验证** —— 读取 `mcpforunity://instances`，选择目标编辑器，先确认项目和场景，再尝试一个小改动。
 
 本地 HTTP 每次启动都会生成新 token；重启服务器后需重新配置并连接 HTTP MCP 客户端。现代无会话调用通过工具参数 `unity_instance` 和资源元数据 `_meta.unity_instance` 选择目标；远程托管必须显式指定目标。脚本、代码执行、菜单、包、构建和批处理等高影响操作需要编辑器中的明确授权。
 
-当前英文操作指南：[安装与连接](../../website/docs/getting-started/install.md)、[迁移到 fork](../../website/docs/getting-started/migrate.md)、[安全与授权](../../website/docs/guides/security.md)、[故障排查](../../website/docs/guides/troubleshooting.md)。完整运行验证的限制见 [fork 1.0.0 发布说明](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0)。
+当前英文操作指南：[安装与连接](../../website/docs/getting-started/install.md)、[迁移到 fork](../../website/docs/getting-started/migrate.md)、[安全与授权](../../website/docs/guides/security.md)、[故障排查](../../website/docs/guides/troubleshooting.md)。完整运行验证的限制见 [fork 1.1.0 发布说明](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.0)。
 
-此 fork 从稳定版本 `1.0.0` 开始独立管理版本，不沿用上游的 `10.3.x`。`ykh09242-v1.0.0` 是稳定发布标签，前缀用于区分上游历史标签；如需不可变安装，请使用完整 commit SHA。`#beta` 仅用于跟踪移动开发分支，分支名称不决定发布是否为测试版。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
+此 fork 从稳定版本 `1.0.0` 开始独立管理版本，不沿用上游的 `10.3.x`。`ykh09242-v1.1.0` 是当前稳定发布标签，前缀用于区分上游历史标签；如需不可变安装，请使用完整 commit SHA。`#beta` 仅用于跟踪移动开发分支，分支名称不决定发布是否为测试版。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
 
 <details>
 <summary><strong>手动配置</strong></summary>

@@ -46,7 +46,7 @@ Full upstream history: [Release Notes](website/docs/releases.md).
 
 ## What it does
 
-Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, manage assets, edit scripts, run tests, profile, and build. Tool availability depends on Editor toggles, installed dependencies, protocol mode, and explicit consent. The fork improves the inherited tool surface; see the [stable 1.0.0 release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0) for additions, fixes, and verification limits.
+Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, manage assets, edit scripts, run tests, profile, and build. Tool availability depends on Editor toggles, installed dependencies, protocol mode, and explicit consent. The fork improves the inherited tool surface; see the [stable 1.1.0 release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.0) for additions, fixes, and verification limits.
 
 **[Browse the full tool catalog →](website/docs/reference/tools/index.md)**
 
@@ -59,7 +59,7 @@ Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, 
 **Requirements:** Unity **2021.3 LTS → 6.x** · Python **3.10+** (via [`uv`](https://docs.astral.sh/uv/)). Works with **any MCP client** — Claude Desktop & Code, Cursor, VS Code, Windsurf, Cline, Gemini CLI, and more.
 
 1. **Install** — Unity → Package Manager → Add from git URL:
-   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.0.0`
+   `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.0`
 2. **Connect** — Open `Window > Unity MCP (ykh09242)`. For local HTTP, start the server before configuring clients, then connect the Unity bridge. Configure your selected client and reconnect it.
 3. **Verify** — Read `mcpforunity://instances`, choose the Editor, and inspect its project/scene before making [a small first change](website/docs/getting-started/first-prompt.md).
 
@@ -67,7 +67,7 @@ Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, 
 
 Local HTTP creates a fresh token each launch: reconfigure HTTP MCP clients after restarting the server. Modern sessionless requests use `unity_instance` for tools and `_meta.unity_instance` for resources when selection is ambiguous; hosted requests always need a target. [Security And Consent](website/docs/guides/security.md) explains high-impact tool permissions, credential handling, and safe retries.
 
-`ykh09242-v1.0.0` is the fork's stable release tag. The prefix distinguishes fork releases from inherited upstream tags. Use a full commit SHA for immutable installation, or `#beta` only to follow the moving development branch. The branch name does not make a tagged release a beta. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the immutable Git server source in `mcpServerSource`. The Python distribution is `ykh09242-unity-mcp-server`, installed from Git, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted MCP service distribution is advertised.
+`ykh09242-v1.1.0` is the fork's stable release tag. The prefix distinguishes fork releases from inherited upstream tags. Use a full commit SHA for immutable installation, or `#beta` only to follow the moving development branch. The branch name does not make a tagged release a beta. The package name is `com.ykh09242.unity-mcp`; its `MCPForUnity/package.json` records the immutable Git server source in `mcpServerSource`. The Python distribution is `ykh09242-unity-mcp-server`, installed from Git, while the executable names remain `mcp-for-unity` and `unity-mcp`. See [server setup](Server/README.md). No fork Asset Store, OpenUPM, PyPI, or hosted MCP service distribution is advertised.
 
 ---
 

@@ -35,7 +35,7 @@ Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp that bridges AI a
 - **[Migration](./migrate.md)** — Replace upstream without co-installing shared assemblies/GUIDs; understand stable release versus development branch.
 - **[Security And Consent](../guides/security.md)** — Local authentication, high-impact tools, credentials, budgets, and retry limits.
 
-Stable fork `1.0.0` follows its own release series. [Fork release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.0.0) list the exact tested versions and limits. [Upstream history](../releases.md) is retained separately and is not the fork's latest release.
+Stable fork `1.1.0` follows its own release series. [Fork release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.0) list the exact tested versions and limits. [Upstream history](../releases.md) is retained separately and is not the fork's latest release.
 
 ---
 
