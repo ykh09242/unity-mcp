@@ -281,6 +281,188 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(180, findings[0]["resolution"].Value<int>("width"));
         }
 
+        [TestCase(0, 0)]
+        [TestCase(0, 1)]
+        [TestCase(1, 1)]
+        [TestCase(2, 1)]
+        [TestCase(0, 2)]
+        public void PublicLegacyTextPreviewPreservesSharedFontAndOriginalDirtyCallbacks(int sourceState, int fontKind)
+        {
+            var child = Child("SharedDynamicFontText");
+            var text = Add(child, "UnityEngine.UI.Text");
+            Font font = fontKind == 0 ? UnityEngine.Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                : fontKind == 1 ? Font.CreateDynamicFontFromOSFont("Arial", 13)
+                : AssetDatabase.LoadAssetAtPath<Font>("Assets/TextMesh Pro/Fonts/LiberationSans.ttf");
+            if (fontKind == 2 && font == null)
+                Assert.Ignore("The imported-font native control requires the fixture's LiberationSans.ttf.");
+            int dirtyCallbacks = 0;
+            int fontCallbacks = 0;
+            UnityEngine.Events.UnityAction dirty = () => dirtyCallbacks++;
+            Action<Font> rebuilt = changed =>
+            {
+                if (changed == font)
+                    fontCallbacks++;
+            };
+            var callbackNames = new[] { "Layout", "Vertices", "Material" };
+            try
+            {
+                Assert.IsNotNull(font);
+                Assert.IsTrue(font.dynamic, "The probe requires a dynamic Font with an atlas shared by source and preview Text.");
+                Set(text, "font", font);
+                Set(text, "fontSize", 13);
+                Set(text, "text", string.Concat(Enumerable.Range(33, 90).Select(code => (char)code)));
+                var scaler = Add(root, "UnityEngine.UI.CanvasScaler");
+                Set(scaler, "uiScaleMode", 1);
+                Set(scaler, "referenceResolution", new Vector2(800, 600));
+                Set(scaler, "matchWidthOrHeight", 0.5f);
+                if (sourceState == 0)
+                    AssertNativeLegacyFontReconstructionPreservesMetricsAndSourceAtlas(text, font);
+                Canvas.ForceUpdateCanvases();
+                Canvas.ForceUpdateCanvases();
+                foreach (string callbackName in callbackNames)
+                    text.GetType().GetMethod("RegisterDirty" + callbackName + "Callback").Invoke(text, new object[] { dirty });
+                Font.textureRebuilt += rebuilt;
+                text.GetType().GetMethod("FontTextureChanged").Invoke(text, null);
+                Assert.Greater(dirtyCallbacks, 0, "The native FontTextureChanged path must reach registered dirty callbacks on the original active Text.");
+                if (sourceState == 1)
+                    ((Behaviour)text).enabled = false;
+                else if (sourceState == 2)
+                    child.SetActive(false);
+                Canvas.ForceUpdateCanvases();
+                Canvas.ForceUpdateCanvases();
+                dirtyCallbacks = 0;
+                fontCallbacks = 0;
+                Canvas.ForceUpdateCanvases();
+                Assert.AreEqual(0, dirtyCallbacks, "A native pending-frame control must be stable before attributing callbacks to diagnose.");
+                Assert.AreEqual(0, fontCallbacks, "The shared Font must be stable without a diagnostic preview.");
+                string textBefore = EditorJsonUtility.ToJson(text);
+                string rectBefore = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
+                string fontBefore = EditorJsonUtility.ToJson(font);
+                var material = (Material)text.GetType().GetProperty("material").GetValue(text);
+                string materialBefore = EditorJsonUtility.ToJson(material);
+                string fontMaterialBefore = EditorJsonUtility.ToJson(font.material);
+                CharacterInfo[] glyphsBefore = font.characterInfo;
+                int[] fontsBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
+                    .Select(existing => existing.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+                bool textDirty = EditorUtility.IsDirty(text);
+                bool fontDirty = EditorUtility.IsDirty(font);
+                var sizes = Sizes(1600, 1200);
+                sizes.Add(Sizes(3200, 2400)[0]);
+                sizes.Add(Sizes(8192, 8192)[0]);
+                for (int call = 0; call < 2; call++)
+                {
+                    var result = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+                    {
+                        ["action"] = "diagnose",
+                        ["target"] = root.GetInstanceIDCompat(),
+                        ["resolutions"] = sizes,
+                        ["include_inactive"] = true
+                    }));
+                    Findings(result);
+                    string callbackCounts = " Font rebuilds: " + fontCallbacks + "; original Text dirty callbacks: " + dirtyCallbacks + ".";
+                    Assert.AreEqual(0, fontCallbacks, "Read-only diagnose must not rebuild the original Text's shared dynamic font atlas." + callbackCounts);
+                    Assert.AreEqual(0, dirtyCallbacks, "Read-only diagnose must not notify dirty callbacks on the original Text through its shared Font." + callbackCounts);
+                    Assert.AreEqual(textBefore, EditorJsonUtility.ToJson(text));
+                    Assert.AreEqual(rectBefore, EditorJsonUtility.ToJson(child.GetComponent<RectTransform>()));
+                    Assert.AreEqual(fontBefore, EditorJsonUtility.ToJson(font));
+                    Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(material));
+                    Assert.AreEqual(fontMaterialBefore, EditorJsonUtility.ToJson(font.material));
+                    CollectionAssert.AreEqual(glyphsBefore, font.characterInfo);
+                    CollectionAssert.AreEqual(fontsBefore, UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
+                        .Select(existing => existing.GetInstanceIDCompat()).OrderBy(id => id).ToArray(), "Temporary preview Fonts must be destroyed before public diagnose returns.");
+                    Assert.AreEqual(textDirty, EditorUtility.IsDirty(text));
+                    Assert.AreEqual(fontDirty, EditorUtility.IsDirty(font));
+                }
+            }
+            finally
+            {
+                Font.textureRebuilt -= rebuilt;
+                foreach (string callbackName in callbackNames)
+                    text.GetType().GetMethod("UnregisterDirty" + callbackName + "Callback").Invoke(text, new object[] { dirty });
+                Set(text, "font", null);
+                if (fontKind == 1 && font != null)
+                    UnityEngine.Object.DestroyImmediate(font);
+            }
+        }
+
+        private static void AssertNativeLegacyFontReconstructionPreservesMetricsAndSourceAtlas(Component text, Font source)
+        {
+            Font candidate = null;
+            int originalRebuilds = 0;
+            Action<Font> rebuilt = changed =>
+            {
+                if (changed == source)
+                    originalRebuilds++;
+            };
+            try
+            {
+                Assert.IsNotNull(source);
+                Assert.IsTrue(source.dynamic);
+                string content = (string)text.GetType().GetProperty("text").GetValue(text);
+                var settings = (TextGenerationSettings)text.GetType().GetMethod("GetGenerationSettings")
+                    .Invoke(text, new object[] { new Vector2(800, 600) });
+                var scales = new[] { 1f, 2f, 5f };
+                var widths = new float[scales.Length];
+                var heights = new float[scales.Length];
+                using (var generator = new TextGenerator())
+                {
+                    for (int index = 0; index < scales.Length; index++)
+                    {
+                        settings.scaleFactor = scales[index];
+                        widths[index] = generator.GetPreferredWidth(content, settings);
+                        heights[index] = generator.GetPreferredHeight(content, settings);
+                        Assert.Greater(widths[index], 0, "The original font must provide valid native metrics.");
+                        Assert.Greater(heights[index], 0);
+                    }
+                }
+                Canvas.ForceUpdateCanvases();
+                Canvas.ForceUpdateCanvases();
+                string fontBefore = EditorJsonUtility.ToJson(source);
+                string materialBefore = EditorJsonUtility.ToJson(source.material);
+                CharacterInfo[] glyphsBefore = source.characterInfo;
+                int[] fontsBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
+                    .Select(font => font.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+                Font.textureRebuilt += rebuilt;
+                string faceEvidence = "Source names: " + string.Join(", ", source.fontNames) + "; source size: " + source.fontSize + ".";
+                candidate = new Font();
+                EditorUtility.CopySerialized(source, candidate);
+                candidate.hideFlags = HideFlags.HideAndDontSave;
+                Assert.IsNotNull(candidate);
+                Assert.IsTrue(candidate.dynamic);
+                Assert.AreNotEqual(source.GetInstanceIDCompat(), candidate.GetInstanceIDCompat());
+                Assert.AreEqual(source.ascent, candidate.ascent, "The exact constructor route must preserve font-face metrics. " + faceEvidence);
+                Assert.AreEqual(source.lineHeight, candidate.lineHeight, faceEvidence);
+                settings.font = candidate;
+                using (var generator = new TextGenerator())
+                {
+                    for (int index = 0; index < scales.Length; index++)
+                    {
+                        settings.scaleFactor = scales[index];
+                        Assert.AreEqual(widths[index], generator.GetPreferredWidth(content, settings), 0.01f, "Preferred width at density " + scales[index] + ". " + faceEvidence);
+                        Assert.AreEqual(heights[index], generator.GetPreferredHeight(content, settings), 0.01f, "Preferred height at density " + scales[index] + ". " + faceEvidence);
+                    }
+                }
+                Assert.AreEqual(0, originalRebuilds, "An independent native Font must not rebuild the original font atlas.");
+                Assert.AreEqual(fontBefore, EditorJsonUtility.ToJson(source));
+                Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(source.material));
+                CollectionAssert.AreEqual(glyphsBefore, source.characterInfo);
+                UnityEngine.Object.DestroyImmediate(candidate);
+                candidate = null;
+                Assert.AreEqual(0, originalRebuilds, "Destroying an independent Font must not notify the original Font.");
+                Assert.AreEqual(fontBefore, EditorJsonUtility.ToJson(source));
+                Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(source.material));
+                CollectionAssert.AreEqual(glyphsBefore, source.characterInfo);
+                CollectionAssert.AreEqual(fontsBefore, UnityEngine.Resources.FindObjectsOfTypeAll<Font>()
+                    .Select(font => font.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
+            }
+            finally
+            {
+                Font.textureRebuilt -= rebuilt;
+                if (candidate != null)
+                    UnityEngine.Object.DestroyImmediate(candidate);
+            }
+        }
+
         private GameObject Button(string name)
         {
             var go = Child(name);

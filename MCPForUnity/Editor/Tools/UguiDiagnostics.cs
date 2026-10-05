@@ -140,6 +140,7 @@ namespace MCPForUnity.Editor.Tools
             var geometry = new JArray();
             var summaries = new JArray();
             var scene = default(Scene);
+            var previewFonts = new Dictionary<Font, Font>();
             bool truncated = false;
             try
             {
@@ -236,6 +237,22 @@ namespace MCPForUnity.Editor.Tools
                                 EditorUtility.CopySerialized(component, copy);
                                 if (name == "UnityEngine.UI.Text")
                                 {
+                                    var sourceFont = Read(component, "font", (Font)null);
+                                    if (sourceFont != null && sourceFont.dynamic)
+                                    {
+                                        if (!previewFonts.TryGetValue(sourceFont, out Font previewFont))
+                                        {
+                                            // Native Text requests glyphs at preview density. Keep those requests
+                                            // off the source atlas without substituting an OS font face.
+                                            previewFont = new Font();
+                                            previewFonts.Add(sourceFont, previewFont);
+                                            EditorUtility.CopySerialized(sourceFont, previewFont);
+                                            previewFont.hideFlags = HideFlags.HideAndDontSave;
+                                        }
+
+                                        copy.GetType().GetProperty("font").SetValue(copy, previewFont);
+                                    }
+
                                     node.Text = component;
                                     node.PreviewText = copy;
                                 }
@@ -594,8 +611,17 @@ namespace MCPForUnity.Editor.Tools
             }
             finally
             {
-                if (scene.IsValid())
-                    EditorSceneManager.ClosePreviewScene(scene);
+                try
+                {
+                    if (scene.IsValid())
+                        EditorSceneManager.ClosePreviewScene(scene);
+                }
+                finally
+                {
+                    foreach (Font previewFont in previewFonts.Values)
+                        if (previewFont != null)
+                            UnityEngine.Object.DestroyImmediate(previewFont);
+                }
             }
         }
 
