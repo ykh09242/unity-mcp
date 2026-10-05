@@ -74,6 +74,13 @@ def is_reloading_rejection(resp: Any) -> bool:
 
     The command was never executed, so retrying is safe.
     """
+    if isinstance(resp, MCPResponse):
+        return (
+            not resp.success
+            and isinstance(resp.data, dict)
+            and resp.data.get("reason") == "reloading"
+            and resp.hint == "retry"
+        )
     if not isinstance(resp, dict) or resp.get("success"):
         return False
     data = resp.get("data") or {}

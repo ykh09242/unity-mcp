@@ -216,6 +216,84 @@ def test_is_reloading_rejection_false_on_non_dict():
     assert is_reloading_rejection(None) is False
 
 
+@pytest.mark.parametrize(
+    "success,data,hint,expected",
+    [
+        (False, {"reason": "reloading"}, "retry", True),
+        (True, {"reason": "reloading"}, "retry", False),
+        (False, {"reason": "stale_connection"}, "retry", False),
+        (False, {"reason": "reloading"}, None, False),
+        (False, None, "retry", False),
+        (False, [{"reason": "reloading"}], "retry", False),
+    ],
+)
+def test_model_reloading_rejection_requires_exact_no_execution_marker(
+    success, data, hint, expected,
+):
+    from models import MCPResponse
+
+    response = MCPResponse(success=success, data=data, hint=hint)
+    assert is_reloading_rejection(response) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_type", ["dict", "model"])
+@pytest.mark.parametrize("second_rejected", [False, True])
+async def test_reload_recovery_retries_once_and_preserves_last_response(
+    monkeypatch, response_type, second_rejected,
+):
+    from unittest.mock import AsyncMock
+    from models import MCPResponse
+    from services.tools import refresh_unity as mod
+
+    refused = {
+        "success": False, "error": "Unity is reloading; please retry",
+        "hint": "retry", "data": {"reason": "reloading", "retry_after_ms": 500},
+    }
+    first = MCPResponse(**refused) if response_type == "model" else refused
+    second = first if second_rejected else {"success": True, "data": {"created": "Canvas"}}
+    send = AsyncMock(side_effect=[first, second])
+    ready = AsyncMock(return_value=(True, 0.0))
+    verify = AsyncMock()
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+
+    result = await mod.send_mutation(
+        DummyContext(), "Safe@sixsafe", "manage_ugui", {"action": "create"},
+        verify_after_disconnect=verify,
+    )
+
+    assert result is second
+    assert send.await_count == 2
+    assert ready.await_count == 2
+    assert all(call.kwargs == {"retry_on_reload": False} for call in send.await_args_list)
+    verify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_model_ordinary_error_is_preserved_without_replaying_mutation(monkeypatch):
+    from unittest.mock import AsyncMock
+    from models import MCPResponse
+    from services.tools import refresh_unity as mod
+
+    response = MCPResponse(
+        success=False, error="Unity connection unavailable", hint="retry",
+        data={"reason": "stale_connection", "retry_after_ms": 500},
+    )
+    send = AsyncMock(return_value=response)
+    ready = AsyncMock(return_value=(True, 0.0))
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+
+    result = await mod.send_mutation(
+        DummyContext(), "Safe@sixsafe", "manage_ugui", {"action": "create"},
+    )
+
+    assert result is response
+    send.assert_awaited_once()
+    ready.assert_awaited_once()
+
+
 # --- is_connection_lost_after_send tests ---
 
 from services.tools.refresh_unity import is_connection_lost_after_send

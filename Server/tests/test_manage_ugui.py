@@ -626,7 +626,86 @@ async def test_preserves_retry_details_when_legacy_transport_returns_response_mo
         result = await client.call_tool("manage_ugui", options)
     # Then: machine-readable error/hint/data survive the legacy failure path.
     assert result.structured_content == response.model_dump()
-    assert legacy_send.await_count == 1
+    assert legacy_send.await_count == (1 if options["action"] == "ping" else 2)
+
+
+@pytest.mark.asyncio
+async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
+    boundary: Boundary,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import asyncio
+    import json
+    from unittest.mock import Mock
+
+    from services.tools import refresh_unity as recovery
+    from transport.legacy import unity_connection as legacy
+
+    # Given: the real legacy preflight refuses before dispatch while Unity reloads.
+    status = tmp_path / ".unity-mcp" / "unity-mcp-status-sixsafe.json"
+    status.parent.mkdir()
+    status.write_text('{"reloading":true,"reason":"reloading"}', encoding="utf-8")
+    payloads = []
+
+    class FakeSocket:
+        def gettimeout(self):
+            return 1.0
+
+        def settimeout(self, value):
+            pass
+
+        def sendall(self, value):
+            payloads.append(json.loads(value.decode("utf-8")))
+
+        def close(self):
+            pass
+
+    connection = legacy.UnityConnection(port=9001, instance_id="Safe@sixsafe")
+    pool = SimpleNamespace(get_connection=Mock(return_value=connection))
+
+    def connect(*args, **kwargs):
+        connection.sock = FakeSocket()
+        return True
+
+    dispatch_counts_at_readiness = []
+
+    async def ready(ctx):
+        dispatch_counts_at_readiness.append(len(payloads))
+        status.write_text('{"reloading":false}', encoding="utf-8")
+        return True, 0.0
+
+    expected = {"success": True, "data": {"created": "SafeCanvas"}}
+    receive = Mock(return_value=json.dumps({
+        "status": "success", "result": expected,
+    }).encode("utf-8"))
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    boundary.instance.return_value = "Safe@sixsafe"
+    monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
+    monkeypatch.setattr(legacy, "get_unity_connection_pool", lambda: pool)
+    monkeypatch.setattr(legacy, "Path", SimpleNamespace(home=lambda: tmp_path))
+    monkeypatch.setattr(connection, "connect", connect)
+    monkeypatch.setattr(connection, "receive_full_response", receive)
+    monkeypatch.setattr(recovery, "wait_for_editor_ready", ready)
+    server = FastMCP("ugui-legacy-status-recovery")
+    server.tool()(manage_ugui)
+    # When: real Client, routing, async/sync wrappers and status-file preflight run.
+    async with Client(server) as client:
+        result = await asyncio.wait_for(client.call_tool(
+            "manage_ugui", {"action": "create", "element_type": "canvas"},
+        ), timeout=3)
+    # Then: wait out the refusal, send exactly once and preserve the native result.
+    assert result.structured_content == expected
+    assert dispatch_counts_at_readiness == [0, 1]
+    assert payloads == [{
+        "type": "manage_ugui",
+        "params": {
+            "action": "create", "include_inactive": False,
+            "max_nodes": 200, "element_type": "canvas",
+        },
+    }]
+    receive.assert_called_once()
 
 
 @pytest.mark.asyncio
