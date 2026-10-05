@@ -382,6 +382,30 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Has(result, "zero_size", inactive));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StencilMaskWithoutActiveGraphicStillFiltersPointersButDoesNotClipRendering(bool disabledGraphic)
+        {
+            var mask = Child("PointerOnlyStencilMask");
+            if (disabledGraphic)
+                ((Behaviour)Add(mask, "UnityEngine.UI.Image")).enabled = false;
+            Add(mask, "UnityEngine.UI.Mask");
+            var child = Child("OutsideStencilGraphic", mask);
+            child.GetComponent<RectTransform>().anchoredPosition = new Vector2(150, 0);
+            var image = Add(child, "UnityEngine.UI.Image");
+            var utilities = UnityTypeResolver.ResolveAny("UnityEngine.UI.MaskUtilities");
+            var depthMethod = utilities.GetMethod("GetStencilDepth", BindingFlags.Static | BindingFlags.Public);
+            Assert.AreEqual(0, depthMethod.Invoke(null, new object[] { child.transform, root.transform }), "Native stencil depth excludes Masks without an active Graphic.");
+            Assert.IsFalse(NativeGraphicRaycast(image, ScreenPoint(child.GetComponent<RectTransform>(), Vector3.zero)), "The enabled Mask remains a pointer filter regardless of Graphic activation.");
+            string before = EditorJsonUtility.ToJson(child.GetComponent<RectTransform>());
+            var result = Diagnose();
+            Assert.IsFalse(Has(result, "clipped_by_mask", child));
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat());
+            Assert.AreEqual(100, output["visibleRect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(0, output["raycastRect"].Value<float>("width"), 0.1f);
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(child.GetComponent<RectTransform>()));
+        }
+
         [TestCase("UnityEngine.UI.RectMask2D")]
         [TestCase("UnityEngine.UI.Mask")]
         public void MaskableFalseGraphicIsNotClippedByAncestorMasks(string maskType)

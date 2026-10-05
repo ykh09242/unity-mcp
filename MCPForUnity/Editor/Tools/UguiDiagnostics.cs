@@ -50,6 +50,7 @@ namespace MCPForUnity.Editor.Tools
             public bool UsesRectMaskCulling;
             public bool RectMask;
             public bool StencilMask;
+            public bool PointerStencilMask;
             public Vector4 MaskPadding;
             public MaskChain VisualMasks;
             public MaskChain PointerMasks;
@@ -185,10 +186,12 @@ namespace MCPForUnity.Editor.Tools
                         node.UsesRectMaskCulling = maskableGraphic != null && maskable;
                         var rectMask = rectMaskType == null ? null : source.GetComponent(rectMaskType);
                         node.RectMask = source.gameObject.activeInHierarchy && Enabled(rectMask);
-                        node.StencilMask = source.gameObject.activeInHierarchy && maskType != null && Enabled(source.GetComponent(maskType));
+                        node.PointerStencilMask = source.gameObject.activeInHierarchy && maskType != null && Enabled(source.GetComponent(maskType));
+                        // An enabled Mask filters pointers even without the active Graphic needed for stencil rendering.
+                        node.StencilMask = node.PointerStencilMask && Enabled(graphic);
                         node.MaskPadding = Read(rectMask, "padding", Vector4.zero);
                         node.VisualMasks = maskable ? inheritedMasks : null;
-                        if (node.RectMask || node.StencilMask)
+                        if (node.RectMask || node.PointerStencilMask)
                         {
                             pointerMasks = new MaskChain
                             {
@@ -358,7 +361,7 @@ namespace MCPForUnity.Editor.Tools
                             mask.PointerMaskBounds = mask.RectMask && mask.MaskPadding != Vector4.zero
                                 ? PaddedBounds(mask.Preview, previewCanvas, scale, size, mask.MaskPadding)
                                 : rawBounds;
-                            if (mask.StencilMask)
+                            if (mask.PointerStencilMask)
                                 mask.PointerMaskBounds = Intersect(mask.PointerMaskBounds, rawBounds);
                         }
                     }
@@ -373,6 +376,8 @@ namespace MCPForUnity.Editor.Tools
                         for (var filter = node.VisualMasks; filter != null; filter = filter.Parent)
                         {
                             Node mask = filter.Mask;
+                            if (!mask.RectMask && !mask.StencilMask)
+                                continue;
                             node.HitBounds = Intersect(node.HitBounds, mask.VisualMaskBounds);
                             if (mask.RectMask)
                             {
