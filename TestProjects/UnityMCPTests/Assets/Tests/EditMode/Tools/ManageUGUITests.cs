@@ -386,6 +386,64 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(rect.sizeDelta, Is.EqualTo(before));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ContentFitterModeEditUndoRestoresAuthoredSizeAfterNativeLayout(bool existingFitter)
+        {
+            var fitterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.ContentSizeFitter");
+            var elementType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.LayoutElement");
+            if (fitterType == null || elementType == null)
+                Assert.Ignore("uGUI is not installed.");
+            var go = Root();
+            var rect = (RectTransform)go.transform;
+            rect.sizeDelta = new Vector2(240, 90);
+            Vector2 before = rect.sizeDelta;
+            var element = go.AddComponent(elementType);
+            elementType.GetProperty("preferredWidth").SetValue(element, 310f);
+            if (existingFitter)
+                go.AddComponent(fitterType);
+            Undo.ClearAll();
+            Failure(Call("set_layout", go, new JObject
+            {
+                ["type"] = "content_size_fitter",
+                ["horizontalFit"] = "PreferredSize",
+                ["verticalFit"] = "Invalid"
+            }));
+            Assert.That(rect.sizeDelta, Is.EqualTo(before));
+            Assert.That(go.GetComponent(fitterType) != null, Is.EqualTo(existingFitter));
+            Success(Call("set_layout", go, new JObject
+            {
+                ["type"] = "content_size_fitter",
+                ["horizontalFit"] = "PreferredSize"
+            }));
+            var fitter = go.GetComponent(fitterType);
+            var horizontalFit = fitterType.GetProperty("horizontalFit");
+            Assert.That(horizontalFit.GetValue(fitter).ToString(), Is.EqualTo("PreferredSize"));
+            var horizontal = fitterType.GetMethod("SetLayoutHorizontal");
+            var vertical = fitterType.GetMethod("SetLayoutVertical");
+            horizontal.Invoke(fitter, null);
+            vertical.Invoke(fitter, null);
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(310, 90)), "Native layout applies the configured preferred width before Undo.");
+            Assert.That(typeof(RectTransform).GetProperty("drivenByObject").GetValue(rect), Is.SameAs(fitter));
+            Undo.PerformUndo();
+            fitter = go.GetComponent(fitterType);
+            Assert.That(fitter != null, Is.EqualTo(existingFitter));
+            if (existingFitter)
+            {
+                Assert.That(horizontalFit.GetValue(fitter).ToString(), Is.EqualTo("Unconstrained"));
+                horizontal.Invoke(fitter, null);
+                vertical.Invoke(fitter, null);
+            }
+            Assert.That(rect.sizeDelta, Is.EqualTo(before), "Undo must restore authored size when the fitter no longer controls it.");
+            Undo.PerformRedo();
+            fitter = go.GetComponent(fitterType);
+            Assert.That(fitter, Is.Not.Null);
+            Assert.That(horizontalFit.GetValue(fitter).ToString(), Is.EqualTo("PreferredSize"));
+            horizontal.Invoke(fitter, null);
+            vertical.Invoke(fitter, null);
+            Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(310, 90)));
+        }
+
         [TestCase("WidthControlsHeight", 240, 120)]
         [TestCase("HeightControlsWidth", 180, 90)]
         public void AspectFitterStillRejectsRectEditsAfterUnconstrainedFitterTakesTrackerOwnership(string mode, float nativeWidth, float nativeHeight)
