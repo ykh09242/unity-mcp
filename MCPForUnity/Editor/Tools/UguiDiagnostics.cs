@@ -767,7 +767,12 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var graphic = ComponentNamed(rect.gameObject, "UnityEngine.UI.Graphic", componentTypes);
-            return graphic == null || (Enabled(graphic) && Read(graphic, "color", Color.white).a > 0.001f);
+            if (graphic == null)
+                return true;
+            if (!Enabled(graphic) || !(Read(graphic, "color", Color.white).a > 0.001f))
+                return false;
+            var mask = ComponentNamed(rect.gameObject, "UnityEngine.UI.Mask", componentTypes);
+            return !Enabled(mask) || Read(mask, "showMaskGraphic", true);
         }
 
         private static bool GroupsAllow(Transform rect, bool interactive)

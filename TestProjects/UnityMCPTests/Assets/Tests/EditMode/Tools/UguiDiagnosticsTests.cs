@@ -427,6 +427,42 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
+        public void HiddenStencilGraphicRetainsPointerInputAndChildVisibility(bool showGraphic, bool maskEnabled)
+        {
+            var go = Button("StencilButton");
+            var image = go.GetComponent(UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image"));
+            var mask = Add(go, "UnityEngine.UI.Mask");
+            Set(mask, "showMaskGraphic", showGraphic);
+            ((Behaviour)mask).enabled = maskEnabled;
+            var child = Child("StencilContent", go);
+            var childImage = Add(child, "UnityEngine.UI.Image");
+            Set(childImage, "raycastTarget", false);
+            Button("OtherButton");
+            var baseMaterial = (Material)image.GetType().GetProperty("material").GetValue(image);
+            var material = (Material)mask.GetType().GetMethod("GetModifiedMaterial").Invoke(mask, new object[] { baseMaterial });
+            bool nativeVisible = material.GetInt("_ColorMask") != 0;
+            Assert.AreEqual(showGraphic || !maskEnabled, nativeVisible, "Native Mask removes its own color writes while retaining stencil writes.");
+            Assert.IsTrue(NativeGraphicRaycast(image, ScreenPoint(go.GetComponent<RectTransform>(), Vector3.zero)), "showMaskGraphic does not disable pointer filtering or receiving.");
+            string maskBefore = EditorJsonUtility.ToJson(mask);
+            string imageBefore = EditorJsonUtility.ToJson(image);
+            string materialBefore = EditorJsonUtility.ToJson(material);
+            var result = Diagnose();
+            Findings(result);
+            var output = result["data"]["rects"].Single(r => (int)r["instanceID"] == go.GetInstanceIDCompat());
+            Assert.AreEqual(nativeVisible, output.Value<bool>("visible"));
+            Assert.AreEqual(100, output["raycastRect"].Value<float>("width"), 0.1f);
+            Assert.IsTrue(Has(result, "interactive_overlap", go));
+            Assert.IsTrue(result["data"]["rects"].Single(r => (int)r["instanceID"] == child.GetInstanceIDCompat()).Value<bool>("visible"));
+            Assert.AreSame(baseMaterial, image.GetType().GetProperty("material").GetValue(image));
+            Assert.AreEqual(maskBefore, EditorJsonUtility.ToJson(mask));
+            Assert.AreEqual(imageBefore, EditorJsonUtility.ToJson(image));
+            Assert.AreEqual(materialBefore, EditorJsonUtility.ToJson(material));
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
         public void CoLocatedStencilAndExpandedRectMaskKeepIndependentRenderBounds(bool stencilEnabled, bool outsideStencil)
         {
             var host = Child("CombinedMask");
