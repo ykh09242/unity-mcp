@@ -387,6 +387,76 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CreatedCanvasRedoPreservesConfiguredComponents()
+        {
+            var scalerType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
+            var raycasterType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.GraphicRaycaster");
+            if (scalerType == null || raycasterType == null)
+                Assert.Ignore("uGUI is not installed.");
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = "canvas",
+                ["name"] = prefix
+            }));
+            Success(r);
+            int id = r["data"]["instance_id"].Value<int>();
+            var go = GameObjectLookup.FindById(id);
+            roots.Add(go);
+            Undo.PerformUndo();
+            Assert.That(go == null, Is.True);
+            Undo.PerformRedo();
+            go = GameObjectLookup.FindById(id);
+            Assert.That(go, Is.Not.Null);
+            roots.Add(go);
+            Assert.That(go.GetComponent<Canvas>().renderMode, Is.EqualTo(RenderMode.ScreenSpaceOverlay));
+            Assert.That(go.GetComponent(raycasterType), Is.Not.Null);
+            var scaler = go.GetComponent(scalerType);
+            Assert.That(scaler, Is.Not.Null);
+            Assert.That(scalerType.GetProperty("uiScaleMode").GetValue(scaler).ToString(), Is.EqualTo("ScaleWithScreenSize"));
+            Assert.That(scalerType.GetProperty("referenceResolution").GetValue(scaler), Is.EqualTo(new Vector2(1920, 1080)));
+            Assert.That(scalerType.GetProperty("matchWidthOrHeight").GetValue(scaler), Is.EqualTo(.5f));
+        }
+
+        [TestCase("panel")]
+        [TestCase("button")]
+        public void CreatedChildRedoPreservesParentRectAndVisualProperties(string kind)
+        {
+            var imageType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image");
+            var buttonType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Button");
+            if (imageType == null || buttonType == null)
+                Assert.Ignore("uGUI is not installed.");
+            var root = Root(true);
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "create",
+                ["element_type"] = kind,
+                ["parent"] = root.GetInstanceIDCompat(),
+                ["properties"] = new JObject
+                {
+                    ["sizeDelta"] = new JArray(240, 90),
+                    ["pivot"] = new JArray(.25f, .75f),
+                    ["color"] = new JArray(.2f, .4f, .6f, 1)
+                }
+            }));
+            Success(r);
+            int id = r["data"]["instance_id"].Value<int>();
+            Undo.PerformUndo();
+            Assert.That(root.transform.childCount, Is.EqualTo(0));
+            Undo.PerformRedo();
+            var go = GameObjectLookup.FindById(id);
+            Assert.That(go, Is.Not.Null);
+            Assert.That(go.transform.parent, Is.SameAs(root.transform));
+            Assert.That(((RectTransform)go.transform).sizeDelta, Is.EqualTo(new Vector2(240, 90)));
+            Assert.That(((RectTransform)go.transform).pivot, Is.EqualTo(new Vector2(.25f, .75f)));
+            var image = go.GetComponent(imageType);
+            Assert.That(imageType.GetProperty("color").GetValue(image), Is.EqualTo(new Color(.2f, .4f, .6f, 1)));
+            Assert.That(imageType.GetProperty("raycastTarget").GetValue(image), Is.EqualTo(kind == "button"));
+            if (kind == "button")
+                Assert.That(buttonType.GetProperty("targetGraphic").GetValue(go.GetComponent(buttonType)), Is.SameAs(image));
+        }
+
+        [Test]
         public void PanelCreationRequiresCanvasParentAndPreservesExistingChildren()
         {
             if (UnityTypeResolver.ResolveComponent("UnityEngine.UI.Image") == null)
@@ -477,6 +547,35 @@ namespace MCPForUnityTests.EditMode.Tools
             Failure(r);
         }
 
+        [TestCase(32768)]
+        [TestCase(-32769)]
+        public void OutOfRangeCanvasSortingOrderIsRejectedBeforeOtherPropertiesChange(int order)
+        {
+            var go = Root(true);
+            var canvas = go.GetComponent<Canvas>();
+            bool beforePixelPerfect = canvas.pixelPerfect;
+            var r = Call("set_canvas", go, new JObject
+            {
+                ["pixelPerfect"] = !beforePixelPerfect,
+                ["sortingOrder"] = order
+            });
+            Assert.That(r["success"]?.Value<bool>(), Is.False, r + " Native sortingOrder: " + canvas.sortingOrder);
+            Assert.That(canvas.sortingOrder, Is.EqualTo(0));
+            Assert.That(canvas.pixelPerfect, Is.EqualTo(beforePixelPerfect));
+        }
+
+        [TestCase(-32768)]
+        [TestCase(32767)]
+        public void CanvasSortingOrderBoundariesRoundTripAndUndo(int order)
+        {
+            var go = Root(true);
+            var canvas = go.GetComponent<Canvas>();
+            Success(Call("set_canvas", go, new JObject { ["sortingOrder"] = order }));
+            Assert.That(canvas.sortingOrder, Is.EqualTo(order));
+            Undo.PerformUndo();
+            Assert.That(canvas.sortingOrder, Is.EqualTo(0));
+        }
+
         [Test]
         public void CanvasScaleEditsPersistInEnabledScalerAndUndoTogether()
         {
@@ -504,19 +603,127 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(100f));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CanvasScaleEditsRequireEnabledRootScalerAndAreAtomic(bool addDisabledScaler)
+        {
+            var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
+            if (addDisabledScaler && type == null)
+                Assert.Ignore("uGUI is not installed.");
+            var go = Root(true);
+            var canvas = go.GetComponent<Canvas>();
+            var scaler = addDisabledScaler ? go.AddComponent(type) : null;
+            if (scaler != null)
+                ((Behaviour)scaler).enabled = false;
+            float beforeScale = canvas.scaleFactor;
+            float beforePixels = canvas.referencePixelsPerUnit;
+            var r = Call("set_canvas", go, new JObject { ["scaleFactor"] = 2, ["referencePixelsPerUnit"] = 200, ["sortingOrder"] = 15 });
+            Failure(r);
+            StringAssert.Contains("enabled CanvasScaler", r["error"].ToString());
+            StringAssert.Contains("undoable", r["error"].ToString());
+            Assert.That(canvas.scaleFactor, Is.EqualTo(beforeScale));
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(beforePixels));
+            Assert.That(canvas.sortingOrder, Is.EqualTo(0));
+            if (scaler != null)
+            {
+                Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(1f));
+                Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
+            }
+        }
+
         [Test]
-        public void CanvasScaleEditsUseCanvasWhenScalerIsDisabled()
+        public void NestedCanvasScaleEditsRejectIneffectiveScaleFactorBeforeOtherPropertiesChange()
+        {
+            var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
+            if (type == null)
+                Assert.Ignore("uGUI is not installed.");
+            var root = Root(true);
+            root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            var child = new GameObject("NestedCanvas", typeof(RectTransform), typeof(Canvas));
+            child.transform.SetParent(root.transform, false);
+            var canvas = child.GetComponent<Canvas>();
+            var scaler = child.AddComponent(type);
+            var handle = type.GetMethod("Handle", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(canvas.isRootCanvas, Is.False);
+            canvas.scaleFactor = 3;
+            canvas.referencePixelsPerUnit = 300;
+            handle.Invoke(scaler, null);
+            Assert.That(canvas.scaleFactor, Is.EqualTo(root.GetComponent<Canvas>().scaleFactor), "Native nested scale follows the root Canvas despite the direct write.");
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(300f), "Nested Canvas retains its own reference pixel density.");
+            float beforeReferencePixels = canvas.referencePixelsPerUnit;
+            var r = Call("set_canvas", child, new JObject { ["scaleFactor"] = 2, ["sortingOrder"] = 15 });
+            handle.Invoke(scaler, null);
+            Failure(r);
+            StringAssert.Contains("root Canvas", r["error"].ToString());
+            Assert.That(canvas.scaleFactor, Is.EqualTo(root.GetComponent<Canvas>().scaleFactor));
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(beforeReferencePixels));
+            Assert.That(canvas.sortingOrder, Is.EqualTo(0));
+            Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(1f));
+            Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void NestedCanvasPixelDensityEditsAreRejectedAtomically(bool addScaler)
+        {
+            var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
+            if (addScaler && type == null)
+                Assert.Ignore("uGUI is not installed.");
+            var root = Root(true);
+            root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            var child = new GameObject("NestedCanvas", typeof(RectTransform), typeof(Canvas));
+            child.transform.SetParent(root.transform, false);
+            var canvas = child.GetComponent<Canvas>();
+            var scaler = addScaler ? child.AddComponent(type) : null;
+            var handle = type?.GetMethod("Handle", BindingFlags.Instance | BindingFlags.NonPublic);
+            canvas.referencePixelsPerUnit = 300;
+            if (scaler != null)
+                handle.Invoke(scaler, null);
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(300f));
+            var r = Call("set_canvas", child, new JObject { ["referencePixelsPerUnit"] = 200, ["sortingOrder"] = 15 });
+            if (scaler != null)
+                handle.Invoke(scaler, null);
+            Failure(r);
+            StringAssert.Contains("root Canvas", r["error"].ToString());
+            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(300f));
+            Assert.That(canvas.sortingOrder, Is.EqualTo(0));
+            if (scaler != null)
+                Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
+        }
+
+        [Test]
+        public void InactiveRootCanvasScalerConfigurationRemainsEditableAndUndoable()
         {
             var type = UnityTypeResolver.ResolveComponent("UnityEngine.UI.CanvasScaler");
             if (type == null)
                 Assert.Ignore("uGUI is not installed.");
             var go = Root(true);
             var canvas = go.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             var scaler = go.AddComponent(type);
-            ((Behaviour)scaler).enabled = false;
-            Success(Call("set_canvas", go, new JObject { ["scaleFactor"] = 2, ["referencePixelsPerUnit"] = 200 }));
-            Assert.That(canvas.scaleFactor, Is.EqualTo(2f));
-            Assert.That(canvas.referencePixelsPerUnit, Is.EqualTo(200f));
+            go.SetActive(false);
+            Assert.That(canvas.isRootCanvas, Is.True);
+            var r = JObject.FromObject(ManageUGUI.HandleCommand(new JObject
+            {
+                ["action"] = "set_canvas",
+                ["target"] = go.GetInstanceIDCompat(),
+                ["include_inactive"] = true,
+                ["properties"] = new JObject
+                {
+                    ["uiScaleMode"] = "ScaleWithScreenSize",
+                    ["referenceResolution"] = new JArray(1280, 720),
+                    ["scaleFactor"] = 2,
+                    ["referencePixelsPerUnit"] = 200
+                }
+            }));
+            Success(r);
+            Assert.That(type.GetProperty("uiScaleMode").GetValue(scaler).ToString(), Is.EqualTo("ScaleWithScreenSize"));
+            Assert.That(type.GetProperty("referenceResolution").GetValue(scaler), Is.EqualTo(new Vector2(1280, 720)));
+            Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(2f));
+            Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(200f));
+            Undo.PerformUndo();
+            Assert.That(type.GetProperty("uiScaleMode").GetValue(scaler).ToString(), Is.EqualTo("ConstantPixelSize"));
+            Assert.That(type.GetProperty("referenceResolution").GetValue(scaler), Is.EqualTo(new Vector2(800, 600)));
             Assert.That(type.GetProperty("scaleFactor").GetValue(scaler), Is.EqualTo(1f));
             Assert.That(type.GetProperty("referencePixelsPerUnit").GetValue(scaler), Is.EqualTo(100f));
         }

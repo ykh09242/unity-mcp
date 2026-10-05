@@ -251,9 +251,13 @@ namespace MCPForUnity.Editor.Tools
             var canvasKeys = Keys("renderMode sortingOrder overrideSorting pixelPerfect worldCamera planeDistance scaleFactor referencePixelsPerUnit");
             var scalerKeys = Keys("uiScaleMode referenceResolution screenMatchMode matchWidthOrHeight");
             var scaler = Find(go, Ui + "CanvasScaler");
-            if (Enabled(scaler))
+            var controlledKeys = Keys("scaleFactor referencePixelsPerUnit");
+            bool ownsScaling = canvas.isRootCanvas && scaler is Behaviour scalerBehaviour && scalerBehaviour.enabled;
+            if (controlledKeys.Any(key => props[key] != null) && !ownsScaling)
+                throw new ArgumentException(
+                    "scaleFactor and referencePixelsPerUnit require an enabled CanvasScaler on the root Canvas for persistent, undoable edits. Target the root Canvas and enable its CanvasScaler.");
+            if (ownsScaling)
             {
-                var controlledKeys = Keys("scaleFactor referencePixelsPerUnit");
                 canvasKeys.ExceptWith(controlledKeys);
                 scalerKeys.UnionWith(controlledKeys);
             }
@@ -521,6 +525,8 @@ namespace MCPForUnity.Editor.Tools
 
             if (value is int n && (key == "constraintCount" || key == "fontSize") && n < 1)
                 throw new ArgumentException(key + " must be positive.");
+            if (value is int order && key == "sortingOrder" && (order < short.MinValue || order > short.MaxValue))
+                throw new ArgumentException("sortingOrder must be between -32768 and 32767.");
             if (value is Vector2 v && (key == "referenceResolution" || key == "cellSize") && (v.x <= 0 || v.y <= 0))
                 throw new ArgumentException(key + " dimensions must be positive.");
         }
