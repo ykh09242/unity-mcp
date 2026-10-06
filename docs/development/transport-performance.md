@@ -287,6 +287,45 @@ registration. A separate resource contract exercises ordinary and authoritative
 resource delivery with positive held reservations; its forced overlap is not a
 natural latency measurement.
 
+### Same-protocol before/after measurements
+
+The v2 harness compared product revision `789a815b` with `cf2f2232`, using the
+fixed harness from `b6186fb5` on Windows 10, Python 3.14.6, FastMCP 4.0.11 and
+MCP 2.3.0. Each profile used three alternating baseline/candidate rounds,
+30 warmed samples per workload after three warmups, a 4 MiB large payload and
+zero requested synthetic delay. Each cell shows baseline to candidate in
+milliseconds: the median of the three per-round p50 values, calculated
+separately for each revision. These are descriptive observations, not pooled
+90-sample percentiles or statistical significance claims.
+
+| Path / workload | Sequential, before → after | Two concurrent calls, before → after |
+| --- | ---: | ---: |
+| stdio / small | 2.512 → 2.386 | 3.729 → 3.867 |
+| stdio / state | 3.372 → 3.235 | 5.981 → 5.717 |
+| stdio / 4 MiB | 319.809 → 298.379 | 378.588 → 321.854 |
+| stdio / job | 3.081 → 2.521 | 4.044 → 3.706 |
+| HTTP / small | 3.865 → 3.873 | 6.650 → 7.029 |
+| HTTP / state | 5.688 → 5.746 | 9.317 → 9.256 |
+| HTTP / 4 MiB | 125.406 → 129.320 | 158.534 → 146.726 |
+| HTTP / job | 3.143 → 3.163 | 6.013 → 5.764 |
+
+The large stdio response took 6.7% less time sequentially and 15.0% less with
+two concurrent callers; the latter HTTP response took 7.4% less. Some medians
+were higher: sequential HTTP rose 0.2–3.1%, concurrent small stdio rose 3.7%,
+and concurrent small HTTP rose 5.7% (0.379 ms). This does not establish that
+every workload improved or predict actual Editor wall time.
+
+Every round preserved payloads, public-call counts and source fingerprints.
+HTTP readiness pings before the separate partial-transfer probe stayed at 105
+for sequential calls and fell from 105 to 75 for concurrent calls. Separate
+held-body resource tests reduced two overlapping ordinary state/ping pairs to
+one while keeping two authoritative pairs. Natural timing runs used neither
+the forced cohort gate nor the resource contract. Cancellation and late-frame
+checks observed positive held reservations followed by zero; these counters
+are not process RSS or continuous allocation peaks.
+
+### Earlier cross-protocol measurements
+
 The earlier v1 subset harness, before the actual `UnityMCP` adapter was included,
 produced the following client latency medians on Windows 10 with Python 3.14.6,
 FastMCP 4.0.11 and MCP 2.3.0. It used 30 warmed calls per workload with no
