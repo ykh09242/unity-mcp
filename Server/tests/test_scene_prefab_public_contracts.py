@@ -322,6 +322,11 @@ for action in ('open_prefab_stage', 'get_info', 'get_hierarchy'):
                          {'action': action, 'prefabPath': 'Assets/Fixture.prefab'}))
 for action in ('save_prefab_stage', 'close_prefab_stage'):
     prefab_cases.append(({'action': action}, {'action': action}))
+for target in (-19340, '-19340', 'McpProbeCube', 'Parent/McpProbeCube', '/Parent/McpProbeCube', 0):
+    prefab_cases.append((
+        {'action': 'create_from_gameobject', 'target': target, 'prefab_path': 'Assets/ProbeCube.prefab'},
+        {'action': 'create_from_gameobject', 'target': target, 'prefabPath': 'Assets/ProbeCube.prefab'},
+    ))
 
 async def main():
     global raw
@@ -337,7 +342,8 @@ async def main():
                             expected = {
                                 'success': not failed,
                                 'message': 'Controlled native diagnostic' if failed else 'Done',
-                                'data': {'instanceId': 321, 'cursor': 0, 'nextCursor': None,
+                                'data': {'instanceId': 321, 'rootObjectName': 'ProbeCube',
+                                         'rootObjectPath': 'ProbeCube', 'cursor': 0, 'nextCursor': None,
                                          'items': [], 'isVariant': False},
                             }
                             raw = {'status': 'success', 'result': expected} if wrapped else expected
@@ -388,7 +394,7 @@ async def main():
             for name, payload in (
                 ('manage_scene', {'action': 'bad'}),
                 ('manage_prefabs', {'action': 'bad'}),
-                ('manage_prefabs', {'action': 'create_from_gameobject', 'target': 321,
+                ('manage_prefabs', {'action': 'create_from_gameobject', 'target': {'id': 321},
                                     'prefab_path': 'Assets/Fixture.prefab'}),
             ):
                 before = len(requests)

@@ -26,6 +26,8 @@ REQUIRED_PARAMS = {
     description=(
         "Manages Unity Prefab assets. "
         "Actions: get_info, get_hierarchy, create_from_gameobject, modify_contents, open_prefab_stage, save_prefab_stage, close_prefab_stage. "
+        "create_from_gameobject accepts a scene/stage instance ID, unique name or full hierarchy path. "
+        "Its response includes rootObjectName/rootObjectPath from the saved prefab; use these for subsequent prefab edits, or omit target to edit its root. "
         "Two approaches to prefab editing: "
         "(1) Headless: use modify_contents for automated/scripted edits without opening the prefab in the editor. "
         "(2) Interactive: use open_prefab_stage to open a prefab, then manage_gameobject/manage_components to edit objects inside the prefab stage, then save_prefab_stage to save and close_prefab_stage to return to the main scene. "
@@ -61,7 +63,7 @@ async def manage_prefabs(
         "Prefab operation to perform.",
     ],
     prefab_path: Annotated[str, "Prefab asset path (e.g., Assets/Prefabs/MyPrefab.prefab)."] | None = None,
-    target: Annotated[str, "Target GameObject: scene object for create_from_gameobject, or object within prefab for modify_contents (name or path like 'Parent/Child')."] | None = None,
+    target: Annotated[str | int, "For create_from_gameobject: instance ID (integer or numeric string), unique name, or full hierarchy path (e.g. 'Parent/Child' or '/Parent/Child') in the active scene/current prefab stage. Stage names/paths take precedence. Numeric targets are IDs; ambiguous names/paths fail. For modify_contents: saved prefab object name or child path; omit to target the root. Use returned rootObjectName/rootObjectPath, which may differ from the source instance name. IDs do not apply to isolated prefab contents."] | None = None,
     allow_overwrite: Annotated[bool, "Allow replacing existing prefab."] | None = None,
     search_inactive: Annotated[bool, "Include inactive GameObjects in search."] | None = None,
     unlink_if_instance: Annotated[bool, "Unlink from existing prefab before creating new one."] | None = None,
@@ -106,7 +108,7 @@ async def manage_prefabs(
         if prefab_path:
             params["prefabPath"] = prefab_path
 
-        if target:
+        if target is not None:
             params["target"] = target
 
         allow_overwrite_val = coerce_bool(allow_overwrite)

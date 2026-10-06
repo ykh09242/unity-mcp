@@ -74,6 +74,35 @@ class TestManagePrefabsComponentProperties:
 
 # ── delete_child ─────────────────────────────────────────────────────
 
+class TestManagePrefabsTargets:
+    @pytest.mark.parametrize("target", [-19340, "-19340", "McpProbeCube", "Parent/McpProbeCube", "/Parent/McpProbeCube", 0])
+    def test_create_target_forwards_id_name_and_path(self, mock_unity, target):
+        result = asyncio.run(manage_prefabs(
+            SimpleNamespace(), action="create_from_gameobject", target=target,
+            prefab_path="Assets/Prefabs/ProbeCube.prefab",
+        ))
+        assert result["success"] is True
+        assert mock_unity["params"]["target"] == target
+
+    def test_create_response_keeps_saved_root_identity(self, monkeypatch, mock_unity):
+        response = {"success": True, "data": {
+            "instanceName": "McpProbeCube", "instanceId": -19340,
+            "prefabPath": "Assets/Prefabs/ProbeCube.prefab",
+            "rootObjectName": "ProbeCube", "rootObjectPath": "ProbeCube",
+        }}
+
+        async def fake_send(*_args):
+            return response
+
+        monkeypatch.setattr("services.tools.manage_prefabs.send_with_unity_instance", fake_send)
+        result = asyncio.run(manage_prefabs(
+            SimpleNamespace(), action="create_from_gameobject", target=-19340,
+            prefab_path="Assets/Prefabs/ProbeCube.prefab",
+        ))
+        assert result is response
+        assert result["data"]["rootObjectPath"] == "ProbeCube"
+
+
 
 class TestManagePrefabsDeleteChild:
     """Tests for the delete_child parameter on manage_prefabs."""

@@ -98,7 +98,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             bool unlinkIfInstance = validation.unlinkIfInstance;
 
             // 2. Find the source object
-            GameObject sourceObject = FindSceneObjectByName(targetName, includeInactive);
+            GameObject sourceObject = FindSceneObjectByName(targetName, includeInactive, out string targetError);
+            if (targetError != null)
+            {
+                return new ErrorResponse(targetError);
+            }
             if (sourceObject == null)
             {
                 return new ErrorResponse($"GameObject '{targetName}' not found in the active scene or prefab stage{(includeInactive ? " (including inactive objects)" : "")}.");
@@ -155,6 +159,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                 // 9. Select the newly created instance
                 Selection.activeGameObject = sourceObject;
+                // Unity may give the saved asset root a different name from the scene instance.
+                GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(finalPath);
 
                 return new SuccessResponse(
                     $"Prefab created at '{finalPath}' and instance linked.",
@@ -163,6 +169,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         prefabPath = finalPath,
                         instanceId = sourceObject.GetInstanceIDCompat(),
                         instanceName = sourceObject.name,
+                        rootObjectName = prefabAsset?.name,
+                        rootObjectPath = prefabAsset?.name,
                         wasUnlinked = unlinkIfInstance && objectValidation.shouldUnlink,
                         wasReplaced = replaceExisting && fileExistedAtPath,
                         componentCount = sourceObject.GetComponents<Component>().Length,
@@ -443,44 +451,58 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         }
 
         /// <summary>
-        /// Finds a GameObject by name in the active scene or current prefab stage.
+        /// Finds a GameObject by instance ID, unique name or full hierarchy path.
+        /// The current prefab stage takes precedence over the active scene for names/paths.
         /// </summary>
-        private static GameObject FindSceneObjectByName(string name, bool includeInactive)
+        private static GameObject FindSceneObjectByName(string target, bool includeInactive, out string error)
         {
-            // First check if we're in Prefab Stage
+            error = null;
             PrefabStage stage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (stage?.prefabContentsRoot != null)
+            GameObject stageRoot = stage?.prefabContentsRoot;
+            GameObject[] sceneRoots = SceneManager.GetActiveScene().GetRootGameObjects();
+
+            // Numeric targets are IDs, never a fallback name. Restrict resolved objects
+            // to the same scene/stage scope as name lookup (excluding prefab assets).
+            if (int.TryParse(target, out int instanceId))
             {
-                foreach (Transform transform in stage.prefabContentsRoot.GetComponentsInChildren<Transform>(includeInactive))
-                {
-                    if (transform.name == name && (includeInactive || transform.gameObject.activeSelf))
-                    {
-                        return transform.gameObject;
-                    }
-                }
+                GameObject byId = GameObjectLookup.FindById(instanceId);
+                if (byId == null || (!includeInactive && !byId.activeInHierarchy))
+                    return null;
+                bool inStage = stageRoot != null && (byId == stageRoot || byId.transform.IsChildOf(stageRoot.transform));
+                bool inScene = sceneRoots.Any(root => byId == root || byId.transform.IsChildOf(root.transform));
+                return inStage || inScene ? byId : null;
+            }
+            string numericTarget = target.Trim();
+            if (numericTarget.StartsWith("+", StringComparison.Ordinal) || numericTarget.StartsWith("-", StringComparison.Ordinal))
+                numericTarget = numericTarget.Substring(1);
+            if (numericTarget.Length > 0 && numericTarget.All(c => c >= '0' && c <= '9'))
+            {
+                error = $"Instance ID '{target}' is outside the supported 32-bit integer range.";
+                return null;
             }
 
-            // Search in the active scene
-            Scene activeScene = SceneManager.GetActiveScene();
-            foreach (GameObject root in activeScene.GetRootGameObjects())
+            string path = target.StartsWith("/", StringComparison.Ordinal) ? target.Substring(1) : target;
+            bool isPath = target.Contains("/");
+            GameObject FindUnique(IEnumerable<GameObject> roots, out bool ambiguous)
             {
-                // Check the root object itself
-                if (root.name == name && (includeInactive || root.activeSelf))
-                {
-                    return root;
-                }
-
-                // Check children
-                foreach (Transform transform in root.GetComponentsInChildren<Transform>(includeInactive))
-                {
-                    if (transform.name == name && (includeInactive || transform.gameObject.activeSelf))
-                    {
-                        return transform.gameObject;
-                    }
-                }
+                var matches = roots.SelectMany(root => root.GetComponentsInChildren<Transform>(includeInactive))
+                    .Select(transform => transform.gameObject)
+                    .Where(go => includeInactive || go.activeInHierarchy)
+                    .Where(go => isPath ? GameObjectLookup.GetGameObjectPath(go) == path : go.name == target)
+                    .Distinct().Take(2).ToList();
+                ambiguous = matches.Count > 1;
+                return matches.Count == 1 ? matches[0] : null;
             }
 
-            return null;
+            GameObject found = null;
+            bool ambiguous = false;
+            if (stageRoot != null)
+                found = FindUnique(new[] { stageRoot }, out ambiguous);
+            if (found == null && !ambiguous)
+                found = FindUnique(sceneRoots, out ambiguous);
+            if (ambiguous)
+                error = $"GameObject target '{target}' is ambiguous. Use an instance ID or a unique full hierarchy path (for example 'Parent/Child').";
+            return found;
         }
 
         #region Read Operations

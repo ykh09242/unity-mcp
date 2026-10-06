@@ -42,6 +42,84 @@ namespace MCPForUnityTests.Editor.Tools
 
         #region CREATE Tests
 
+        [TestCase("integer_id")]
+        [TestCase("string_id")]
+        [TestCase("name")]
+        [TestCase("path")]
+        [TestCase("absolute_path")]
+        public void CreateFromGameObject_TargetFormsReturnSavedRootForSubsequentEdit(string targetForm)
+        {
+            string prefabPath = TempDirectory + "/ProbeCube.prefab";
+            GameObject parent = new GameObject("PrefabTargetParent");
+            GameObject source = new GameObject("McpProbeCube");
+            source.transform.SetParent(parent.transform);
+            GameObject child = new GameObject("PreservedChild");
+            child.transform.SetParent(source.transform);
+            JToken target = source.name;
+            if (targetForm == "integer_id") target = source.GetInstanceID();
+            if (targetForm == "string_id") target = source.GetInstanceID().ToString();
+            if (targetForm == "path") target = "PrefabTargetParent/McpProbeCube";
+            if (targetForm == "absolute_path") target = "/PrefabTargetParent/McpProbeCube";
+            try
+            {
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
+                {
+                    ["action"] = "create_from_gameobject", ["target"] = target,
+                    ["prefabPath"] = prefabPath
+                }));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                GameObject saved = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+                Assert.IsNotNull(saved);
+                Assert.AreEqual("ProbeCube", saved.name);
+                Assert.AreEqual(saved.name, result["data"].Value<string>("rootObjectName"));
+                Assert.AreEqual(saved.name, result["data"].Value<string>("rootObjectPath"));
+                Assert.AreEqual("McpProbeCube", source.name);
+                Assert.AreEqual(source.name, result["data"].Value<string>("instanceName"));
+                Assert.AreEqual(parent.transform, source.transform.parent);
+                Assert.IsNotNull(saved.transform.Find("PreservedChild"));
+                var modified = ToJObject(ManagePrefabs.HandleCommand(new JObject
+                {
+                    ["action"] = "modify_contents", ["prefabPath"] = prefabPath,
+                    ["target"] = result["data"]["rootObjectPath"],
+                    ["scale"] = new JArray(0.75f, 0.75f, 0.75f)
+                }));
+                Assert.IsTrue(modified.Value<bool>("success"), modified.ToString());
+                Assert.AreEqual(Vector3.one * 0.75f, AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).transform.localScale);
+            }
+            finally
+            {
+                SafeDeleteAsset(prefabPath);
+                UnityEngine.Object.DestroyImmediate(parent);
+            }
+        }
+
+        [Test]
+        public void CreateFromGameObject_RejectsAmbiguousNameBeforeSaving()
+        {
+            string prefabPath = TempDirectory + "/Ambiguous.prefab";
+            GameObject first = new GameObject("DuplicatePrefabTarget");
+            GameObject second = new GameObject("DuplicatePrefabTarget");
+            try
+            {
+                var result = ToJObject(ManagePrefabs.HandleCommand(new JObject
+                {
+                    ["action"] = "create_from_gameobject", ["target"] = first.name,
+                    ["prefabPath"] = prefabPath
+                }));
+                Assert.IsFalse(result.Value<bool>("success"));
+                StringAssert.Contains("ambiguous", result.Value<string>("error"));
+                Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath));
+                Assert.IsFalse(PrefabUtility.IsPartOfPrefabInstance(first));
+                Assert.IsFalse(PrefabUtility.IsPartOfPrefabInstance(second));
+            }
+            finally
+            {
+                SafeDeleteAsset(prefabPath);
+                UnityEngine.Object.DestroyImmediate(first);
+                UnityEngine.Object.DestroyImmediate(second);
+            }
+        }
+
         [Test]
         public void CreateFromGameObject_CreatesNewPrefab()
         {
