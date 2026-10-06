@@ -11,10 +11,13 @@ import random
 import re
 import socket
 import struct
+import sys
 import threading
 import time
 from typing import Any, TYPE_CHECKING
 import weakref
+
+from pydantic_core import from_json
 
 if TYPE_CHECKING:
     import asyncio
@@ -35,6 +38,18 @@ FRAMED_MAX = 64 * 1024 * 1024
 
 class _UnityProtocolError(ValueError):
     """A Unity response cannot be safely decoded or reused."""
+
+
+def _decode_unity_response(data: bytes) -> Any:
+    """Decode JSON before callers enforce the existing object response shape."""
+    # The native parser does not follow a customized Python integer digit limit.
+    if sys.get_int_max_str_digits() != sys.int_info.default_max_str_digits:
+        return json.loads(data.decode('utf-8'))
+    try:
+        return from_json(data, allow_inf_nan=True, allow_partial=False, cache_strings='keys')
+    except ValueError:
+        # Preserve accepted lone surrogates and exact UTF-8/stdlib exceptions.
+        return json.loads(data.decode('utf-8'))
 
 
 def read_status_file(target_hash: str | None = None) -> dict | None:
@@ -511,7 +526,7 @@ class UnityConnection:
 
                     # Parse
                     if command_type == 'ping':
-                        resp = json.loads(response_data.decode('utf-8'))
+                        resp = _decode_unity_response(response_data)
                         if not isinstance(resp, dict):
                             raise _UnityProtocolError("Unity response must be a JSON object")
                         response_received = True
@@ -519,7 +534,7 @@ class UnityConnection:
                             return {"message": "pong"}
                         raise Exception("Ping unsuccessful")
 
-                    resp = json.loads(response_data.decode('utf-8'))
+                    resp = _decode_unity_response(response_data)
                     if not isinstance(resp, dict):
                         raise _UnityProtocolError("Unity response must be a JSON object")
                     response_received = True
