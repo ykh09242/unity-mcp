@@ -949,16 +949,15 @@ class TestStressTestSetupPatterns:
         assert 0 < port < 65536
         assert port == 6400
 
-    def test_port_discovery_default_fallback(self):
+    def test_port_discovery_default_fallback(self, tmp_path):
         """Test port discovery falls back to default when no status file.
 
         Behavior: Return 6400 if ~/.unity-mcp doesn't exist or no valid files
         """
-        status_dir = Path("/tmp/nonexistent_unity_mcp")
+        status_dir = tmp_path / "missing_unity_mcp"
 
         # Simulate find_status_files returning empty
-        if not status_dir.exists():
-            files = []
+        files = list(status_dir.glob("*.json"))
 
         default_port = 6400
         port = default_port if not files else int(files[0])

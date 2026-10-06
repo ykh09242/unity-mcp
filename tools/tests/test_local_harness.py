@@ -57,6 +57,25 @@ from local_harness import (  # noqa: E402
 # ===========================================================================
 # Helpers for hermetic filesystem injection into discover_editor
 # ===========================================================================
+@pytest.mark.parametrize("kill_signal", [None, 9])
+def test_pid_only_teardown_uses_available_termination_signal(monkeypatch, kill_signal):
+    # Given: a detached process and either Windows or POSIX signal availability.
+    calls = []
+    monkeypatch.setattr(lh.os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    if kill_signal is None:
+        monkeypatch.delattr(lh.signal, "SIGKILL", raising=False)
+    else:
+        monkeypatch.setattr(lh.signal, "SIGKILL", kill_signal, raising=False)
+    launcher = lh.LocalLauncher(build_arg_parser().parse_args([]))
+    handle = lh.Handle(pid=12345)
+
+    # When: the grace period has expired without a Popen handle.
+    launcher.teardown(handle, grace_s=0)
+
+    # Then: force termination uses a signal supported by the current platform.
+    assert calls == [(12345, lh.signal.SIGTERM), (12345, kill_signal or lh.signal.SIGTERM)]
+
+
 def _fake_fs(present_paths: set[str], dirs: dict[str, list[str]] | None = None):
     """Build (exists, is_exec, list_dir) callables over an in-memory file set.
 

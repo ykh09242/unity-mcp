@@ -411,7 +411,8 @@ def discover_editor(version: str,
             if not (_exists(binary) and _is_exec(binary)):
                 continue
             key = (pv[2], pv[3])
-            if best is None or key > best[0]:
+            # The short-circuit excludes None; Pylint misses the loop assignment.
+            if best is None or key > best[0]:  # pylint: disable=unsubscriptable-object
                 best = (key, binary, name)
 
     if best is not None:
@@ -859,7 +860,7 @@ class LocalLauncher:
                         return
                     time.sleep(0.2)
                 try:
-                    os.kill(pid, signal.SIGKILL)
+                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                 except OSError:
                     pass
         except OSError:

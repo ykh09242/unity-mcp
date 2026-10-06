@@ -140,7 +140,7 @@ def _records(directory: Path) -> dict:
             raise ValueError("Compiler inputs must be ordinary files")
         digest = hashlib.sha256()
         with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            while chunk := stream.read(1024 * 1024):
                 digest.update(chunk)
         details = path.stat()
         records[path.relative_to(directory).as_posix()] = {
