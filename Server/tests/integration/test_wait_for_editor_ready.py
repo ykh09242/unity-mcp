@@ -507,14 +507,15 @@ async def test_send_mutation_waits_only_when_completion_may_be_pending(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_send_mutation_keeps_disconnect_verification_and_readiness_waits(monkeypatch):
+@pytest.mark.parametrize("initially_ready", [True, False])
+async def test_send_mutation_reuses_confirmed_readiness_after_readonly_verification(monkeypatch, initially_ready):
     # Given: a connection loss may follow a successful mutation and still needs verification.
     from services.tools import refresh_unity as mod
     from unittest.mock import AsyncMock
 
     response = {"success": True, "message": "Verified!"}
     send = AsyncMock(return_value={"success": False, "error": "Connection closed"})
-    ready = AsyncMock(return_value=(True, 0.0))
+    ready = AsyncMock(side_effect=[(initially_ready, 0.0), (True, 0.0)])
     verify = AsyncMock(return_value=response)
     monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
     monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
@@ -522,8 +523,9 @@ async def test_send_mutation_keeps_disconnect_verification_and_readiness_waits(m
     result = await send_mutation(
         DummyContext(), None, "manage_script", {}, verify_after_disconnect=verify,
     )
-    # Then: preserve both readiness waits and verification without replay.
+    # A confirmed ready snapshot and a successful read verification need no extra RPC.
+    # If the first readiness wait expired, retain the final readiness check.
     assert result is response
     assert send.await_count == 1
-    assert ready.await_count == 2
+    assert ready.await_count == (1 if initially_ready else 2)
     verify.assert_awaited_once_with()

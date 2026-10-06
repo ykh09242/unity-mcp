@@ -121,9 +121,9 @@ async def send_mutation(
     4. Wait for editor readiness after successful or disconnected mutations
 
     Args:
-        verify_after_disconnect: async callable returning a replacement response
-            dict if the mutation was verified after connection loss, or None to
-            keep the original error response.
+        verify_after_disconnect: read-only async callable returning a replacement
+            response dict if the mutation was verified after connection loss,
+            or None to keep the original error response.
     """
     resp = await unity_transport.send_with_unity_instance(
         _legacy_conn.async_send_command_with_retry,
@@ -151,10 +151,13 @@ async def send_mutation(
         # Selection failed before dispatch; polling cannot select an instance.
         return resp
     if is_connection_lost_after_send(resp) and verify_after_disconnect:
-        await wait_for_editor_ready(ctx)
+        ready, _ = await wait_for_editor_ready(ctx)
         verified = await verify_after_disconnect()
         if verified is not None:
             resp = verified
+            if ready and verified.get("success") is True:
+                # Verification only reads state; it cannot schedule another reload.
+                return resp
     failed = resp.get("success") is False if isinstance(resp, dict) else (
         isinstance(resp, MCPResponse) and resp.success is False
     )

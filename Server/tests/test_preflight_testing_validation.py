@@ -108,7 +108,7 @@ async def test_disconnect_still_recovers_and_verifies_mutation(editor_boundary):
     )
     assert response is verified
     verify.assert_awaited_once_with()
-    assert state.await_count >= 1
+    state.assert_awaited_once_with(ctx)
     send.assert_awaited_once()
 
 
