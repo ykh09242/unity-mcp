@@ -331,9 +331,9 @@ def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
                 {'action': 'look_at', 'target': 'Fixture', 'look_at_target': [0, 0, 0],
                  'look_at_up': '[0,1,0]'},
                 {'action': 'look_at', 'target': 'Fixture', 'look_at_target': [0, 0, 0],
-                 'look_at_up': '[0,1,0]'},
+                 'look_at_up': [0, 1, 0]},
             ),
-            ({'action': 'modify', 'target': '', 'position': None}, {'action': 'modify', 'target': ''}),
+            ({'action': 'modify', 'target': 'Fixture', 'position': None}, {'action': 'modify', 'target': 'Fixture'}),
             ({'action': 'modify', 'target': '321', 'set_active': False},
              {'action': 'modify', 'target': '321', 'setActive': False}),
             ({'action': 'modify', 'target': '321', 'search_method': 'by_name', 'set_active': False},
@@ -349,8 +349,7 @@ def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
                     tools = {tool.name: tool for tool in await client.list_tools()}
                     check('manage_gameobject' in tools, 'registry ' + mode)
                     print('FULL_SCHEMA', mode, json.dumps(tools['manage_gameobject'].inputSchema, sort_keys=True))
-                    # This controlled response is the native required-path diagnostic.
-                    # Actual native path/save consequences are checked independently.
+                    # Missing prefab destination is locally invalid before readiness.
                     raw = {
                         'success': False,
                         'message': "'prefabPath' is required when 'saveAsPrefab' is true and creating a new object.",
@@ -359,13 +358,11 @@ def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
                     before = len(requests)
                     result = await client.call_tool('manage_gameobject', payload)
                     domain = [row for row in requests[before:] if row[1] == 'manage_gameobject']
-                    check(result.structured_content == raw, 'native required-path diagnostic ' + mode)
-                    check(domain == [('Project@fixture', 'manage_gameobject',
-                                      {'action': 'create', 'name': 'Fixture', 'saveAsPrefab': True,
-                                       'world_space': True})],
-                          'absent folder must not fabricate path ' + mode)
+                    check(result.structured_content['success'] is False and 'prefab' in result.structured_content['message'],
+                          'local required-path diagnostic ' + mode)
+                    check(not requests[before:], 'absent folder rejected before preflight ' + mode)
                     print('DOMAIN_WIRE', json.dumps({'surface': 'sdk', 'mode': mode,
-                                                    'input': payload, 'wire': domain[-1][2]}))
+                                                    'input': payload, 'wire': None}))
                     for payload, wire in cases:
                         for failed in (False, True):
                             for wrapped in (False, True):
@@ -391,6 +388,7 @@ def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
                                     print('DOMAIN_WIRE', json.dumps({'surface': 'sdk', 'mode': mode,
                                                                     'input': payload, 'wire': domain[-1][2]}))
                     for payload in (
+                        {'action': 'modify', 'target': '', 'position': None},
                         {}, {'action': None},
                         {'action': 'create', 'position': '[1,2]'},
                         {'action': 'modify', 'rotation': {'x': 0}},

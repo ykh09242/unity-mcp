@@ -9,6 +9,7 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.utils import coerce_bool, parse_json_payload, normalize_vector3, normalize_string_list
 from services.tools.preflight import preflight
+from services.tools.primitive_validation import primitive_type_error
 
 
 def _normalize_components_to_add(value: Any) -> tuple[list[str | dict[str, Any]] | None, str | None]:
@@ -103,6 +104,9 @@ def _normalize_component_properties(value: Any) -> tuple[dict[str, dict[str, Any
 
     # Already a dict - validate structure
     if isinstance(value, dict):
+        for component, properties in value.items():
+            if not isinstance(component, str) or not component or not isinstance(properties, dict):
+                return None, "component_properties must map component type names to property objects."
         return value, None
 
     # Try parsing as JSON string
@@ -113,7 +117,7 @@ def _normalize_component_properties(value: Any) -> tuple[dict[str, dict[str, Any
 
         parsed = parse_json_payload(value)
         if isinstance(parsed, dict):
-            return parsed, None
+            return _normalize_component_properties(parsed)
 
         return None, f"component_properties must be a JSON object (dict), got string that parsed to {type(parsed).__name__}"
 
@@ -205,11 +209,34 @@ async def manage_gameobject(
     look_at_up: Annotated[list[float] | str,
                           "Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]."] | None = None,
 ) -> dict[str, Any]:
-    if action is None:
+    if action not in {"create", "modify", "delete", "duplicate", "move_relative", "look_at"}:
         return {
             "success": False,
             "message": "Missing required parameter 'action'. Valid actions: create, modify, delete, duplicate, move_relative, look_at. To SEARCH for GameObjects use the find_gameobjects tool. To manage COMPONENTS use the manage_components tool."
         }
+
+    if action == "create" and not name:
+        return {"success": False, "message": "Action 'create' requires parameter 'name'."}
+    # Unity permits 'name' as a target alias only when target is omitted.
+    if action != "create" and not (target if target is not None else name):
+        return {"success": False, "message": f"Action '{action}' requires parameter 'target' or its 'name' alias."}
+    if action == "move_relative":
+        if not reference_object:
+            return {"success": False, "message": "Action 'move_relative' requires parameter 'reference_object'."}
+        if not direction and offset is None:
+            return {"success": False, "message": "Action 'move_relative' requires 'direction' or 'offset'."}
+    if action == "look_at":
+        if look_at_target is None or look_at_target == "":
+            return {"success": False, "message": "Action 'look_at' requires parameter 'look_at_target'."}
+        # Strings can also be GameObject names, including names resembling JSON.
+        if not isinstance(look_at_target, str):
+            _, look_error = normalize_vector3(look_at_target, "look_at_target")
+            if look_error:
+                return {"success": False, "message": look_error}
+        if look_at_up is not None:
+            look_at_up, up_error = normalize_vector3(look_at_up, "look_at_up")
+            if up_error:
+                return {"success": False, "message": up_error}
 
     # --- Normalize vector parameters with detailed error handling ---
     position, position_error = normalize_vector3(position, "position")
@@ -230,6 +257,12 @@ async def manage_gameobject(
     set_active = coerce_bool(set_active)
     is_static = coerce_bool(is_static)
     world_space = coerce_bool(world_space, default=True)
+
+    # Instantiating an existing prefab bypasses native primitive fallback entirely.
+    if action == "create" and (not prefab_path or save_as_prefab):
+        primitive_error = primitive_type_error(primitive_type)
+        if primitive_error:
+            return {"success": False, "message": primitive_error}
 
     # --- Normalize component_properties with detailed error handling ---
     component_properties, comp_props_error = _normalize_component_properties(
@@ -292,6 +325,8 @@ async def manage_gameobject(
                     constructed_path = f"{prefab_folder}/{params['name']}.prefab"
                     # Ensure clean path separators (Unity prefers '/')
                     params["prefabPath"] = constructed_path.replace("\\", "/")
+                else:
+                    return {"success": False, "message": "'prefab_path' or 'prefab_folder' is required when 'save_as_prefab' is true."}
             elif not params["prefabPath"].lower().endswith(".prefab"):
                 return {"success": False, "message": f"Invalid prefab_path: '{params['prefabPath']}' must end with .prefab"}
         # Ensure prefabFolder itself isn't sent if prefabPath was constructed or provided

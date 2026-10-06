@@ -9,6 +9,7 @@ from services.tools.utils import coerce_bool, normalize_vector3
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
+from services.tools.primitive_validation import primitive_type_error
 
 
 # Required parameters for each action
@@ -79,6 +80,8 @@ async def manage_prefabs(
     delete_child: Annotated[str | list[str], "Child name(s) or path(s) to remove from the prefab. Supports single string or array for batch deletion (e.g. 'Child1' or ['Child1', 'Child1/Grandchild'])."] | None = None,
     component_properties: Annotated[dict[str, dict[str, Any]], "Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {\"Rigidbody\": {\"mass\": 5.0}, \"MyScript\": {\"health\": 100}}. Supports object references via {\"guid\": \"...\"}, {\"path\": \"Assets/...\"}, or {\"instanceID\": 123}. For Sprite sub-assets: {\"guid\": \"...\", \"spriteName\": \"<name>\"}. Single-sprite textures auto-resolve."] | None = None,
 ) -> dict[str, Any]:
+    if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
+        return {"success": False, "message": f"Unknown prefab action: '{action}'."}
     # Back-compat: map 'name' → 'target' for create_from_gameobject (Unity accepts both)
     if action == "create_from_gameobject" and target is None and name is not None:
         target = name
@@ -158,6 +161,34 @@ async def manage_prefabs(
                 if not isinstance(child, dict):
                     return None, f"{prefix} must be a dict with child properties (name, primitive_type, position, etc.), got {type(child).__name__}"
                 child_params = dict(child)
+                if not isinstance(child_params.get("name"), str) or not child_params["name"]:
+                    return None, f"{prefix}.name is required."
+                for field in ("sourcePrefabPath", "source_prefab_path", "primitiveType", "primitive_type"):
+                    if field in child_params and child_params[field] is not None and not isinstance(child_params[field], str):
+                        return None, f"{prefix}.{field} must be a string."
+                source = child_params.get("sourcePrefabPath", child_params.get("source_prefab_path"))
+                primitive = child_params.get("primitiveType", child_params.get("primitive_type"))
+                if source and primitive:
+                    return None, f"{prefix}.source_prefab_path and primitive_type are mutually exclusive."
+                primitive_error = primitive_type_error(primitive, f"{prefix}.primitive_type")
+                if primitive_error:
+                    return None, primitive_error
+                for flag in ("setActive", "set_active"):
+                    if flag in child_params:
+                        try:
+                            coerce_bool(child_params[flag])
+                        except ValueError as exc:
+                            return None, f"Invalid {prefix}.{flag}: {exc}"
+                components = child_params.get("componentsToAdd", child_params.get("components_to_add"))
+                if components is not None:
+                    if not isinstance(components, list):
+                        return None, f"{prefix}.components_to_add must be an array."
+                    for item in components:
+                        if isinstance(item, str) and item:
+                            continue
+                        if isinstance(item, dict) and isinstance(item.get("typeName"), str) and item["typeName"]:
+                            continue
+                        return None, f"{prefix}.components_to_add entries must be strings or objects with typeName."
                 for vec_field in ("position", "rotation", "scale"):
                     if vec_field in child_params and child_params[vec_field] is not None:
                         vec_val, vec_err = normalize_vector3(child_params[vec_field], f"{prefix}.{vec_field}")

@@ -56,8 +56,8 @@ async def test_look_at_string_target(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_look_at_without_target_still_sends(monkeypatch):
-    """look_at without look_at_target should still send the command (C# will error)."""
+async def test_look_at_without_target_rejected_before_preflight(monkeypatch):
+    """A missing local required parameter must not reach readiness or transport."""
     captured = {}
 
     async def fake_send(cmd, params, **kwargs):
@@ -65,6 +65,9 @@ async def test_look_at_without_target_still_sends(monkeypatch):
         return {"success": False, "message": "look_at_target is required"}
 
     monkeypatch.setattr(manage_go_mod, "async_send_command_with_retry", fake_send)
+    async def unexpected_preflight(*args, **kwargs):
+        pytest.fail("Missing look_at_target reached preflight")
+    monkeypatch.setattr(manage_go_mod, "preflight", unexpected_preflight)
 
     resp = await manage_go_mod.manage_gameobject(
         ctx=DummyContext(),
@@ -72,6 +75,6 @@ async def test_look_at_without_target_still_sends(monkeypatch):
         target="MainCamera",
     )
 
-    p = captured["params"]
-    assert p["action"] == "look_at"
-    assert "look_at_target" not in p
+    assert resp["success"] is False
+    assert "look_at_target" in resp["message"]
+    assert not captured

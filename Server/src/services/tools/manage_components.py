@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -18,12 +18,6 @@ from services.tools.preflight import preflight
 _VALUE_OMITTED = object()
 # Keep the public value optional/nullable while distinguishing a JSON null from omission.
 _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
-
-
-def _reject_boolean_component_index(value: Any) -> Any:
-    if isinstance(value, bool):
-        raise ValueError("component_index must be an integer, not a boolean.")
-    return value
 
 
 @mcp_for_unity_tool(
@@ -81,7 +75,6 @@ async def manage_components(
                 "Use the components resource to discover indices. If omitted, targets the first instance."
             )
         ),
-        BeforeValidator(_reject_boolean_component_index),
     ] = None,
 ) -> dict[str, Any]:
     """
@@ -98,7 +91,7 @@ async def manage_components(
     - Set single property: action="set_property", target="Enemy", component_type="Rigidbody", property="mass", value=5.0
     - Set multiple properties: action="set_property", target="Enemy", component_type="Rigidbody", properties={"mass": 5.0, "useGravity": false}
     """
-    if not action:
+    if action not in {"add", "remove", "set_property"}:
         return {
             "success": False,
             "message": "Missing required parameter 'action'. Valid actions: add, remove, set_property"
@@ -128,6 +121,9 @@ async def manage_components(
     # Bare Python calls receive FieldInfo; SDK calls receive the factory marker.
     if action == "set_property" and property and (value is _VALUE_DEFAULT or value is _VALUE_OMITTED):
         return {"success": False, "message": "Missing required parameter 'value' for single property. Use null to clear an object reference."}
+
+    if action == "set_property" and not property and not properties:
+        return {"success": False, "message": "Either 'property'+'value' or nonempty 'properties' is required for 'set_property'."}
 
     unity_instance = await get_unity_instance_from_context(ctx)
     gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)

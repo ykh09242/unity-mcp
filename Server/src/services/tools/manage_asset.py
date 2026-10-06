@@ -55,6 +55,18 @@ async def manage_asset(
     page_number: Annotated[int | str,
                            "Page number for pagination (1-based)."] | None = None,
 ) -> dict[str, Any]:
+    action_l = (action or "").lower()
+    if action_l not in {"import", "create", "modify", "delete", "duplicate", "move", "rename", "search", "get_info", "create_folder", "get_components"}:
+        return {"success": False, "message": f"Unknown asset action: '{action}'."}
+    if action_l != "search" and not path:
+        return {"success": False, "message": f"Action '{action}' requires parameter 'path'."}
+    if action_l == "create" and not asset_type:
+        return {"success": False, "message": "Action 'create' requires parameter 'asset_type'."}
+    if action_l == "create" and asset_type.lower() not in {"folder", "material", "physicsmaterial"}:
+        return {"success": False, "message": f"Creating asset type '{asset_type}' is not supported. Supported: Folder, Material, PhysicsMaterial."}
+    if action_l in {"move", "rename"} and not destination:
+        return {"success": False, "message": f"Action '{action}' requires parameter 'destination'."}
+
     try:
         page_size = coerce_int(page_size)
     except ValueError as exc:
@@ -64,7 +76,7 @@ async def manage_asset(
     except ValueError as exc:
         return {"success": False, "message": f"Invalid 'page_number': {exc}"}
 
-    if (action or "").lower() == "search":
+    if action_l == "search":
         try:
             page_size, page_number = validate_page(page_size, page_number, preview=generate_preview)
         except ValueError as exc:
@@ -75,19 +87,13 @@ async def manage_asset(
     if parse_error:
         logger.error("manage_asset: invalid properties")
         return {"success": False, "message": parse_error}
-
-    unity_instance = await get_unity_instance_from_context(ctx)
-    # Wait/refresh only after rejecting invalid local payloads: preflight can
-    # perform editor I/O, refresh assets and wait for compilation.
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
-    if gate is not None:
-        return gate.model_dump()
+    if action_l == "modify" and properties is None:
+        return {"success": False, "message": "Action 'modify' requires parameter 'properties'."}
 
     # --- Payload-safe normalization for common LLM mistakes (search) ---
     # Unity's C# handler treats `path` as a folder scope. If a model mistakenly puts a query like
     # "t:MonoScript" into `path`, Unity will consider it an invalid folder and fall back to searching
     # the entire project, which is token-heavy. Normalize such cases into search_pattern + Assets scope.
-    action_l = (action or "").lower()
     if action_l == "search":
         try:
             raw_path = (path or "").strip()
@@ -124,6 +130,11 @@ async def manage_asset(
 
     # Remove None values to avoid sending unnecessary nulls
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    if gate is not None:
+        return gate.model_dump()
 
     # Get the current asyncio event loop
     loop = asyncio.get_running_loop()
