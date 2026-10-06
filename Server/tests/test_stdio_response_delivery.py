@@ -1,9 +1,11 @@
 """Actual SDK stdio writer backpressure and typed response ownership."""
 import asyncio
+import gc
 import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from contextlib import asynccontextmanager
 
 import pytest
 from mcp.shared.message import SessionMessage
@@ -14,6 +16,22 @@ from services.tools.shared_read_budget import SharedReadBudget
 from services.tools.shared_tool_reads import SharedToolReads
 from transport.response_limit_middleware import ResponseLimitMiddleware
 from transport.stdio_response_delivery import StdioResponseDelivery, retained_stdio_server, stdio_delivery
+
+
+@pytest.fixture(autouse=True)
+def collect_owned_streams():
+    """Detect deferred stream-finalizer warnings in their owning test."""
+    yield
+    gc.collect()
+
+
+@asynccontextmanager
+async def owned_stdio_streams(stdin, stdout):
+    # These direct SDK tests replace the protocol dispatcher, which normally
+    # owns/closes both consumer endpoints, including on cancellation/failure.
+    async with retained_stdio_server(stdin, stdout) as (read, write):
+        async with read, write:
+            yield read, write
 
 
 class IdleInput:
@@ -81,7 +99,7 @@ async def test_actual_sdk_keeps_source_and_delayed_copy_charged_until_each_flush
         result = await guard.on_message(context(request_id), call_next)
         await write.send(SessionMessage(JSONRPCResponse(jsonrpc="2.0", id=request_id, result=result)))
 
-    async with retained_stdio_server(stdin, stdout) as (_, write):
+    async with owned_stdio_streams(stdin, stdout) as (_, write):
         first = asyncio.create_task(produce(7, write))
         entered, resume = stdout.gate(7)
         await asyncio.wait_for(entered.wait(), 3)
@@ -122,7 +140,7 @@ async def test_cancelled_producer_releases_only_before_handoff_and_disconnect_dr
     owner_ref = []
 
     async def serve():
-        async with retained_stdio_server(stdin, stdout) as (_, write):
+        async with owned_stdio_streams(stdin, stdout) as (_, write):
             async def producer():
                 async def next_call(_):
                     from models.response_limits import response_owner
@@ -187,7 +205,7 @@ async def test_duplicate_sdk_error_flush_cannot_release_original_active_producer
     stdin, stdout = IdleInput(), BlockedOutput("none")
     ready, complete = asyncio.Event(), asyncio.Event()
     guard = ResponseLimitMiddleware()
-    async with retained_stdio_server(stdin, stdout) as (_, write):
+    async with owned_stdio_streams(stdin, stdout) as (_, write):
         async def first():
             async def next_call(_):
                 from models.response_limits import response_owner
@@ -234,7 +252,7 @@ async def test_actual_sdk_writer_failure_releases_delivery(phase):
                 await fail.wait()
                 raise BrokenPipeError("owned reader disconnected")
     with pytest.raises(BaseExceptionGroup):
-        async with retained_stdio_server(stdin, BrokenOutput()) as (_, write):
+        async with owned_stdio_streams(stdin, BrokenOutput()) as (_, write):
             async def producer():
                 async def next_call(_):
                     from models.response_limits import response_owner
@@ -268,7 +286,7 @@ def test_unsupported_sdk_stdout_shape_fails_before_claim(monkeypatch):
 async def test_missing_stdio_request_identity_rejects_owned_result_without_fallback():
     ledger = {"copy": 100}
     stdin, stdout = IdleInput(), BlockedOutput("none")
-    async with retained_stdio_server(stdin, stdout) as (_, write):
+    async with owned_stdio_streams(stdin, stdout) as (_, write):
         async def next_call(_):
             from models.response_limits import response_owner
             response_owner.get().entries.append((ledger, "copy"))
@@ -286,7 +304,7 @@ async def test_cancel_during_sdk_channel_send_retains_ambiguous_handoff_until_di
     stdin, stdout = IdleInput(), BlockedOutput("write")
     ready = asyncio.Event()
     async def serve():
-        async with retained_stdio_server(stdin, stdout) as (_, write):
+        async with owned_stdio_streams(stdin, stdout) as (_, write):
             async def produce(request_id):
                 async def next_call(_):
                     from models.response_limits import response_owner
