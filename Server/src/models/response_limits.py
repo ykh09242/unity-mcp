@@ -94,10 +94,10 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
         retained += 128 + 2 * sys.getsizeof(item)
         if retained > max_retained:
             return False
+        item_type = type(item)
         if encoded_bound is not None:
             # Only exact builtins have predictable length/serialization. Models,
             # URLs and subclasses keep the existing streaming encoder behavior.
-            item_type = type(item)
             if item_type is str:
                 encoded_bound += 6 * len(item) + 2
             elif item_type is int:
@@ -115,6 +115,24 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
                 encoded_bound = None
             if encoded_bound is not None and encoded_bound > fast_limit:
                 encoded_bound = None
+        # Common JSON nodes need no model/URL/subclass dispatch. Keep the
+        # original ordered fallback below for user-defined types and their hooks.
+        if item_type is str:
+            if len(item) > max_bytes:
+                return False
+            retained += 4 * len(item)
+            return retained <= max_retained
+        if item_type is dict:
+            return all(isinstance(key, str) and visit(key, depth + 1)
+                       and visit(child, depth + 1) for key, child in item.items())
+        if item_type is list or item_type is tuple:
+            return all(visit(child, depth + 1) for child in item)
+        if item_type is float:
+            return math.isfinite(item)
+        if item_type is int:
+            return item.bit_length() <= 14_000
+        if item_type is bool or item is None:
+            return True
         if isinstance(item, BaseModel):
             return visit(item.__dict__, depth)
         if isinstance(item, AnyUrl):
