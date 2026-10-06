@@ -235,27 +235,58 @@ class PortDiscovery:
         Returns:
             List of UnityInstanceInfo objects for all discovered instances
         """
+        return PortDiscovery._discover_status_entries(PortDiscovery._read_status_entries())
+
+    @staticmethod
+    def _read_status_entries() -> list[tuple[Path, dict, datetime]]:
+        """Read the metadata snapshot before deciding which ports to probe."""
+        entries = []
+        base = PortDiscovery.get_registry_dir()
+        for filename in glob.glob(str(base / "unity-mcp-status-*.json")):
+            try:
+                path = Path(filename)
+                modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+                with path.open('r') as stream:
+                    data = json.load(stream)
+                if isinstance(data, dict):
+                    entries.append((path, data, modified))
+            except Exception as exc:
+                logger.debug(f"Failed to parse status file {filename}: {exc}")
+        return entries
+
+    @staticmethod
+    def discover_unity_instance(instance_id: str) -> UnityInstanceInfo | None:
+        """Probe an exact target and all identities competing for its ports.
+
+        A pong only identifies the protocol. All status metadata must therefore
+        be considered before reusing the full scan's newest viable port owner.
+        Missing or displaced targets let the caller fall back to a full scan.
+        """
+        entries = PortDiscovery._read_status_entries()
+        target_ports = set()
+        for path, data, _ in entries:
+            hash_value = path.name.replace('unity-mcp-status-', '').replace('.json', '')
+            name = PortDiscovery._extract_project_name(data.get('project_path', ''))
+            port = data.get('unity_port')
+            if f"{name}@{hash_value}" == instance_id and isinstance(port, int):
+                target_ports.add(port)
+        competing_entries = [entry for entry in entries
+                             if isinstance(entry[1].get('unity_port'), int)
+                             and entry[1]['unity_port'] in target_ports]
+        instances = PortDiscovery._discover_status_entries(competing_entries)
+        return next((instance for instance in instances if instance.id == instance_id), None)
+
+    @staticmethod
+    def _discover_status_entries(entries: list[tuple[Path, dict, datetime]]) -> list[UnityInstanceInfo]:
+        """Apply the same liveness, reload and metadata precedence to any scan."""
         instances_by_port: dict[int, tuple[UnityInstanceInfo, datetime]] = {}
         # A scan is one liveness snapshot: legacy/duplicate status files for a
         # port do not need additional handshakes. Metadata still competes below.
         probes_by_port: dict[int, bool] = {}
-        base = PortDiscovery.get_registry_dir()
-
-        # Scan all status files
-        status_pattern = str(base / "unity-mcp-status-*.json")
-        status_files = glob.glob(status_pattern)
-
-        for status_file_path in status_files:
+        for status_path, data, file_mtime in entries:
             try:
-                status_path = Path(status_file_path)
-                file_mtime = datetime.fromtimestamp(
-                    status_path.stat().st_mtime, timezone.utc)
-
-                with status_path.open('r') as f:
-                    data = json.load(f)
-
                 # Extract hash from filename: unity-mcp-status-{hash}.json
-                filename = os.path.basename(status_file_path)
+                filename = status_path.name
                 hash_value = filename.replace(
                     'unity-mcp-status-', '').replace('.json', '')
 
@@ -325,7 +356,7 @@ class PortDiscovery:
 
             except Exception as e:
                 logger.debug(
-                    f"Failed to parse status file {status_file_path}: {e}")
+                    f"Failed to parse status file {status_path}: {e}")
                 continue
 
         deduped_instances = [entry[0] for entry in sorted(

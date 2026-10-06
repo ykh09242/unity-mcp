@@ -158,6 +158,22 @@ class UnityInstanceMiddleware(Middleware):
 
         transport = (config.transport_mode or "stdio").lower()
 
+        instances = None
+        # Local stdio exact IDs need fresh target metadata, not unrelated port
+        # probes. Leave PluginHub discovery and tenant visibility unchanged.
+        if transport != "http" and not config.http_remote_hosted and not PluginHub.is_configured():
+            from transport.legacy.unity_connection import get_unity_connection_pool, UnityConnectionPool
+            if UnityConnectionPool.is_exact_instance_id(value):
+                pool = get_unity_connection_pool()
+                try:
+                    target = pool.resolve_instance(value, force_refresh=True)
+                    if target.id == value:
+                        return value
+                except ConnectionError:
+                    pass  # Preserve the middleware's full inventory error below.
+                # A missing exact ID already triggered full fallback discovery.
+                instances = pool.discover_all_instances()
+
         # Port number (stdio only) — resolve to Name@hash via status file lookup
         if value.isdigit():
             if transport == "http":
@@ -178,7 +194,8 @@ class UnityInstanceMiddleware(Middleware):
                 f"No Unity instance found on port {value}. Available: {available}."
             )
 
-        instances = await self._discover_instances(ctx)
+        if instances is None:
+            instances = await self._discover_instances(ctx)
         ids = {
             getattr(inst, "id", None): inst
             for inst in instances

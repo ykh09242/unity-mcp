@@ -607,7 +607,8 @@ class UnityConnectionPool:
     def __init__(self):
         self._connections: dict[str, UnityConnection] = {}
         self._known_instances: dict[str, UnityInstanceInfo] = {}
-        self._last_full_scan: float = 0
+        self._last_full_scan: float | None = None
+        self._target_refreshes: dict[str, float] = {}
         self._scan_interval: float = 5.0  # Cache for 5 seconds
         self._pool_lock = threading.Lock()
         self._scan_lock = threading.Lock()
@@ -634,7 +635,8 @@ class UnityConnectionPool:
             now = time.time()
 
             # Return cached results if valid
-            if not force_refresh and (now - self._last_full_scan) < self._scan_interval:
+            if (not force_refresh and self._last_full_scan is not None
+                    and (now - self._last_full_scan) < self._scan_interval):
                 logger.debug(
                     f"Returning cached Unity instances (age: {now - self._last_full_scan:.1f}s)")
                 return list(self._known_instances.values())
@@ -647,10 +649,57 @@ class UnityConnectionPool:
             with self._pool_lock:
                 self._known_instances = {inst.id: inst for inst in instances}
                 self._last_full_scan = time.time()
+                self._target_refreshes.clear()
 
             logger.info(
                 f"Found {len(instances)} Unity instances: {[inst.id for inst in instances]}")
             return instances
+
+    @staticmethod
+    def is_exact_instance_id(identifier: str | None) -> bool:
+        """Only canonical full IDs can avoid global selection discovery."""
+        return isinstance(identifier, str) and re.fullmatch(
+            r'[^@/\\]+@[0-9a-fA-F]{8}(?:[0-9a-fA-F]{8})?', identifier.strip()) is not None
+
+    def resolve_instance(self, instance_identifier: str | None = None,
+                         force_refresh: bool = False) -> UnityInstanceInfo:
+        """Resolve metadata without connecting or mistaking a target for a full scan."""
+        if config.http_remote_hosted:
+            raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
+        if self.is_exact_instance_id(instance_identifier):
+            identifier = instance_identifier.strip()
+            with self._scan_lock:
+                now = time.time()
+                if (not force_refresh and self._last_full_scan is not None
+                        and now - self._last_full_scan < self._scan_interval):
+                    return self._resolve_instance_id(identifier, list(self._known_instances.values()))
+                refreshed = self._target_refreshes.get(identifier)
+                if (not force_refresh and refreshed is not None
+                        and now - refreshed < self._scan_interval):
+                    return self._known_instances[identifier]
+                target = PortDiscovery.discover_unity_instance(identifier)
+                if target is not None:
+                    with self._pool_lock:
+                        # A refreshed port owner displaces stale metadata, while
+                        # retaining the proven target root for editor resources.
+                        displaced = [key for key, instance in self._known_instances.items()
+                                     if instance.port == target.port or key == target.id]
+                        known_instances = {key: instance for key, instance in self._known_instances.items()
+                                           if key not in displaced}
+                        for key in displaced:
+                            self._target_refreshes.pop(key, None)
+                        known_instances[target.id] = target
+                        # Publish atomically for resource readers that iterate
+                        # metadata without holding the pool's internal locks.
+                        self._known_instances = known_instances
+                        self._target_refreshes[target.id] = time.time()
+                        # A partial refresh cannot certify a global inventory.
+                        self._last_full_scan = None
+                    return target
+        # Ambiguous, noncanonical, missing and displaced selectors keep the
+        # existing global discovery and helpful selection errors.
+        return self._resolve_instance_id(
+            instance_identifier, self.discover_all_instances(force_refresh=force_refresh))
 
     def _resolve_instance_id(self, instance_identifier: str | None, instances: list[UnityInstanceInfo]) -> UnityInstanceInfo:
         """
@@ -780,11 +829,7 @@ class UnityConnectionPool:
         Raises:
             ConnectionError: If instance cannot be found or connected
         """
-        # Refresh instance list if cache expired
-        instances = self.discover_all_instances()
-
-        # Resolve identifier to specific instance
-        target = self._resolve_instance_id(instance_identifier, instances)
+        target = self.resolve_instance(instance_identifier)
 
         # Return existing connection or create new one
         with self._pool_lock:
