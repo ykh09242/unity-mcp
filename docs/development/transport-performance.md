@@ -2,7 +2,8 @@
 
 The MCP client still uses the standard stdio or Streamable HTTP interface. These
 optimizations affect the internal Unity bridge and server reads; they do not
-change tool parameters or replace MCP JSON-RPC with a private protocol.
+replace MCP JSON-RPC with a private protocol. Existing tool defaults are
+preserved; `read_console` adds an optional response-field selection.
 
 ## Connection negotiation
 
@@ -13,6 +14,27 @@ extensions. Old clients retain text results and ordinary state RPCs; old servers
 do not activate extensions on a new client. The existing legacy TCP path remains
 available.
 
+### Authenticated stdio bridge
+
+External MCP stdio still runs over the client's subprocess pipes; this product
+also has an internal loopback TCP connection from Python to Unity. That internal
+connection now requires a v2 `FRAMING=1 AUTH=HMAC-SHA256` handshake. A fresh server
+generation, per-connection challenge, client nonce and reciprocal server proof
+bind authentication to this connection. Unity verifies the client before
+replacing an established connection. Pending unauthenticated peers are limited
+to 16 and have a three-second authentication deadline.
+
+The launch credential uses the dedicated `MCPForUnity.Stdio:<generation>` user
+credential namespace on Windows. Unix uses an owned private generation directory
+and token file with owner/mode/no-symlink checks. Credentials are not included in
+the banner or proof messages. This authenticates the local bridge; it does not
+encrypt loopback traffic or isolate applications running as the same OS user.
+
+Update the Editor package and its pinned Python server together. Python rejects
+old unauthenticated peers by default. `UNITY_MCP_STDIO_ALLOW_LEGACY=1` deliberately
+allows a genuinely old v1 banner; an advertised v2 authentication failure can
+never trigger fallback. The new Unity bridge always requires authentication.
+
 ## Command processing and JSON
 
 The receiver admits commands into a connection-owned queue and resumes reading
@@ -22,10 +44,20 @@ Deadlines start at receipt, so an expired queued command never executes.
 
 Commands retain their arrival order. If an already-started asynchronous handler
 outlives its response deadline, the next command waits for actual completion.
-Disconnect releases connection-owned waits and prevents stale sends. It cannot
-undo an already-started operation: legacy Unity handlers do not accept a
-cancellation token. Commands are not automatically replayed after uncertain
-outcomes.
+Disconnect releases connection-owned waits and prevents stale sends. Opt-in
+asynchronous handlers accept a `CancellationToken`; `batch_execute` checks it
+between children and passes it to cooperative handlers. Legacy handlers still
+settle before a following mutation starts. Cancellation cannot undo a completed
+side effect. Commands are not automatically replayed after uncertain outcomes.
+
+With negotiated `command_cancel_v1`, caller cancellation or an expired server
+deadline sends `{"type":"cancel","id":"command-uuid"}` to the captured
+connection generation. Old peers receive no new control messages. Duplicate or
+completed IDs are harmless, and stale sockets cannot cancel replacement work.
+Python releases pending/raw accounting before bounded, shielded cancellation
+delivery. This explicit control message is a WebSocket extension; the stdio TCP
+path currently propagates disconnection and local deadlines, not same-socket
+active cancellation messages.
 
 Synchronous results are projected to a JSON token on the Unity main thread and
 serialized with their final response envelope. This removes an intermediate
@@ -81,7 +113,7 @@ A complete binary message is at most 65,536 bytes. The reassembled UTF-8 payload
 is the original complete `command_result` JSON envelope; its command ID must
 match the transfer ID. Each frame releases the send lock, allowing pong and
 state messages between chunks. This is message multiplexing on one WebSocket,
-not a second connection, compression, or a reduction in model input tokens.
+not a second connection or a reduction in model input tokens.
 
 The server requires a pending command on the exact connection generation before
 allocating a buffer. It validates size, chunk count, offsets, JSON bounds and the
@@ -95,6 +127,44 @@ chunks are ignored without disturbing other commands. Malformed active
 transfers close the offending connection; capacity refusals return a bounded
 error and leave it usable. Legacy non-UUID IDs retain text fallback.
 
+Unity encodes the final JSON string incrementally into bounded UTF-8 frames,
+preserving surrogate handling without allocating another full response byte
+array. Small/legacy results retain a single text message.
+
+### Optional `large_result_gzip_v1`
+
+Compression requires both `large_result_v1` and `large_result_gzip_v1` in the
+registration acknowledgement. Set `UNITY_MCP_RESULT_COMPRESSION=gzip` in the
+Unity Editor process environment to opt in; it is disabled by default on local
+and remote connections. Restart/relaunch the Editor with the intended environment.
+At least 1 MiB of decoded data and at least 10% estimated size savings are
+required. A bounded prefix probe skips low-gain data such as base64 previews;
+the completed compressed representation must also meet the savings threshold.
+
+```json
+{"type":"result_start","id":"00000000-0000-0000-0000-000000000001","total_bytes":1200,"chunk_count":1,"encoding":"gzip","decoded_bytes":1048576}
+```
+
+`total_bytes` and frame offsets refer to compressed wire bytes. `decoded_bytes`
+is the exact uncompressed JSON length, still capped at 32 MiB. Identity starts
+remain unchanged. The decoder writes one gzip member directly into the reserved
+decoded buffer, uses bounded output chunks, and rejects bad CRC, truncated,
+trailing, multi-member or length-mismatched data. Before allocation it reserves
+`5 * decoded_bytes + 4096 + 512 KiB` against the shared result budgets. The
+separate 64 MiB assembly cap counts decoded buffers; decompressor working space
+is included in the shared reservation. Compression reduces wire traffic, not
+the JSON content presented to an MCP client or model.
+
+## Console response projection
+
+Use `read_console(format="json", fields=["type", "message"])` to omit file,
+line and stack fields. `type` and `message` are required; `stackTrace` additionally
+requires `include_stacktrace=true`. A JSON-encoded list is also accepted.
+Projection is restricted to `get` with `json` or `detailed` format. Omitting
+`fields` retains the existing response schema. Filtering/pagination still scan
+the same native log entries, but only entries in the requested page are split
+and formatted. Projection does not add an Editor call.
+
 ## Shared reads
 
 On the HTTP/WebSocket bridge, positive `get_test_job.wait_timeout` callers can
@@ -104,18 +174,44 @@ snapshot is reused for at most two seconds while long-wait callers remain
 active. Immediate reads remain independent. Each caller keeps its own deadline
 and receives a detached result. The shared fetch owns its original response
 independently of any caller. Each detached copy reserves capacity before it is
-created and keeps that reservation until its caller's response is delivered or
-cancelled. The final waiter releases shared work and its retained snapshot.
+created and keeps that reservation through delivery. Cancellation releases it
+when delivery is known not to retain the response; ambiguous stdio handoffs use
+the conservative lifetime described below. The final waiter releases shared
+work and its retained snapshot.
 
 Concurrent batch settings cache misses share one read; each batch dispatch still
 executes independently and preserves its command order and `failFast` behavior.
 The existing five-second settings cache remains generation-aware. Missing
 remote identity or registered connection cannot create a shared cross-user
 entry. Shared registries are bounded to 128 identities per event loop; overflow
-uses independent reads. The legacy stdio/TCP bridge does not expose a reliable
-connection generation to these callers, so it uses fresh reads instead of this
-sharing and settings cache. This adds a settings RPC per legacy batch rather
-than risking reuse after a same-project reconnect.
+uses independent reads. Authenticated stdio/TCP connections also expose a
+server/connection generation for shared job and batch-settings reads. Missing
+authentication, a busy connection gate, a closed socket, or a changed generation
+prevents a shared cache hit. Legacy opt-in connections retain independent reads.
+Ordinary stdio state reads use at most 128 slots with one-second freshness;
+authoritative readiness and refresh reads invalidate and bypass this cache.
+No unsolicited state frames are introduced on the TCP stream.
+
+When a shared source has no HTTP transport reservation, a process-wide 256 MiB
+fallback budget admits its retained response and each detached copy before
+allocation, with at most 1,024 charges. Source expiry and consumer delivery have
+independent ownership; one caller cannot release another caller's copy.
+
+For stdio, a producer finishing its SDK queue send does not imply that stdout
+has finished writing. A connection-owned delivery registry retains each charged
+result until the actual stdout write and flush complete. It preserves integer
+and string request IDs and the SDK's stdout descriptor protection. The adapter
+targets the verified FastMCP 4.0.11 / MCP 2.3.0 runner and fails clearly for an
+unsupported runner or stream shape; dependency upgrades must rerun its real
+subprocess and blocked-writer tests.
+
+Duplicate active IDs are rejected before tool execution. A duplicate error or
+cancellation during an uncertain SDK handoff can make output ownership
+ambiguous, so that identity's charges remain until the stdio connection closes.
+The registry admits at most 256 identities and retains the aggregate byte
+budget. Repeated ambiguous requests can exhaust this bounded capacity and cause
+refusals until the client restarts its stdio connection. Normal successful
+responses release their charges after flush.
 
 ## Evidence and further choices
 
@@ -139,11 +235,61 @@ C#, Go and Rust currently have [Tier 1 official MCP SDKs](https://modelcontextpr
 Python preserves the existing FastMCP behavior and tests. C# is the first
 alternative to evaluate for shared contracts and Unity development experience;
 Go is a candidate for standalone server deployment. Rust is a candidate for a
-measured codec or data-processing hotspot. No cross-language performance claim
-has been established by these tests.
+measured codec or data-processing hotspot. The representative comparison below
+does not establish full product parity or predict real Editor latency.
 
 A separate control/data WebSocket pair could avoid data backlog on the control
 connection, but needs paired authentication, generation ownership and cleanup.
 Local Named Pipes or Unix sockets are additional deployment options. They do
 not remove Unity main-thread work, JSON volume, or unnecessary polling. Evaluate
 them against the optimized persistent connection before adding a new transport.
+
+The [owned transport benchmark](../../tools/tests/fixtures/transport_bench/README.md)
+compares real MCP stdio/HTTP subprocess paths through the production TCP/WS
+routing with deterministic simulated Editor responses. It separates measured
+queue/work/peer encoding from the combined wire/framework residual and records
+payload equality, cancellation cleanup, reconnect and source fingerprints.
+It excludes real Editor execution, full server startup/catalog and state-resource
+caching; its results are not a before/after product speedup.
+
+On Windows 10 with Python 3.14.6, FastMCP 4.0.11 and MCP 2.3.0, 30 warmed calls
+per workload with no synthetic delay produced these client latency medians:
+
+| Workload | stdio | Local HTTP |
+| --- | ---: | ---: |
+| Small console result | 2.63 ms | 4.83 ms |
+| State command | 2.93 ms | 5.65 ms |
+| 4 MiB console result | 292.64 ms | 117.66 ms |
+| Completed test job | 2.72 ms | 3.45 ms |
+
+Both paths returned equal payloads. HTTP negotiated uncompressed chunks, and
+its readiness checks add RPCs for the gated console/state tools. Runs with a
+requested 2 ms synthetic delay also include Windows timer granularity, so their
+larger differences are not estimates of protocol overhead alone. Small calls
+favored stdio here; large results favored the complete HTTP path. Repeat the
+owned benchmark on the target machine before choosing a transport for latency.
+
+Separate same-output fixtures measured console projection from 9,448 to 6,698
+bytes for a 50-entry page and C# sender allocation from 4,936,616 to 138,640 bytes
+for roughly 4.86 MB of JSON. The latter excludes the existing JSON string. With
+512 KiB/s target pacing, negotiated gzip reduced complete receive/validation
+time from 10,020 to 459 ms for repetitive JSON; low-gain base64 data bypassed
+compression and showed no material improvement. These component measurements
+do not predict end-to-end Editor speedups.
+
+The isolated Editor runner, `tools/unity_editor_transport_qa.py`, snapshots the
+package and runs explicitly selected tests against owned endpoints. Its final
+Unity 6000.0.69f1 run passed 54 checks, including actual domain reload,
+authentication, cancellation, reconnection, large Unicode chunks and console
+projection. The dedicated integration fixture requires the runner's child-only
+`UNITY_MCP_OWNED_TRANSPORT_TESTS=1`; ordinary Editor runs skip those 13 cases
+without starting or stopping a bridge. Existing tests that alter global
+preferences are outside this owned suite.
+
+The [transport experiment results](../../tools/experiments/transport/RESULTS.md)
+include actual Windows Named Pipe and Unix socket endpoints, paired control/data
+streams under forced backpressure, and an official C# MCP SDK subset with schema
+and output equivalence checks. All three product migrations are deferred:
+stream microbenchmarks exclude Unity/MCP work, and the C# subset has different
+binding costs and substantial observed memory retention after large responses.
+The probes and measured limits are retained for a future justified decision.
