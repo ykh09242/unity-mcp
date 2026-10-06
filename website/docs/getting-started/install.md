@@ -8,11 +8,11 @@ description: Install the stable fork, authenticate a client, and verify the Unit
 
 # Install And Connect
 
-Install stable **Unity MCP (ykh09242) 1.1.2**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
+Install stable **Unity MCP (ykh09242) 1.1.3**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
 ## Before you start
 
-- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.2).
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.3).
 - Git available to Unity Package Manager.
 - Python **3.10+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
@@ -24,13 +24,13 @@ Install stable **Unity MCP (ykh09242) 1.1.2**, then connect an MCP client to you
 In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.2
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.3
 ```
 
-This tag identifies stable `1.1.2`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
+This tag identifies stable `1.1.3`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#de00ca2c77008d1f6738adb5cd6dc8103fb581af
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#4fd56a7f30bf8e1f5acf371693dd6aeeee20a7c7
 ```
 
 `#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
@@ -58,11 +58,13 @@ resolved as a package dependency for UPM waits; server connections remain indepe
 of window lifetime.
 :::
 
-Version **1.1.2** fixes **Install Skills** selecting the missing `main` branch for
-stable fork installs, the oversized **Script Validation** dropdown, and window
-colors that did not follow the Editor theme. Python remains at **1.1.1** with the
-same immutable source. Native Editor rendering and UPM installation have not been
-runtime-tested; see the release notes for the compile and managed-test evidence.
+Version **1.1.3** fixes Windows server installation failing with **Filename too
+long** during Git checkout. It installs the same Python **1.1.1** commit through
+a GitHub source archive, without changing global Git/OS settings. Clear any
+unintended server source override and regenerate stale stdio client configurations
+after updating. The archive is cached for repeat launches. Native Editor rendering
+and UPM installation have not been runtime-tested; see the release notes for
+bootstrap, compile and managed-test evidence.
 
 ## 3. Configure your client
 

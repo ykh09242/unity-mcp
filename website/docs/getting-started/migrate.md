@@ -25,7 +25,7 @@ The Python distribution is `ykh09242-unity-mcp-server`; executables remain `mcp-
 
 | Source | What it selects |
 |---|---|
-| `#ykh09242-v1.1.2` | The current stable fork release tag. |
+| `#ykh09242-v1.1.3` | The current stable fork release tag. |
 | Full 40-character SHA | A commit-addressed Unity package revision. |
 | `#beta` | The moving development branch, not an immutable release. |
 | Installed `mcpServerSource` | Matching Python source at a full SHA and `Server` subdirectory. |
