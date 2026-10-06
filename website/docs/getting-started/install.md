@@ -8,11 +8,11 @@ description: Install the stable fork, authenticate a client, and verify the Unit
 
 # Install And Connect
 
-Install stable **Unity MCP (ykh09242) 1.1.3**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
+Install stable **Unity MCP (ykh09242) 1.1.4**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
 ## Before you start
 
-- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.3).
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.4).
 - Git available to Unity Package Manager.
 - Python **3.11+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
@@ -24,13 +24,13 @@ Install stable **Unity MCP (ykh09242) 1.1.3**, then connect an MCP client to you
 In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.3
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.4
 ```
 
-This tag identifies stable `1.1.3`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
+This tag identifies stable `1.1.4`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#4fd56a7f30bf8e1f5acf371693dd6aeeee20a7c7
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#694e2c067e6fe4f741a9bb2bf549f329445f16b2
 ```
 
 `#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
@@ -58,13 +58,20 @@ resolved as a package dependency for UPM waits; server connections remain indepe
 of window lifetime.
 :::
 
-Version **1.1.3** fixes Windows server installation failing with **Filename too
-long** during Git checkout. It installs the same Python **1.1.1** commit through
-a GitHub source archive, without changing global Git/OS settings. Clear any
-unintended server source override and regenerate stale stdio client configurations
-after updating. The archive is cached for repeat launches. Native Editor rendering
-and UPM installation have not been runtime-tested; see the release notes for
-bootstrap, compile and managed-test evidence.
+Version **1.1.4** requires **Python 3.11+** and explicitly requests it in generated
+launch commands. Python 3.10 is no longer supported: a dependency's `StrEnum`
+import could fail only when the server registered its tools, even when `--help`
+worked. The updated Python **1.1.4** server refreshes FastMCP/MCP dependencies and
+uses the standard-library TOML reader. Install a supported interpreter with
+`uv python install 3.11`, clear unintended server source overrides, and regenerate
+existing stdio client configurations after updating. Custom commands selecting
+Python 3.10 must also be updated.
+
+The **1.1.3** Windows **Filename too long** fix remains: the server installs from
+a commit-addressed GitHub archive without a Git checkout or global Git/OS changes.
+The archive is cached for repeat launches. Native Editor rendering and UPM
+installation have not been runtime-tested; see the release notes for startup,
+compile and managed-test evidence.
 
 ## 3. Configure your client
 

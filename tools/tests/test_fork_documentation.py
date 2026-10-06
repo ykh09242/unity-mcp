@@ -88,7 +88,7 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
         assert connection["url"] == "http://localhost:8080/mcp"
         assert set(connection["headers"]) == {"X-Unity-MCP-Token"}
     launch = blocks[2]["mcpServers"]["unityMCP"]
-    assert launch["args"] == ["--from", expected, "mcp-for-unity", "--transport", "stdio"]
+    assert launch["args"] == ["--python", ">=3.11", "--from", expected, "mcp-for-unity", "--transport", "stdio"]
     for relative in ("Server/README.md", "website/docs/guides/cli.md"):
         sources = []
         for language, body in FENCES.findall(_read(ROOT / relative)):
@@ -97,6 +97,7 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
             for line in body.splitlines():
                 words = shlex.split(line)
                 if words and words[0] == "uvx" and "--from" in words:
+                    assert words[words.index("--python") + 1] == ">=3.11", (relative, line)
                     sources.append(words[words.index("--from") + 1])
         assert sources, relative
         assert all(source == expected for source in sources), (relative, sources)
