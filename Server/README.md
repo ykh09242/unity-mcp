@@ -43,6 +43,16 @@ Discover `mcpforunity://instances`. Modern sessionless calls use `unity_instance
 
 `manage_tools` activation/deactivation/reset also require a stateful handshake. Local clients can use `sync` to refresh selected-Editor toggles. Hosted catalogs are pushed by authenticated Unity plugins; remote `sync` is unavailable. See [Tool Groups](../website/docs/guides/tool-groups.md).
 
+## Scalar input types
+
+Tool arguments preserve their declared types. Use JSON `true`/`false` for boolean flags and whole JSON integers for integer arguments. Numeric `0`/`1` cannot substitute for booleans; booleans cannot substitute for numbers. Integer arguments reject floating values such as `1.0` and `1.5` instead of rounding or truncating them. Floating arguments accept integers and finite floats, but reject NaN and Infinity.
+
+Parameters explicitly declaring a string alternative retain canonical `"true"`/`"false"`, exact base-10 integer strings, or finite numeric strings as appropriate. An invalid supplied value produces a validation error; it does not silently select the default. Valid `false` and `0` remain intact. These checks also apply to typed collection elements, nested script-edit options/coordinates, texture settings and declared custom-tool parameters.
+
+`batch_execute` retains the Editor's native parameter names and payload shapes. Its commands use the same Unity scalar readers as individual native calls. Arbitrary custom handlers should use `PropertyConversion.ConvertTo<T>(parameters)` or `token.ReadScalar<T>()` instead of Json.NET's permissive primitive conversions; see [Custom Tools](../website/docs/guides/custom-tools.md).
+
+Explicit Unity domain conversions remain supported, including boolean shader toggles and stepped animation-curve tangents.
+
 ## CLI and environment reference
 
 ```bash

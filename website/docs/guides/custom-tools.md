@@ -41,7 +41,7 @@ namespace MyProject.Editor.CustomTools
 
         public static object HandleCommand(JObject @params)
         {
-            var parameters = @params.ToObject<Parameters>();
+            var parameters = PropertyConversion.ConvertTo<Parameters>(@params);
 
             if (string.IsNullOrEmpty(parameters.param1))
             {
@@ -64,6 +64,12 @@ namespace MyProject.Editor.CustomTools
     }
 }
 ```
+
+### Validate typed values
+
+Use `PropertyConversion.ConvertTo<T>(token)` for typed objects, arrays and nested properties, or `token.ReadScalar<T>()` for a scalar. These readers reject boolean/number substitutions, fractional integers, overflow and nonfinite ordinary numbers. `ReadScalar<int?>()` and `ReadScalar<bool?>()` preserve missing/null optional values; use `??` to supply a default. Handle validation exceptions with your normal error response before applying changes.
+
+The server validates declared custom-tool scalar parameters for both global tools and `execute_custom_tool`. Descriptor defaults are strings: integer defaults must represent integers and boolean defaults must be `"true"` or `"false"`. Malformed descriptors are reported without dropping other valid tools. Parameter dictionaries with no declared schema remain the handler's responsibility, including calls through `batch_execute`.
 
 ## Step 2: Refresh Your MCP Client
 
@@ -124,7 +130,7 @@ namespace MyProject.Editor.CustomTools
         public static object HandleCommand(JObject @params)
         {
             // Parse parameters
-            var parameters = @params.ToObject<Parameters>();
+            var parameters = PropertyConversion.ConvertTo<Parameters>(@params);
 
             if (string.IsNullOrEmpty(parameters.filename))
             {

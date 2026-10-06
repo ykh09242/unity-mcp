@@ -3,7 +3,7 @@
 Run with the installed Unity data directory and .NET SDK, for example:
 
 ```powershell
-./Tools/tests/fixtures/tool_property_scalars/RunPropertyScalarRegression.ps1 `
+./tools/tests/fixtures/tool_property_scalars/RunPropertyScalarRegression.ps1 `
   -UnityData 'C:/Program Files/Unity/Hub/Editor/6000.0.69f1/Editor/Data' `
   -SdkPath 'C:/Program Files/dotnet/sdk/10.0.401'
 ```
