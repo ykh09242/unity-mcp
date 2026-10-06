@@ -21,7 +21,7 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
     [TestFixture]
     public class WindowsCharacterizationTests : TransportPreferenceTestBase
     {
-        #region Section 1: EditorPrefsWindow Tests (3 tests)
+        #region Section 1: EditorPrefsWindow Tests
 
         /// <summary>
         /// Current behavior: EditorPrefsWindow caches 2 base UI elements (ScrollView, Container)
@@ -44,23 +44,11 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
         }
 
         /// <summary>
-        /// Current behavior: EditorPrefsWindow uses type detection logic to identify
-        /// whether an EditorPref is Bool, Int, Float, or String.
+        /// EditorPrefsWindow supports explicit Bool, Int, Float, and String value types.
         /// </summary>
         [Test]
-        public void EditorPrefsWindow_UsesTypeDetectionLogic_ForUnknownPrefs()
+        public void EditorPrefsWindow_SupportsExplicitValueTypes()
         {
-            // Document the type detection approach
-            var detectionSteps = new[]
-            {
-                "1. Check knownPrefTypes dictionary for known keys",
-                "2. For unknown keys: EditorPrefs.GetString() first",
-                "3. Try int.TryParse()",
-                "4. Try float.TryParse()",
-                "5. Try bool.TryParse()",
-                "6. Default to String if all fail"
-            };
-
             // Verify the enum exists
             var type = typeof(EditorPrefsWindow);
             var enumType = type.Assembly.GetType("MCPForUnity.Editor.Windows.EditorPrefType");
@@ -72,7 +60,6 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             Assert.Contains("Float", enumValues);
             Assert.Contains("Bool", enumValues);
 
-            Assert.Pass($"Type detection flow: {string.Join("; ", detectionSteps)}");
         }
 
         /// <summary>

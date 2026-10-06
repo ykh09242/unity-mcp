@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -28,6 +29,21 @@ namespace MCPForUnity.Editor.Windows
         private List<EditorPrefItem> currentPrefs = new List<EditorPrefItem>();
         private readonly Dictionary<string, VisualElement> prefRows = new Dictionary<string, VisualElement>();
         private HashSet<string> knownMcpKeys = new HashSet<string>();
+        private Action<string> showSaveError = message => EditorUtility.DisplayDialog("Error", message, "OK");
+
+        private static readonly Dictionary<string, string> cachedPrefNames = new Dictionary<string, string>
+        {
+            { EditorPrefKeys.UseHttpTransport, nameof(EditorConfigurationCache.UseHttpTransport) },
+            { EditorPrefKeys.DebugLogs, nameof(EditorConfigurationCache.DebugLogs) },
+            { EditorPrefKeys.DevModeForceServerRefresh, nameof(EditorConfigurationCache.DevModeForceServerRefresh) },
+            { EditorPrefKeys.UvxPathOverride, nameof(EditorConfigurationCache.UvxPathOverride) },
+            { EditorPrefKeys.GitUrlOverride, nameof(EditorConfigurationCache.GitUrlOverride) },
+            { EditorPrefKeys.HttpBaseUrl, nameof(EditorConfigurationCache.HttpBaseUrl) },
+            { EditorPrefKeys.HttpRemoteBaseUrl, nameof(EditorConfigurationCache.HttpRemoteBaseUrl) },
+            { EditorPrefKeys.ClaudeCliPathOverride, nameof(EditorConfigurationCache.ClaudeCliPathOverride) },
+            { EditorPrefKeys.HttpTransportScope, nameof(EditorConfigurationCache.HttpTransportScope) },
+            { EditorPrefKeys.UnitySocketPort, nameof(EditorConfigurationCache.UnitySocketPort) },
+        };
 
         // Type mapping for known EditorPrefs
         private readonly Dictionary<string, EditorPrefType> knownPrefTypes = new Dictionary<string, EditorPrefType>
@@ -47,6 +63,11 @@ namespace MCPForUnity.Editor.Windows
             { EditorPrefKeys.ProjectScopedToolsLocalHttp, EditorPrefType.Bool },
             { EditorPrefKeys.AllowLanHttpBind, EditorPrefType.Bool },
             { EditorPrefKeys.AllowInsecureRemoteHttp, EditorPrefType.Bool },
+            { EditorPrefKeys.ClientDetailsFoldoutOpen, EditorPrefType.Bool },
+            { EditorPrefKeys.AutoStartOnLoad, EditorPrefType.Bool },
+            { EditorPrefKeys.HttpServerLaunchConfirmed, EditorPrefType.Bool },
+            { EditorPrefKeys.LogRecordEnabled, EditorPrefType.Bool },
+            { EditorPrefKeys.AssetGenAutoNormalize, EditorPrefType.Bool },
             
             // Integer prefs
             { EditorPrefKeys.UnitySocketPort, EditorPrefType.Int },
@@ -55,6 +76,8 @@ namespace MCPForUnity.Editor.Windows
             { EditorPrefKeys.LastStdIoUpgradeVersion, EditorPrefType.Int },
             { EditorPrefKeys.LastLocalHttpServerPid, EditorPrefType.Int },
             { EditorPrefKeys.LastLocalHttpServerPort, EditorPrefType.Int },
+            { EditorPrefKeys.BatchExecuteMaxCommands, EditorPrefType.Int },
+            { EditorPrefKeys.BlenderPort, EditorPrefType.Int },
             
             // String prefs
             { EditorPrefKeys.EditorWindowActivePanel, EditorPrefType.String },
@@ -257,54 +280,33 @@ namespace MCPForUnity.Editor.Windows
                 {
                     case EditorPrefType.Bool:
                         item.Type = EditorPrefType.Bool;
-                        item.Value = item.IsUnset ? "Unset. Default: False" : EditorPrefs.GetBool(key, false).ToString();
+                        item.Value = item.IsUnset ? "Unset" : EditorPrefs.GetBool(key, false).ToString();
                         break;
                     case EditorPrefType.Int:
                         item.Type = EditorPrefType.Int;
-                        item.Value = item.IsUnset ? "Unset. Default: 0" : EditorPrefs.GetInt(key, 0).ToString();
+                        item.Value = item.IsUnset ? "Unset" : EditorPrefs.GetInt(key, 0).ToString();
                         break;
                     case EditorPrefType.Float:
                         item.Type = EditorPrefType.Float;
-                        item.Value = item.IsUnset ? "Unset. Default: 0" : EditorPrefs.GetFloat(key, 0f).ToString();
+                        item.Value = item.IsUnset ? "Unset" : EditorPrefs.GetFloat(key, 0f).ToString();
                         break;
                     case EditorPrefType.String:
                         item.Type = EditorPrefType.String;
-                        item.Value = item.IsUnset ? "Unset. Default: (empty)" : EditorPrefs.GetString(key, "");
+                        item.Value = item.IsUnset ? "Unset" : EditorPrefs.GetString(key, "");
                         break;
                 }
             }
             else
             {
-                // Only try to detect type for unknown keys that actually exist
+                // Unknown keys have no schema; preserve their string content without coercion.
                 if (!EditorPrefs.HasKey(key))
                 {
                     // Key doesn't exist and we don't know its type, skip it
                     return null;
                 }
 
-                // Unknown pref - try to detect type
-                var stringValue = EditorPrefs.GetString(key, "");
-
-                if (int.TryParse(stringValue, out var intValue))
-                {
-                    item.Type = EditorPrefType.Int;
-                    item.Value = intValue.ToString();
-                }
-                else if (float.TryParse(stringValue, out var floatValue))
-                {
-                    item.Type = EditorPrefType.Float;
-                    item.Value = floatValue.ToString();
-                }
-                else if (bool.TryParse(stringValue, out var boolValue))
-                {
-                    item.Type = EditorPrefType.Bool;
-                    item.Value = boolValue.ToString();
-                }
-                else
-                {
-                    item.Type = EditorPrefType.String;
-                    item.Value = stringValue;
-                }
+                item.Type = EditorPrefType.String;
+                item.Value = EditorPrefs.GetString(key, "");
             }
 
             return item;
@@ -349,11 +351,25 @@ namespace MCPForUnity.Editor.Windows
 
         private void SavePref(EditorPrefItem item, string newValue, EditorPrefType newType)
         {
-            SaveValue(item.Key, newValue, newType);
-            RefreshPrefs();
+            if (!SaveValue(item.Key, newValue, newType))
+            {
+                return;
+            }
+
+            item.Value = newValue;
+            item.Type = newType;
+            item.IsUnset = false;
+            var row = prefRows[item.Key];
+            row.Q<TextField>("value-field").SetValueWithoutNotify(newValue);
+            row.Q<DropdownField>("type-dropdown").index = (int)newType;
+
+            if (cachedPrefNames.TryGetValue(item.Key, out var cacheName))
+            {
+                EditorConfigurationCache.Instance.InvalidateKey(cacheName);
+            }
         }
 
-        private void SaveValue(string key, string value, EditorPrefType type)
+        private bool SaveValue(string key, string value, EditorPrefType type)
         {
             switch (type)
             {
@@ -367,8 +383,8 @@ namespace MCPForUnity.Editor.Windows
                     }
                     else
                     {
-                        EditorUtility.DisplayDialog("Error", $"Cannot convert '{value}' to int", "OK");
-                        return;
+                        showSaveError($"Cannot convert '{value}' to int");
+                        return false;
                     }
                     break;
                 case EditorPrefType.Float:
@@ -378,8 +394,8 @@ namespace MCPForUnity.Editor.Windows
                     }
                     else
                     {
-                        EditorUtility.DisplayDialog("Error", $"Cannot convert '{value}' to float", "OK");
-                        return;
+                        showSaveError($"Cannot convert '{value}' to float");
+                        return false;
                     }
                     break;
                 case EditorPrefType.Bool:
@@ -389,11 +405,15 @@ namespace MCPForUnity.Editor.Windows
                     }
                     else
                     {
-                        EditorUtility.DisplayDialog("Error", $"Cannot convert '{value}' to bool (use 'True' or 'False')", "OK");
-                        return;
+                        showSaveError($"Cannot convert '{value}' to bool (use 'True' or 'False')");
+                        return false;
                     }
                     break;
+                default:
+                    showSaveError("Unsupported preference type");
+                    return false;
             }
+            return true;
         }
     }
 
