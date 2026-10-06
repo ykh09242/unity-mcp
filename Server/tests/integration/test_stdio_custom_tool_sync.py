@@ -10,6 +10,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from transport.legacy.unity_connection import UnityConnection
 
 
 # ---------------------------------------------------------------------------
@@ -188,19 +189,12 @@ async def test_sync_handles_custom_tool_service_not_initialized():
 @pytest.mark.asyncio
 async def test_reconnection_flag_triggers_resync():
     """After reconnection, async_send_command_with_retry should schedule a re-sync."""
-    mock_conn = MagicMock()
+    mock_conn = UnityConnection(port=6400, instance_id="Project@deadbeef")
     mock_conn._needs_tool_resync = True
-    mock_conn.instance_id = None
-
-    mock_pool = MagicMock()
-    mock_pool.get_connection.return_value = mock_conn
 
     with patch(
-        "transport.legacy.unity_connection.send_command_with_retry",
-        return_value={"success": True, "message": "ok"},
-    ), patch(
-        "transport.legacy.unity_connection.get_unity_connection_pool",
-        return_value=mock_pool,
+        "transport.legacy.unity_connection._send_command_with_retry",
+        return_value=({"success": True, "message": "ok"}, mock_conn),
     ), patch(
         "transport.legacy.unity_connection._resync_tools_after_reconnect",
         new_callable=AsyncMock,
@@ -215,24 +209,18 @@ async def test_reconnection_flag_triggers_resync():
     # Flag should be cleared
     assert mock_conn._needs_tool_resync is False
     # Re-sync should have been scheduled
-    mock_resync.assert_awaited_once_with(None)
+    mock_resync.assert_awaited_once_with("Project@deadbeef")
 
 
 @pytest.mark.asyncio
 async def test_no_resync_for_get_tool_states():
     """get_tool_states itself should NOT trigger re-sync (avoids recursion)."""
-    mock_conn = MagicMock()
+    mock_conn = UnityConnection(port=6400, instance_id="Project@deadbeef")
     mock_conn._needs_tool_resync = True
 
-    mock_pool = MagicMock()
-    mock_pool.get_connection.return_value = mock_conn
-
     with patch(
-        "transport.legacy.unity_connection.send_command_with_retry",
-        return_value={"data": {"tools": []}},
-    ), patch(
-        "transport.legacy.unity_connection.get_unity_connection_pool",
-        return_value=mock_pool,
+        "transport.legacy.unity_connection._send_command_with_retry",
+        return_value=({"data": {"tools": []}}, mock_conn),
     ), patch(
         "transport.legacy.unity_connection._resync_tools_after_reconnect",
         new_callable=AsyncMock,
@@ -248,23 +236,18 @@ async def test_no_resync_for_get_tool_states():
 @pytest.mark.asyncio
 async def test_no_resync_when_not_reconnected():
     """When _needs_tool_resync is False, no re-sync should be scheduled."""
-    mock_conn = MagicMock()
+    mock_conn = UnityConnection(port=6400, instance_id="Project@deadbeef")
     mock_conn._needs_tool_resync = False
 
-    mock_pool = MagicMock()
-    mock_pool.get_connection.return_value = mock_conn
-
     with patch(
-        "transport.legacy.unity_connection.send_command_with_retry",
-        return_value={"success": True},
-    ), patch(
-        "transport.legacy.unity_connection.get_unity_connection_pool",
-        return_value=mock_pool,
+        "transport.legacy.unity_connection._send_command_with_retry",
+        return_value=({"success": True}, mock_conn),
     ), patch(
         "transport.legacy.unity_connection._resync_tools_after_reconnect",
         new_callable=AsyncMock,
     ) as mock_resync:
         from transport.legacy.unity_connection import async_send_command_with_retry
         await async_send_command_with_retry("manage_gameobject", {"action": "list"})
+        await asyncio.sleep(0)
 
     mock_resync.assert_not_awaited()

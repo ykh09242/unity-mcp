@@ -89,7 +89,15 @@ class UnityConnection:
         # Connection publication, liveness checks, close, and commands share one
         # lock. Lifecycle helpers are also called from a command transaction.
         self._conn_lock = self._io_lock
+        self._resync_lock = threading.Lock()
         self._needs_tool_resync = False  # Set True after reconnection
+
+    def claim_tool_resync(self) -> bool:
+        """Claim reconnect metadata work without waiting for socket I/O."""
+        with self._resync_lock:
+            pending = self._needs_tool_resync
+            self._needs_tool_resync = False
+            return pending
 
     def _prepare_socket(self, sock: socket.socket) -> None:
         try:
@@ -117,7 +125,8 @@ class UnityConnection:
                     (self.host, self.port), connect_timeout)
                 self._check_deadline(deadline)
                 self._prepare_socket(self.sock)
-                self._needs_tool_resync = True
+                with self._resync_lock:
+                    self._needs_tool_resync = True
                 logger.debug(f"Connected to Unity at {self.host}:{self.port}")
 
                 # Strict handshake: require FRAMING=1
@@ -987,6 +996,26 @@ def send_command_with_retry(
     Uses config.reload_retry_ms and config.reload_max_retries by default. Preserves the
     structured failure if retries are exhausted.
     """
+    response, _ = _send_command_with_retry(
+        command_type, params, instance_id=instance_id, max_retries=max_retries,
+        retry_ms=retry_ms, retry_on_reload=retry_on_reload)
+    return response
+
+
+def _send_command_with_retry(
+    command_type: str,
+    params: dict[str, Any],
+    *,
+    instance_id: str | None = None,
+    max_retries: int | None = None,
+    retry_ms: int | None = None,
+    retry_on_reload: bool = True,
+) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
+    """Retain dispatch provenance for async completion without another lookup.
+
+    The public sync helper returns only the response and leaves reconnect work
+    pending. Async callers receive the exact connection used by this command.
+    """
     t_retry_start = time.time()
     logger.info("[TIMING-STDIO] send_command_with_retry START command=%s", command_type)
     t_get_conn = time.time()
@@ -1094,7 +1123,7 @@ def send_command_with_retry(
                     "reason": "reloading",
                     "retry_after_ms": min(250, max(50, retry_ms)),
                 },
-            )
+            ), conn
         logger.debug(
             "Unity reload wait completed: command=%s instance=%s waited_s=%.3f",
             command_type,
@@ -1102,7 +1131,7 @@ def send_command_with_retry(
             waited,
         )
     logger.info("[TIMING-STDIO] send_command_with_retry DONE total=%.3fs command=%s", time.time() - t_retry_start, command_type)
-    return response
+    return response, conn
 
 
 async def async_send_command_with_retry(
@@ -1133,9 +1162,9 @@ async def async_send_command_with_retry(
         import asyncio  # local import to avoid mandatory asyncio dependency for sync callers
         if loop is None:
             loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
+        result, conn = await loop.run_in_executor(
             None,
-            lambda: send_command_with_retry(
+            lambda: _send_command_with_retry(
                 command_type, params, instance_id=instance_id, max_retries=max_retries,
                 retry_ms=retry_ms, retry_on_reload=retry_on_reload),
         )
@@ -1146,15 +1175,12 @@ async def async_send_command_with_retry(
         # Always clear the flag, but only schedule the background resync
         # when this call is not itself get_tool_states (to avoid recursion).
         try:
-            pool = get_unity_connection_pool()
-            conn = pool.get_connection(instance_id)
-            if getattr(conn, "_needs_tool_resync", False):
-                conn._needs_tool_resync = False
+            if conn.claim_tool_resync():
                 if command_type != "get_tool_states":
                     logger.info(
                         "Detected reconnection to Unity; scheduling tool re-sync"
                     )
-                    asyncio.ensure_future(_resync_tools_after_reconnect(instance_id))
+                    asyncio.ensure_future(_resync_tools_after_reconnect(conn.instance_id))
         except Exception as exc:
             logger.debug(
                 "Failed to schedule post-reconnection tool re-sync: %s",
