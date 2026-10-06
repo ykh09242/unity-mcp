@@ -232,7 +232,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             foldout.RegisterValueChangedCallback(evt =>
             {
-                if (evt.target != foldout) return;
+                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value)) return;
                 EditorPrefs.SetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, evt.newValue);
             });
 
@@ -301,7 +301,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             var tagsContainer = new VisualElement();
             tagsContainer.AddToClassList("tool-tags");
 
-            bool defaultEnabled = tool.AutoRegister || tool.IsBuiltIn;
+            bool defaultEnabled = !tool.RequiresExplicitConsent && (tool.AutoRegister || tool.IsBuiltIn);
             tagsContainer.Add(CreateTag(defaultEnabled ? "On by default" : "Off by default"));
 
             tagsContainer.Add(CreateTag(tool.StructuredOutput ? "Structured output" : "Free-form"));
@@ -397,23 +397,15 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             foreach (var tool in allTools)
             {
-                if (!toolToggleMap.TryGetValue(tool.Name, out var toggle))
-                {
-                    bool currentEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
-                    if (currentEnabled != enabled)
-                    {
-                        MCPServiceLocator.ToolDiscovery.SetToolEnabled(tool.Name, enabled);
-                        hasChanges = true;
-                    }
-                    continue;
-                }
+                bool currentEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
+                if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
+                    toggle.SetValueWithoutNotify(enabled);
 
-                if (toggle.value == enabled)
+                if (currentEnabled == enabled)
                 {
                     continue;
                 }
 
-                toggle.SetValueWithoutNotify(enabled);
                 HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false);
                 hasChanges = true;
             }
@@ -435,23 +427,14 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             foreach (var tool in groupTools)
             {
+                bool currentEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
                 if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
+                    toggle.SetValueWithoutNotify(enabled);
+
+                if (currentEnabled != enabled)
                 {
-                    if (toggle.value != enabled)
-                    {
-                        toggle.SetValueWithoutNotify(enabled);
-                        HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false);
-                        hasChanges = true;
-                    }
-                }
-                else
-                {
-                    bool currentEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
-                    if (currentEnabled != enabled)
-                    {
-                        MCPServiceLocator.ToolDiscovery.SetToolEnabled(tool.Name, enabled);
-                        hasChanges = true;
-                    }
+                    HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false);
+                    hasChanges = true;
                 }
             }
 

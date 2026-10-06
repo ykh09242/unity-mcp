@@ -41,6 +41,32 @@ namespace MCPForUnityTests.EditMode.Windows
             previousServices.Clear();
         }
 
+        [TestCase(true, true, true, "Off by default")]
+        [TestCase(true, true, false, "On by default")]
+        [TestCase(true, false, true, "Off by default")]
+        [TestCase(true, false, false, "On by default")]
+        [TestCase(false, true, true, "Off by default")]
+        [TestCase(false, true, false, "On by default")]
+        [TestCase(false, false, true, "Off by default")]
+        [TestCase(false, false, false, "Off by default")]
+        public void ToolDefaultTag_RespectsExplicitConsent(bool builtIn, bool autoRegister, bool requiresConsent, string expected)
+        {
+            var tool = new ToolMetadata
+            {
+                Name = "default_tag_probe",
+                IsBuiltIn = builtIn,
+                AutoRegister = autoRegister,
+                RequiresExplicitConsent = requiresConsent
+            };
+            var section = new McpToolsSection(CreateRoot(true));
+            var row = (VisualElement)typeof(McpToolsSection)
+                .GetMethod("CreateToolRow", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(section, new object[] { tool });
+
+            Assert.That(row.Query<Label>(className: "tool-tag").ToList()[0].text, Is.EqualTo(expected));
+            Assert.That(tools.WriteCalls, Is.Zero);
+        }
+
         [TestCase("  CAMERA ", true)]
         [TestCase("render a scene", true)]
         [TestCase(" VFX ", true)]
@@ -132,6 +158,61 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.That(toolCatalog ? tools.IsToolEnabled("beta") : resources.IsResourceEnabled("beta"), Is.False);
         }
 
+        [TestCase(true, true, true)]
+        [TestCase(true, true, false)]
+        [TestCase(true, false, true)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, true)]
+        [TestCase(false, true, false)]
+        [TestCase(false, false, true)]
+        [TestCase(false, false, false)]
+        public void BulkActions_UseAuthoritativeStateAndSynchronizeCachedUi(bool toolCatalog, bool requested, bool needsChange)
+        {
+            var (section, root) = CreateCatalog(toolCatalog);
+            var rows = root.Query<VisualElement>(className: "tool-item").ToList();
+            var alphaToggle = rows.Single(row => row.Q<Toggle>().label == "alpha").Q<Toggle>();
+            alphaToggle.SetValueWithoutNotify(needsChange ? requested : !requested);
+            if (toolCatalog)
+            {
+                tools.SetToolEnabled("alpha", needsChange ? !requested : requested);
+                tools.SetToolEnabled("beta", requested);
+            }
+            else
+            {
+                resources.SetResourceEnabled("alpha", needsChange ? !requested : requested);
+                resources.SetResourceEnabled("beta", requested);
+            }
+            int previousWrites = toolCatalog ? tools.WriteCalls : resources.WriteCalls;
+            Search(root, toolCatalog ? "tools" : "resources", "beta");
+
+            Invoke(section, toolCatalog ? "SetAllToolsState" : "SetAllResourcesState", requested);
+
+            Assert.That(toolCatalog ? tools.IsToolEnabled("alpha") : resources.IsResourceEnabled("alpha"), Is.EqualTo(requested));
+            Assert.That(rows.All(row => row.Q<Toggle>().value == requested), Is.True);
+            Assert.That((toolCatalog ? tools.WriteCalls : resources.WriteCalls) - previousWrites, Is.EqualTo(needsChange ? 1 : 0));
+        }
+
+        [TestCase(true, true)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(false, false)]
+        public void GroupAction_UsesAuthoritativeStateAndSynchronizesCachedUi(bool requested, bool needsChange)
+        {
+            var (section, root) = CreateCatalog(true);
+            var alphaToggle = root.Query<VisualElement>(className: "tool-item").ToList().Single(row => row.Q<Toggle>().label == "alpha").Q<Toggle>();
+            alphaToggle.SetValueWithoutNotify(needsChange ? requested : !requested);
+            tools.SetToolEnabled("alpha", needsChange ? !requested : requested);
+            int previousWrites = tools.WriteCalls;
+            Search(root, "tools", "beta");
+            var foldout = root.Query<Foldout>().ToList()[0];
+
+            Invoke(section, "SetGroupToolsState", tools.Items.Where(tool => tool.IsBuiltIn).ToList(), requested, foldout, "Core Tools");
+
+            Assert.That(tools.IsToolEnabled("alpha"), Is.EqualTo(requested));
+            Assert.That(alphaToggle.value, Is.EqualTo(requested));
+            Assert.That(tools.WriteCalls - previousWrites, Is.EqualTo(needsChange ? 1 : 0));
+        }
+
         [Test]
         public void GroupAction_IncludesHiddenTools()
         {
@@ -155,6 +236,48 @@ namespace MCPForUnityTests.EditMode.Windows
             Invoke(section, "Refresh");
             Assert.That(root.Q<TextField>(prefix + "-search").value, Is.EqualTo("alpha"));
             Assert.That(root.Q<Label>(prefix + "-visible-count").text, Is.EqualTo("1 / 2 shown"));
+        }
+
+        [TestCase(true, true)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(false, false)]
+        public void SearchFoldoutChanges_AreTemporaryAcrossClearAndRefresh(bool toolCatalog, bool initialExpanded)
+        {
+            string key = toolCatalog
+                ? EditorPrefKeys.ToolFoldoutStatePrefix + "group-core"
+                : EditorPrefKeys.ResourceFoldoutStatePrefix + "built-in";
+            bool hadKey = EditorPrefs.HasKey(key);
+            bool previous = EditorPrefs.GetBool(key);
+            try
+            {
+                EditorPrefs.SetBool(key, initialExpanded);
+                var (section, root) = CreateCatalog(toolCatalog);
+                string prefix = toolCatalog ? "tools" : "resources";
+                var foldout = root.Query<Foldout>().ToList()[0];
+                Search(root, prefix, "alpha");
+
+                ChangeFoldout(foldout, !initialExpanded);
+                ChangeFoldout(foldout, initialExpanded);
+                ChangeFoldout(foldout, !initialExpanded);
+                Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(initialExpanded));
+
+                Search(root, prefix, string.Empty);
+                Assert.That(foldout.value, Is.EqualTo(initialExpanded));
+                Invoke(section, "Refresh");
+                foldout = root.Query<Foldout>().ToList()[0];
+                Assert.That(foldout.value, Is.EqualTo(initialExpanded));
+                Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(initialExpanded));
+
+                Search(root, prefix, "   ");
+                ChangeFoldout(foldout, !initialExpanded);
+                Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(!initialExpanded));
+            }
+            finally
+            {
+                if (hadKey) EditorPrefs.SetBool(key, previous);
+                else EditorPrefs.DeleteKey(key);
+            }
         }
 
         [TestCase(true)]
@@ -229,6 +352,18 @@ namespace MCPForUnityTests.EditMode.Windows
             {
                 evt.target = field;
                 field.SendEvent(evt);
+            }
+        }
+
+        private static void ChangeFoldout(Foldout foldout, bool expanded)
+        {
+            bool previous = foldout.value;
+            if (previous == expanded) return;
+            foldout.SetValueWithoutNotify(expanded);
+            using (var evt = ChangeEvent<bool>.GetPooled(previous, expanded))
+            {
+                evt.target = foldout;
+                foldout.SendEvent(evt);
             }
         }
 

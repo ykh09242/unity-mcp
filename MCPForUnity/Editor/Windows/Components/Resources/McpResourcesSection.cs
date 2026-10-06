@@ -141,7 +141,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
             foldout.RegisterValueChangedCallback(evt =>
             {
-                if (evt.target != foldout) return;
+                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value)) return;
                 EditorPrefs.SetBool(EditorPrefKeys.ResourceFoldoutStatePrefix + prefsSuffix, evt.newValue);
             });
 
@@ -210,18 +210,15 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         {
             foreach (var resource in allResources)
             {
-                if (!resourceToggleMap.TryGetValue(resource.Name, out var toggle))
-                {
-                    MCPServiceLocator.ResourceDiscovery.SetResourceEnabled(resource.Name, enabled);
-                    continue;
-                }
+                bool currentEnabled = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name);
+                if (resourceToggleMap.TryGetValue(resource.Name, out var toggle))
+                    toggle.SetValueWithoutNotify(enabled);
 
-                if (toggle.value == enabled)
+                if (currentEnabled == enabled)
                 {
                     continue;
                 }
 
-                toggle.SetValueWithoutNotify(enabled);
                 HandleToggleChange(resource, enabled, updateSummary: false);
             }
 
