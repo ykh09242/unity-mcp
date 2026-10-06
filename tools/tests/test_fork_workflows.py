@@ -41,10 +41,45 @@ def test_legacy_publication_and_adoption_jobs_exclude_forks(name: str, job: str)
 
 
 def test_forks_keep_python_and_unity_validation() -> None:
-    jobs = workflow("beta-release.yml")["jobs"]
-    for name in ("python_tests", "unity_tests"):
-        assert jobs[name]["if"] == "github.actor != 'github-actions[bot]'"
-        assert jobs[name]["uses"].startswith("./.github/workflows/")
+    # Given: fork beta validation has separate Unity and Python entry points.
+    unity = workflow("beta-release.yml")["jobs"]["unity_tests"]
+    python = workflow("fork-beta-tools.yml")["jobs"]["python_tests"]
+    # When: each entry point's reusable workflow and repository condition are read.
+    definitions = (unity, python)
+    # Then: forks retain both kinds of validation without passing new secrets.
+    assert unity["if"] == "github.actor != 'github-actions[bot]'"
+    assert python["if"] == "github.repository != 'CoplayDev/unity-mcp'"
+    assert all(job["uses"].startswith("./.github/workflows/") for job in definitions)
+    assert "secrets" not in python
+
+
+def test_beta_python_release_gate_excludes_duplicate_fork_runs() -> None:
+    # Given: a mixed server/tool push selects both beta workflow entry points.
+    release = workflow("beta-release.yml")["jobs"]["python_tests"]
+    fork = workflow("fork-beta-tools.yml")["jobs"]["python_tests"]
+    # When: the repository dispatch conditions are evaluated by GitHub.
+    conditions = (release["if"], fork["if"])
+    # Then: exactly one caller owns Python validation for each repository kind.
+    assert conditions == (
+        f"{UPSTREAM_ONLY} && github.actor != 'github-actions[bot]'",
+        "github.repository != 'CoplayDev/unity-mcp'",
+    )
+    assert release["uses"] == fork["uses"] == "./.github/workflows/python-tests.yml"
+
+
+@pytest.mark.parametrize("path", [
+    "Server/src/main.py",
+    "Server/uv.lock",
+    "MCPForUnity/Editor/Tools/ReadConsole.cs",
+    "MCPForUnity/package.json",
+])
+def test_fork_beta_product_changes_select_python_validation(path: str) -> None:
+    # Given: a product-only beta push, with no tooling change to trigger the old wrapper.
+    # When: the fork Python entry point's real branch and path filters are applied.
+    selected = push_selects("fork-beta-tools.yml", "beta", path)
+    # Then: moving the release caller's ownership cannot leave product pushes untested.
+    assert selected
+    assert not push_selects("fork-beta-tools.yml", "main", path)
 
 
 def test_pages_setup_upload_and_deployment_require_an_owned_beta_branch() -> None:

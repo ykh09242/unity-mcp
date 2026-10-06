@@ -1,11 +1,14 @@
 name: Fork Beta Tool Tests
 
-# beta-release.yml validates Server/MCPForUnity changes. Tooling and CI-policy
-# fork beta pushes need their own trigger without expanding release triggers.
+# This is the single Python validation entry point for fork beta pushes.
+# Keep product, tooling and CI-policy paths together so mixed pushes run once.
+# beta-release.yml retains upstream Python validation and the Unity gate.
 on:
   push:
     branches: [beta]
     paths:
+      - Server/**
+      - MCPForUnity/**
       - tools/**
       - mcp_source.py
       - .github/scripts/**

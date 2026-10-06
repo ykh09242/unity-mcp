@@ -28,7 +28,8 @@ jobs:
 
   python_tests:
     name: Python tests gate
-    if: github.actor != 'github-actions[bot]'
+    # Fork beta pushes run the same complete suite via fork-beta-tools.yml.
+    if: github.repository == 'CoplayDev/unity-mcp' && github.actor != 'github-actions[bot]'
     uses: ./.github/workflows/python-tests.yml
 
   update_unity_beta_version:
