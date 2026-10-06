@@ -42,7 +42,7 @@ class _UnityProtocolError(ValueError):
     """A Unity response cannot be safely decoded or reused."""
 
 
-def _decode_unity_response(data: bytes) -> Any:
+def _decode_unity_response(data: bytes | bytearray) -> Any:
     """Decode JSON before callers enforce the existing object response shape."""
     # The native parser does not follow a customized Python integer digit limit.
     if sys.get_int_max_str_digits() != sys.int_info.default_max_str_digits:
@@ -292,18 +292,33 @@ class UnityConnection:
                     original_socket.settimeout(original_timeout)
 
     def _read_exact(self, sock: socket.socket, count: int, deadline: float | None = None) -> bytes:
-        data = bytearray()
-        while len(data) < count:
-            self._set_socket_deadline(sock, deadline)
-            chunk = sock.recv(count - len(data))
-            self._check_deadline(deadline)
-            if not chunk:
-                raise ConnectionError(
-                    "Connection closed before reading expected bytes")
-            data.extend(chunk)
-        return bytes(data)
+        return bytes(self._read_exact_buffer(sock, count, deadline))
 
-    def receive_full_response(self, sock, buffer_size=config.buffer_size, deadline: float | None = None) -> bytes:
+    def _read_exact_buffer(self, sock: socket.socket, count: int, deadline: float | None = None) -> bytearray:
+        """Grow only one receive slab ahead; keep the final payload buffer owned."""
+        data = bytearray()
+        received = 0
+        receive_into = getattr(sock, 'recv_into', None)
+        while received < count:
+            data.extend(b'\0' * min(65_536, count - received))
+            with memoryview(data) as destination:
+                while received < len(data):
+                    self._set_socket_deadline(sock, deadline)
+                    with destination[received:] as remaining:
+                        if receive_into is not None:
+                            size = receive_into(remaining)
+                        else:
+                            # Retain recv-only adapters used by legacy integrations.
+                            chunk = sock.recv(len(remaining))
+                            size = len(chunk)
+                            remaining[:size] = chunk
+                    self._check_deadline(deadline)
+                    if not size:
+                        raise ConnectionError("Connection closed before reading expected bytes")
+                    received += size
+        return data
+
+    def receive_full_response(self, sock, buffer_size=config.buffer_size, deadline: float | None = None) -> bytes | bytearray:
         """Receive a complete response from Unity, handling chunked data."""
         if self.use_framing:
             # Heartbeat semantics: the Unity editor emits zero-length frames while
@@ -330,7 +345,7 @@ class UnityConnection:
                     if payload_len > FRAMED_MAX:
                         raise _UnityProtocolError(
                             f"Invalid framed length: {payload_len}")
-                    payload = self._read_exact(sock, payload_len, deadline)
+                    payload = self._read_exact_buffer(sock, payload_len, deadline)
                     logger.debug(
                         f"Received framed response ({len(payload)} bytes)")
                     return payload
