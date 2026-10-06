@@ -26,6 +26,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private Toggle projectScopedToolsToggle;
         private Label summaryLabel;
         private Label noteLabel;
+        private TextField searchField;
+        private Label visibleCountLabel;
+        private Label emptyStateLabel;
         private Button enableAllButton;
         private Button disableAllButton;
         private Button rescanButton;
@@ -34,6 +37,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private List<ToolMetadata> allTools = new();
         private readonly Dictionary<string, Toggle> groupToggleMap = new();
         private readonly List<(Foldout foldout, string title, List<ToolMetadata> tools)> foldoutEntries = new();
+        private readonly Dictionary<string, VisualElement> toolRowMap = new();
+        private readonly Dictionary<Foldout, bool> foldoutStatesBeforeSearch = new();
 
         /// <summary>Human-friendly names for tool groups shown in the UI.</summary>
         private static readonly Dictionary<string, string> GroupDisplayNames = new(StringComparer.OrdinalIgnoreCase)
@@ -63,6 +68,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             projectScopedToolsToggle = Root.Q<Toggle>("project-scoped-tools-toggle");
             summaryLabel = Root.Q<Label>("tools-summary");
             noteLabel = Root.Q<Label>("tools-note");
+            searchField = Root.Q<TextField>("tools-search");
+            visibleCountLabel = Root.Q<Label>("tools-visible-count");
+            emptyStateLabel = Root.Q<Label>("tools-empty-state");
             enableAllButton = Root.Q<Button>("enable-all-button");
             disableAllButton = Root.Q<Button>("disable-all-button");
             rescanButton = Root.Q<Button>("rescan-button");
@@ -72,6 +80,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private void RegisterCallbacks()
         {
+            searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+
             if (projectScopedToolsToggle != null)
             {
                 projectScopedToolsToggle.value = EditorPrefs.GetBool(
@@ -88,14 +98,12 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             if (enableAllButton != null)
             {
                 enableAllButton.AddToClassList("tool-action-button");
-                enableAllButton.style.marginRight = 4;
                 enableAllButton.clicked += () => SetAllToolsState(true);
             }
 
             if (disableAllButton != null)
             {
                 disableAllButton.AddToClassList("tool-action-button");
-                disableAllButton.style.marginRight = 4;
                 disableAllButton.clicked += () => SetAllToolsState(false);
             }
 
@@ -128,6 +136,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             toolToggleMap.Clear();
             groupToggleMap.Clear();
             foldoutEntries.Clear();
+            toolRowMap.Clear();
+            foldoutStatesBeforeSearch.Clear();
             categoryContainer?.Clear();
 
             var service = MCPServiceLocator.ToolDiscovery;
@@ -141,7 +151,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             if (noteLabel != null)
             {
-                noteLabel.style.display = hasTools ? DisplayStyle.Flex : DisplayStyle.None;
+                noteLabel.EnableInClassList("catalog-hidden", !hasTools);
                 if (hasTools)
                 {
                     bool isHttp = EditorConfigurationCache.Instance.UseHttpTransport;
@@ -153,8 +163,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             if (!hasTools)
             {
-                AddInfoLabel("No MCP tools found. Add classes decorated with [McpForUnityTool] to expose tools.");
                 UpdateSummary();
+                ApplySearch();
                 return;
             }
 
@@ -186,6 +196,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
 
             UpdateSummary();
+            ApplySearch();
         }
 
         private static string GetGroupDisplayName(string group)
@@ -217,6 +228,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 text = $"{title} ({enabledCount}/{toolList.Count})",
                 value = EditorPrefs.GetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, defaultOpen)
             };
+            foldout.AddToClassList("catalog-category");
 
             foldout.RegisterValueChangedCallback(evt =>
             {
@@ -254,8 +266,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                     "unexpected results on complex topologies. Always save your scene before " +
                     "performing destructive operations.",
                     HelpBoxMessageType.Warning);
-                warning.style.marginTop = 4;
-                warning.style.marginBottom = 2;
+                warning.AddToClassList("catalog-group-warning");
                 foldout.Insert(0, warning);
             }
 
@@ -267,6 +278,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             var row = new VisualElement();
             row.AddToClassList("tool-item");
+            toolRowMap[tool.Name] = row;
 
             var header = new VisualElement();
             header.AddToClassList("tool-item-header");
@@ -580,11 +592,58 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
         }
 
-        private void AddInfoLabel(string message)
+        private void ApplySearch()
         {
-            var label = new Label(message);
-            label.AddToClassList("help-text");
-            categoryContainer?.Add(label);
+            string query = (searchField?.value ?? string.Empty).Trim();
+            bool searching = query.Length > 0;
+            int visibleCount = 0;
+
+            foreach (var (foldout, _, tools) in foldoutEntries)
+            {
+                int groupVisibleCount = 0;
+                foreach (var tool in tools)
+                {
+                    bool matches = MatchesSearch(tool, query);
+                    if (toolRowMap.TryGetValue(tool.Name, out var row))
+                        row.EnableInClassList("catalog-hidden", !matches);
+                    if (matches) groupVisibleCount++;
+                }
+
+                visibleCount += groupVisibleCount;
+                foldout.EnableInClassList("catalog-hidden", groupVisibleCount == 0);
+                if (searching)
+                {
+                    if (!foldoutStatesBeforeSearch.ContainsKey(foldout))
+                        foldoutStatesBeforeSearch[foldout] = foldout.value;
+                    foldout.SetValueWithoutNotify(true);
+                }
+                else if (foldoutStatesBeforeSearch.TryGetValue(foldout, out var expanded))
+                {
+                    foldout.SetValueWithoutNotify(expanded);
+                }
+            }
+
+            if (!searching) foldoutStatesBeforeSearch.Clear();
+            if (visibleCountLabel != null)
+                visibleCountLabel.text = $"{visibleCount} / {allTools.Count} shown";
+            if (emptyStateLabel != null)
+            {
+                emptyStateLabel.text = allTools.Count == 0 ? "No tools discovered." : "No tools match your search.";
+                emptyStateLabel.EnableInClassList("catalog-hidden", visibleCount > 0);
+            }
+        }
+
+        private static bool MatchesSearch(ToolMetadata tool, string query)
+        {
+            if (tool == null) return false;
+            query = (query ?? string.Empty).Trim();
+            if (query.Length == 0) return true;
+            string group = tool.Group ?? "core";
+            string category = IsBuiltIn(tool) ? GetGroupDisplayName(group) : "Custom Tools";
+            return (tool.Name ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || (tool.Description ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || group.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || category.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private VisualElement CreateManageSceneActions()

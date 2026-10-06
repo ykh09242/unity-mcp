@@ -38,11 +38,24 @@ https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#cb802ac112cbd3b9b482
 ## 2. Start the local connection
 
 1. Let the package import and fix any Unity compilation errors first.
-2. Open **Window > Unity MCP (ykh09242)**. Complete the dependency checks if the setup window appears.
+2. Open **Window > Unity MCP (ykh09242) > Toggle MCP Window**. For dependency checks, open **Local Setup Window** from the same menu.
 3. Select local **HTTP** for a shared server, or **stdio** when your client needs a separate server process. Keep local HTTP on loopback unless deliberately configuring a trusted tunnel.
 4. For HTTP, start the local server and wait for it to be reachable **before configuring clients**. Connect the Unity bridge to that server. Stdio clients launch their own Python process from the generated configuration.
 
 The Unity bridge and the MCP client are separate connections. A running Python process alone does not mean an Editor is connected.
+
+You can close the MCP window after connecting. Closing a window does not stop the
+server or disconnect the bridge. Use the explicit server/session controls when
+you intend to stop them. The HTTP auto-start setting in **Advanced** is a separate,
+optional background-start preference; it does not require an open MCP window.
+Unity can still restore tabs that were left open in its saved Editor layout.
+
+:::note Development branch
+The current `beta` branch uses manual setup and does not open it automatically.
+The pinned **1.1.0** release above can still open the setup window on Editor startup.
+The redesigned windows and **Start HTTP on Editor Startup** label are available
+on `beta`; they are not part of the published 1.1.0 package.
+:::
 
 ## 3. Configure your client
 

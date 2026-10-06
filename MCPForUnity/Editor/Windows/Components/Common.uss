@@ -1,92 +1,134 @@
-/* Root Container */
-#root-container {
-    padding: 16px;
+.mcp-editor {
+    --mcp-bg: #242629;
+    --mcp-surface: #2c2f33;
+    --mcp-field: #1c1e21;
+    --mcp-hover: #373b40;
+    --mcp-text: #e7e9ec;
+    --mcp-muted: #b3b8c0;
+    --mcp-border: #484d54;
+    --mcp-accent: #66d3bc;
+    --mcp-accent-text: #152e28;
+    --mcp-danger: #f18e96;
+    --mcp-success: #81d6a3;
+    --mcp-warning: #ecc16f;
+    flex-grow: 1;
+    min-width: 0;
+    min-height: 0;
+    font-size: 12px;
+    letter-spacing: 0;
+    color: var(--mcp-text);
+    background-color: var(--mcp-bg);
+}
+
+.unity-theme-light .mcp-editor,
+.mcp-editor.unity-theme-light {
+    --mcp-bg: #f3f4f6;
+    --mcp-surface: #e7e9ec;
+    --mcp-field: #ffffff;
+    --mcp-hover: #dce0e5;
+    --mcp-text: #22262c;
+    --mcp-muted: #535c68;
+    --mcp-border: #c0c6ce;
+    --mcp-accent: #087963;
+    --mcp-accent-text: #ffffff;
+    --mcp-danger: #b12837;
+    --mcp-success: #216d42;
+    --mcp-warning: #845b08;
+}
+
+.mcp-editor .unity-base-field {
+    min-width: 0;
+}
+
+.mcp-editor .unity-base-field__label {
+    color: var(--mcp-text);
+    white-space: normal;
     flex-shrink: 1;
-    overflow: hidden;
 }
 
-/* Title */
+.mcp-editor .unity-text-field__input,
+.mcp-editor .unity-base-popup-field__input,
+.mcp-editor .unity-enum-field__input {
+    min-height: 24px;
+    color: var(--mcp-text);
+    background-color: var(--mcp-field);
+    border-color: var(--mcp-border);
+    border-radius: 3px;
+}
+
+.mcp-editor .unity-text-field__input:focus {
+    border-color: var(--mcp-accent);
+}
+
 .title {
-    font-size: 20px;
+    font-size: 16px;
     -unity-font-style: bold;
-    margin-bottom: 20px;
-    padding: 8px;
-    background-color: rgba(0, 0, 0, 0.1);
-    border-radius: 4px;
+    white-space: normal;
+    margin-bottom: 8px;
 }
 
-/* Section Styling */
 .section {
-    margin-bottom: 14px;
-    padding: 8px;
-    background-color: rgba(0, 0, 0, 0.04);
-    border-radius: 4px;
-    border-width: 1px;
-    border-color: rgba(0, 0, 0, 0.15);
-}
-
-/* Remove bottom margin from last section in a stack */
-/* Note: Unity UI Toolkit doesn't support :last-child pseudo-class.
-   The .section-last class is applied programmatically instead. */
-.section-stack > .section.section-last {
-    margin-bottom: 0px;
+    padding: 16px 0;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--mcp-border);
+    min-width: 0;
+    flex-shrink: 0;
 }
 
 .section-title {
     font-size: 13px;
     -unity-font-style: bold;
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    letter-spacing: 0.3px;
-    border-bottom-width: 1px;
-    border-bottom-color: rgba(255, 255, 255, 0.08);
+    margin-bottom: 10px;
+    white-space: normal;
 }
 
 .section-content {
-    padding: 4px;
+    min-width: 0;
 }
 
-/* Setting Rows */
 .setting-row {
     flex-direction: row;
     flex-wrap: wrap;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 4px;
-    min-height: 24px;
-    flex-shrink: 1;
+    margin-bottom: 8px;
+    min-height: 28px;
     min-width: 0;
 }
 
 .setting-column {
-    flex-direction: column;
-    margin-bottom: 4px;
-    flex-shrink: 1;
+    margin-bottom: 8px;
     min-width: 0;
 }
 
 .setting-label {
     min-width: 140px;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    margin-right: 8px;
+    white-space: normal;
     -unity-text-align: middle-left;
 }
 
+.setting-label-small,
+.override-label {
+    min-width: 120px;
+    flex-shrink: 1;
+    margin-right: 8px;
+    font-size: 11px;
+    white-space: normal;
+}
+
 .setting-value {
-    -unity-text-align: middle-right;
-    color: rgba(150, 150, 150, 1);
+    color: var(--mcp-muted);
+    white-space: normal;
+    flex-shrink: 1;
 }
 
 .setting-toggle {
     margin-left: auto;
+    flex-shrink: 0;
 }
 
-.setting-dropdown {
-    flex-grow: 1;
-    flex-shrink: 1;
-    margin-top: 4px;
-    max-width: 100%;
-}
-
+.setting-dropdown,
 .setting-dropdown-inline {
     flex-grow: 1;
     flex-shrink: 1;
@@ -94,232 +136,193 @@
     flex-basis: 200px;
 }
 
-/* Validation Description */
-.validation-description {
+.setting-dropdown {
     margin-top: 4px;
-    padding: 8px;
-    background-color: rgba(100, 150, 200, 0.15);
-    border-radius: 4px;
-    font-size: 11px;
-    white-space: normal;
 }
 
-/* Port Fields */
+.validation-description,
+.installation-steps {
+    font-size: 11px;
+    color: var(--mcp-muted);
+    white-space: normal;
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+
 .port-field {
     width: 100px;
     margin-left: auto;
 }
 
-/* URL Fields */
 .url-field {
     flex-grow: 1;
     flex-shrink: 1;
-    min-width: 200px;
-    flex-basis: 250px;
+    min-width: 180px;
+    flex-basis: 220px;
 }
 
-.port-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.1);
-    -unity-text-align: middle-center;
-}
-
-/* Status Container */
 .status-container {
     flex-direction: row;
     align-items: center;
     flex-grow: 1;
-}
-
-.status-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 6px;
-    margin-right: 8px;
-    background-color: rgba(150, 150, 150, 1);
-}
-
-.status-dot.connected {
-    background-color: rgba(0, 200, 100, 1);
-}
-
-.status-dot.disconnected {
-    background-color: rgba(200, 50, 50, 1);
-}
-
-.status-dot.configured {
-    background-color: rgba(0, 200, 100, 1);
-}
-
-.status-dot.not-configured {
-    background-color: rgba(200, 50, 50, 1);
-}
-
-.status-dot.warning {
-    background-color: rgba(255, 200, 0, 1);
-}
-
-.status-dot.unknown {
-    background-color: rgba(150, 150, 150, 1);
-}
-
-.status-dot.healthy {
-    background-color: rgba(0, 200, 100, 1);
-}
-
-.status-text {
-    -unity-text-align: middle-left;
-}
-
-/* At narrow widths the connection status label (e.g. "Session Active (Project)") must wrap/shrink
-   instead of sliding under the toggle button. Scoped to the connection section so other shared
-   .status-text rows are unaffected; uses wrapping (not ellipsis) so the text stays fully readable. */
-#connection-section .status-container {
     flex-shrink: 1;
     min-width: 0;
+    margin-right: 8px;
 }
 
-#connection-section .status-text {
-    flex-shrink: 1;
-    white-space: normal;
-}
-
-#connection-section #connection-toggle {
-    flex-shrink: 0;
-}
-
+.status-dot,
 .status-indicator-small {
     width: 8px;
     height: 8px;
     border-radius: 4px;
-    margin-left: 8px;
-    background-color: rgba(150, 150, 150, 1);
+    flex-shrink: 0;
+    background-color: var(--mcp-muted);
 }
 
+.status-dot {
+    margin-right: 8px;
+}
+
+.status-indicator-small {
+    margin-left: 8px;
+}
+
+.status-dot.connected,
+.status-dot.configured,
+.status-dot.healthy,
 .status-indicator-small.valid {
-    background-color: rgba(0, 200, 100, 1);
+    background-color: var(--mcp-success);
 }
 
+.status-dot.disconnected,
+.status-dot.not-configured,
 .status-indicator-small.invalid {
-    background-color: rgba(200, 50, 50, 1);
+    background-color: var(--mcp-danger);
 }
 
+.status-dot.warning,
 .status-indicator-small.warning {
-    background-color: rgba(255, 200, 0, 1);
+    background-color: var(--mcp-warning);
 }
 
-/* Buttons */
-.action-button {
-    min-width: 80px;
-    height: 28px;
-    margin-left: 8px;
-    background-color: rgba(50, 150, 250, 0.8);
-    border-radius: 4px;
-    -unity-font-style: bold;
+.status-dot.unknown {
+    background-color: var(--mcp-muted);
 }
 
-.action-button:hover {
-    background-color: rgba(50, 150, 250, 1);
+.status-text {
+    flex-shrink: 1;
+    white-space: normal;
 }
 
-.action-button:active {
-    background-color: rgba(30, 120, 200, 1);
-}
-
-/* Start Server button in the manual config section should align flush left like other full-width controls */
-.start-server-button {
-    margin-left: 0px;
-}
-
-/* When the HTTP server/session is running, we show the Start/Stop button as "danger" (red) */
-.action-button.server-running {
-    background-color: rgba(200, 50, 50, 0.85);
-}
-
-.action-button.server-running:hover {
-    background-color: rgba(220, 60, 60, 1);
-}
-
-.action-button.server-running:active {
-    background-color: rgba(170, 40, 40, 1);
-}
-
-.secondary-button {
-    width: 100%;
-    height: 28px;
-    background-color: rgba(100, 100, 100, 0.3);
-    border-radius: 4px;
-}
-
-.secondary-button:hover {
-    background-color: rgba(100, 100, 100, 0.5);
-}
-
-.secondary-button:active {
-    background-color: rgba(80, 80, 80, 0.5);
-}
-
-/* Primary one-click action — flagged as the recommended path. */
-.primary-button {
-    width: 100%;
-    height: 34px;
-    margin-top: 4px;
-    margin-bottom: 4px;
-    background-color: rgba(0, 175, 110, 1);
-    color: rgba(255, 255, 255, 1);
-    border-radius: 6px;
+.action-button,
+.secondary-button,
+.icon-button,
+.icon-button-vertical,
+.tool-action-button {
+    min-height: 28px;
+    height: auto;
+    padding: 4px 10px;
+    margin: 2px 0 2px 6px;
     border-width: 1px;
-    border-color: rgba(0, 145, 90, 1);
-    font-size: 13px;
+    border-color: var(--mcp-border);
+    border-radius: 3px;
+    background-color: var(--mcp-surface);
+    color: var(--mcp-text);
+    white-space: normal;
+    flex-shrink: 0;
+}
+
+.action-button,
+.secondary-button {
+    min-width: 80px;
+}
+
+.action-button:hover,
+.secondary-button:hover,
+.icon-button:hover,
+.icon-button-vertical:hover,
+.tool-action-button:hover {
+    background-color: var(--mcp-hover);
+}
+
+.action-button:focus,
+.secondary-button:focus,
+.icon-button:focus,
+.icon-button-vertical:focus,
+.tool-action-button:focus {
+    border-color: var(--mcp-accent);
+}
+
+.action-button:disabled,
+.secondary-button:disabled,
+.icon-button:disabled,
+.icon-button-vertical:disabled,
+.tool-action-button:disabled {
+    color: var(--mcp-muted);
+    opacity: 0.55;
+}
+
+.start-server-button {
+    margin-left: 0;
+}
+
+.action-button.server-running {
+    color: var(--mcp-danger);
+    border-color: var(--mcp-danger);
+}
+
+.primary-button {
+    min-height: 32px;
+    padding: 6px 12px;
+    margin: 4px 0 8px 0;
+    background-color: var(--mcp-accent);
+    color: var(--mcp-accent-text);
+    border-width: 1px;
+    border-color: var(--mcp-accent);
+    border-radius: 3px;
     -unity-font-style: bold;
-    letter-spacing: 0.3px;
+    white-space: normal;
 }
 
 .primary-button:hover {
-    background-color: rgba(0, 200, 130, 1);
-    border-color: rgba(0, 170, 105, 1);
+    opacity: 0.9;
 }
 
-.primary-button:active {
-    background-color: rgba(0, 150, 90, 1);
-    border-color: rgba(0, 125, 75, 1);
+.primary-button:focus {
+    border-color: var(--mcp-text);
 }
 
 .primary-button:disabled {
-    background-color: rgba(70, 100, 85, 0.5);
-    color: rgba(220, 220, 220, 0.6);
-    border-color: rgba(70, 100, 85, 0.5);
+    opacity: 0.5;
 }
 
-/* Foldout that hides the per-client (single-target) controls. */
-.client-details-foldout {
-    margin-top: 4px;
+.client-details-foldout,
+.manual-config-foldout,
+.manual-command-foldout,
+.advanced-settings-foldout {
+    margin-top: 8px;
     margin-bottom: 4px;
 }
 
-.client-details-foldout > .unity-foldout__toggle {
+.client-details-foldout > .unity-foldout__toggle,
+.manual-config-foldout > .unity-foldout__toggle,
+.manual-command-foldout > .unity-foldout__toggle,
+.advanced-settings-foldout > .unity-foldout__toggle,
+.catalog-category > .unity-foldout__toggle {
+    min-height: 28px;
     -unity-font-style: bold;
-    font-size: 11px;
-    padding: 4px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 3px;
 }
 
-.client-details-foldout > .unity-foldout__content {
+.client-details-foldout > .unity-foldout__content,
+.manual-config-foldout > .unity-foldout__content,
+.manual-command-foldout > .unity-foldout__content {
     margin-top: 6px;
-    padding-left: 4px;
+    margin-left: 0;
 }
 
-.unity-theme-light .client-details-foldout > .unity-foldout__toggle {
-    background-color: rgba(0, 0, 0, 0.03);
-}
-
-/* Manual Configuration */
-.manual-config-content {
-    padding: 8px;
+.manual-config-content,
+.advanced-settings-content {
     margin-top: 8px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
-    flex-shrink: 1;
     min-width: 0;
 }
 
@@ -330,116 +333,122 @@
     margin-bottom: 4px;
 }
 
-.path-row {
+.path-row,
+.path-override-controls,
+.config-json-row {
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     margin-bottom: 8px;
-    flex-shrink: 1;
     min-width: 0;
 }
 
-.config-path-field {
+.path-override-controls {
+    margin-bottom: 12px;
+}
+
+.config-path-field,
+.override-field,
+.path-display-field {
     flex-grow: 1;
     flex-shrink: 1;
+    flex-basis: 180px;
+    min-width: 120px;
     margin-right: 4px;
-    min-width: 0;
-    max-width: 100%;
-}
-
-.config-path-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.1);
-    font-size: 11px;
-    overflow: hidden;
-    text-overflow: clip;
-}
-
-.icon-button {
-    min-width: 50px;
-    height: 24px;
-    margin-left: 4px;
 }
 
 .config-json-row {
-    flex-direction: row;
-    margin-bottom: 8px;
-    flex-shrink: 1;
-    min-width: 0;
+    align-items: flex-start;
 }
 
 .config-json-field {
     flex-grow: 1;
     flex-shrink: 1;
-    min-height: 64px;
+    flex-basis: 240px;
+    min-height: 80px;
+    min-width: 160px;
     margin-right: 4px;
-    min-width: 0;
-    max-width: 100%;
 }
 
 .config-json-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.1);
-    font-size: 10px;
-    -unity-font-style: normal;
+    font-size: 11px;
     white-space: normal;
-    overflow: hidden;
 }
 
 .icon-button-vertical {
-    min-width: 50px;
-    height: 30px;
     align-self: flex-start;
 }
 
-.installation-steps {
-    padding: 8px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
-    font-size: 11px;
-    white-space: normal;
-    margin-top: 4px;
-}
-
-/* Tools Section */
-.tool-actions {
-    flex-direction: column;
-    margin-top: 8px;
+.tool-actions,
+.catalog-toolbar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     margin-bottom: 8px;
+    min-width: 0;
 }
 
 .tool-action-button {
+    margin-left: 0;
+    margin-right: 6px;
+}
+
+.catalog-search {
     flex-grow: 1;
     flex-shrink: 1;
-    flex-basis: 0;
-    min-width: 0;
-    height: 26px;
+    flex-basis: 200px;
+    min-width: 140px;
+    margin: 0 8px 4px 0;
+}
+
+.catalog-count {
+    color: var(--mcp-muted);
+    font-size: 11px;
+    white-space: normal;
     margin-bottom: 4px;
-    overflow: hidden;
-    -unity-text-overflow-position: end;
-    text-overflow: ellipsis;
+}
+
+.catalog-empty {
+    padding: 16px 0;
+    white-space: normal;
+    color: var(--mcp-muted);
+}
+
+.catalog-group-warning {
+    margin-top: 4px;
+    margin-bottom: 8px;
 }
 
 .tool-category-container {
-    flex-direction: column;
     margin-top: 8px;
 }
 
-.tool-item {
-    flex-direction: column;
-    padding: 8px;
+.catalog-category {
     margin-bottom: 8px;
-    background-color: rgba(0, 0, 0, 0.04);
-    border-radius: 4px;
-    border-width: 1px;
-    border-color: rgba(0, 0, 0, 0.12);
+}
+
+.tool-item {
+    padding: 10px 8px;
+    margin-bottom: 4px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--mcp-border);
+    min-width: 0;
 }
 
 .tool-item-header {
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
 }
 
 .tool-item-toggle {
-    flex-shrink: 0;
+    flex-shrink: 1;
     min-width: 0;
+}
+
+.tool-item-toggle .unity-toggle__text {
+    white-space: normal;
+    flex-shrink: 1;
 }
 
 .tool-tags {
@@ -452,255 +461,126 @@
 .tool-tag {
     font-size: 10px;
     padding: 2px 6px;
-    margin-left: 4px;
-    margin-top: 2px;
-    background-color: rgba(200, 200, 200, 1);
+    margin: 2px 0 0 4px;
+    background-color: var(--mcp-surface);
     border-radius: 3px;
-    border-width: 1px;
-    border-color: rgba(160, 160, 160, 1);
-    color: rgba(40, 40, 40, 1);
+    color: var(--mcp-muted);
+}
+
+.tool-item-description,
+.tool-parameters,
+.help-text,
+.advanced-label {
+    font-size: 11px;
+    color: var(--mcp-muted);
+    white-space: normal;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-bottom: 4px;
 }
 
 .tool-item-description,
 .tool-parameters {
-    font-size: 11px;
-    color: rgba(120, 120, 120, 1);
-    white-space: normal;
     margin-top: 4px;
 }
 
-.tool-parameters {
-    -unity-font-style: italic;
-}
-
-/* Group enable/disable checkbox in the foldout header */
 .group-header-checkbox {
     margin-left: 6px;
     margin-right: 0;
     flex-shrink: 0;
 }
 
-.group-header-checkbox > .unity-toggle__input > .unity-toggle__checkmark {
-    margin-top: 0;
-    margin-bottom: 0;
-}
-
-/* Advanced Settings */
-.advanced-settings-foldout {
-    margin-top: 16px;
-}
-
-.advanced-settings-foldout > .unity-foldout__toggle {
-    -unity-font-style: bold;
-    font-size: 12px;
-}
-
-/* Manual Command Foldout */
-.manual-command-foldout {
-    margin-top: 8px;
-    margin-bottom: 8px;
-}
-
-.manual-command-foldout > .unity-foldout__toggle {
-    font-size: 11px;
-    padding: 4px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 3px;
-}
-
-.manual-command-foldout > .unity-foldout__content {
-    margin-top: 4px;
-}
-
-.advanced-settings-content {
-    padding: 8px;
-    margin-top: 8px;
-    background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
-    flex-shrink: 1;
-    min-width: 0;
-}
-
-.advanced-label {
-    font-size: 11px;
-    -unity-font-style: bold;
-    margin-bottom: 8px;
-    color: rgba(150, 150, 150, 1);
-    white-space: normal;
-    flex-shrink: 1;
-    min-width: 0;
-}
-
 .override-row {
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     margin-top: 8px;
     margin-bottom: 4px;
 }
 
-.override-label {
-    font-size: 11px;
-    -unity-font-style: bold;
-    min-width: 120px;
-    white-space: normal;
-    flex-shrink: 1;
-}
-
-.help-text {
-    font-size: 10px;
-    color: rgba(120, 120, 120, 1);
-    white-space: normal;
-    flex-shrink: 1;
-    min-width: 0;
-    margin-bottom: 4px;
-}
-
-.help-text.http-local-url-error {
-    color: rgba(255, 80, 80, 1);
-    -unity-font-style: bold;
-}
-
-.path-override-controls {
-    flex-direction: row;
-    align-items: center;
-    margin-bottom: 12px;
-    flex-shrink: 1;
-    min-width: 0;
-}
-
-.override-field {
-    flex-grow: 1;
-    flex-shrink: 1;
-    margin-right: 4px;
-    min-width: 0;
-    max-width: 100%;
-}
-
-.override-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.1);
-    font-size: 11px;
-    overflow: hidden;
-    text-overflow: clip;
-}
-
-.setting-label-small {
-    font-size: 11px;
-    min-width: 120px;
-    -unity-text-align: middle-left;
-}
-
-.path-display-field {
-    flex-grow: 1;
-    flex-shrink: 1;
-    margin-right: 4px;
-    min-width: 0;
-    max-width: 100%;
-}
-
-.path-display-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.1);
-    font-size: 11px;
-    overflow: hidden;
-    text-overflow: clip;
-}
-
-/* Light Theme Overrides */
-.unity-theme-light .title {
-    background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unity-theme-light .section {
-    background-color: rgba(0, 0, 0, 0.03);
-    border-color: rgba(0, 0, 0, 0.15);
-}
-
-.unity-theme-light .section-title {
-    border-bottom-color: rgba(0, 0, 0, 0.1);
-}
-
-.unity-theme-dark .tool-tag {
-    color: rgba(255, 255, 255, 0.9);
-    background-color: rgba(90, 95, 105, 1);
-    border-color: rgba(110, 115, 125, 1);
-}
-
-.unity-theme-dark .tool-item {
-    background-color: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.08);
-}
-
-.unity-theme-dark .tool-item-description,
-.unity-theme-dark .tool-parameters {
-    color: rgba(200, 200, 200, 0.8);
-}
-
-
-.unity-theme-light .validation-description {
-    background-color: rgba(100, 150, 200, 0.1);
-}
-
-.unity-theme-light .port-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unity-theme-light .config-path-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unity-theme-light .config-json-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unity-theme-light .manual-config-content {
-    background-color: rgba(0, 0, 0, 0.03);
-}
-
-.unity-theme-light .installation-steps {
-    background-color: rgba(0, 0, 0, 0.03);
-}
-
-.unity-theme-light .advanced-settings-content {
-    background-color: rgba(0, 0, 0, 0.03);
-}
-
-.unity-theme-light .override-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.05);
-}
-
-.unity-theme-light .path-display-field > .unity-text-field__input {
-    background-color: rgba(0, 0, 0, 0.05);
-}
-
-/* Warning Banner (for transport mismatch, etc.) */
 .warning-banner {
     display: none;
     padding: 8px 12px;
-    margin-bottom: 6px;
-    background-color: rgba(255, 180, 0, 0.2);
-    border-radius: 4px;
-    border-width: 1px;
-    border-color: rgba(255, 180, 0, 0.5);
+    margin-bottom: 8px;
+    background-color: var(--mcp-surface);
+    border-left-width: 3px;
+    border-left-color: var(--mcp-warning);
 }
 
 .warning-banner.visible {
     display: flex;
 }
 
-.warning-banner-text {
+.warning-banner-text,
+.status-warning {
     font-size: 11px;
     white-space: normal;
-    color: rgba(180, 120, 0, 1);
+    color: var(--mcp-warning);
 }
 
-.unity-theme-dark .warning-banner {
-    background-color: rgba(255, 180, 0, 0.15);
-    border-color: rgba(255, 180, 0, 0.4);
+.help-text.http-local-url-error,
+.status-error {
+    color: var(--mcp-danger);
 }
 
-.unity-theme-dark .warning-banner-text {
-    color: rgba(255, 200, 100, 1);
+.status-success {
+    color: var(--mcp-success);
 }
 
-.unity-theme-light .manual-command-foldout > .unity-foldout__toggle {
-    background-color: rgba(0, 0, 0, 0.03);
+.trailing-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.spaced-row {
+    margin-top: 8px;
+}
+
+.compact-actions {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+.subsection {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top-width: 1px;
+    border-top-color: var(--mcp-border);
+}
+
+.package-row {
+    padding: 10px 0;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--mcp-border);
+}
+
+.package-name {
+    flex-grow: 1;
+    flex-shrink: 1;
+    white-space: normal;
+    -unity-font-style: bold;
+}
+
+.inline-status {
+    margin-left: 8px;
+    flex-grow: 1;
+}
+
+.endpoint-host {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 100px;
+    flex-basis: 140px;
+}
+
+.endpoint-port {
+    width: 70px;
+    margin-left: 4px;
+}
+
+.hidden,
+.initially-hidden,
+.catalog-hidden {
+    display: none;
 }

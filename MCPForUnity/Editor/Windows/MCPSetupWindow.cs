@@ -74,6 +74,10 @@ namespace MCPForUnity.Editor.Windows
                 return;
             }
 
+            rootVisualElement.Clear();
+            rootVisualElement.AddToClassList("mcp-editor");
+            rootVisualElement.EnableInClassList("unity-theme-light", !EditorGUIUtility.isProSkin);
+            rootVisualElement.EnableInClassList("unity-theme-dark", EditorGUIUtility.isProSkin);
             visualTree.CloneTree(rootVisualElement);
 
             // Embed the Ocean brand mark beside the title
@@ -117,6 +121,11 @@ namespace MCPForUnity.Editor.Windows
             if (installUvButton != null) installUvButton.clicked += OnInstallUvClicked;
             skipClientsButton.clicked += OnSkipClientsClicked;
             configureSelectedButton.clicked += OnConfigureSelectedClicked;
+            rootVisualElement.Q<Button>("back-button").clicked += () =>
+            {
+                stepClients.AddToClassList("hidden");
+                stepDeps.RemoveFromClassList("hidden");
+            };
 
             // Initial update
             UpdateUI();
@@ -158,8 +167,8 @@ namespace MCPForUnity.Editor.Windows
 
         private void ShowClientsStep()
         {
-            stepDeps.style.display = DisplayStyle.None;
-            stepClients.style.display = DisplayStyle.Flex;
+            stepDeps.AddToClassList("hidden");
+            stepClients.RemoveFromClassList("hidden");
             PopulateClientsList();
         }
 
@@ -167,6 +176,7 @@ namespace MCPForUnity.Editor.Windows
         {
             clientsList.Clear();
             clientToggles.Clear();
+            configureSelectedButton.SetEnabled(true);
             foreach (var c in McpClientRegistry.All)
             {
                 if (!c.IsInstalled) continue;
@@ -180,7 +190,9 @@ namespace MCPForUnity.Editor.Windows
             }
             if (clientToggles.Count == 0)
             {
-                clientsList.Add(new Label($"No supported MCP clients detected on this machine. You can configure clients later from {ProductInfo.MenuRoot}."));
+                var empty = new Label("No supported MCP clients detected.");
+                empty.AddToClassList("help-text");
+                clientsList.Add(empty);
                 configureSelectedButton.SetEnabled(false);
             }
         }
@@ -259,7 +271,8 @@ namespace MCPForUnity.Editor.Windows
             installUvButton.SetEnabled(false);
             installUvButton.text = "Installing UV…";
             statusMessage.text = "Installing uv… this can take a moment.";
-            statusMessage.style.color = new StyleColor(new Color(1f, 0.6f, 0f));
+            statusMessage.RemoveFromClassList("status-success");
+            statusMessage.AddToClassList("status-warning");
 
             _uvInstallTask = Task.Run(() => UvInstaller.Run());
             EditorApplication.update += PollUvInstall;
@@ -281,7 +294,7 @@ namespace MCPForUnity.Editor.Windows
             _uvInstallTask = null;
 
             installUvButton.SetEnabled(true);
-            installUvButton.text = "Install UV Automatically";
+            installUvButton.text = "Install uv";
 
             // UvInstaller.Run catches its own exceptions, so the task always completes with a result.
             UvInstaller.UvInstallResult result = task.Result;
@@ -347,21 +360,25 @@ namespace MCPForUnity.Editor.Windows
             if (installUvButton != null)
             {
                 bool showInstall = uvMissing && UvInstaller.IsSupported && _uvInstallTask == null;
-                installUvButton.style.display = showInstall ? DisplayStyle.Flex : DisplayStyle.None;
+                installUvButton.EnableInClassList("hidden", !showInstall);
             }
 
             // Update overall status
             if (_dependencyResult.IsSystemReady)
             {
-                statusMessage.text = $"✓ All requirements met! {ProductInfo.ProductName} is ready to use.";
-                statusMessage.style.color = new StyleColor(Color.green);
-                installationSection.style.display = DisplayStyle.None;
+                statusMessage.text = "System requirements met";
+                statusMessage.RemoveFromClassList("status-warning");
+                statusMessage.AddToClassList("status-success");
+                installationSection.RemoveFromClassList("visible");
+                doneButton.text = "Next";
             }
             else
             {
-                statusMessage.text = $"⚠ Missing dependencies. {ProductInfo.ProductName} requires all dependencies to function.";
-                statusMessage.style.color = new StyleColor(new Color(1f, 0.6f, 0f)); // Orange
-                installationSection.style.display = DisplayStyle.Flex;
+                statusMessage.text = "Required dependencies missing";
+                statusMessage.RemoveFromClassList("status-success");
+                statusMessage.AddToClassList("status-warning");
+                installationSection.AddToClassList("visible");
+                doneButton.text = "Close";
                 installationInstructions.text = DependencyManager.GetInstallationRecommendations();
             }
         }
@@ -374,7 +391,7 @@ namespace MCPForUnity.Editor.Windows
                 indicator.AddToClassList("valid");
                 versionLabel.text = $"v{dep.Version}";
                 detailsLabel.text = dep.Details ?? "Available";
-                detailsLabel.style.color = new StyleColor(Color.gray);
+                detailsLabel.RemoveFromClassList("status-error");
             }
             else if (dep.IsRequired)
             {
@@ -382,7 +399,7 @@ namespace MCPForUnity.Editor.Windows
                 indicator.AddToClassList("invalid");
                 versionLabel.text = "Not Found";
                 detailsLabel.text = dep.ErrorMessage ?? "Not available";
-                detailsLabel.style.color = new StyleColor(Color.red);
+                detailsLabel.AddToClassList("status-error");
             }
             else
             {
@@ -393,7 +410,7 @@ namespace MCPForUnity.Editor.Windows
                 indicator.RemoveFromClassList("invalid");
                 versionLabel.text = "Not Found";
                 detailsLabel.text = dep.Details ?? dep.ErrorMessage ?? "Not available";
-                detailsLabel.style.color = new StyleColor(Color.gray);
+                detailsLabel.RemoveFromClassList("status-error");
             }
         }
     }

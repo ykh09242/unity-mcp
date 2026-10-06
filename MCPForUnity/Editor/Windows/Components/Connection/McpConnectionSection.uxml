@@ -1,5 +1,5 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
-    <Style src="../Common.uss" />
+    <ui:Style src="../Common.uss" />
     <ui:VisualElement name="connection-section" class="section">
         <ui:Label text="Server" class="section-title" />
         <ui:VisualElement class="section-content">
@@ -17,12 +17,12 @@
                 <ui:Label text="HTTP URL:" class="setting-label" />
                 <ui:TextField name="http-url" class="url-field" />
             </ui:VisualElement>
-            <ui:VisualElement name="api-key-row" style="margin-bottom: 4px;">
+            <ui:VisualElement name="api-key-row">
                 <ui:VisualElement class="setting-row">
                     <ui:Label text="API Key:" class="setting-label" />
                     <ui:TextField name="api-key-field" password="true" class="url-field" />
                 </ui:VisualElement>
-                <ui:VisualElement style="flex-direction: row; justify-content: flex-end;">
+                <ui:VisualElement class="trailing-actions">
                     <ui:Button name="get-api-key-button" text="Get API Key" class="action-button" />
                     <ui:Button name="clear-api-key-button" text="Clear" class="action-button" />
                 </ui:VisualElement>
@@ -44,7 +44,7 @@
             </ui:VisualElement>
             <ui:Foldout name="manual-command-foldout" text="Manual Server Launch" value="false" class="manual-config-foldout">
                 <ui:VisualElement name="http-server-command-section" class="manual-config-content">
-                    <ui:Label text="Use this command to launch the server manually:" class="config-label" />
+                    <ui:Label text="Server Command" class="config-label" />
                     <ui:VisualElement class="config-json-row">
                         <ui:TextField name="http-server-command" readonly="true" multiline="true" class="config-json-field" />
                         <ui:Button name="copy-http-server-command-button" text="Copy" class="icon-button-vertical" />

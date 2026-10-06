@@ -18,11 +18,17 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         private readonly Dictionary<string, Toggle> resourceToggleMap = new();
         private Label summaryLabel;
         private Label noteLabel;
+        private TextField searchField;
+        private Label visibleCountLabel;
+        private Label emptyStateLabel;
         private Button enableAllButton;
         private Button disableAllButton;
         private Button rescanButton;
         private VisualElement categoryContainer;
         private List<ResourceMetadata> allResources = new();
+        private readonly Dictionary<string, VisualElement> resourceRowMap = new();
+        private readonly List<(Foldout foldout, List<ResourceMetadata> resources)> foldoutEntries = new();
+        private readonly Dictionary<Foldout, bool> foldoutStatesBeforeSearch = new();
 
         public VisualElement Root { get; }
 
@@ -37,6 +43,9 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         {
             summaryLabel = Root.Q<Label>("resources-summary");
             noteLabel = Root.Q<Label>("resources-note");
+            searchField = Root.Q<TextField>("resources-search");
+            visibleCountLabel = Root.Q<Label>("resources-visible-count");
+            emptyStateLabel = Root.Q<Label>("resources-empty-state");
             enableAllButton = Root.Q<Button>("enable-all-resources-button");
             disableAllButton = Root.Q<Button>("disable-all-resources-button");
             rescanButton = Root.Q<Button>("rescan-resources-button");
@@ -45,17 +54,17 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
         private void RegisterCallbacks()
         {
+            searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+
             if (enableAllButton != null)
             {
                 enableAllButton.AddToClassList("tool-action-button");
-                enableAllButton.style.marginRight = 4;
                 enableAllButton.clicked += () => SetAllResourcesState(true);
             }
 
             if (disableAllButton != null)
             {
                 disableAllButton.AddToClassList("tool-action-button");
-                disableAllButton.style.marginRight = 4;
                 disableAllButton.clicked += () => SetAllResourcesState(false);
             }
 
@@ -77,6 +86,9 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         public void Refresh()
         {
             resourceToggleMap.Clear();
+            resourceRowMap.Clear();
+            foldoutEntries.Clear();
+            foldoutStatesBeforeSearch.Clear();
             categoryContainer?.Clear();
 
             var service = MCPServiceLocator.ResourceDiscovery;
@@ -91,13 +103,13 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
             if (noteLabel != null)
             {
-                noteLabel.style.display = hasResources ? DisplayStyle.Flex : DisplayStyle.None;
+                noteLabel.EnableInClassList("catalog-hidden", !hasResources);
             }
 
             if (!hasResources)
             {
-                AddInfoLabel("No MCP resources found. Add classes decorated with [McpForUnityResource] to expose resources.");
                 UpdateSummary();
+                ApplySearch();
                 return;
             }
 
@@ -108,12 +120,8 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             {
                 BuildCategory("Custom Resources", "custom", customResources);
             }
-            else
-            {
-                AddInfoLabel("No custom resources detected in loaded assemblies.");
-            }
-
             UpdateSummary();
+            ApplySearch();
         }
 
         private void BuildCategory(string title, string prefsSuffix, IEnumerable<ResourceMetadata> resources)
@@ -129,9 +137,11 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
                 text = $"{title} ({resourceList.Count})",
                 value = EditorPrefs.GetBool(EditorPrefKeys.ResourceFoldoutStatePrefix + prefsSuffix, true)
             };
+            foldout.AddToClassList("catalog-category");
 
             foldout.RegisterValueChangedCallback(evt =>
             {
+                if (evt.target != foldout) return;
                 EditorPrefs.SetBool(EditorPrefKeys.ResourceFoldoutStatePrefix + prefsSuffix, evt.newValue);
             });
 
@@ -140,6 +150,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
                 foldout.Add(CreateResourceRow(resource));
             }
 
+            foldoutEntries.Add((foldout, resourceList));
             categoryContainer?.Add(foldout);
         }
 
@@ -147,6 +158,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         {
             var row = new VisualElement();
             row.AddToClassList("tool-item");
+            resourceRowMap[resource.Name] = row;
 
             var header = new VisualElement();
             header.AddToClassList("tool-item-header");
@@ -233,11 +245,56 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             summaryLabel.text = $"{enabledCount} of {allResources.Count} resources enabled.";
         }
 
-        private void AddInfoLabel(string message)
+        private void ApplySearch()
         {
-            var label = new Label(message);
-            label.AddToClassList("help-text");
-            categoryContainer?.Add(label);
+            string query = (searchField?.value ?? string.Empty).Trim();
+            bool searching = query.Length > 0;
+            int visibleCount = 0;
+
+            foreach (var (foldout, resources) in foldoutEntries)
+            {
+                int groupVisibleCount = 0;
+                foreach (var resource in resources)
+                {
+                    bool matches = MatchesSearch(resource, query);
+                    if (resourceRowMap.TryGetValue(resource.Name, out var row))
+                        row.EnableInClassList("catalog-hidden", !matches);
+                    if (matches) groupVisibleCount++;
+                }
+
+                visibleCount += groupVisibleCount;
+                foldout.EnableInClassList("catalog-hidden", groupVisibleCount == 0);
+                if (searching)
+                {
+                    if (!foldoutStatesBeforeSearch.ContainsKey(foldout))
+                        foldoutStatesBeforeSearch[foldout] = foldout.value;
+                    foldout.SetValueWithoutNotify(true);
+                }
+                else if (foldoutStatesBeforeSearch.TryGetValue(foldout, out var expanded))
+                {
+                    foldout.SetValueWithoutNotify(expanded);
+                }
+            }
+
+            if (!searching) foldoutStatesBeforeSearch.Clear();
+            if (visibleCountLabel != null)
+                visibleCountLabel.text = $"{visibleCount} / {allResources.Count} shown";
+            if (emptyStateLabel != null)
+            {
+                emptyStateLabel.text = allResources.Count == 0 ? "No resources discovered." : "No resources match your search.";
+                emptyStateLabel.EnableInClassList("catalog-hidden", visibleCount > 0);
+            }
+        }
+
+        private static bool MatchesSearch(ResourceMetadata resource, string query)
+        {
+            if (resource == null) return false;
+            query = (query ?? string.Empty).Trim();
+            if (query.Length == 0) return true;
+            string category = resource.IsBuiltIn ? "Built-in Resources" : "Custom Resources";
+            return (resource.Name ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || (resource.Description ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || category.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static Label CreateTag(string text)

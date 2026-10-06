@@ -1,5 +1,5 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
-    <Style src="../Common.uss" />
+    <ui:Style src="../Common.uss" />
     <ui:VisualElement name="advanced-section" class="section">
         <ui:Label text="Advanced Settings" class="section-title" />
         <ui:VisualElement class="section-content">
@@ -13,7 +13,7 @@
                 <ui:Button name="clear-uv-button" text="Clear" class="icon-button" />
             </ui:VisualElement>
 
-            <ui:VisualElement class="override-row" style="margin-top: 8px;">
+            <ui:VisualElement class="override-row">
                 <ui:Label text="Server Source:" class="override-label" />
             </ui:VisualElement>
             <ui:VisualElement class="path-override-controls">
@@ -22,7 +22,7 @@
                 <ui:Button name="clear-git-url-button" text="Clear" class="icon-button" />
             </ui:VisualElement>
 
-            <ui:VisualElement class="setting-row" style="margin-top: 8px;">
+            <ui:VisualElement class="setting-row spaced-row">
                 <ui:Label text="Debug Logging:" class="setting-label" />
                 <ui:Toggle name="debug-logs-toggle" class="setting-toggle" />
             </ui:VisualElement>
@@ -42,7 +42,7 @@
             </ui:VisualElement>
 
             <ui:VisualElement class="setting-row">
-                <ui:Label text="Auto-Start Server on Editor Load:" class="setting-label" />
+                <ui:Label text="Start HTTP on Editor Startup:" class="setting-label" />
                 <ui:Toggle name="auto-start-on-load-toggle" class="setting-toggle" />
             </ui:VisualElement>
 
@@ -61,7 +61,7 @@
                 <ui:Toggle name="allow-insecure-remote-http-toggle" class="setting-toggle" />
             </ui:VisualElement>
 
-            <ui:VisualElement class="override-row" style="margin-top: 8px;">
+            <ui:VisualElement class="override-row">
                 <ui:Label text="Screenshots Folder:" class="override-label" />
             </ui:VisualElement>
             <ui:VisualElement class="path-override-controls">
@@ -70,7 +70,7 @@
                 <ui:Button name="clear-screenshots-folder-button" text="Clear" class="icon-button" />
             </ui:VisualElement>
 
-            <ui:VisualElement class="override-row" style="margin-top: 8px;">
+            <ui:VisualElement class="override-row">
                 <ui:Label text="Package Source:" class="override-label" />
             </ui:VisualElement>
             <ui:VisualElement class="path-override-controls">
@@ -80,7 +80,7 @@
             </ui:VisualElement>
             <ui:Label name="deploy-target-label" class="help-text" />
             <ui:Label name="deploy-backup-label" class="help-text" />
-            <ui:VisualElement class="path-override-controls" style="margin-top: 4px;">
+            <ui:VisualElement class="path-override-controls compact-actions">
                 <ui:Button name="deploy-button" text="Deploy" class="icon-button" />
                 <ui:Button name="deploy-restore-button" text="Restore" class="icon-button" />
             </ui:VisualElement>

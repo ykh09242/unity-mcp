@@ -3,14 +3,19 @@
         <ui:Label text="Resources" class="section-title" />
         <ui:VisualElement class="section-content">
             <ui:Label name="resources-summary" class="help-text" text="Discovering resources..." />
+            <ui:VisualElement class="catalog-toolbar">
+                <ui:TextField name="resources-search" label="Search" class="catalog-search" tooltip="Search resource names, descriptions, and categories." />
+                <ui:Label name="resources-visible-count" class="catalog-count" />
+            </ui:VisualElement>
             <ui:VisualElement name="resources-actions" class="tool-actions">
-                <ui:VisualElement style="flex-direction: row;">
-                    <ui:Button name="enable-all-resources-button" text="Enable All" class="tool-action-button" />
-                    <ui:Button name="disable-all-resources-button" text="Disable All" class="tool-action-button" />
+                <ui:VisualElement class="catalog-toolbar">
+                    <ui:Button name="enable-all-resources-button" text="Enable All Resources" class="tool-action-button" tooltip="Enable every discovered resource, including resources hidden by search." />
+                    <ui:Button name="disable-all-resources-button" text="Disable All Resources" class="tool-action-button" tooltip="Disable every discovered resource, including resources hidden by search." />
                     <ui:Button name="rescan-resources-button" text="Rescan" class="tool-action-button" />
                 </ui:VisualElement>
             </ui:VisualElement>
             <ui:Label name="resources-note" class="help-text" text="Changes apply after reconnecting or re-registering resources." />
+            <ui:Label name="resources-empty-state" class="catalog-empty help-text catalog-hidden" />
             <ui:VisualElement name="resource-category-container" class="tool-category-container" />
         </ui:VisualElement>
     </ui:VisualElement>

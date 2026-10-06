@@ -1,225 +1,141 @@
-.header {
-    padding-bottom: 16px;
-    border-bottom-width: 1px;
-    border-bottom-color: #333333;
-    margin-bottom: 16px;
+.editor-prefs-window {
+    flex-grow: 1;
+    min-height: 0;
+    padding: 12px;
+    background-color: var(--mcp-bg);
+    color: var(--mcp-text);
 }
 
-.title {
+.editor-prefs-window .prefs-header {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.editor-prefs-window .prefs-title {
+    flex-grow: 1;
+    font-size: 16px;
     -unity-font-style: bold;
-    font-size: 18px;
+}
+
+.editor-prefs-window .prefs-count {
+    color: var(--mcp-muted);
+    margin-right: 4px;
+}
+
+.editor-prefs-window .prefs-toolbar {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.editor-prefs-window .prefs-search {
+    flex-grow: 1;
+    min-width: 0;
+    margin-left: 0;
+}
+
+.editor-prefs-window .prefs-search > .unity-base-field__label {
+    min-width: 52px;
+    width: 52px;
+}
+
+.editor-prefs-window .prefs-refresh {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin-left: 6px;
+    font-size: 16px;
+}
+
+.editor-prefs-window .prefs-scroll {
+    flex-grow: 1;
+    min-height: 0;
+    border-top-width: 1px;
+    border-top-color: var(--mcp-border);
+}
+
+.editor-prefs-window .pref-item {
+    padding: 8px 4px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--mcp-border);
+}
+
+.editor-prefs-window .key-section {
     margin-bottom: 4px;
+    min-width: 0;
 }
 
-.description {
-    color: #999999;
-    font-size: 12px;
+.editor-prefs-window .key-label {
+    color: var(--mcp-text);
     white-space: normal;
-    margin-left: 4px;
-}
-
-.controls {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-    padding: 8px;
-    background-color: #393939;
-    border-radius: 4px;
-}
-
-.add-section {
-    margin-bottom: 16px;
-}
-
-.primary-button {
-    -unity-text-align: middle-left;
-    background-color: #4a90e2;
-    color: white;
-    border-radius: 4px;
-    padding: 8px 16px;
-}
-
-.primary-button:hover {
-    background-color: #357abd;
-}
-
-.secondary-button {
-    background-color: #393939;
-    border-left-width: 1px;
-    border-right-width: 1px;
-    border-top-width: 1px;
-    border-bottom-width: 1px;
-    border-left-color: #555555;
-    border-right-color: #555555;
-    border-top-color: #555555;
-    border-bottom-color: #555555;
-    border-radius: 4px;
-    padding: 6px 12px;
-    width: 80px;
-}
-
-.secondary-button:hover {
-    background-color: #484848;
-}
-
-/* Add New Row */
-.add-new-row {
-    background-color: #393939;
-    border-left-width: 1px;
-    border-right-width: 1px;
-    border-top-width: 1px;
-    border-bottom-width: 1px;
-    border-left-color: #555555;
-    border-right-color: #555555;
-    border-top-color: #555555;
-    border-bottom-color: #555555;
-    border-radius: 4px;
-    padding: 16px;
-    margin-bottom: 16px;
-}
-
-.add-row-content {
-    flex-direction: row;
-    align-items: flex-end;
-}
-
-.add-row-content .key-field {
-    flex: 1;
-    min-width: 200px;
-    margin-right: 12px;
-}
-
-.add-row-content .value-field {
-    flex: 1;
-    min-width: 150px;
-    margin-right: 12px;
-}
-
-.add-row-content .type-dropdown {
-    width: 100px;
-    margin-right: 12px;
-}
-
-.add-buttons {
-    flex-direction: row;
-    justify-content: flex-end;
-    margin-top: 8px;
-}
-
-.add-buttons .cancel-button {
-    margin-left: 8px;
-}
-
-.save-button {
-    background-color: #4caf50;
-    color: white;
-    min-width: 60px;
-    border-radius: 4px;
-}
-
-.save-button:hover {
-    background-color: #45a049;
-}
-
-.cancel-button {
-    background-color: #393939;
-    border-left-width: 1px;
-    border-right-width: 1px;
-    border-top-width: 1px;
-    border-bottom-width: 1px;
-    border-left-color: #555555;
-    border-right-color: #555555;
-    border-top-color: #555555;
-    border-bottom-color: #555555;
-    min-width: 60px;
-    border-radius: 4px;
-}
-
-.cancel-button:hover {
-    background-color: #484848;
-}
-
-/* Pref Items */
-.prefs-container {
-    flex-direction: column;
-}
-
-.pref-item {
-    margin-bottom: 0;
-    background-color: #393939;
-    border-left-width: 0;
-    border-right-width: 0;
-    border-top-width: 0;
-    border-bottom-width: 1px;
-    border-bottom-color: #555555;
-    border-radius: 0;
-    padding: 8px;
-}
-
-.pref-row {
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: nowrap; /* Prevent wrapping */
-}
-
-.pref-row .key-section {
-    flex-shrink: 0;
-    width: 200px; /* Fixed width for key section */
-    margin-right: 12px;
-}
-
-.pref-row .value-field {
-    flex: 1;
-    min-width: 150px;
-    margin-right: 12px;
-}
-
-.pref-row .type-dropdown {
-    width: 100px;
-    margin-right: 12px;
-}
-
-.pref-row .action-buttons {
-    flex-direction: row;
-    width: 32px;
-    justify-content: flex-start;
-}
-
-.key-section {
-    flex-direction: column;
-    min-width: 200px;
-}
-
-.key-label {
     -unity-font-style: bold;
-    color: white;
-    white-space: normal;
+    margin-left: 0;
 }
 
-.value-field {
-    flex: 1;
-    min-width: 150px;
-}
-
-.type-dropdown {
-    width: 100px;
-}
-
-.action-buttons {
+.editor-prefs-window .pref-row,
+.editor-prefs-window .add-row-content {
     flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
 }
 
-.action-buttons .save-button {
-    background-color: #4caf50;
-    color: white;
-    min-width: 32px;
+.editor-prefs-window .value-field,
+.editor-prefs-window .key-field {
+    flex-grow: 1;
+    flex-basis: 260px;
+    min-width: 180px;
+    margin-left: 0;
+    margin-right: 6px;
+}
+
+.editor-prefs-window .type-dropdown {
+    width: 84px;
+    flex-shrink: 0;
+    margin-right: 6px;
+}
+
+.editor-prefs-window .action-buttons,
+.editor-prefs-window .add-buttons {
+    flex-direction: row;
+    flex-shrink: 0;
+}
+
+.editor-prefs-window .action-buttons .save-button {
+    width: 28px;
     height: 28px;
     padding: 0;
     font-size: 16px;
     -unity-font-style: bold;
 }
 
-.action-buttons .save-button:hover {
-    background-color: #45a049;
+.editor-prefs-window .save-button {
+    background-color: var(--mcp-accent);
+    color: var(--mcp-accent-text);
+}
+
+.editor-prefs-window .save-button:hover {
+    background-color: var(--mcp-hover);
+    color: var(--mcp-text);
+}
+
+.editor-prefs-window .unity-base-field__input {
+    min-width: 0;
+    background-color: var(--mcp-field);
+    color: var(--mcp-text);
+    border-color: var(--mcp-border);
+}
+
+.editor-prefs-window .pref-unset {
+    opacity: 0.6;
+}
+
+.editor-prefs-window .prefs-empty {
+    color: var(--mcp-muted);
+    padding: 16px 4px;
+    white-space: normal;
+}
+
+.editor-prefs-window .pref-hidden {
+    display: none;
 }

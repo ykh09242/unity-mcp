@@ -20,10 +20,13 @@ namespace MCPForUnity.Editor.Windows
         private ScrollView scrollView;
         private VisualElement prefsContainer;
         private TextField searchField;
+        private Label resultCount;
+        private Label emptyState;
         private string searchFilter = "";
 
         // Data
         private List<EditorPrefItem> currentPrefs = new List<EditorPrefItem>();
+        private readonly Dictionary<string, VisualElement> prefRows = new Dictionary<string, VisualElement>();
         private HashSet<string> knownMcpKeys = new HashSet<string>();
 
         // Type mapping for known EditorPrefs
@@ -120,43 +123,26 @@ namespace MCPForUnity.Editor.Windows
                 return;
             }
 
+            rootVisualElement.Clear();
+            rootVisualElement.AddToClassList("mcp-editor");
+            rootVisualElement.EnableInClassList("unity-theme-light", !EditorGUIUtility.isProSkin);
+            rootVisualElement.EnableInClassList("unity-theme-dark", EditorGUIUtility.isProSkin);
             visualTree.CloneTree(rootVisualElement);
 
-            // Add search bar container at the top
-            var searchContainer = new VisualElement();
-            searchContainer.style.flexDirection = FlexDirection.Row;
-            searchContainer.style.marginTop = 8;
-            searchContainer.style.marginBottom = 20;
-            searchContainer.style.marginLeft = 4;
-            searchContainer.style.marginRight = 4;
-
-            searchField = new TextField("Search");
-            searchField.style.flexGrow = 1;
-            searchField.style.height = 28;
-            searchField.style.paddingTop = 2;
-            searchField.style.paddingBottom = 2;
-            searchField.labelElement.style.unityFontStyleAndWeight = FontStyle.Bold;
+            searchField = rootVisualElement.Q<TextField>("search-field");
+            searchField.SetValueWithoutNotify(searchFilter);
             searchField.RegisterValueChangedCallback(evt =>
             {
                 searchFilter = evt.newValue ?? "";
-                RefreshPrefs();
+                ApplyFilter();
             });
-
-            var refreshButton = new Button(RefreshPrefs);
-            refreshButton.text = "↻";
-            refreshButton.tooltip = "Refresh prefs";
-            refreshButton.style.width = 30;
-            refreshButton.style.height = 28;
-            refreshButton.style.marginLeft = 6;
-            refreshButton.style.backgroundColor = new Color(0.9f, 0.5f, 0.1f);
-
-            searchContainer.Add(searchField);
-            searchContainer.Add(refreshButton);
-            rootVisualElement.Insert(0, searchContainer);
+            rootVisualElement.Q<Button>("refresh-button").clicked += RefreshPrefs;
 
             // Get references
             scrollView = rootVisualElement.Q<ScrollView>("scroll-view");
             prefsContainer = rootVisualElement.Q<VisualElement>("prefs-container");
+            resultCount = rootVisualElement.Q<Label>("result-count");
+            emptyState = rootVisualElement.Q<Label>("empty-state");
 
             // Load known MCP keys
             LoadKnownMcpKeys();
@@ -182,6 +168,7 @@ namespace MCPForUnity.Editor.Windows
         private void RefreshPrefs()
         {
             currentPrefs.Clear();
+            prefRows.Clear();
             prefsContainer.Clear();
 
             // Get all EditorPrefs keys
@@ -203,30 +190,43 @@ namespace MCPForUnity.Editor.Windows
             // Sort keys
             allKeys.Sort();
 
-            // Pre-trim filter once outside the loop
-            var filter = searchFilter?.Trim();
-
             // Create items for existing prefs
             foreach (var key in allKeys)
             {
                 // Skip Customer UUID but show everything else that's defined
                 if (key != EditorPrefKeys.CustomerUuid)
                 {
-                    // Apply search filter using OrdinalIgnoreCase for fewer allocations
-                    if (!string.IsNullOrEmpty(filter) &&
-                        key.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
-                    {
-                        continue;
-                    }
-
                     var item = CreateEditorPrefItem(key);
                     if (item != null)
                     {
                         currentPrefs.Add(item);
-                        prefsContainer.Add(CreateItemUI(item));
+                        var row = CreateItemUI(item);
+                        prefRows.Add(item.Key, row);
+                        prefsContainer.Add(row);
                     }
                 }
             }
+            ApplyFilter();
+        }
+
+        private void ApplyFilter()
+        {
+            var filter = searchFilter.Trim();
+            int visibleCount = 0;
+            // Keep the same fields alive so filtering preserves pending value and type edits.
+            foreach (var item in currentPrefs)
+            {
+                bool visible = filter.Length == 0 ||
+                    item.Key.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+                prefRows[item.Key].EnableInClassList("pref-hidden", !visible);
+                if (visible)
+                {
+                    visibleCount++;
+                }
+            }
+            resultCount.text = $"{visibleCount} / {currentPrefs.Count}";
+            emptyState.EnableInClassList("pref-hidden", visibleCount != 0);
+            emptyState.text = currentPrefs.Count == 0 ? "No preferences available." : "No matching preferences.";
         }
 
         private List<string> GetAllMcpKeys()
@@ -321,7 +321,9 @@ namespace MCPForUnity.Editor.Windows
             var itemElement = itemTemplate.CloneTree();
 
             // Set values
-            itemElement.Q<Label>("key-label").text = item.Key;
+            var keyLabel = itemElement.Q<Label>("key-label");
+            keyLabel.text = item.Key;
+            keyLabel.tooltip = item.Key;
             var valueField = itemElement.Q<TextField>("value-field");
             valueField.value = item.Value;
 
@@ -335,7 +337,7 @@ namespace MCPForUnity.Editor.Windows
             if (item.IsUnset)
             {
                 valueField.SetEnabled(false);
-                valueField.style.opacity = 0.6f;
+                valueField.AddToClassList("pref-unset");
                 saveButton.SetEnabled(false);
             }
 

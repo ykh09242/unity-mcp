@@ -1,5 +1,5 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
-    <Style src="../Common.uss" />
+    <ui:Style src="../Common.uss" />
     <ui:VisualElement name="client-section" class="section">
         <ui:Label text="Client Configuration" class="section-title" />
         <ui:VisualElement class="section-content">
@@ -15,14 +15,14 @@
                         <ui:Label name="client-status" text="Not Configured" class="status-text" />
                     </ui:VisualElement>
                     <ui:Button name="configure-button" text="Configure" class="action-button" />
-                    <ui:Button name="install-skills-button" text="Install Skills" class="action-button" style="display: none;" />
+                    <ui:Button name="install-skills-button" text="Install Skills" class="action-button initially-hidden" />
                 </ui:VisualElement>
-                <ui:VisualElement class="setting-row" name="claude-cli-path-row" style="display: none;">
+                <ui:VisualElement class="setting-row initially-hidden" name="claude-cli-path-row">
                     <ui:Label text="Claude CLI Path:" class="setting-label-small" />
                     <ui:TextField name="claude-cli-path" readonly="true" class="path-display-field" />
                     <ui:Button name="browse-claude-button" text="Browse" class="icon-button" />
                 </ui:VisualElement>
-                <ui:VisualElement class="setting-row" name="client-project-dir-row" style="display: none;">
+                <ui:VisualElement class="setting-row initially-hidden" name="client-project-dir-row">
                     <ui:Label text="Client Project Dir:" class="setting-label-small" />
                     <ui:TextField name="client-project-dir" readonly="true" class="path-display-field" />
                     <ui:Button name="browse-project-dir-button" text="Browse" class="icon-button" />

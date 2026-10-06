@@ -57,6 +57,7 @@ namespace MCPForUnity.Editor.Windows
         private const double RefreshDebounceSeconds = 0.5;
         private bool updateCheckQueued = false;
         private bool updateCheckInFlight = false;
+        private ActivePanel activePanel;
 
         private enum ActivePanel
         {
@@ -166,25 +167,10 @@ namespace MCPForUnity.Editor.Windows
             }
 
             rootVisualElement.Clear();
+            rootVisualElement.AddToClassList("mcp-editor");
+            rootVisualElement.EnableInClassList("unity-theme-light", !EditorGUIUtility.isProSkin);
+            rootVisualElement.EnableInClassList("unity-theme-dark", EditorGUIUtility.isProSkin);
             visualTree.CloneTree(rootVisualElement);
-
-            // Load main window USS
-            var mainStyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(
-                $"{basePath}/Editor/Windows/MCPForUnityEditorWindow.uss"
-            );
-            if (mainStyleSheet != null)
-            {
-                rootVisualElement.styleSheets.Add(mainStyleSheet);
-            }
-
-            // Load common USS
-            var commonStyleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(
-                $"{basePath}/Editor/Windows/Components/Common.uss"
-            );
-            if (commonStyleSheet != null)
-            {
-                rootVisualElement.styleSheets.Add(commonStyleSheet);
-            }
 
             // Embed the Ocean brand mark at the left of the header bar
             var headerLeft = rootVisualElement.Q<VisualElement>("header-left");
@@ -580,6 +566,7 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnEnable()
         {
+            EditorApplication.update -= OnEditorUpdate;
             EditorApplication.update += OnEditorUpdate;
             OpenWindows.Add(this);
         }
@@ -587,6 +574,8 @@ namespace MCPForUnity.Editor.Windows
         private void OnDisable()
         {
             EditorApplication.update -= OnEditorUpdate;
+            EditorApplication.delayCall -= CheckForPackageUpdates;
+            updateCheckQueued = false;
             OpenWindows.Remove(this);
             guiCreated = false;
             toolsLoaded = false;
@@ -650,65 +639,18 @@ namespace MCPForUnity.Editor.Windows
             resourcesTabToggle = rootVisualElement.Q<ToolbarToggle>("resources-tab");
             assetGenTabToggle = rootVisualElement.Q<ToolbarToggle>("assetgen-tab");
 
-            clientsPanel?.RemoveFromClassList("hidden");
-            depsPanel?.RemoveFromClassList("hidden");
-            advancedPanel?.RemoveFromClassList("hidden");
-            toolsPanel?.RemoveFromClassList("hidden");
-            resourcesPanel?.RemoveFromClassList("hidden");
-            assetGenPanel?.RemoveFromClassList("hidden");
-
-            if (clientsTabToggle != null)
-            {
-                clientsTabToggle.RegisterValueChangedCallback(evt =>
-                {
-                    if (evt.newValue) SwitchPanel(ActivePanel.Clients);
-                });
-            }
-
-            if (depsTabToggle != null)
-            {
-                depsTabToggle.RegisterValueChangedCallback(evt =>
-                {
-                    if (evt.newValue) SwitchPanel(ActivePanel.Deps);
-                });
-            }
-
-            if (advancedTabToggle != null)
-            {
-                advancedTabToggle.RegisterValueChangedCallback(evt =>
-                {
-                    if (evt.newValue) SwitchPanel(ActivePanel.Advanced);
-                });
-            }
-
-            if (toolsTabToggle != null)
-            {
-                toolsTabToggle.RegisterValueChangedCallback(evt =>
-                {
-                    if (evt.newValue) SwitchPanel(ActivePanel.Tools);
-                });
-            }
-
-            if (resourcesTabToggle != null)
-            {
-                resourcesTabToggle.RegisterValueChangedCallback(evt =>
-                {
-                    if (evt.newValue) SwitchPanel(ActivePanel.Resources);
-                });
-            }
-
-            if (assetGenTabToggle != null)
-            {
-                assetGenTabToggle.RegisterValueChangedCallback(evt =>
-                {
-                    if (evt.newValue) SwitchPanel(ActivePanel.AssetGen);
-                });
-            }
+            RegisterTab(clientsTabToggle, ActivePanel.Clients);
+            RegisterTab(depsTabToggle, ActivePanel.Deps);
+            RegisterTab(advancedTabToggle, ActivePanel.Advanced);
+            RegisterTab(toolsTabToggle, ActivePanel.Tools);
+            RegisterTab(resourcesTabToggle, ActivePanel.Resources);
+            RegisterTab(assetGenTabToggle, ActivePanel.AssetGen);
 
             var savedPanel = EditorPrefs.GetString(EditorPrefKeys.EditorWindowActivePanel, ActivePanel.Clients.ToString());
             // Migrate old "Validation" saved value to "Deps"
             if (savedPanel == "Validation") savedPanel = "Deps";
-            if (!Enum.TryParse(savedPanel, out ActivePanel initialPanel))
+            if (!Enum.TryParse(savedPanel, out ActivePanel initialPanel)
+                || !Enum.IsDefined(typeof(ActivePanel), initialPanel))
             {
                 initialPanel = ActivePanel.Clients;
             }
@@ -716,63 +658,45 @@ namespace MCPForUnity.Editor.Windows
             SwitchPanel(initialPanel);
         }
 
+        private void RegisterTab(ToolbarToggle toggle, ActivePanel panel)
+        {
+            toggle?.RegisterValueChangedCallback(evt =>
+            {
+                if (evt.newValue)
+                    SwitchPanel(panel);
+                else if (activePanel == panel)
+                    toggle.SetValueWithoutNotify(true);
+            });
+        }
+
         private void SwitchPanel(ActivePanel panel)
         {
-            // Hide all panels
-            if (clientsPanel != null)
-            {
-                clientsPanel.style.display = DisplayStyle.None;
-            }
-
-            if (depsPanel != null)
-            {
-                depsPanel.style.display = DisplayStyle.None;
-            }
-
-            if (advancedPanel != null)
-            {
-                advancedPanel.style.display = DisplayStyle.None;
-            }
-
-            if (toolsPanel != null)
-            {
-                toolsPanel.style.display = DisplayStyle.None;
-            }
-
-            if (resourcesPanel != null)
-            {
-                resourcesPanel.style.display = DisplayStyle.None;
-            }
-
-            if (assetGenPanel != null)
-            {
-                assetGenPanel.style.display = DisplayStyle.None;
-            }
+            activePanel = panel;
+            clientsPanel?.EnableInClassList("hidden", panel != ActivePanel.Clients);
+            depsPanel?.EnableInClassList("hidden", panel != ActivePanel.Deps);
+            advancedPanel?.EnableInClassList("hidden", panel != ActivePanel.Advanced);
+            toolsPanel?.EnableInClassList("hidden", panel != ActivePanel.Tools);
+            resourcesPanel?.EnableInClassList("hidden", panel != ActivePanel.Resources);
+            assetGenPanel?.EnableInClassList("hidden", panel != ActivePanel.AssetGen);
 
             // Show selected panel
             switch (panel)
             {
                 case ActivePanel.Clients:
-                    if (clientsPanel != null) clientsPanel.style.display = DisplayStyle.Flex;
                     // Refresh client status when switching to Connect tab (e.g., after package/version changes).
                     clientConfigSection?.RefreshSelectedClient(forceImmediate: true);
                     break;
                 case ActivePanel.Deps:
-                    if (depsPanel != null) depsPanel.style.display = DisplayStyle.Flex;
                     break;
                 case ActivePanel.Advanced:
-                    if (advancedPanel != null) advancedPanel.style.display = DisplayStyle.Flex;
                     break;
                 case ActivePanel.Tools:
-                    if (toolsPanel != null) toolsPanel.style.display = DisplayStyle.Flex;
                     EnsureToolsLoaded();
                     break;
                 case ActivePanel.Resources:
-                    if (resourcesPanel != null) resourcesPanel.style.display = DisplayStyle.Flex;
                     EnsureResourcesLoaded();
                     break;
                 case ActivePanel.AssetGen:
-                    if (assetGenPanel != null) assetGenPanel.style.display = DisplayStyle.Flex;
                     assetGenSection?.Refresh();
                     break;
             }
@@ -830,15 +754,9 @@ namespace MCPForUnity.Editor.Windows
             var content = new VisualElement();
             content.AddToClassList("section-content");
 
-            var desc = new Label("Some tool groups require optional packages. Install them to unlock additional capabilities.");
-            desc.AddToClassList("validation-description");
-            desc.style.marginBottom = 4;
-            content.Add(desc);
-
             // Install All / Uninstall All buttons
             var bulkRow = new VisualElement();
-            bulkRow.style.flexDirection = FlexDirection.Row;
-            bulkRow.style.marginBottom = 8;
+            bulkRow.AddToClassList("tool-actions");
 
             var upmPackages = new[] { "com.unity.probuilder", "com.unity.cinemachine", "com.unity.visualeffectgraph", "com.unity.cloud.gltfast" };
 
@@ -859,7 +777,6 @@ namespace MCPForUnity.Editor.Windows
             });
             installAllButton.text = "Install All";
             installAllButton.AddToClassList("action-button");
-            installAllButton.style.marginRight = 4;
             bulkRow.Add(installAllButton);
 
             Button uninstallAllButton = null;
@@ -954,41 +871,29 @@ namespace MCPForUnity.Editor.Windows
             Action<Action> installAction, Action<Action> uninstallAction)
         {
             var row = new VisualElement();
-            row.style.marginBottom = 8;
-            row.style.paddingBottom = 8;
-            row.style.borderBottomWidth = 1;
-            row.style.borderBottomColor = new Color(0.3f, 0.3f, 0.3f, 0.3f);
+            row.AddToClassList("package-row");
 
             var header = new VisualElement();
-            header.style.flexDirection = FlexDirection.Row;
-            header.style.alignItems = Align.Center;
-            header.style.marginBottom = 2;
+            header.AddToClassList("setting-row");
 
             var nameLabel = new Label(name);
-            nameLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            nameLabel.style.flexGrow = 1;
+            nameLabel.AddToClassList("package-name");
+            nameLabel.tooltip = description;
             header.Add(nameLabel);
 
             var statusIcon = new Label(isInstalled ? "\u2713" : "\u2717");
-            statusIcon.style.color = isInstalled ? new Color(0.4f, 0.8f, 0.4f) : new Color(0.8f, 0.4f, 0.4f);
-            statusIcon.style.fontSize = 14;
+            statusIcon.AddToClassList(isInstalled ? "status-success" : "status-warning");
             header.Add(statusIcon);
 
             row.Add(header);
 
-            var descLabel = new Label(description);
-            descLabel.AddToClassList("validation-description");
-            descLabel.style.marginBottom = 2;
-            row.Add(descLabel);
-
             var statusText = new Label(isInstalled ? installedText : missingText);
-            statusText.style.fontSize = 11;
-            statusText.style.color = isInstalled ? new Color(0.6f, 0.8f, 0.6f) : new Color(0.8f, 0.7f, 0.5f);
+            statusText.AddToClassList("help-text");
+            statusText.AddToClassList(isInstalled ? "status-success" : "status-warning");
             row.Add(statusText);
 
             var buttonRow = new VisualElement();
-            buttonRow.style.flexDirection = FlexDirection.Row;
-            buttonRow.style.marginTop = 4;
+            buttonRow.AddToClassList("tool-actions");
 
             if (!isInstalled && installAction != null)
             {

@@ -92,6 +92,70 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
             Assert.Pass($"Callback pattern: {pattern}");
         }
 
+        [TestCase("", false)]
+        [TestCase("   ", false)]
+        [TestCase("  MIXEDkey  ", false)]
+        [TestCase("no match", true)]
+        public void EditorPrefsWindow_FilterPreservesPendingEdits_AndReportsResults(string filter, bool hidden)
+        {
+            var window = UnityEngine.ScriptableObject.CreateInstance<EditorPrefsWindow>();
+            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            var type = typeof(EditorPrefsWindow);
+            string key = "MCPForUnity.MixedKey." + Guid.NewGuid().ToString("N");
+            UnityEditor.EditorPrefs.SetString(key, "persisted value");
+            try
+            {
+                var item = new EditorPrefItem { Key = key, Value = "persisted value", Type = EditorPrefType.String };
+                var prefs = (System.Collections.Generic.List<EditorPrefItem>)type.GetField("currentPrefs", flags).GetValue(window);
+                prefs.Add(item);
+                var rows = (System.Collections.Generic.Dictionary<string, VisualElement>)type.GetField("prefRows", flags).GetValue(window);
+                var row = new VisualElement();
+                var value = new TextField { name = "value-field", value = "pending value" };
+                var dropdown = new DropdownField(new System.Collections.Generic.List<string> { "String", "Int", "Float", "Bool" }, 2);
+                row.Add(value);
+                row.Add(dropdown);
+                rows.Add(key, row);
+                var count = new Label();
+                var empty = new Label();
+                type.GetField("resultCount", flags).SetValue(window, count);
+                type.GetField("emptyState", flags).SetValue(window, empty);
+                type.GetField("searchFilter", flags).SetValue(window, filter);
+
+                var applyFilter = type.GetMethod("ApplyFilter", flags);
+                applyFilter.Invoke(window, null);
+
+                Assert.AreEqual(hidden, row.ClassListContains("pref-hidden"));
+                Assert.AreEqual(hidden ? "0 / 1" : "1 / 1", count.text);
+                Assert.AreEqual(!hidden, empty.ClassListContains("pref-hidden"));
+                if (hidden)
+                {
+                    Assert.AreEqual("No matching preferences.", empty.text);
+                }
+
+                type.GetField("searchFilter", flags).SetValue(window, "");
+                applyFilter.Invoke(window, null);
+                Assert.IsFalse(row.ClassListContains("pref-hidden"));
+                Assert.AreSame(row, rows[key]);
+                Assert.AreEqual("pending value", value.value);
+                Assert.AreEqual((int)EditorPrefType.Float, dropdown.index);
+                Assert.AreEqual("persisted value", item.Value);
+                Assert.AreEqual(EditorPrefType.String, item.Type);
+                Assert.AreEqual("persisted value", UnityEditor.EditorPrefs.GetString(key));
+
+                prefs.Clear();
+                rows.Clear();
+                applyFilter.Invoke(window, null);
+                Assert.AreEqual("0 / 0", count.text);
+                Assert.AreEqual("No preferences available.", empty.text);
+                Assert.IsFalse(empty.ClassListContains("pref-hidden"));
+            }
+            finally
+            {
+                UnityEditor.EditorPrefs.DeleteKey(key);
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
         #endregion
 
         #region Section 2: MCPSetupWindow Tests (3 tests)
