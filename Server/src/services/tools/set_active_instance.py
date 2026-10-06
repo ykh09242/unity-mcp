@@ -29,6 +29,13 @@ async def set_active_instance(
         ctx: Context,
         instance: Annotated[str, "Target instance (Name@hash, hash prefix, or port number in stdio mode)"]
 ) -> dict[str, Any]:
+    value = (instance or "").strip()
+    if not value:
+        return {
+            "success": False,
+            "error": "Instance identifier is required. "
+                     "Use mcpforunity://instances to copy a Name@hash or provide a hash prefix.",
+        }
     if is_sessionless(ctx):
         return {
             "success": False,
@@ -38,7 +45,6 @@ async def set_active_instance(
     transport = (config.transport_mode or "stdio").lower()
 
     # Port number shorthand (stdio only) — resolve to Name@hash via pool discovery
-    value = (instance or "").strip()
     if value.isdigit():
         if transport == "http":
             return {
@@ -101,13 +107,6 @@ async def set_active_instance(
         }
     ids = {inst.id: inst for inst in instances if getattr(inst, "id", None)}
 
-    value = (instance or "").strip()
-    if not value:
-        return {
-            "success": False,
-            "error": "Instance identifier is required. "
-                     "Use mcpforunity://instances to copy a Name@hash or provide a hash prefix."
-        }
     resolved = None
     if "@" in value:
         resolved = ids.get(value)

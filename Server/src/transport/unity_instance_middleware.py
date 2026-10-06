@@ -10,10 +10,12 @@ import logging
 import time
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.exceptions import ValidationError
 
 from core.config import config
 from services.registry import get_registered_tools
 from transport.plugin_hub import PluginHub
+from transport.tool_input_validation import validate_tool_arguments
 
 logger = logging.getLogger("mcp-for-unity-server")
 # Separate logger that propagates to root -> stderr so diagnostics show in console
@@ -322,7 +324,9 @@ class UnityInstanceMiddleware(Middleware):
         from transport.unity_transport import _resolve_user_id_from_request
         return await _resolve_user_id_from_request()
 
-    async def _inject_unity_instance(self, context: MiddlewareContext) -> None:
+    async def _inject_unity_instance(
+        self, context: MiddlewareContext, *, authenticated_user_id: str | None = None,
+    ) -> None:
         """Inject active Unity instance and user_id into context if available."""
         ctx = context.fastmcp_context
 
@@ -331,7 +335,7 @@ class UnityInstanceMiddleware(Middleware):
             await ctx.set_state(key, None, serializable=False)
 
         # Resolve user_id from the HTTP request's API key header
-        user_id = await self._resolve_user_id()
+        user_id = authenticated_user_id if authenticated_user_id is not None else await self._resolve_user_id()
         if config.http_remote_hosted and user_id is None:
             raise RuntimeError(
                 "API key authentication required. Provide a valid X-API-Key header."
@@ -411,7 +415,24 @@ class UnityInstanceMiddleware(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into tool context if available."""
-        await self._inject_unity_instance(context)
+        user_id = None
+        if config.http_remote_hosted:
+            user_id = await self._resolve_user_id()
+            if user_id is None:
+                raise RuntimeError("API key authentication required. Provide a valid X-API-Key header.")
+        ctx = context.fastmcp_context
+        server = getattr(ctx, "fastmcp", None)
+        name = getattr(context.message, "name", None)
+        arguments = getattr(context.message, "arguments", None)
+        if server is not None and hasattr(type(server), "get_tool") and isinstance(name, str):
+            tool = await server.get_tool(name)
+            if tool is not None:
+                supplied = dict(arguments or {})
+                selector = supplied.pop("unity_instance", None)
+                if selector is not None and not isinstance(selector, str) and type(selector) is not int:
+                    raise ValidationError("unity_instance must be a string identifier or an integer port")
+                validate_tool_arguments(tool, supplied, strict=True if server.strict_input_validation else None)
+        await self._inject_unity_instance(context, authenticated_user_id=user_id)
         if config.http_remote_hosted:
             self._refresh_tool_visibility_metadata_from_registry()
             tool_name = getattr(context.message, "name", None)

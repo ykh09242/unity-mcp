@@ -2,7 +2,7 @@ from typing import Annotated, Any, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -46,12 +46,6 @@ ALL_ACTIONS = (
     ["ping"] + VOLUME_ACTIONS + BAKE_ACTIONS + STATS_ACTIONS
     + PIPELINE_ACTIONS + FEATURE_ACTIONS + SKYBOX_ACTIONS
 )
-
-
-def _reject_boolean_feature_index(value: Any) -> Any:
-    if isinstance(value, bool):
-        raise ValueError("index must be an integer, not a boolean.")
-    return value
 
 
 @mcp_for_unity_tool(
@@ -114,7 +108,6 @@ async def manage_graphics(
     index: Annotated[
         Optional[int],
         Field(description="Feature index."),
-        BeforeValidator(_reject_boolean_feature_index),
     ] = None,
     active: Annotated[Optional[bool], "Feature active state."] = None,
     order: Annotated[Optional[list[int]], "Feature reorder indices."] = None,

@@ -2,7 +2,7 @@ from typing import Annotated, Any, Literal, Optional, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -35,12 +35,6 @@ PhysicsAction = Literal[
 ]
 
 ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
-
-
-def _reject_boolean_component_index(value: Any) -> Any:
-    if isinstance(value, bool):
-        raise ValueError("component_index must be an integer, not a boolean")
-    return value
 
 
 @mcp_for_unity_tool(
@@ -192,7 +186,6 @@ async def manage_physics(
             "Zero-based index to select which component when multiple of the same type exist (e.g., multiple HingeJoints or BoxColliders). "
             "If omitted, targets the first instance."
         )),
-        BeforeValidator(_reject_boolean_component_index),
     ] = None,
 ) -> dict[str, Any]:
     """Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries, validation, simulation."""

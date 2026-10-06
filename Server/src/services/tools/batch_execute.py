@@ -122,9 +122,11 @@ async def batch_execute(
         tool_name = command.get("tool")
         params = command.get("params", {})
 
-        if not tool_name or not isinstance(tool_name, str):
+        if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError(
                 f"Command at index {index} is missing a valid 'tool' name")
+        if tool_name.casefold() == "batch_execute":
+            raise ValueError("Nested batch_execute commands are not allowed")
 
         if params is None:
             params = {}

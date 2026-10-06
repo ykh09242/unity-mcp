@@ -206,7 +206,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                                 error = str(exc)
                             check(bool(error),"strict selector rejected "+mode+action+str(joint_type)+repr(index))
                             if isinstance(index, bool):
-                                check("component_index must be an integer, not a boolean" in error,"boolean selector diagnostic "+mode+action+str(joint_type)+repr(index))
+                                check("component_index" in error and "valid integer" in error and "int_type" in error,"strict integer selector diagnostic "+mode+action+str(joint_type)+repr(index))
                             check(len(requests) == before,"strict selector no transport "+mode+action+str(joint_type)+repr(index))
                             print("SELECTOR_WIRE",json.dumps({"mode":mode,"input":index,"input_type":type(index).__name__,"rejected":bool(error),"error":error,"wire":None if len(requests) == before else requests[-1][2]},sort_keys=True))
                     for payload in ({"action":"unknown"},{"action":"PING"},{"action":"configure_joint","properties":[]},{"action":"add_joint","motor":"bad"},{"action":"raycast","origin":["bad"]},{"action":"ping","component_index":1.5}):

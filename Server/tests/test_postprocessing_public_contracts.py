@@ -238,8 +238,8 @@ async def main():
                         check(result.is_error and not sent,
                               'boolean selector rejected before transport ' + mode + repr(payload))
                         text = ' '.join(getattr(block, 'text', '') for block in result.content)
-                        check('index must be an integer, not a boolean' in text,
-                              'specific boolean diagnostic ' + mode + repr(payload))
+                        check('index' in text and 'valid integer' in text and 'int_type' in text,
+                              'strict integer diagnostic ' + mode + repr(payload))
                         continue
                     if isinstance(value, (str, float)):
                         check(result.is_error and not sent,

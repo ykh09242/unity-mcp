@@ -24,6 +24,14 @@ from services.tools import get_unity_instance_from_context
     ),
 )
 async def execute_custom_tool(ctx: Context, tool_name: str, parameters: dict[str, Any] | None = None) -> MCPResponse:
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return MCPResponse(success=False, message="tool_name must be a nonempty string")
+    # Reject malformed outer arguments before discovering a project/catalog.
+    if parameters is None:
+        parameters = {}
+    elif not isinstance(parameters, dict):
+        return MCPResponse(success=False, message="parameters must be an object/dictionary")
+
     unity_instance = await get_unity_instance_from_context(ctx)
     if not unity_instance:
         return MCPResponse(
@@ -36,16 +44,6 @@ async def execute_custom_tool(ctx: Context, tool_name: str, parameters: dict[str
         return MCPResponse(
             success=False,
             message=f"Could not resolve project id for {unity_instance}. Ensure Unity is running and reachable.",
-        )
-
-    # The signature accepts None (parameter-less custom tools). Treat it as an empty
-    # dict rather than rejecting — the previous behavior contradicted the optional type.
-    if parameters is None:
-        parameters = {}
-    elif not isinstance(parameters, dict):
-        return MCPResponse(
-            success=False,
-            message="parameters must be an object/dictionary",
         )
 
     service = CustomToolService.get_instance()
