@@ -413,8 +413,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (token is JArray arr && arr.Count >= 3)
             {
                 return new Color(
-                    (float)arr[0], (float)arr[1], (float)arr[2],
-                    arr.Count >= 4 ? (float)arr[3] : 1f);
+                    arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>(),
+                    arr.Count >= 4 ? arr[3].ReadScalar<float>() : 1f);
             }
             return null;
         }
@@ -455,25 +455,25 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         if (value is JArray colorArr && colorArr.Count >= 3)
                         {
                             mat.SetColor(propName, new Color(
-                                (float)colorArr[0], (float)colorArr[1], (float)colorArr[2],
-                                colorArr.Count >= 4 ? (float)colorArr[3] : 1f));
+                                colorArr[0].ReadScalar<float>(), colorArr[1].ReadScalar<float>(), colorArr[2].ReadScalar<float>(),
+                                colorArr.Count >= 4 ? colorArr[3].ReadScalar<float>() : 1f));
                             return true;
                         }
                         return false;
                     case ShaderPropertyType.Float:
                     case ShaderPropertyType.Range:
-                        mat.SetFloat(propName, (float)value);
+                        mat.SetFloat(propName, value.ReadScalar<float>());
                         return true;
                     case ShaderPropertyType.Int:
-                        mat.SetInteger(propName, (int)value);
+                        mat.SetInteger(propName, value.ReadScalar<int>());
                         return true;
                     case ShaderPropertyType.Vector:
                         if (value is JArray vecArr && vecArr.Count >= 2)
                         {
                             mat.SetVector(propName, new Vector4(
-                                (float)vecArr[0], (float)vecArr[1],
-                                vecArr.Count >= 3 ? (float)vecArr[2] : 0f,
-                                vecArr.Count >= 4 ? (float)vecArr[3] : 0f));
+                                vecArr[0].ReadScalar<float>(), vecArr[1].ReadScalar<float>(),
+                                vecArr.Count >= 3 ? vecArr[2].ReadScalar<float>() : 0f,
+                                vecArr.Count >= 4 ? vecArr[3].ReadScalar<float>() : 0f));
                             return true;
                         }
                         return false;

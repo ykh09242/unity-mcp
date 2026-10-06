@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             // When setActive=true is specified, we need to search for inactive objects
             // otherwise we can't find an inactive object to activate it
             JObject findParams = null;
-            if (@params["setActive"]?.ToObject<bool?>() == true)
+            if (@params["setActive"]?.ReadScalar<bool?>() == true)
             {
                 findParams = new JObject { ["searchInactive"] = true };
             }
@@ -53,7 +53,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Invalid layer specified: '{layerName}'. Use a valid layer name.");
             }
 
-            bool? isStatic = @params["isStatic"]?.ToObject<bool?>();
+            bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
 
             Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
             Undo.RecordObject(targetGo, "Modify GameObject Properties");
@@ -112,7 +112,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
             }
 
-            bool? setActive = @params["setActive"]?.ToObject<bool?>();
+            bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
             if (setActive.HasValue && targetGo.activeSelf != setActive.Value)
             {
                 targetGo.SetActive(setActive.Value);

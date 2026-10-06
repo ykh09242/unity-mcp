@@ -89,7 +89,7 @@ namespace MCPForUnity.Editor.Tools
                 string code = @params["code"]?.ToString();
                 string assemblyName = @params["assembly_name"]?.ToString() ?? $"DynamicAssembly_{DateTime.Now.Ticks}";
                 string attachTo = @params["attach_to"]?.ToString();
-                bool loadImmediately = @params["load_immediately"]?.ToObject<bool>() ?? true;
+                bool loadImmediately = @params["load_immediately"]?.ReadScalar<bool?>() ?? true;
                 
                 if (string.IsNullOrEmpty(code))
                 {
@@ -294,7 +294,7 @@ namespace MCPForUnity.Editor.Tools
                 string className = @params["class_name"]?.ToString() ?? "AIGenerated";
                 string methodName = @params["method_name"]?.ToString() ?? "Run";
                 string targetObjectName = @params["target_object"]?.ToString();
-                bool attachAsComponent = @params["attach_as_component"]?.ToObject<bool>() ?? false;
+                bool attachAsComponent = @params["attach_as_component"]?.ReadScalar<bool?>() ?? false;
                 
                 if (string.IsNullOrEmpty(code))
                 {

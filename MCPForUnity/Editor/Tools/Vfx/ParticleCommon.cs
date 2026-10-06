@@ -1,3 +1,4 @@
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -21,7 +22,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             if (token.Type == JTokenType.Float || token.Type == JTokenType.Integer)
             {
-                return new ParticleSystem.MinMaxCurve(token.ToObject<float>());
+                return new ParticleSystem.MinMaxCurve(token.ReadScalar<float>());
             }
 
             if (token is JObject obj)
@@ -31,18 +32,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 switch (mode)
                 {
                     case "constant":
-                        float constant = obj["value"]?.ToObject<float>() ?? defaultValue;
+                        float constant = obj["value"]?.ReadScalar<float?>() ?? defaultValue;
                         return new ParticleSystem.MinMaxCurve(constant);
 
                     case "random_between_constants":
                     case "two_constants":
-                        float min = obj["min"]?.ToObject<float>() ?? 0f;
-                        float max = obj["max"]?.ToObject<float>() ?? 1f;
+                        float min = obj["min"]?.ReadScalar<float?>() ?? 0f;
+                        float max = obj["max"]?.ReadScalar<float?>() ?? 1f;
                         return new ParticleSystem.MinMaxCurve(min, max);
 
                     case "curve":
                         AnimationCurve curve = ManageVfxCommon.ParseAnimationCurve(obj, defaultValue);
-                        return new ParticleSystem.MinMaxCurve(obj["multiplier"]?.ToObject<float>() ?? 1f, curve);
+                        return new ParticleSystem.MinMaxCurve(obj["multiplier"]?.ReadScalar<float?>() ?? 1f, curve);
 
                     default:
                         return new ParticleSystem.MinMaxCurve(defaultValue);

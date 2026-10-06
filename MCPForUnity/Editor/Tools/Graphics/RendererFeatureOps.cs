@@ -356,7 +356,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (featuresList == null || featuresList.Count == 0)
                 return new ErrorResponse("No renderer features to reorder.");
 
-            var newOrder = orderToken.Select(t => (int)t).ToList();
+            var newOrder = orderToken.Select(t => t.ReadScalar<int>()).ToList();
             if (newOrder.Count != featuresList.Count)
                 return new ErrorResponse(
                     $"Order array length ({newOrder.Count}) must match feature count ({featuresList.Count}).");

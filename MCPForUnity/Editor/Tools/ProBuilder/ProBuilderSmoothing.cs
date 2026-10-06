@@ -19,8 +19,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (faceIndicesToken == null)
                 return new ErrorResponse("faceIndices parameter is required.");
 
-            var smoothingGroup = props["smoothingGroup"]?.Value<int>()
-                              ?? props["smoothing_group"]?.Value<int>()
+            var smoothingGroup = props["smoothingGroup"]?.ReadScalar<int?>()
+                              ?? props["smoothing_group"]?.ReadScalar<int?>()
                               ?? 0;
 
             var faces = ManageProBuilder.GetFacesByIndices(pbMesh, faceIndicesToken);
@@ -47,8 +47,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var pbMesh = ManageProBuilder.RequireProBuilderMesh(@params);
             var props = ManageProBuilder.ExtractProperties(@params);
 
-            var angleThreshold = props["angleThreshold"]?.Value<float>()
-                              ?? props["angle_threshold"]?.Value<float>()
+            var angleThreshold = props["angleThreshold"]?.ReadScalar<float?>()
+                              ?? props["angle_threshold"]?.ReadScalar<float?>()
                               ?? 30f;
 
             if (ManageProBuilder._smoothingType == null)

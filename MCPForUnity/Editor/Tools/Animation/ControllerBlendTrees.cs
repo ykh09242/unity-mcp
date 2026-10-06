@@ -31,7 +31,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(blendParameter))
                 return new { success = false, message = "'blendParameter' is required" };
 
-            int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
+            int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
 
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length)
@@ -100,7 +100,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(blendParameterX) || string.IsNullOrEmpty(blendParameterY))
                 return new { success = false, message = "'blendParameterX' and 'blendParameterY' are required" };
 
-            int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
+            int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
             var blendTypeToken = @params["blendType"];
             string blendTypeStr = blendTypeToken == null || blendTypeToken.Type == JTokenType.Null
                 ? "simpledirectional2d" : blendTypeToken.ToString().ToLowerInvariant();
@@ -189,7 +189,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (clip == null)
                 return new { success = false, message = $"AnimationClip not found at '{clipPath}'" };
 
-            int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
+            int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
 
             var layers = controller.layers;
             if (layerIndex < 0 || layerIndex >= layers.Length)
@@ -290,7 +290,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return false;
             try
             {
-                value = token.ToObject<float>();
+                value = token.ReadScalar<float>();
                 return !float.IsNaN(value) && !float.IsInfinity(value);
             }
             catch (Exception ex) when (ex is FormatException || ex is OverflowException ||

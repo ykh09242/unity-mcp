@@ -263,7 +263,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 if (int.TryParse(str, out int intVal))
                     return Enum.ToObject(targetType, intVal);
             }
-            return Convert.ChangeType(value.ToObject<object>(), targetType);
+            return PropertyConversion.ConvertToType(value, targetType);
         }
 
         // --- Helper: Try to read a property value via reflection ---

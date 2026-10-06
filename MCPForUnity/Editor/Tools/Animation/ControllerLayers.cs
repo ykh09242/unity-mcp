@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(layerName))
                 return new { success = false, message = "'layerName' is required" };
 
-            float weight = @params["weight"]?.ToObject<float>() ?? 1f;
+            float weight = @params["weight"]?.ReadScalar<float?>() ?? 1f;
             string blendingModeStr = @params["blendingMode"]?.ToString()?.ToLowerInvariant() ?? "override";
 
             AnimatorLayerBlendingMode blendingMode = blendingModeStr == "additive"
@@ -76,7 +76,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (controller == null)
                 return new { success = false, message = $"AnimatorController not found at '{controllerPath}'" };
 
-            int? layerIndex = @params["layerIndex"]?.ToObject<int?>();
+            int? layerIndex = @params["layerIndex"]?.ReadScalar<int?>();
             string layerName = @params["layerName"]?.ToString();
 
             if (!layerIndex.HasValue && string.IsNullOrEmpty(layerName))
@@ -146,13 +146,13 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (controller == null)
                 return new { success = false, message = $"AnimatorController not found at '{controllerPath}'" };
 
-            int? layerIndex = @params["layerIndex"]?.ToObject<int?>();
+            int? layerIndex = @params["layerIndex"]?.ReadScalar<int?>();
             string layerName = @params["layerName"]?.ToString();
 
             if (!layerIndex.HasValue && string.IsNullOrEmpty(layerName))
                 return new { success = false, message = "Either 'layerIndex' or 'layerName' is required" };
 
-            float weight = @params["weight"]?.ToObject<float>() ?? 1f;
+            float weight = @params["weight"]?.ReadScalar<float?>() ?? 1f;
 
             var layers = controller.layers;
             if (layerIndex.HasValue)

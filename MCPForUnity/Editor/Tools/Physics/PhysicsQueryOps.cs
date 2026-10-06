@@ -41,9 +41,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("3D raycast 'direction' requires [x, y, z].");
 
             var origin = new Vector3(
-                originArr[0].Value<float>(), originArr[1].Value<float>(), originArr[2].Value<float>());
+                originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
             var direction = new Vector3(
-                dirArr[0].Value<float>(), dirArr[1].Value<float>(), dirArr[2].Value<float>());
+                dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -93,8 +93,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dirArr.Count < 2)
                 return new ErrorResponse("2D raycast 'direction' requires [x, y].");
 
-            var origin = new Vector2(originArr[0].Value<float>(), originArr[1].Value<float>());
-            var direction = new Vector2(dirArr[0].Value<float>(), dirArr[1].Value<float>());
+            var origin = new Vector2(originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>());
+            var direction = new Vector2(dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -165,7 +165,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("3D overlap 'position' requires [x, y, z].");
 
             var position = new Vector3(
-                posArr[0].Value<float>(), posArr[1].Value<float>(), posArr[2].Value<float>());
+                posArr[0].ReadScalar<float>(), posArr[1].ReadScalar<float>(), posArr[2].ReadScalar<float>());
 
             Collider[] results;
 
@@ -173,7 +173,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 case "sphere":
                 {
-                    float radius = sizeToken.Value<float>();
+                    float radius = sizeToken.ReadScalar<float>();
                     UnityEngine.Physics.SyncTransforms();
                     results = UnityEngine.Physics.OverlapSphere(position, radius, layerMask);
                     break;
@@ -183,7 +183,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     Vector3 halfExtents;
                     if (sizeToken is JArray sizeArr && sizeArr.Count >= 3)
                         halfExtents = new Vector3(
-                            sizeArr[0].Value<float>(), sizeArr[1].Value<float>(), sizeArr[2].Value<float>());
+                            sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>(), sizeArr[2].ReadScalar<float>());
                     else
                         return new ErrorResponse("3D box overlap 'size' requires [halfX, halfY, halfZ].");
                     UnityEngine.Physics.SyncTransforms();
@@ -194,9 +194,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (sizeToken is JObject capsuleObj)
                     {
-                        float radius = capsuleObj["radius"]?.Value<float>() ?? 0.5f;
-                        float height = capsuleObj["height"]?.Value<float>() ?? 2f;
-                        int direction = capsuleObj["direction"]?.Value<int>() ?? 1;
+                        float radius = capsuleObj["radius"]?.ReadScalar<float?>() ?? 0.5f;
+                        float height = capsuleObj["height"]?.ReadScalar<float?>() ?? 2f;
+                        int direction = capsuleObj["direction"]?.ReadScalar<int?>() ?? 1;
 
                         Vector3 point0, point1;
                         float halfHeight = Mathf.Max(0, height / 2f - radius);
@@ -237,7 +237,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (posArr.Count < 2)
                 return new ErrorResponse("2D overlap 'position' requires [x, y].");
 
-            var position = new Vector2(posArr[0].Value<float>(), posArr[1].Value<float>());
+            var position = new Vector2(posArr[0].ReadScalar<float>(), posArr[1].ReadScalar<float>());
 
             Collider2D[] results;
 
@@ -245,7 +245,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 case "circle":
                 {
-                    float radius = sizeToken.Value<float>();
+                    float radius = sizeToken.ReadScalar<float>();
                     Physics2D.SyncTransforms();
                     results = Physics2D.OverlapCircleAll(position, radius, layerMask);
                     break;
@@ -254,7 +254,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     Vector2 size;
                     if (sizeToken is JArray sizeArr && sizeArr.Count >= 2)
-                        size = new Vector2(sizeArr[0].Value<float>(), sizeArr[1].Value<float>());
+                        size = new Vector2(sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>());
                     else
                         return new ErrorResponse("2D box overlap 'size' requires [width, height].");
                     Physics2D.SyncTransforms();
@@ -265,8 +265,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (sizeToken is JObject capsuleObj)
                     {
-                        float sizeX = capsuleObj["width"]?.Value<float>() ?? 1f;
-                        float sizeY = capsuleObj["height"]?.Value<float>() ?? 2f;
+                        float sizeX = capsuleObj["width"]?.ReadScalar<float?>() ?? 1f;
+                        float sizeY = capsuleObj["height"]?.ReadScalar<float?>() ?? 2f;
                         var dir = CapsuleDirection2D.Vertical;
                         string dirStr = capsuleObj["direction"]?.ToString();
                         if (dirStr != null && dirStr.ToLowerInvariant() == "horizontal")
@@ -364,9 +364,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("3D shapecast 'direction' requires [x, y, z].");
 
             var origin = new Vector3(
-                originArr[0].Value<float>(), originArr[1].Value<float>(), originArr[2].Value<float>());
+                originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
             var direction = new Vector3(
-                dirArr[0].Value<float>(), dirArr[1].Value<float>(), dirArr[2].Value<float>());
+                dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -389,7 +389,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 case "sphere":
                 {
-                    float radius = sizeToken.Value<float>();
+                    float radius = sizeToken.ReadScalar<float>();
                     UnityEngine.Physics.SyncTransforms();
                     hit = UnityEngine.Physics.SphereCast(origin, radius, direction, out hitInfo, maxDistance, layerMask, triggerInteraction);
                     break;
@@ -399,7 +399,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     Vector3 halfExtents;
                     if (sizeToken is JArray sizeArr && sizeArr.Count >= 3)
                         halfExtents = new Vector3(
-                            sizeArr[0].Value<float>(), sizeArr[1].Value<float>(), sizeArr[2].Value<float>());
+                            sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>(), sizeArr[2].ReadScalar<float>());
                     else
                         return new ErrorResponse("3D box shapecast 'size' requires [halfX, halfY, halfZ].");
                     UnityEngine.Physics.SyncTransforms();
@@ -408,7 +408,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 }
                 case "capsule":
                 {
-                    float radius = sizeToken.Value<float>();
+                    float radius = sizeToken.ReadScalar<float>();
                     Vector3 pt1, pt2;
 
                     var pt1Arr = p.GetRaw("point1") as JArray;
@@ -416,8 +416,8 @@ namespace MCPForUnity.Editor.Tools.Physics
 
                     if (pt1Arr != null && pt1Arr.Count >= 3 && pt2Arr != null && pt2Arr.Count >= 3)
                     {
-                        pt1 = new Vector3(pt1Arr[0].Value<float>(), pt1Arr[1].Value<float>(), pt1Arr[2].Value<float>());
-                        pt2 = new Vector3(pt2Arr[0].Value<float>(), pt2Arr[1].Value<float>(), pt2Arr[2].Value<float>());
+                        pt1 = new Vector3(pt1Arr[0].ReadScalar<float>(), pt1Arr[1].ReadScalar<float>(), pt1Arr[2].ReadScalar<float>());
+                        pt2 = new Vector3(pt2Arr[0].ReadScalar<float>(), pt2Arr[1].ReadScalar<float>(), pt2Arr[2].ReadScalar<float>());
                     }
                     else
                     {
@@ -484,8 +484,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dirArr.Count < 2)
                 return new ErrorResponse("2D shapecast 'direction' requires [x, y].");
 
-            var origin = new Vector2(originArr[0].Value<float>(), originArr[1].Value<float>());
-            var direction = new Vector2(dirArr[0].Value<float>(), dirArr[1].Value<float>());
+            var origin = new Vector2(originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>());
+            var direction = new Vector2(dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
             float angle = p.GetFloat("angle") ?? 0f;
@@ -501,7 +501,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 case "circle":
                 {
-                    float radius = sizeToken.Value<float>();
+                    float radius = sizeToken.ReadScalar<float>();
                     Physics2D.SyncTransforms();
                     hit = triggerFilter.HasValue
                         ? Physics2D.defaultPhysicsScene.CircleCast(origin, radius, direction, maxDistance, triggerFilter.Value)
@@ -512,7 +512,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     Vector2 size;
                     if (sizeToken is JArray sizeArr && sizeArr.Count >= 2)
-                        size = new Vector2(sizeArr[0].Value<float>(), sizeArr[1].Value<float>());
+                        size = new Vector2(sizeArr[0].ReadScalar<float>(), sizeArr[1].ReadScalar<float>());
                     else
                         return new ErrorResponse("2D box shapecast 'size' requires [width, height].");
                     Physics2D.SyncTransforms();
@@ -526,8 +526,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     if (sizeToken is JObject sizeObj)
                     {
                         var capsuleSize = new Vector2(
-                            sizeObj["width"]?.Value<float>() ?? 1f,
-                            sizeObj["height"]?.Value<float>() ?? 2f);
+                            sizeObj["width"]?.ReadScalar<float?>() ?? 1f,
+                            sizeObj["height"]?.ReadScalar<float?>() ?? 2f);
                         var capsuleDir = CapsuleDirection2D.Vertical;
                         string dirStr = sizeObj["direction"]?.ToString();
                         if (dirStr != null && dirStr.ToLowerInvariant() == "horizontal")
@@ -606,9 +606,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("3D RaycastAll 'direction' requires [x, y, z].");
 
             var origin = new Vector3(
-                originArr[0].Value<float>(), originArr[1].Value<float>(), originArr[2].Value<float>());
+                originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>(), originArr[2].ReadScalar<float>());
             var direction = new Vector3(
-                dirArr[0].Value<float>(), dirArr[1].Value<float>(), dirArr[2].Value<float>());
+                dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>(), dirArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -654,8 +654,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (dirArr.Count < 2)
                 return new ErrorResponse("2D RaycastAll 'direction' requires [x, y].");
 
-            var origin = new Vector2(originArr[0].Value<float>(), originArr[1].Value<float>());
-            var direction = new Vector2(dirArr[0].Value<float>(), dirArr[1].Value<float>());
+            var origin = new Vector2(originArr[0].ReadScalar<float>(), originArr[1].ReadScalar<float>());
+            var direction = new Vector2(dirArr[0].ReadScalar<float>(), dirArr[1].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -727,9 +727,9 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("3D linecast 'end' requires [x, y, z].");
 
             var start = new Vector3(
-                startArr[0].Value<float>(), startArr[1].Value<float>(), startArr[2].Value<float>());
+                startArr[0].ReadScalar<float>(), startArr[1].ReadScalar<float>(), startArr[2].ReadScalar<float>());
             var end = new Vector3(
-                endArr[0].Value<float>(), endArr[1].Value<float>(), endArr[2].Value<float>());
+                endArr[0].ReadScalar<float>(), endArr[1].ReadScalar<float>(), endArr[2].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
@@ -779,8 +779,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (endArr.Count < 2)
                 return new ErrorResponse("2D linecast 'end' requires [x, y].");
 
-            var start = new Vector2(startArr[0].Value<float>(), startArr[1].Value<float>());
-            var end = new Vector2(endArr[0].Value<float>(), endArr[1].Value<float>());
+            var start = new Vector2(startArr[0].ReadScalar<float>(), startArr[1].ReadScalar<float>());
+            var end = new Vector2(endArr[0].ReadScalar<float>(), endArr[1].ReadScalar<float>());
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 

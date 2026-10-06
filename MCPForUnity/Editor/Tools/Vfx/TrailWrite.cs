@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             TrailRenderer tr = TrailRead.FindTrailRenderer(@params);
             if (tr == null) return new { success = false, message = TrailRead.FindTrailRendererError(@params) };
 
-            float time = @params["time"]?.ToObject<float>() ?? 5f;
+            float time = @params["time"]?.ReadScalar<float?>() ?? 5f;
             RequireFinite(time, "time");
 
             RendererHelpers.EnsureMaterial(tr);
@@ -104,25 +104,25 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             // Handle time if provided
-            if (@params["time"] != null) { float value = @params["time"].ToObject<float>(); RequireFinite(value, "time"); apply.Add(() => tr.time = value); changes.Add("time"); }
+            if (@params["time"] != null) { float value = @params["time"].ReadScalar<float>(); RequireFinite(value, "time"); apply.Add(() => tr.time = value); changes.Add("time"); }
 
             // Handle width properties if provided
             if (@params["width"] != null || @params["startWidth"] != null || @params["endWidth"] != null)
             {
                 if (@params["width"] != null)
                 {
-                    float w = @params["width"].ToObject<float>();
+                    float w = @params["width"].ReadScalar<float>();
                     RequireFinite(w, "width");
                     apply.Add(() => { tr.startWidth = w; tr.endWidth = w; });
                     changes.Add("width");
                 }
-                if (@params["startWidth"] != null) { float value = @params["startWidth"].ToObject<float>(); RequireFinite(value, "startWidth"); apply.Add(() => tr.startWidth = value); changes.Add("startWidth"); }
-                if (@params["endWidth"] != null) { float value = @params["endWidth"].ToObject<float>(); RequireFinite(value, "endWidth"); apply.Add(() => tr.endWidth = value); changes.Add("endWidth"); }
+                if (@params["startWidth"] != null) { float value = @params["startWidth"].ReadScalar<float>(); RequireFinite(value, "startWidth"); apply.Add(() => tr.startWidth = value); changes.Add("startWidth"); }
+                if (@params["endWidth"] != null) { float value = @params["endWidth"].ReadScalar<float>(); RequireFinite(value, "endWidth"); apply.Add(() => tr.endWidth = value); changes.Add("endWidth"); }
             }
 
-            if (@params["minVertexDistance"] != null) { float value = @params["minVertexDistance"].ToObject<float>(); RequireFinite(value, "minVertexDistance"); apply.Add(() => tr.minVertexDistance = value); changes.Add("minVertexDistance"); }
-            if (@params["autodestruct"] != null) { bool value = @params["autodestruct"].ToObject<bool>(); apply.Add(() => tr.autodestruct = value); changes.Add("autodestruct"); }
-            if (@params["emitting"] != null) { bool value = @params["emitting"].ToObject<bool>(); apply.Add(() => tr.emitting = value); changes.Add("emitting"); }
+            if (@params["minVertexDistance"] != null) { float value = @params["minVertexDistance"].ReadScalar<float>(); RequireFinite(value, "minVertexDistance"); apply.Add(() => tr.minVertexDistance = value); changes.Add("minVertexDistance"); }
+            if (@params["autodestruct"] != null) { bool value = @params["autodestruct"].ReadScalar<bool>(); apply.Add(() => tr.autodestruct = value); changes.Add("autodestruct"); }
+            if (@params["emitting"] != null) { bool value = @params["emitting"].ReadScalar<bool>(); apply.Add(() => tr.emitting = value); changes.Add("emitting"); }
 
             RendererHelpers.ApplyLineTrailProperties(@params, changes,
                 null, null,

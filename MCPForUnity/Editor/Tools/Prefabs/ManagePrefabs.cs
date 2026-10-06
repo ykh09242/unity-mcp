@@ -63,7 +63,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         return SavePrefabStage();
                     case ACTION_CLOSE_PREFAB_STAGE:
                     {
-                        bool saveBeforeClose = @params["saveBeforeClose"]?.ToObject<bool>() ?? false;
+                        bool saveBeforeClose = @params["saveBeforeClose"]?.ReadScalar<bool?>() ?? false;
                         return ClosePrefabStage(saveBeforeClose);
                     }
                     default:
@@ -216,9 +216,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return (false, $"Prefab path must be within the Assets folder. Got: '{sanitizedPath}'", targetName, null, false, false, false);
             }
 
-            bool includeInactive = @params["searchInactive"]?.ToObject<bool>() ?? false;
-            bool replaceExisting = @params["allowOverwrite"]?.ToObject<bool>() ?? false;
-            bool unlinkIfInstance = @params["unlinkIfInstance"]?.ToObject<bool>() ?? false;
+            bool includeInactive = @params["searchInactive"]?.ReadScalar<bool?>() ?? false;
+            bool replaceExisting = @params["allowOverwrite"]?.ReadScalar<bool?>() ?? false;
+            bool unlinkIfInstance = @params["unlinkIfInstance"]?.ReadScalar<bool?>() ?? false;
 
             return (true, null, targetName, sanitizedPath, includeInactive, replaceExisting, unlinkIfInstance);
         }
@@ -745,7 +745,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // Active state
-            bool? setActive = @params["setActive"]?.ToObject<bool?>();
+            bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
             if (setActive.HasValue && targetGo.activeSelf != setActive.Value)
             {
                 targetGo.SetActive(setActive.Value);
@@ -1148,7 +1148,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // Set active state
-            bool? setActive = childParams["setActive"]?.ToObject<bool?>() ?? childParams["set_active"]?.ToObject<bool?>();
+            bool? setActive = childParams["setActive"]?.ReadScalar<bool?>() ?? childParams["set_active"]?.ReadScalar<bool?>();
             if (setActive.HasValue)
             {
                 newChild.SetActive(setActive.Value);

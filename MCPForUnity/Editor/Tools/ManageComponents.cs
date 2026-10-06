@@ -400,7 +400,7 @@ namespace MCPForUnity.Editor.Tools
             // Try instance ID first
             if (targetToken.Type == JTokenType.Integer)
             {
-                int instanceId = targetToken.Value<int>();
+                int instanceId = targetToken.ReadScalar<int>();
                 return GameObjectLookup.FindById(instanceId);
             }
 

@@ -222,22 +222,22 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         if (value is JArray colorArr && colorArr.Count >= 3)
                         {
                             prop.colorValue = new Color(
-                                (float)colorArr[0], (float)colorArr[1], (float)colorArr[2],
-                                colorArr.Count >= 4 ? (float)colorArr[3] : 1f);
+                                colorArr[0].ReadScalar<float>(), colorArr[1].ReadScalar<float>(), colorArr[2].ReadScalar<float>(),
+                                colorArr.Count >= 4 ? colorArr[3].ReadScalar<float>() : 1f);
                             return true;
                         }
                         return false;
                     case SerializedPropertyType.Vector2:
                         if (value is JArray v2Arr && v2Arr.Count >= 2)
                         {
-                            prop.vector2Value = new Vector2((float)v2Arr[0], (float)v2Arr[1]);
+                            prop.vector2Value = new Vector2(v2Arr[0].ReadScalar<float>(), v2Arr[1].ReadScalar<float>());
                             return true;
                         }
                         return false;
                     case SerializedPropertyType.Vector3:
                         if (value is JArray v3Arr && v3Arr.Count >= 3)
                         {
-                            prop.vector3Value = new Vector3((float)v3Arr[0], (float)v3Arr[1], (float)v3Arr[2]);
+                            prop.vector3Value = new Vector3(v3Arr[0].ReadScalar<float>(), v3Arr[1].ReadScalar<float>(), v3Arr[2].ReadScalar<float>());
                             return true;
                         }
                         return false;

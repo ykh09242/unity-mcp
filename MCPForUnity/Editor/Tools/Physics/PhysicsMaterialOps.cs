@@ -336,17 +336,17 @@ namespace MCPForUnity.Editor.Tools.Physics
                 switch (key)
                 {
                     case "dynamicfriction":
-                        float dynamicFriction = prop.Value.Value<float>();
+                        float dynamicFriction = prop.Value.ReadScalar<float>();
                         setters.Add(() => mat.dynamicFriction = dynamicFriction);
                         changed.Add("dynamicFriction");
                         break;
                     case "staticfriction":
-                        float staticFriction = prop.Value.Value<float>();
+                        float staticFriction = prop.Value.ReadScalar<float>();
                         setters.Add(() => mat.staticFriction = staticFriction);
                         changed.Add("staticFriction");
                         break;
                     case "bounciness":
-                        float bounciness = prop.Value.Value<float>();
+                        float bounciness = prop.Value.ReadScalar<float>();
                         setters.Add(() => mat.bounciness = bounciness);
                         changed.Add("bounciness");
                         break;
@@ -428,12 +428,12 @@ namespace MCPForUnity.Editor.Tools.Physics
                 switch (key)
                 {
                     case "friction":
-                        float friction = prop.Value.Value<float>();
+                        float friction = prop.Value.ReadScalar<float>();
                         setters.Add(() => mat.friction = friction);
                         changed.Add("friction");
                         break;
                     case "bounciness":
-                        float bounciness = prop.Value.Value<float>();
+                        float bounciness = prop.Value.ReadScalar<float>();
                         setters.Add(() => mat.bounciness = bounciness);
                         changed.Add("bounciness");
                         break;

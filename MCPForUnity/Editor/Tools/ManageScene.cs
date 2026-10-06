@@ -80,7 +80,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     try
                     {
-                        result[i] = arr[i].ToObject<float>();
+                        result[i] = arr[i].ReadScalar<float>();
                         if (float.IsNaN(result[i]) || float.IsInfinity(result[i]))
                             throw new ArgumentException("Orbit elevations must be finite.");
                     }

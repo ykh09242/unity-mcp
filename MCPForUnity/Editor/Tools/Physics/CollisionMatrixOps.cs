@@ -125,7 +125,7 @@ namespace MCPForUnity.Editor.Tools.Physics
         {
             if (token.Type == JTokenType.Integer)
             {
-                int idx = token.Value<int>();
+                int idx = token.ReadScalar<int>();
                 return idx >= 0 && idx < 32 ? idx : -1;
             }
             string name = token.ToString();

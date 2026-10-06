@@ -21,7 +21,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             // Get prefab creation parameters
-            bool saveAsPrefab = @params["saveAsPrefab"]?.ToObject<bool>() ?? false;
+            bool saveAsPrefab = @params["saveAsPrefab"]?.ReadScalar<bool?>() ?? false;
             string prefabPath = @params["prefabPath"]?.ToString();
             string tag = @params["tag"]?.ToString();
             string primitiveType = @params["primitiveType"]?.ToString();

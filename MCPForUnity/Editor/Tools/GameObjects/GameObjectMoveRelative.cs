@@ -30,9 +30,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             string direction = @params["direction"]?.ToString()?.ToLowerInvariant();
-            float distance = @params["distance"]?.ToObject<float>() ?? 1f;
+            float distance = @params["distance"]?.ReadScalar<float?>() ?? 1f;
             Vector3? customOffset = VectorParsing.ParseVector3(@params["offset"]);
-            bool useWorldSpace = @params["world_space"]?.ToObject<bool>() ?? true;
+            bool useWorldSpace = @params["world_space"]?.ReadScalar<bool?>() ?? true;
 
             Vector3 newPosition;
 

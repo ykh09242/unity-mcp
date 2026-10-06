@@ -337,7 +337,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (faceIndicesToken.Type == JTokenType.Null)
                 throw new ArgumentException("faceIndices must be an array.");
 
-            var indices = faceIndicesToken.ToObject<int[]>();
+            var indices = PropertyConversion.ConvertTo<int[]>(faceIndicesToken);
             var result = Array.CreateInstance(_faceType, indices.Length);
             for (int i = 0; i < indices.Length; i++)
             {
@@ -521,7 +521,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             {
                 // Edge specification by index into unique edges
                 var allEdges = CollectUniqueEdges(pbMesh);
-                var edgeIndices = edgeIndicesToken.ToObject<int[]>();
+                var edgeIndices = PropertyConversion.ConvertTo<int[]>(edgeIndicesToken);
                 foreach (int idx in edgeIndices)
                 {
                     if (idx < 0 || idx >= allEdges.Count)
@@ -543,19 +543,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         private static int ParseEdgeVertex(JToken token)
         {
-            if ((token.Type == JTokenType.Integer || token.Type == JTokenType.String)
-                && int.TryParse(token.ToString(), System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out int vertex))
-                return vertex;
-
-            if (token.Type == JTokenType.Float)
-            {
-                double number = token.Value<double>();
-                if (number >= int.MinValue && number <= int.MaxValue && number == Math.Truncate(number))
-                    return (int)number;
-            }
-
-            throw new ArgumentException("Each edge must specify integer vertices a and b.");
+            return token.ReadScalar<int>();
         }
 
         /// <summary>
@@ -643,11 +631,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         private static Component CreateShapeViaGenerator(string shapeType, JObject props, object pivot)
         {
-            float size = props["size"]?.Value<float>() ?? 0;
-            float width = props["width"]?.Value<float>() ?? 0;
-            float height = props["height"]?.Value<float>() ?? 0;
-            float depth = props["depth"]?.Value<float>() ?? 0;
-            float radius = props["radius"]?.Value<float>() ?? 0;
+            float size = props["size"]?.ReadScalar<float?>() ?? 0;
+            float width = props["width"]?.ReadScalar<float?>() ?? 0;
+            float height = props["height"]?.ReadScalar<float?>() ?? 0;
+            float depth = props["depth"]?.ReadScalar<float?>() ?? 0;
+            float radius = props["radius"]?.ReadScalar<float?>() ?? 0;
 
             switch (shapeType.ToUpperInvariant())
             {
@@ -675,12 +663,12 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 0.5f);
                     float h = height > 0 ? height : (size > 0 ? size : 2f);
-                    int axisDivisions = props["axisDivisions"]?.Value<int>()
-                        ?? props["axis_divisions"]?.Value<int>()
-                        ?? props["segments"]?.Value<int>() ?? 24;
-                    int heightCuts = props["heightCuts"]?.Value<int>()
-                        ?? props["height_cuts"]?.Value<int>() ?? 0;
-                    int smoothing = props["smoothing"]?.Value<int>() ?? -1;
+                    int axisDivisions = props["axisDivisions"]?.ReadScalar<int?>()
+                        ?? props["axis_divisions"]?.ReadScalar<int?>()
+                        ?? props["segments"]?.ReadScalar<int?>() ?? 24;
+                    int heightCuts = props["heightCuts"]?.ReadScalar<int?>()
+                        ?? props["height_cuts"]?.ReadScalar<int?>() ?? 0;
+                    int smoothing = props["smoothing"]?.ReadScalar<int?>() ?? -1;
                     return InvokeGenerator("GenerateCylinder",
                         new[] { _pivotLocationType, typeof(int), typeof(float), typeof(float), typeof(int), typeof(int) },
                         new object[] { pivot, axisDivisions, r, h, heightCuts, smoothing });
@@ -690,9 +678,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 0.5f);
                     float h = height > 0 ? height : (size > 0 ? size : 1f);
-                    int subdivAxis = props["subdivAxis"]?.Value<int>()
-                        ?? props["subdiv_axis"]?.Value<int>()
-                        ?? props["segments"]?.Value<int>() ?? 6;
+                    int subdivAxis = props["subdivAxis"]?.ReadScalar<int?>()
+                        ?? props["subdiv_axis"]?.ReadScalar<int?>()
+                        ?? props["segments"]?.ReadScalar<int?>() ?? 6;
                     return InvokeGenerator("GenerateCone",
                         new[] { _pivotLocationType, typeof(float), typeof(float), typeof(int) },
                         new object[] { pivot, r, h, subdivAxis });
@@ -701,7 +689,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 case "SPHERE":
                 {
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 0.5f);
-                    int subdivisions = props["subdivisions"]?.Value<int>() ?? 2;
+                    int subdivisions = props["subdivisions"]?.ReadScalar<int?>() ?? 2;
                     return InvokeGenerator("GenerateIcosahedron",
                         new[] { _pivotLocationType, typeof(float), typeof(int), typeof(bool), typeof(bool) },
                         new object[] { pivot, r, subdivisions, true, false });
@@ -709,26 +697,26 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
                 case "TORUS":
                 {
-                    int rows = props["rows"]?.Value<int>() ?? 8;
-                    int columns = props["columns"]?.Value<int>() ?? 16;
+                    int rows = props["rows"]?.ReadScalar<int?>() ?? 8;
+                    int columns = props["columns"]?.ReadScalar<int?>() ?? 16;
                     // ProBuilder convention: innerRadius = ring radius (major), outerRadius = tube radius (minor).
                     // Our API uses the intuitive naming: outerRadius = ring, innerRadius = tube.
                     // So we swap when passing to ProBuilder's GenerateTorus.
-                    float tubeRadius = props["innerRadius"]?.Value<float>()
-                        ?? props["inner_radius"]?.Value<float>()
-                        ?? props["tubeRadius"]?.Value<float>()
-                        ?? props["tube_radius"]?.Value<float>()
+                    float tubeRadius = props["innerRadius"]?.ReadScalar<float?>()
+                        ?? props["inner_radius"]?.ReadScalar<float?>()
+                        ?? props["tubeRadius"]?.ReadScalar<float?>()
+                        ?? props["tube_radius"]?.ReadScalar<float?>()
                         ?? (radius > 0 ? radius * 0.1f : 0.1f);
-                    float ringRadius = props["outerRadius"]?.Value<float>()
-                        ?? props["outer_radius"]?.Value<float>()
-                        ?? props["ringRadius"]?.Value<float>()
-                        ?? props["ring_radius"]?.Value<float>()
+                    float ringRadius = props["outerRadius"]?.ReadScalar<float?>()
+                        ?? props["outer_radius"]?.ReadScalar<float?>()
+                        ?? props["ringRadius"]?.ReadScalar<float?>()
+                        ?? props["ring_radius"]?.ReadScalar<float?>()
                         ?? (radius > 0 ? radius : (size > 0 ? size / 2f : 0.5f));
-                    bool smooth = props["smooth"]?.Value<bool>() ?? true;
-                    float hCirc = props["horizontalCircumference"]?.Value<float>()
-                        ?? props["horizontal_circumference"]?.Value<float>() ?? 360f;
-                    float vCirc = props["verticalCircumference"]?.Value<float>()
-                        ?? props["vertical_circumference"]?.Value<float>() ?? 360f;
+                    bool smooth = props["smooth"]?.ReadScalar<bool?>() ?? true;
+                    float hCirc = props["horizontalCircumference"]?.ReadScalar<float?>()
+                        ?? props["horizontal_circumference"]?.ReadScalar<float?>() ?? 360f;
+                    float vCirc = props["verticalCircumference"]?.ReadScalar<float?>()
+                        ?? props["vertical_circumference"]?.ReadScalar<float?>() ?? 360f;
                     return InvokeGenerator("GenerateTorus",
                         new[] { _pivotLocationType, typeof(int), typeof(int), typeof(float), typeof(float),
                                 typeof(bool), typeof(float), typeof(float), typeof(bool) },
@@ -739,12 +727,12 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 1f);
                     float h = height > 0 ? height : (size > 0 ? size : 2f);
-                    float thickness = props["thickness"]?.Value<float>() ?? 0.2f;
-                    int subdivAxis = props["subdivAxis"]?.Value<int>()
-                        ?? props["subdiv_axis"]?.Value<int>()
-                        ?? props["segments"]?.Value<int>() ?? 6;
-                    int subdivHeight = props["subdivHeight"]?.Value<int>()
-                        ?? props["subdiv_height"]?.Value<int>() ?? 1;
+                    float thickness = props["thickness"]?.ReadScalar<float?>() ?? 0.2f;
+                    int subdivAxis = props["subdivAxis"]?.ReadScalar<int?>()
+                        ?? props["subdiv_axis"]?.ReadScalar<int?>()
+                        ?? props["segments"]?.ReadScalar<int?>() ?? 6;
+                    int subdivHeight = props["subdivHeight"]?.ReadScalar<int?>()
+                        ?? props["subdiv_height"]?.ReadScalar<int?>() ?? 1;
                     return InvokeGenerator("GeneratePipe",
                         new[] { _pivotLocationType, typeof(float), typeof(float), typeof(float), typeof(int), typeof(int) },
                         new object[] { pivot, r, h, thickness, subdivAxis, subdivHeight });
@@ -754,14 +742,14 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float w = width > 0 ? width : (size > 0 ? size : 1f);
                     float h = height > 0 ? height : (depth > 0 ? depth : (size > 0 ? size : 1f));
-                    int widthCuts = props["widthCuts"]?.Value<int>()
-                        ?? props["width_cuts"]?.Value<int>() ?? 0;
-                    int heightCuts = props["heightCuts"]?.Value<int>()
-                        ?? props["height_cuts"]?.Value<int>() ?? 0;
+                    int widthCuts = props["widthCuts"]?.ReadScalar<int?>()
+                        ?? props["width_cuts"]?.ReadScalar<int?>() ?? 0;
+                    int heightCuts = props["heightCuts"]?.ReadScalar<int?>()
+                        ?? props["height_cuts"]?.ReadScalar<int?>() ?? 0;
                     // Axis enum: default Y-up (2)
                     if (_axisEnum != null)
                     {
-                        int axisVal = props["axis"]?.Value<int>() ?? 2;
+                        int axisVal = props["axis"]?.ReadScalar<int?>() ?? 2;
                         var axisObj = Enum.ToObject(_axisEnum, axisVal);
                         return InvokeGenerator("GeneratePlane",
                             new[] { _pivotLocationType, typeof(float), typeof(float), typeof(int), typeof(int), _axisEnum },
@@ -777,9 +765,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     float w = width > 0 ? width : (size > 0 ? size : 2f);
                     float h = height > 0 ? height : (size > 0 ? size : 2.5f);
                     float d = depth > 0 ? depth : (size > 0 ? size : 4f);
-                    int steps = props["steps"]?.Value<int>() ?? 10;
-                    bool buildSides = props["buildSides"]?.Value<bool>()
-                        ?? props["build_sides"]?.Value<bool>() ?? true;
+                    int steps = props["steps"]?.ReadScalar<int?>() ?? 10;
+                    bool buildSides = props["buildSides"]?.ReadScalar<bool?>()
+                        ?? props["build_sides"]?.ReadScalar<bool?>() ?? true;
                     return InvokeGenerator("GenerateStair",
                         new[] { _pivotLocationType, typeof(Vector3), typeof(int), typeof(bool) },
                         new object[] { pivot, new Vector3(w, h, d), steps, buildSides });
@@ -789,13 +777,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float stairWidth = width > 0 ? width : (size > 0 ? size : 2f);
                     float h = height > 0 ? height : (size > 0 ? size : 2.5f);
-                    float innerR = props["innerRadius"]?.Value<float>()
-                        ?? props["inner_radius"]?.Value<float>()
+                    float innerR = props["innerRadius"]?.ReadScalar<float?>()
+                        ?? props["inner_radius"]?.ReadScalar<float?>()
                         ?? (radius > 0 ? radius : 2f);
-                    float circumference = props["circumference"]?.Value<float>() ?? 90f;
-                    int steps = props["steps"]?.Value<int>() ?? 10;
-                    bool buildSides = props["buildSides"]?.Value<bool>()
-                        ?? props["build_sides"]?.Value<bool>() ?? true;
+                    float circumference = props["circumference"]?.ReadScalar<float?>() ?? 90f;
+                    int steps = props["steps"]?.ReadScalar<int?>() ?? 10;
+                    bool buildSides = props["buildSides"]?.ReadScalar<bool?>()
+                        ?? props["build_sides"]?.ReadScalar<bool?>() ?? true;
                     return InvokeGenerator("GenerateCurvedStair",
                         new[] { _pivotLocationType, typeof(float), typeof(float), typeof(float), typeof(float), typeof(int), typeof(bool) },
                         new object[] { pivot, stairWidth, h, innerR, circumference, steps, buildSides });
@@ -803,22 +791,22 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
                 case "ARCH":
                 {
-                    float angle = props["angle"]?.Value<float>() ?? 180f;
+                    float angle = props["angle"]?.ReadScalar<float?>() ?? 180f;
                     float r = radius > 0 ? radius : (size > 0 ? size / 2f : 2f);
                     float w = width > 0 ? width : 0.5f;
                     float d = depth > 0 ? depth : 0.5f;
-                    int radialCuts = props["radialCuts"]?.Value<int>()
-                        ?? props["radial_cuts"]?.Value<int>() ?? 6;
-                    bool insideFaces = props["insideFaces"]?.Value<bool>()
-                        ?? props["inside_faces"]?.Value<bool>() ?? true;
-                    bool outsideFaces = props["outsideFaces"]?.Value<bool>()
-                        ?? props["outside_faces"]?.Value<bool>() ?? true;
-                    bool frontFaces = props["frontFaces"]?.Value<bool>()
-                        ?? props["front_faces"]?.Value<bool>() ?? true;
-                    bool backFaces = props["backFaces"]?.Value<bool>()
-                        ?? props["back_faces"]?.Value<bool>() ?? true;
-                    bool endCaps = props["endCaps"]?.Value<bool>()
-                        ?? props["end_caps"]?.Value<bool>() ?? true;
+                    int radialCuts = props["radialCuts"]?.ReadScalar<int?>()
+                        ?? props["radial_cuts"]?.ReadScalar<int?>() ?? 6;
+                    bool insideFaces = props["insideFaces"]?.ReadScalar<bool?>()
+                        ?? props["inside_faces"]?.ReadScalar<bool?>() ?? true;
+                    bool outsideFaces = props["outsideFaces"]?.ReadScalar<bool?>()
+                        ?? props["outside_faces"]?.ReadScalar<bool?>() ?? true;
+                    bool frontFaces = props["frontFaces"]?.ReadScalar<bool?>()
+                        ?? props["front_faces"]?.ReadScalar<bool?>() ?? true;
+                    bool backFaces = props["backFaces"]?.ReadScalar<bool?>()
+                        ?? props["back_faces"]?.ReadScalar<bool?>() ?? true;
+                    bool endCaps = props["endCaps"]?.ReadScalar<bool?>()
+                        ?? props["end_caps"]?.ReadScalar<bool?>() ?? true;
                     return InvokeGenerator("GenerateArch",
                         new[] { _pivotLocationType, typeof(float), typeof(float), typeof(float), typeof(float),
                                 typeof(int), typeof(bool), typeof(bool), typeof(bool), typeof(bool), typeof(bool) },
@@ -830,10 +818,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 {
                     float totalWidth = width > 0 ? width : (size > 0 ? size : 4f);
                     float totalHeight = height > 0 ? height : (size > 0 ? size : 4f);
-                    float ledgeHeight = props["ledgeHeight"]?.Value<float>()
-                        ?? props["ledge_height"]?.Value<float>() ?? 0.1f;
-                    float legWidth = props["legWidth"]?.Value<float>()
-                        ?? props["leg_width"]?.Value<float>() ?? 1f;
+                    float ledgeHeight = props["ledgeHeight"]?.ReadScalar<float?>()
+                        ?? props["ledge_height"]?.ReadScalar<float?>() ?? 0.1f;
+                    float legWidth = props["legWidth"]?.ReadScalar<float?>()
+                        ?? props["leg_width"]?.ReadScalar<float?>() ?? 1f;
                     float d = depth > 0 ? depth : (size > 0 ? size : 0.5f);
                     return InvokeGenerator("GenerateDoor",
                         new[] { _pivotLocationType, typeof(float), typeof(float), typeof(float), typeof(float), typeof(float) },
@@ -901,8 +889,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (points.Count < 3)
                 return new ErrorResponse("At least 3 points are required for a poly shape.");
 
-            float extrudeHeight = props["extrudeHeight"]?.Value<float>() ?? props["extrude_height"]?.Value<float>() ?? 1f;
-            bool flipNormals = props["flipNormals"]?.Value<bool>() ?? props["flip_normals"]?.Value<bool>() ?? false;
+            float extrudeHeight = props["extrudeHeight"]?.ReadScalar<float?>() ?? props["extrude_height"]?.ReadScalar<float?>() ?? 1f;
+            bool flipNormals = props["flipNormals"]?.ReadScalar<bool?>() ?? props["flip_normals"]?.ReadScalar<bool?>() ?? false;
 
             if (_appendElementsType == null)
             {
@@ -973,7 +961,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var pbMesh = RequireProBuilderMesh(@params);
             var props = ExtractProperties(@params);
             var faces = GetFacesByIndices(pbMesh, props["faceIndices"] ?? props["face_indices"]);
-            float distance = props["distance"]?.Value<float>() ?? 0.5f;
+            float distance = props["distance"]?.ReadScalar<float?>() ?? 0.5f;
 
             string methodStr = props["method"]?.ToString() ?? "FaceNormal";
             object extrudeMethod;
@@ -1025,8 +1013,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse(ex.Message);
             }
 
-            float distance = props["distance"]?.Value<float>() ?? 0.5f;
-            bool asGroup = props["asGroup"]?.Value<bool>() ?? props["as_group"]?.Value<bool>() ?? true;
+            float distance = props["distance"]?.ReadScalar<float?>() ?? 0.5f;
+            bool asGroup = props["asGroup"]?.ReadScalar<bool?>() ?? props["as_group"]?.ReadScalar<bool?>() ?? true;
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Extrude Edges");
 
@@ -1066,7 +1054,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse(ex.Message);
             }
 
-            float amount = props["amount"]?.Value<float>() ?? 0.1f;
+            float amount = props["amount"]?.ReadScalar<float?>() ?? 0.1f;
 
             if (_bevelType == null)
                 return new ErrorResponse("Bevel type not found in ProBuilder assembly.");
@@ -1138,7 +1126,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_deleteElementsType == null)
                 return new ErrorResponse("DeleteElements type not found.");
 
-            var faceIndices = faceIndicesToken.ToObject<int[]>();
+            var faceIndices = PropertyConversion.ConvertTo<int[]>(faceIndicesToken);
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Delete Faces");
 
@@ -1205,18 +1193,18 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (edgeAToken == null || edgeBToken == null)
                 return new ErrorResponse("edgeA and edgeB parameters are required (as {a, b} vertex index pairs).");
 
-            int aA = edgeAToken["a"]?.Value<int>() ?? 0;
-            int aB = edgeAToken["b"]?.Value<int>() ?? 0;
-            int bA = edgeBToken["a"]?.Value<int>() ?? 0;
-            int bB = edgeBToken["b"]?.Value<int>() ?? 0;
+            int aA = edgeAToken["a"]?.ReadScalar<int?>() ?? 0;
+            int aB = edgeAToken["b"]?.ReadScalar<int?>() ?? 0;
+            int bA = edgeBToken["a"]?.ReadScalar<int?>() ?? 0;
+            int bB = edgeBToken["b"]?.ReadScalar<int?>() ?? 0;
 
             var edgeA = CreateEdge(aA, aB);
             var edgeB = CreateEdge(bA, bB);
 
-            bool allowNonManifold = props["allowNonManifold"]?.Value<bool>()
-                ?? props["allow_non_manifold"]?.Value<bool>()
-                ?? props["allowNonManifoldGeometry"]?.Value<bool>()
-                ?? props["allow_non_manifold_geometry"]?.Value<bool>()
+            bool allowNonManifold = props["allowNonManifold"]?.ReadScalar<bool?>()
+                ?? props["allow_non_manifold"]?.ReadScalar<bool?>()
+                ?? props["allowNonManifoldGeometry"]?.ReadScalar<bool?>()
+                ?? props["allow_non_manifold_geometry"]?.ReadScalar<bool?>()
                 ?? false;
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Bridge Edges");
@@ -1333,10 +1321,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_extrudeElementsType == null)
                 return new ErrorResponse("ExtrudeElements type not found.");
 
-            bool deleteSource = props["deleteSourceFaces"]?.Value<bool>()
-                ?? props["delete_source_faces"]?.Value<bool>()
-                ?? props["deleteSource"]?.Value<bool>()
-                ?? props["delete_source"]?.Value<bool>()
+            bool deleteSource = props["deleteSourceFaces"]?.ReadScalar<bool?>()
+                ?? props["delete_source_faces"]?.ReadScalar<bool?>()
+                ?? props["deleteSource"]?.ReadScalar<bool?>()
+                ?? props["delete_source"]?.ReadScalar<bool?>()
                 ?? false;
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Detach Faces");
@@ -1676,8 +1664,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_appendElementsType == null)
                 return new ErrorResponse("AppendElements type not found.");
 
-            var vertexIndices = vertexIndicesToken.ToObject<int[]>();
-            bool unordered = props["unordered"]?.Value<bool>() ?? true;
+            var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            bool unordered = props["unordered"]?.ReadScalar<bool?>() ?? true;
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Create Polygon");
 
@@ -1715,9 +1703,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (vertexIndicesToken == null)
                 return new ErrorResponse("vertexIndices parameter is required.");
 
-            var vertexIndices = vertexIndicesToken.ToObject<int[]>();
-            bool collapseToFirst = props["collapseToFirst"]?.Value<bool>()
-                ?? props["collapse_to_first"]?.Value<bool>()
+            var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            bool collapseToFirst = props["collapseToFirst"]?.ReadScalar<bool?>()
+                ?? props["collapse_to_first"]?.ReadScalar<bool?>()
                 ?? false;
 
             if (_vertexEditingType == null)
@@ -1752,10 +1740,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (vertexIndicesToken == null)
                 return new ErrorResponse("vertexIndices parameter is required.");
 
-            var vertexIndices = vertexIndicesToken.ToObject<int[]>();
-            float neighborRadius = props["radius"]?.Value<float>()
-                ?? props["neighborRadius"]?.Value<float>()
-                ?? props["neighbor_radius"]?.Value<float>()
+            var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            float neighborRadius = props["radius"]?.ReadScalar<float?>()
+                ?? props["neighborRadius"]?.ReadScalar<float?>()
+                ?? props["neighbor_radius"]?.ReadScalar<float?>()
                 ?? 0.01f;
 
             if (_vertexEditingType == null)
@@ -1792,7 +1780,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (vertexIndicesToken == null)
                 return new ErrorResponse("vertexIndices parameter is required.");
 
-            var vertexIndices = vertexIndicesToken.ToObject<int[]>();
+            var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
 
             if (_vertexEditingType == null)
                 return new ErrorResponse("VertexEditing type not found.");
@@ -1839,7 +1827,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (offsetToken == null)
                 return new ErrorResponse("offset parameter is required ([x,y,z]).");
 
-            var vertexIndices = vertexIndicesToken.ToObject<int[]>();
+            var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
             var parsedOffset = VectorParsing.ParseVector3(offsetToken);
             if (!parsedOffset.HasValue)
                 return new ErrorResponse("offset must be a valid vector ([x,y,z] or {x,y,z}).");
@@ -1924,8 +1912,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (edgeToken != null)
             {
                 // InsertVertexOnEdge(ProBuilderMesh mesh, Edge edge, Vector3 point)
-                int a = edgeToken["a"]?.Value<int>() ?? 0;
-                int b = edgeToken["b"]?.Value<int>() ?? 0;
+                int a = edgeToken["a"]?.ReadScalar<int?>() ?? 0;
+                int b = edgeToken["b"]?.ReadScalar<int?>() ?? 0;
                 var edge = CreateEdge(a, b);
 
                 var insertMethod = _appendElementsType.GetMethod("InsertVertexOnEdge",
@@ -1945,7 +1933,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 if (faceIndexToken == null)
                     return new ErrorResponse("Either edge ({a,b}) or faceIndex parameter is required.");
 
-                int faceIndex = faceIndexToken.Value<int>();
+                int faceIndex = faceIndexToken.ReadScalar<int>();
                 var allFaces = (System.Collections.IList)GetFacesArray(pbMesh);
                 if (faceIndex < 0 || faceIndex >= allFaces.Count)
                     return new ErrorResponse($"Face index {faceIndex} out of range (0-{allFaces.Count - 1}).");
@@ -1983,7 +1971,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_appendElementsType == null)
                 return new ErrorResponse("AppendElements type not found.");
 
-            int count = props["count"]?.Value<int>() ?? 1;
+            int count = props["count"]?.ReadScalar<int?>() ?? 1;
 
             Undo.RegisterCompleteObjectUndo(pbMesh, "Append Vertices to Edge");
 
@@ -2049,7 +2037,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var directionStr = props["direction"]?.ToString();
             if (!string.IsNullOrEmpty(directionStr))
             {
-                float tolerance = props["tolerance"]?.Value<float>() ?? 0.7f;
+                float tolerance = props["tolerance"]?.ReadScalar<float?>() ?? 0.7f;
                 Vector3 targetDir;
                 switch (directionStr.ToLowerInvariant())
                 {
@@ -2076,7 +2064,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             // Grow selection from existing faces
             var growFromToken = props["growFrom"] ?? props["grow_from"];
-            var growAngle = props["growAngle"]?.Value<float>() ?? props["grow_angle"]?.Value<float>() ?? -1f;
+            var growAngle = props["growAngle"]?.ReadScalar<float?>() ?? props["grow_angle"]?.ReadScalar<float?>() ?? -1f;
             if (growFromToken != null && _elementSelectionType != null)
             {
                 var seedFaces = GetFacesByIndices(pbMesh, growFromToken);
@@ -2102,7 +2090,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             // Flood selection from existing faces
             var floodFromToken = props["floodFrom"] ?? props["flood_from"];
-            var floodAngle = props["floodAngle"]?.Value<float>() ?? props["flood_angle"]?.Value<float>() ?? 15f;
+            var floodAngle = props["floodAngle"]?.ReadScalar<float?>() ?? props["flood_angle"]?.ReadScalar<float?>() ?? 15f;
             if (floodFromToken != null && _elementSelectionType != null)
             {
                 var seedFaces = GetFacesByIndices(pbMesh, floodFromToken);
@@ -2128,7 +2116,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             // Loop/ring selection
             var loopFromToken = props["loopFrom"] ?? props["loop_from"];
-            bool ring = props["ring"]?.Value<bool>() ?? false;
+            bool ring = props["ring"]?.ReadScalar<bool?>() ?? false;
             if (loopFromToken != null && _elementSelectionType != null)
             {
                 var seedFaces = GetFacesByIndices(pbMesh, loopFromToken);
@@ -2276,7 +2264,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             RefreshMesh(pbMesh);
 
-            bool skipSwap = props["skipMaterialSwap"]?.Value<bool>() ?? props["skip_material_swap"]?.Value<bool>() ?? false;
+            bool skipSwap = props["skipMaterialSwap"]?.ReadScalar<bool?>() ?? props["skip_material_swap"]?.ReadScalar<bool?>() ?? false;
             if (!skipSwap)
             {
                 var go = pbMesh.gameObject;
@@ -2335,24 +2323,24 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
                 if (scaleToken != null && scaleField != null)
                 {
-                    var scaleArr = scaleToken.ToObject<float[]>();
+                    var scaleArr = PropertyConversion.ConvertTo<float[]>(scaleToken);
                     SetUVSetting(scaleField, uvSettings, new Vector2(scaleArr[0], scaleArr.Length > 1 ? scaleArr[1] : scaleArr[0]));
                 }
 
                 if (offsetToken != null && offsetField != null)
                 {
-                    var offsetArr = offsetToken.ToObject<float[]>();
+                    var offsetArr = PropertyConversion.ConvertTo<float[]>(offsetToken);
                     SetUVSetting(offsetField, uvSettings, new Vector2(offsetArr[0], offsetArr.Length > 1 ? offsetArr[1] : 0f));
                 }
 
                 if (rotationToken != null && rotField != null)
-                    SetUVSetting(rotField, uvSettings, rotationToken.Value<float>());
+                    SetUVSetting(rotField, uvSettings, rotationToken.ReadScalar<float>());
 
                 if (flipUToken != null && flipUField != null)
-                    SetUVSetting(flipUField, uvSettings, flipUToken.Value<bool>());
+                    SetUVSetting(flipUField, uvSettings, flipUToken.ReadScalar<bool>());
 
                 if (flipVToken != null && flipVField != null)
-                    SetUVSetting(flipVField, uvSettings, flipVToken.Value<bool>());
+                    SetUVSetting(flipVField, uvSettings, flipVToken.ReadScalar<bool>());
 
                 uvProperty.SetValue(face, uvSettings);
             }

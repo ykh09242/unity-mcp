@@ -16,7 +16,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
     {
         internal static GameObject FindObjectInternal(JToken targetToken, string searchMethod, JObject findParams = null)
         {
-            bool findAll = findParams?["findAll"]?.ToObject<bool>() ?? false;
+            bool findAll = findParams?["findAll"]?.ReadScalar<bool?>() ?? false;
 
             if (
                 targetToken?.Type == JTokenType.Integer
@@ -39,8 +39,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
         {
             List<GameObject> results = new List<GameObject>();
             string searchTerm = findParams?["searchTerm"]?.ToString() ?? targetToken?.ToString();
-            bool searchInChildren = findParams?["searchInChildren"]?.ToObject<bool>() ?? false;
-            bool searchInactive = findParams?["searchInactive"]?.ToObject<bool>() ?? false;
+            bool searchInChildren = findParams?["searchInChildren"]?.ReadScalar<bool?>() ?? false;
+            bool searchInactive = findParams?["searchInactive"]?.ReadScalar<bool?>() ?? false;
 
             if (string.IsNullOrEmpty(searchMethod))
             {

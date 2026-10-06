@@ -196,7 +196,7 @@ namespace MCPForUnity.Editor.Tools
                         var optionsObj = p.GetRaw("options") as JObject;
                         string refreshOpt = optionsObj?["refresh"]?.ToString()?.ToLowerInvariant();
                         string validateOpt = optionsObj?["validate"]?.ToString()?.ToLowerInvariant();
-                        bool preview = action == "preview_text_edits" || optionsObj?.Value<bool?>("preview") == true;
+                        bool preview = action == "preview_text_edits" || optionsObj?.ReadScalar<bool?>("preview") == true;
                         return ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt, preview);
                     }
                 case "validate":
@@ -568,10 +568,10 @@ namespace MCPForUnity.Editor.Tools
                         || edit["newText"].Type != JTokenType.String)
                         return new ErrorResponse("Invalid edit payload: requires startLine/startCol/endLine/endCol and a string newText (empty for deletion).");
 
-                    int sl = Math.Max(1, e.Value<int>("startLine"));
-                    int sc = Math.Max(1, e.Value<int>("startCol"));
-                    int el = Math.Max(1, e.Value<int>("endLine"));
-                    int ec = Math.Max(1, e.Value<int>("endCol"));
+                    int sl = Math.Max(1, e.ReadScalar<int>("startLine"));
+                    int sc = Math.Max(1, e.ReadScalar<int>("startCol"));
+                    int el = Math.Max(1, e.ReadScalar<int>("endLine"));
+                    int ec = Math.Max(1, e.ReadScalar<int>("endCol"));
                     string newText = e.Value<string>("newText") ?? string.Empty;
 
                     if (!TryIndexFromLineCol(original, sl, sc, out int sidx))
@@ -1212,7 +1212,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 var replacements = new List<(int start, int length, string text)>();
-                preview = preview || options?.Value<bool?>("preview") == true;
+                preview = preview || options?.ReadScalar<bool?>("preview") == true;
                 var structuralInsertions = new HashSet<int>();
                 int appliedCount = 0;
 

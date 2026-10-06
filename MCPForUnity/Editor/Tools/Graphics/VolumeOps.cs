@@ -708,10 +708,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 if (value is JArray arr && arr.Count >= 3)
                 {
-                    float r = arr[0].Value<float>();
-                    float g = arr[1].Value<float>();
-                    float b = arr[2].Value<float>();
-                    float a = arr.Count >= 4 ? arr[3].Value<float>() : 1f;
+                    float r = arr[0].ReadScalar<float>();
+                    float g = arr[1].ReadScalar<float>();
+                    float b = arr[2].ReadScalar<float>();
+                    float a = arr.Count >= 4 ? arr[3].ReadScalar<float>() : 1f;
                     return new Color(r, g, b, a);
                 }
                 // Try hex string
@@ -726,22 +726,22 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (targetType == typeof(Vector2))
             {
                 if (value is JArray arr && arr.Count >= 2)
-                    return new Vector2(arr[0].Value<float>(), arr[1].Value<float>());
+                    return new Vector2(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>());
             }
 
             // Handle Vector3
             if (targetType == typeof(Vector3))
             {
                 if (value is JArray arr && arr.Count >= 3)
-                    return new Vector3(arr[0].Value<float>(), arr[1].Value<float>(), arr[2].Value<float>());
+                    return new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
             }
 
             // Handle Vector4
             if (targetType == typeof(Vector4))
             {
                 if (value is JArray arr && arr.Count >= 4)
-                    return new Vector4(arr[0].Value<float>(), arr[1].Value<float>(),
-                                      arr[2].Value<float>(), arr[3].Value<float>());
+                    return new Vector4(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(),
+                                      arr[2].ReadScalar<float>(), arr[3].ReadScalar<float>());
             }
 
             // Handle enums
@@ -777,15 +777,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return texture;
             }
 
-            // Fallback: try Convert
-            try
-            {
-                return Convert.ChangeType(value.ToObject<object>(), targetType);
-            }
-            catch
-            {
-                return value.ToObject<object>();
-            }
+            return PropertyConversion.ConvertToType(value, targetType);
         }
 
         // --- Reflection helpers (with field fallback for Volume.sharedProfile etc.) ---

@@ -35,7 +35,7 @@ namespace MCPForUnity.Editor.Tools
             bool contentsEncoded;
             try
             {
-                contentsEncoded = @params["contentsEncoded"]?.ToObject<bool>() ?? false;
+                contentsEncoded = @params["contentsEncoded"]?.ReadScalar<bool?>() ?? false;
             }
             catch (Exception e) when (e is ArgumentException || e is FormatException || e is InvalidCastException || e is Newtonsoft.Json.JsonException)
             {

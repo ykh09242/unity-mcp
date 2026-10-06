@@ -143,7 +143,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         if (arr == null || arr.Count < 3)
                             return new ErrorResponse("3D gravity requires [x, y, z] array.");
                         var newGravity = new Vector3(
-                            arr[0].Value<float>(), arr[1].Value<float>(), arr[2].Value<float>());
+                            arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.gravity = newGravity;
@@ -152,7 +152,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         break;
                     }
                     case "defaultcontactoffset":
-                        var newDefaultContactOffset = prop.Value.Value<float>();
+                        var newDefaultContactOffset = prop.Value.ReadScalar<float>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.defaultContactOffset = newDefaultContactOffset;
@@ -160,7 +160,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "sleepthreshold":
-                        var newSleepThreshold = prop.Value.Value<float>();
+                        var newSleepThreshold = prop.Value.ReadScalar<float>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.sleepThreshold = newSleepThreshold;
@@ -168,7 +168,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "defaultsolveriterations":
-                        var newDefaultSolverIterations = prop.Value.Value<int>();
+                        var newDefaultSolverIterations = prop.Value.ReadScalar<int>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.defaultSolverIterations = newDefaultSolverIterations;
@@ -176,7 +176,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "defaultsolvervelocityiterations":
-                        var newDefaultSolverVelocityIterations = prop.Value.Value<int>();
+                        var newDefaultSolverVelocityIterations = prop.Value.ReadScalar<int>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.defaultSolverVelocityIterations = newDefaultSolverVelocityIterations;
@@ -184,7 +184,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "bouncethreshold":
-                        var newBounceThreshold = prop.Value.Value<float>();
+                        var newBounceThreshold = prop.Value.ReadScalar<float>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.bounceThreshold = newBounceThreshold;
@@ -192,7 +192,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "defaultmaxangularspeed":
-                        var newDefaultMaxAngularSpeed = prop.Value.Value<float>();
+                        var newDefaultMaxAngularSpeed = prop.Value.ReadScalar<float>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.defaultMaxAngularSpeed = newDefaultMaxAngularSpeed;
@@ -200,7 +200,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "querieshittriggers":
-                        var newQueriesHitTriggers = prop.Value.Value<bool>();
+                        var newQueriesHitTriggers = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.queriesHitTriggers = newQueriesHitTriggers;
@@ -208,7 +208,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "querieshitbackfaces":
-                        var newQueriesHitBackfaces = prop.Value.Value<bool>();
+                        var newQueriesHitBackfaces = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             UnityEngine.Physics.queriesHitBackfaces = newQueriesHitBackfaces;
@@ -237,7 +237,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     }
                     case "autosynctransforms":
                     {
-                        bool autoSync = prop.Value.Value<bool>();
+                        bool autoSync = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             if (UnityPhysicsCompat.TrySetPhysicsAutoSyncTransforms(autoSync))
@@ -293,7 +293,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         if (arr == null || arr.Count < 2)
                             return new ErrorResponse("2D gravity requires [x, y] array.");
                         var newGravity = new Vector2(
-                            arr[0].Value<float>(), arr[1].Value<float>());
+                            arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>());
                         changes.Add(() =>
                         {
                             Physics2D.gravity = newGravity;
@@ -302,7 +302,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         break;
                     }
                     case "velocityiterations":
-                        var newVelocityIterations = prop.Value.Value<int>();
+                        var newVelocityIterations = prop.Value.ReadScalar<int>();
                         changes.Add(() =>
                         {
                             Physics2D.velocityIterations = newVelocityIterations;
@@ -310,7 +310,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "positioniterations":
-                        var newPositionIterations = prop.Value.Value<int>();
+                        var newPositionIterations = prop.Value.ReadScalar<int>();
                         changes.Add(() =>
                         {
                             Physics2D.positionIterations = newPositionIterations;
@@ -318,7 +318,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "querieshittriggers":
-                        var newQueriesHitTriggers = prop.Value.Value<bool>();
+                        var newQueriesHitTriggers = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             Physics2D.queriesHitTriggers = newQueriesHitTriggers;
@@ -326,7 +326,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "queriesstartincolliders":
-                        var newQueriesStartInColliders = prop.Value.Value<bool>();
+                        var newQueriesStartInColliders = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             Physics2D.queriesStartInColliders = newQueriesStartInColliders;
@@ -334,7 +334,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         });
                         break;
                     case "callbacksondisable":
-                        var newCallbacksOnDisable = prop.Value.Value<bool>();
+                        var newCallbacksOnDisable = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             Physics2D.callbacksOnDisable = newCallbacksOnDisable;
@@ -343,7 +343,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         break;
                     case "autosynctransforms":
                     {
-                        bool autoSync = prop.Value.Value<bool>();
+                        bool autoSync = prop.Value.ReadScalar<bool>();
                         changes.Add(() =>
                         {
                             if (UnityPhysicsCompat.TrySetPhysics2DAutoSyncTransforms(autoSync))

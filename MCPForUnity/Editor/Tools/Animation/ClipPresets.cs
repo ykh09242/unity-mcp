@@ -33,9 +33,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (Array.IndexOf(ValidPresets, preset) < 0)
                 return new { success = false, message = $"Unknown preset '{preset}'. Valid: {string.Join(", ", ValidPresets)}" };
 
-            float duration = @params["duration"]?.ToObject<float>() ?? 1f;
-            float amplitude = @params["amplitude"]?.ToObject<float>() ?? 1f;
-            bool loop = @params["loop"]?.ToObject<bool>() ?? true;
+            float duration = @params["duration"]?.ReadScalar<float?>() ?? 1f;
+            float amplitude = @params["amplitude"]?.ReadScalar<float?>() ?? 1f;
+            bool loop = @params["loop"]?.ReadScalar<bool?>() ?? true;
 
             // Resolve position offset from target GameObject or explicit offset parameter.
             // localPosition rather than absolute origin, preventing objects from jumping to (0,0,0).
@@ -52,9 +52,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (offsetToken is JArray offsetArray && offsetArray.Count >= 3)
             {
                 offset = new Vector3(
-                    offsetArray[0].ToObject<float>(),
-                    offsetArray[1].ToObject<float>(),
-                    offsetArray[2].ToObject<float>()
+                    offsetArray[0].ReadScalar<float>(),
+                    offsetArray[1].ReadScalar<float>(),
+                    offsetArray[2].ReadScalar<float>()
                 );
             }
 

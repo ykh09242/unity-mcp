@@ -108,7 +108,7 @@ namespace MCPForUnity.Editor.Tools
             string typeName = @params["typeName"]?.ToString() ?? @params["type_name"]?.ToString();
             string folderPath = @params["folderPath"]?.ToString() ?? @params["folder_path"]?.ToString();
             string assetName = @params["assetName"]?.ToString() ?? @params["asset_name"]?.ToString();
-            bool overwrite = @params["overwrite"]?.ToObject<bool?>() ?? false;
+            bool overwrite = @params["overwrite"]?.ReadScalar<bool?>() ?? false;
 
             if (string.IsNullOrWhiteSpace(typeName))
             {
@@ -267,7 +267,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleModify(JObject @params)
         {
-            bool dryRun = @params["dryRun"]?.ToObject<bool?>() ?? @params["dry_run"]?.ToObject<bool?>() ?? false;
+            bool dryRun = @params["dryRun"]?.ReadScalar<bool?>() ?? @params["dry_run"]?.ReadScalar<bool?>() ?? false;
             if (!TryResolveTarget(@params["target"], !dryRun, out var target, out var targetPath, out var targetGuid, out var err))
             {
                 return err;
@@ -333,16 +333,7 @@ namespace MCPForUnity.Editor.Tools
                 return false;
             try
             {
-                long value;
-                if (token.Type == JTokenType.Integer) value = token.Value<long>();
-                else if (token.Type == JTokenType.Float) value = checked((long)token.Value<double>());
-                else if (!long.TryParse(token.ToString(), System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out value))
-                {
-                    if (!double.TryParse(token.ToString(), System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out double number)) return false;
-                    value = checked((long)number);
-                }
+                long value = token.ReadScalar<long>();
                 if (value < 0 || value > int.MaxValue) return false;
                 size = (int)value;
                 return true;
@@ -1367,17 +1358,6 @@ namespace MCPForUnity.Editor.Tools
                             return false;
                         }
                         bool boolVal = ParamCoercion.CoerceBool(valueToken, false);
-                        // Verify it actually looked like a bool
-                        if (valueToken.Type != JTokenType.Boolean)
-                        {
-                            string strVal = valueToken.ToString().Trim().ToLowerInvariant();
-                            if (strVal != "true" && strVal != "false" && strVal != "1" && strVal != "0" &&
-                                strVal != "yes" && strVal != "no" && strVal != "on" && strVal != "off")
-                            {
-                                message = "Expected boolean value.";
-                                return false;
-                            }
-                        }
                         prop.boolValue = boolVal;
                         message = "Set bool.";
                         return true;
@@ -1385,19 +1365,7 @@ namespace MCPForUnity.Editor.Tools
                     case SerializedPropertyType.Float:
                         if (prop.type == "double")
                         {
-                            double doubleVal = double.NaN;
-                            if (valueToken?.Type == JTokenType.Float || valueToken?.Type == JTokenType.Integer)
-                                doubleVal = valueToken.Value<double>();
-                            else if (valueToken?.Type == JTokenType.String)
-                            {
-                                if (!double.TryParse(valueToken.ToString(), System.Globalization.NumberStyles.Float,
-                                    System.Globalization.CultureInfo.InvariantCulture, out doubleVal))
-                                {
-                                    message = "Expected double value.";
-                                    return false;
-                                }
-                            }
-                            if (double.IsNaN(doubleVal)) { message = "Expected double value."; return false; }
+                            double doubleVal = valueToken.ReadScalar<double>();
                             prop.doubleValue = doubleVal;
                             message = "Set double.";
                             return true;
@@ -1507,13 +1475,13 @@ namespace MCPForUnity.Editor.Tools
             value = 0;
             message = "Expected integer value.";
             if (token == null || token.Type == JTokenType.Null
-                || (token.Type != JTokenType.Integer && token.Type != JTokenType.Float
+                || (token.Type != JTokenType.Integer && token.Type != JTokenType.String
                     && !long.TryParse(token.ToString(), out _)))
                 return false;
 
             try
             {
-                value = token.Type == JTokenType.Float ? checked((long)token.Value<double>()) : token.Value<long>();
+                value = token.ReadScalar<long>();
                 if (prop.type != "long" && (value < int.MinValue || value > int.MaxValue))
                 {
                     message = "Integer value is outside the Int32 range.";
@@ -1537,7 +1505,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (valueToken.Type == JTokenType.Integer)
             {
-                int idx = valueToken.Value<int>();
+                int idx = valueToken.ReadScalar<int>();
                 if (idx < 0 || idx >= names.Length) { message = $"Enum index out of range: {idx}"; return false; }
                 prop.enumValueIndex = idx; message = "Set enum."; return true;
             }
@@ -1628,26 +1596,26 @@ namespace MCPForUnity.Editor.Tools
                         return false;
                     }
 
-                    float time = keyObj["time"]?.Value<float>() ?? 0f;
-                    float value = keyObj["value"]?.Value<float>() ?? 0f;
-                    float inSlope = keyObj["inSlope"]?.Value<float>() ?? keyObj["inTangent"]?.Value<float>() ?? 0f;
-                    float outSlope = keyObj["outSlope"]?.Value<float>() ?? keyObj["outTangent"]?.Value<float>() ?? 0f;
+                    float time = keyObj["time"]?.ReadScalar<float?>() ?? 0f;
+                    float value = keyObj["value"]?.ReadScalar<float?>() ?? 0f;
+                    float inSlope = keyObj["inSlope"]?.ReadScalar<float?>() ?? keyObj["inTangent"]?.ReadScalar<float?>() ?? 0f;
+                    float outSlope = keyObj["outSlope"]?.ReadScalar<float?>() ?? keyObj["outTangent"]?.ReadScalar<float?>() ?? 0f;
 
                     var keyframe = new Keyframe(time, value, inSlope, outSlope);
 
                     // Optional: weighted tangent mode (Unity 2018.1+)
                     if (keyObj["weightedMode"] != null)
                     {
-                        int weightedMode = keyObj["weightedMode"].Value<int>();
+                        int weightedMode = keyObj["weightedMode"].ReadScalar<int>();
                         keyframe.weightedMode = (WeightedMode)weightedMode;
                     }
                     if (keyObj["inWeight"] != null)
                     {
-                        keyframe.inWeight = keyObj["inWeight"].Value<float>();
+                        keyframe.inWeight = keyObj["inWeight"].ReadScalar<float>();
                     }
                     if (keyObj["outWeight"] != null)
                     {
-                        keyframe.outWeight = keyObj["outWeight"].Value<float>();
+                        keyframe.outWeight = keyObj["outWeight"].ReadScalar<float>();
                     }
 
                     curve.AddKey(keyframe);
@@ -1707,9 +1675,9 @@ namespace MCPForUnity.Editor.Tools
                     {
                         // Euler angles [x, y, z]
                         var euler = new Vector3(
-                            arr[0].Value<float>(),
-                            arr[1].Value<float>(),
-                            arr[2].Value<float>()
+                            arr[0].ReadScalar<float>(),
+                            arr[1].ReadScalar<float>(),
+                            arr[2].ReadScalar<float>()
                         );
                         prop.quaternionValue = Quaternion.Euler(euler);
                         message = $"Set Quaternion from Euler({euler.x}, {euler.y}, {euler.z}).";
@@ -1719,10 +1687,10 @@ namespace MCPForUnity.Editor.Tools
                     {
                         // Raw quaternion [x, y, z, w]
                         prop.quaternionValue = new Quaternion(
-                            arr[0].Value<float>(),
-                            arr[1].Value<float>(),
-                            arr[2].Value<float>(),
-                            arr[3].Value<float>()
+                            arr[0].ReadScalar<float>(),
+                            arr[1].ReadScalar<float>(),
+                            arr[2].ReadScalar<float>(),
+                            arr[3].ReadScalar<float>()
                         );
                         message = "Set Quaternion from [x, y, z, w].";
                         return true;
@@ -1739,9 +1707,9 @@ namespace MCPForUnity.Editor.Tools
                     if (obj["euler"] is JArray eulerArr && eulerArr.Count == 3)
                     {
                         var euler = new Vector3(
-                            eulerArr[0].Value<float>(),
-                            eulerArr[1].Value<float>(),
-                            eulerArr[2].Value<float>()
+                            eulerArr[0].ReadScalar<float>(),
+                            eulerArr[1].ReadScalar<float>(),
+                            eulerArr[2].ReadScalar<float>()
                         );
                         prop.quaternionValue = Quaternion.Euler(euler);
                         message = $"Set Quaternion from euler: ({euler.x}, {euler.y}, {euler.z}).";
@@ -1752,10 +1720,10 @@ namespace MCPForUnity.Editor.Tools
                     if (obj["x"] != null && obj["y"] != null && obj["z"] != null && obj["w"] != null)
                     {
                         prop.quaternionValue = new Quaternion(
-                            obj["x"].Value<float>(),
-                            obj["y"].Value<float>(),
-                            obj["z"].Value<float>(),
-                            obj["w"].Value<float>()
+                            obj["x"].ReadScalar<float>(),
+                            obj["y"].ReadScalar<float>(),
+                            obj["z"].ReadScalar<float>(),
+                            obj["w"].ReadScalar<float>()
                         );
                         message = "Set Quaternion from { x, y, z, w }.";
                         return true;

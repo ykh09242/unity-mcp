@@ -84,7 +84,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             if (targetToken.Type == JTokenType.Integer)
             {
-                int instanceId = targetToken.Value<int>();
+                int instanceId = targetToken.ReadScalar<int>();
                 return GameObjectLookup.FindById(instanceId);
             }
 
@@ -106,7 +106,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (reference is JToken jt)
             {
                 if (jt.Type == JTokenType.Integer)
-                    return GameObjectLookup.FindById(jt.Value<int>());
+                    return GameObjectLookup.FindById(jt.ReadScalar<int>());
                 if (jt.Type == JTokenType.String)
                 {
                     string str = jt.ToString();

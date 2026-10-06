@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
-            int layer = @params["layer"]?.ToObject<int>() ?? -1;
+            int layer = @params["layer"]?.ReadScalar<int?>() ?? -1;
 
             Undo.RecordObject(animator, "Play Animation State");
             animator.Play(stateName, layer);
@@ -45,8 +45,8 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
-            float duration = @params["duration"]?.ToObject<float>() ?? 0.25f;
-            int layer = @params["layer"]?.ToObject<int>() ?? -1;
+            float duration = @params["duration"]?.ReadScalar<float?>() ?? 0.25f;
+            int layer = @params["layer"]?.ReadScalar<int?>() ?? -1;
 
             Undo.RecordObject(animator, "Crossfade Animation State");
             animator.CrossFadeInFixedTime(stateName, duration, layer);
@@ -134,9 +134,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             bool bVal = false;
             switch (paramType)
             {
-                case "float": fVal = valueToken?.ToObject<float>() ?? 0f; break;
-                case "int": iVal = valueToken?.ToObject<int>() ?? 0; break;
-                case "bool": bVal = valueToken?.ToObject<bool>() ?? false; break;
+                case "float": fVal = valueToken?.ReadScalar<float?>() ?? 0f; break;
+                case "int": iVal = valueToken?.ReadScalar<int?>() ?? 0; break;
+                case "bool": bVal = valueToken?.ReadScalar<bool?>() ?? false; break;
             }
 
             if (isPlaying)
@@ -195,7 +195,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            float speed = @params["speed"]?.ToObject<float>() ?? 1f;
+            float speed = @params["speed"]?.ReadScalar<float?>() ?? 1f;
 
             Undo.RecordObject(animator, "Set Animator Speed");
             animator.speed = speed;
@@ -213,7 +213,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            bool enabled = @params["enabled"]?.ToObject<bool>() ?? true;
+            bool enabled = @params["enabled"]?.ReadScalar<bool?>() ?? true;
 
             Undo.RecordObject(animator, "Set Animator Enabled");
             animator.enabled = enabled;

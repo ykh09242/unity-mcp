@@ -995,10 +995,15 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             JArray arr = token as JArray;
             if (arr == null && token.Type == JTokenType.String)
             {
-                try { arr = JArray.Parse(token.ToString()); } catch { return Vector3.zero; }
+                try { arr = JArray.Parse(token.ToString()); }
+                catch (Newtonsoft.Json.JsonException ex)
+                {
+                    throw new ArgumentException("Position must contain three finite numeric components.", ex);
+                }
             }
-            if (arr == null || arr.Count < 3) return Vector3.zero;
-            return new Vector3(arr[0].Value<float>(), arr[1].Value<float>(), arr[2].Value<float>());
+            if (arr == null || arr.Count < 3)
+                throw new ArgumentException("Position must contain three finite numeric components.");
+            return new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
         }
 
         /// <summary>World-space bounds over every renderer in the hierarchy; false when it has none.</summary>

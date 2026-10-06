@@ -58,9 +58,9 @@ namespace MCPForUnity.Editor.Tools
                 if (token is JObject entry && string.Equals(entry["tool"]?.ToString(), "batch_execute", StringComparison.OrdinalIgnoreCase))
                     return new ErrorResponse("Nested batch_execute commands are not allowed.");
 
-            bool failFast = @params.Value<bool?>("failFast") ?? false;
-            bool parallelRequested = @params.Value<bool?>("parallel") ?? false;
-            int? maxParallel = @params.Value<int?>("maxParallelism");
+            bool failFast = @params.ReadScalar<bool?>("failFast") ?? false;
+            bool parallelRequested = @params.ReadScalar<bool?>("parallel") ?? false;
+            int? maxParallel = @params.ReadScalar<int?>("maxParallelism");
 
             if (parallelRequested)
             {

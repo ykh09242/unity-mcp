@@ -227,7 +227,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return false;
             try
             {
-                value = token.Value<float>();
+                value = token.ReadScalar<float>();
                 return !float.IsNaN(value) && !float.IsInfinity(value);
             }
             catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is ArgumentException || ex is OverflowException)
@@ -302,7 +302,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             if (targetToken.Type == JTokenType.Integer)
             {
-                int instanceId = targetToken.Value<int>();
+                int instanceId = targetToken.ReadScalar<int>();
                 return GameObjectLookup.FindById(instanceId);
             }
 

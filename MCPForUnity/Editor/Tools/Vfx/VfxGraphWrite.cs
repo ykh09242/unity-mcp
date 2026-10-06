@@ -82,13 +82,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
             T value;
             try
             {
-                value = valueToken.ToObject<T>();
+                value = valueToken.ReadScalar<T>();
             }
             catch (JsonException ex)
             {
                 return new { success = false, message = $"Invalid value for {param}: {ex.Message}" };
             }
-            catch (InvalidCastException ex)
+            catch (Exception ex) when (ex is InvalidCastException || ex is ArgumentException)
             {
                 return new { success = false, message = $"Invalid value type for {param}: {ex.Message}" };
             }
@@ -134,7 +134,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector4 vec;
             if (dims == 2)
             {
-                Vector2 value = VectorParsing.ParseVector2(token) ?? default;
+                Vector2 value = VectorParsing.ParseVector2(token)
+                    ?? throw new ArgumentException("'value' must contain two finite numeric components.");
                 vec = new Vector4(value.x, value.y, 0, 0);
             }
             else if (dims == 3)
@@ -325,7 +326,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
             if (@params["size"] != null)
             {
-                float? sizeValue = @params["size"].Value<float?>();
+                float? sizeValue = @params["size"].ReadScalar<float?>();
                 if (sizeValue.HasValue)
                 {
                     attr.SetFloat("size", sizeValue.Value);
@@ -333,7 +334,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
             if (@params["lifetime"] != null)
             {
-                float? lifetimeValue = @params["lifetime"].Value<float?>();
+                float? lifetimeValue = @params["lifetime"].ReadScalar<float?>();
                 if (lifetimeValue.HasValue)
                 {
                     attr.SetFloat("lifetime", lifetimeValue.Value);

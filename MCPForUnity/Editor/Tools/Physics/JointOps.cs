@@ -197,11 +197,11 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     var motor = hingeForMotor.motor;
                     if (motorToken["targetVelocity"] != null)
-                        motor.targetVelocity = motorToken["targetVelocity"].Value<float>();
+                        motor.targetVelocity = motorToken["targetVelocity"].ReadScalar<float>();
                     if (motorToken["force"] != null)
-                        motor.force = motorToken["force"].Value<float>();
+                        motor.force = motorToken["force"].ReadScalar<float>();
                     if (motorToken["freeSpin"] != null)
-                        motor.freeSpin = motorToken["freeSpin"].Value<bool>();
+                        motor.freeSpin = motorToken["freeSpin"].ReadScalar<bool>();
                     changes.Add(() => hingeForMotor.motor = motor);
                     changes.Add(() => hingeForMotor.useMotor = true);
                     configured.Add("motor");
@@ -220,11 +220,11 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     var limits = hingeForLimits.limits;
                     if (limitsToken["min"] != null)
-                        limits.min = limitsToken["min"].Value<float>();
+                        limits.min = limitsToken["min"].ReadScalar<float>();
                     if (limitsToken["max"] != null)
-                        limits.max = limitsToken["max"].Value<float>();
+                        limits.max = limitsToken["max"].ReadScalar<float>();
                     if (limitsToken["bounciness"] != null)
-                        limits.bounciness = limitsToken["bounciness"].Value<float>();
+                        limits.bounciness = limitsToken["bounciness"].ReadScalar<float>();
                     changes.Add(() => hingeForLimits.limits = limits);
                     changes.Add(() => hingeForLimits.useLimits = true);
                     configured.Add("limits");
@@ -243,11 +243,11 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     var spring = hingeForSpring.spring;
                     if (springToken["spring"] != null)
-                        spring.spring = springToken["spring"].Value<float>();
+                        spring.spring = springToken["spring"].ReadScalar<float>();
                     if (springToken["damper"] != null)
-                        spring.damper = springToken["damper"].Value<float>();
+                        spring.damper = springToken["damper"].ReadScalar<float>();
                     if (springToken["targetPosition"] != null)
-                        spring.targetPosition = springToken["targetPosition"].Value<float>();
+                        spring.targetPosition = springToken["targetPosition"].ReadScalar<float>();
                     changes.Add(() => hingeForSpring.spring = spring);
                     changes.Add(() => hingeForSpring.useSpring = true);
                     configured.Add("spring");
@@ -256,17 +256,17 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     if (springToken["spring"] != null)
                     {
-                        var newSpring = springToken["spring"].Value<float>();
+                        var newSpring = springToken["spring"].ReadScalar<float>();
                         changes.Add(() => springJoint.spring = newSpring);
                     }
                     if (springToken["damper"] != null)
                     {
-                        var newDamper = springToken["damper"].Value<float>();
+                        var newDamper = springToken["damper"].ReadScalar<float>();
                         changes.Add(() => springJoint.damper = newDamper);
                     }
                     if (springToken["targetPosition"] != null)
                     {
-                        var newMinDistance = springToken["targetPosition"].Value<float>();
+                        var newMinDistance = springToken["targetPosition"].ReadScalar<float>();
                         changes.Add(() => springJoint.minDistance = newMinDistance);
                     }
                     configured.Add("spring");
@@ -288,11 +288,11 @@ namespace MCPForUnity.Editor.Tools.Physics
                     {
                         var xDrive = configJoint.xDrive;
                         if (xDriveToken["positionSpring"] != null)
-                            xDrive.positionSpring = xDriveToken["positionSpring"].Value<float>();
+                            xDrive.positionSpring = xDriveToken["positionSpring"].ReadScalar<float>();
                         if (xDriveToken["positionDamper"] != null)
-                            xDrive.positionDamper = xDriveToken["positionDamper"].Value<float>();
+                            xDrive.positionDamper = xDriveToken["positionDamper"].ReadScalar<float>();
                         if (xDriveToken["maximumForce"] != null)
-                            xDrive.maximumForce = xDriveToken["maximumForce"].Value<float>();
+                            xDrive.maximumForce = xDriveToken["maximumForce"].ReadScalar<float>();
                         changes.Add(() => configJoint.xDrive = xDrive);
                     }
                     configured.Add("drive");
@@ -424,7 +424,7 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             if (targetToken.Type == JTokenType.Integer)
             {
-                int instanceId = targetToken.Value<int>();
+                int instanceId = targetToken.ReadScalar<int>();
                 return GameObjectLookup.FindById(instanceId);
             }
 
@@ -518,27 +518,27 @@ namespace MCPForUnity.Editor.Tools.Physics
         private static object ConvertValue(JToken token, Type targetType)
         {
             if (targetType == typeof(float))
-                return token.Value<float>();
+                return token.ReadScalar<float>();
             if (targetType == typeof(int))
-                return token.Value<int>();
+                return token.ReadScalar<int>();
             if (targetType == typeof(bool))
-                return token.Value<bool>();
+                return token.ReadScalar<bool>();
             if (targetType == typeof(string))
                 return token.Value<string>();
             if (targetType == typeof(Vector3))
             {
                 var arr = token as JArray;
                 if (arr != null && arr.Count >= 3)
-                    return new Vector3(arr[0].Value<float>(), arr[1].Value<float>(), arr[2].Value<float>());
+                    return new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
             }
             if (targetType == typeof(Vector2))
             {
                 var arr = token as JArray;
                 if (arr != null && arr.Count >= 2)
-                    return new Vector2(arr[0].Value<float>(), arr[1].Value<float>());
+                    return new Vector2(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>());
             }
 
-            return token.ToObject(targetType);
+            return PropertyConversion.ConvertToType(token, targetType);
         }
     }
 }

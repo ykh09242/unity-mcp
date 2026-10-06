@@ -271,8 +271,8 @@ namespace MCPForUnity.Editor.Tools
             string imagePath = @params["imagePath"]?.ToString();
             bool hasImage = !string.IsNullOrEmpty(imagePath);
 
-            int width = @params["width"]?.ToObject<int>() ?? 64;
-            int height = @params["height"]?.ToObject<int>() ?? 64;
+            int width = @params["width"]?.ReadScalar<int?>() ?? 64;
+            int height = @params["height"]?.ReadScalar<int?>() ?? 64;
             List<string> warnings = new List<string>();
 
             // Validate dimensions
@@ -310,7 +310,7 @@ namespace MCPForUnity.Editor.Tools
                 int patternSize = 8;
                 if (!hasImage && patternToken != null)
                 {
-                    patternSize = @params["patternSize"]?.ToObject<int>() ?? 8;
+                    patternSize = @params["patternSize"]?.ReadScalar<int?>() ?? 8;
                     if (patternSize <= 0)
                         return new ErrorResponse("patternSize must be greater than 0.");
                 }
@@ -457,10 +457,10 @@ namespace MCPForUnity.Editor.Tools
                 // Pixel modification path
                 if (setPixelsToken != null)
                 {
-                    int x = setPixelsToken["x"]?.ToObject<int>() ?? 0;
-                    int y = setPixelsToken["y"]?.ToObject<int>() ?? 0;
-                    int w = setPixelsToken["width"]?.ToObject<int>() ?? 1;
-                    int h = setPixelsToken["height"]?.ToObject<int>() ?? 1;
+                    int x = setPixelsToken["x"]?.ReadScalar<int?>() ?? 0;
+                    int y = setPixelsToken["y"]?.ReadScalar<int?>() ?? 0;
+                    int w = setPixelsToken["width"]?.ReadScalar<int?>() ?? 1;
+                    int h = setPixelsToken["height"]?.ReadScalar<int?>() ?? 1;
                     var regionError = ValidateDimensions(w, h, null);
                     if (regionError != null) return regionError;
                     var pixelsToken = setPixelsToken["pixels"];
@@ -574,14 +574,14 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for apply_gradient.");
 
-            int width = @params["width"]?.ToObject<int>() ?? 64;
-            int height = @params["height"]?.ToObject<int>() ?? 64;
+            int width = @params["width"]?.ReadScalar<int?>() ?? 64;
+            int height = @params["height"]?.ReadScalar<int?>() ?? 64;
             List<string> warnings = new List<string>();
             var dimensionError = ValidateDimensions(width, height, warnings);
             if (dimensionError != null)
                 return dimensionError;
             string gradientType = @params["gradientType"]?.ToString() ?? "linear";
-            float angle = @params["gradientAngle"]?.ToObject<float>() ?? 0f;
+            float angle = @params["gradientAngle"]?.ReadScalar<float?>() ?? 0f;
 
             var palette = TextureOps.ParsePalette(@params["palette"] as JArray);
             if (palette == null || palette.Count < 2)
@@ -656,14 +656,14 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for apply_noise.");
 
-            int width = @params["width"]?.ToObject<int>() ?? 64;
-            int height = @params["height"]?.ToObject<int>() ?? 64;
+            int width = @params["width"]?.ReadScalar<int?>() ?? 64;
+            int height = @params["height"]?.ReadScalar<int?>() ?? 64;
             List<string> warnings = new List<string>();
             var dimensionError = ValidateDimensions(width, height, warnings);
             if (dimensionError != null)
                 return dimensionError;
-            float scale = @params["noiseScale"]?.ToObject<float>() ?? 0.1f;
-            int octaves = @params["octaves"]?.ToObject<int>() ?? 1;
+            float scale = @params["noiseScale"]?.ReadScalar<float?>() ?? 0.1f;
+            int octaves = @params["octaves"]?.ReadScalar<int?>() ?? 1;
             if (octaves <= 0)
                 return new ErrorResponse("octaves must be greater than 0.");
             long totalPixels = (long)width * height;
@@ -912,7 +912,7 @@ namespace MCPForUnity.Editor.Tools
 
             bool hasImportSettings = importSettingsToken is JObject importObject && importObject.HasValues;
             bool hasSpriteSettings = (asSpriteToken is JObject spriteObject && spriteObject.HasValues)
-                || (asSpriteToken?.Type == JTokenType.Boolean && asSpriteToken.ToObject<bool>());
+                || (asSpriteToken?.Type == JTokenType.Boolean && asSpriteToken.ReadScalar<bool>());
 
             return hasImportSettings || hasSpriteSettings;
         }
@@ -947,7 +947,7 @@ namespace MCPForUnity.Editor.Tools
                 apply = PrepareTextureImporterSettings(importSettingsToken);
             }
             else if (asSpriteToken != null &&
-                     (asSpriteToken.Type == JTokenType.Boolean ? asSpriteToken.ToObject<bool>() : true))
+                     (asSpriteToken.Type == JTokenType.Boolean ? asSpriteToken.ReadScalar<bool>() : true))
             {
                 apply = PrepareSpriteSettings(asSpriteToken.Type == JTokenType.Object ? asSpriteToken : null);
             }
@@ -1014,8 +1014,8 @@ namespace MCPForUnity.Editor.Tools
                 if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
                 {
                     var pivot = new Vector2(
-                        pivotArray[0].ToObject<float>(),
-                        pivotArray[1].ToObject<float>()
+                        pivotArray[0].ReadScalar<float>(),
+                        pivotArray[1].ReadScalar<float>()
                     );
                     setters.Add(importer => importer.spritePivot = pivot);
                 }
@@ -1024,7 +1024,7 @@ namespace MCPForUnity.Editor.Tools
                 var ppuToken = settings["pixelsPerUnit"];
                 if (ppuToken != null)
                 {
-                    float pixelsPerUnit = ppuToken.ToObject<float>();
+                    float pixelsPerUnit = ppuToken.ReadScalar<float>();
                     setters.Add(importer => importer.spritePixelsPerUnit = pixelsPerUnit);
                 }
             }
@@ -1072,7 +1072,7 @@ namespace MCPForUnity.Editor.Tools
             var srgbToken = settings["sRGBTexture"];
             if (srgbToken != null)
             {
-                bool sRGBTexture = srgbToken.ToObject<bool>();
+                bool sRGBTexture = srgbToken.ReadScalar<bool>();
                 setters.Add(importer => importer.sRGBTexture = sRGBTexture);
             }
 
@@ -1091,7 +1091,7 @@ namespace MCPForUnity.Editor.Tools
             var alphaTransToken = settings["alphaIsTransparency"];
             if (alphaTransToken != null)
             {
-                bool alphaIsTransparency = alphaTransToken.ToObject<bool>();
+                bool alphaIsTransparency = alphaTransToken.ReadScalar<bool>();
                 setters.Add(importer => importer.alphaIsTransparency = alphaIsTransparency);
             }
 
@@ -1099,7 +1099,7 @@ namespace MCPForUnity.Editor.Tools
             var readableToken = settings["isReadable"];
             if (readableToken != null)
             {
-                bool isReadable = readableToken.ToObject<bool>();
+                bool isReadable = readableToken.ReadScalar<bool>();
                 setters.Add(importer => importer.isReadable = isReadable);
             }
 
@@ -1107,7 +1107,7 @@ namespace MCPForUnity.Editor.Tools
             var mipmapToken = settings["mipmapEnabled"];
             if (mipmapToken != null)
             {
-                bool mipmapEnabled = mipmapToken.ToObject<bool>();
+                bool mipmapEnabled = mipmapToken.ReadScalar<bool>();
                 setters.Add(importer => importer.mipmapEnabled = mipmapEnabled);
             }
 
@@ -1170,7 +1170,7 @@ namespace MCPForUnity.Editor.Tools
             var anisoToken = settings["anisoLevel"];
             if (anisoToken != null)
             {
-                int anisoLevel = anisoToken.ToObject<int>();
+                int anisoLevel = anisoToken.ReadScalar<int>();
                 setters.Add(importer => importer.anisoLevel = anisoLevel);
             }
 
@@ -1178,7 +1178,7 @@ namespace MCPForUnity.Editor.Tools
             var maxSizeToken = settings["maxTextureSize"];
             if (maxSizeToken != null)
             {
-                int maxTextureSize = maxSizeToken.ToObject<int>();
+                int maxTextureSize = maxSizeToken.ReadScalar<int>();
                 setters.Add(importer => importer.maxTextureSize = maxTextureSize);
             }
 
@@ -1197,7 +1197,7 @@ namespace MCPForUnity.Editor.Tools
             var crunchedToken = settings["crunchedCompression"];
             if (crunchedToken != null)
             {
-                bool crunchedCompression = crunchedToken.ToObject<bool>();
+                bool crunchedCompression = crunchedToken.ReadScalar<bool>();
                 setters.Add(importer => importer.crunchedCompression = crunchedCompression);
             }
 
@@ -1205,7 +1205,7 @@ namespace MCPForUnity.Editor.Tools
             var qualityToken = settings["compressionQuality"];
             if (qualityToken != null)
             {
-                int compressionQuality = qualityToken.ToObject<int>();
+                int compressionQuality = qualityToken.ReadScalar<int>();
                 setters.Add(importer => importer.compressionQuality = compressionQuality);
             }
 
@@ -1226,7 +1226,7 @@ namespace MCPForUnity.Editor.Tools
             var ppuToken = settings["spritePixelsPerUnit"];
             if (ppuToken != null)
             {
-                float spritePixelsPerUnit = ppuToken.ToObject<float>();
+                float spritePixelsPerUnit = ppuToken.ReadScalar<float>();
                 setters.Add(importer => importer.spritePixelsPerUnit = spritePixelsPerUnit);
             }
 
@@ -1235,8 +1235,8 @@ namespace MCPForUnity.Editor.Tools
             if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
             {
                 var pivot = new Vector2(
-                    pivotArray[0].ToObject<float>(),
-                    pivotArray[1].ToObject<float>()
+                    pivotArray[0].ReadScalar<float>(),
+                    pivotArray[1].ReadScalar<float>()
                 );
                 setters.Add(importer => importer.spritePivot = pivot);
             }
@@ -1249,7 +1249,7 @@ namespace MCPForUnity.Editor.Tools
             uint? extrude = null;
             var extrudeToken = settings["spriteExtrude"];
             if (extrudeToken != null)
-                extrude = (uint)extrudeToken.ToObject<int>();
+                extrude = (uint)extrudeToken.ReadScalar<int>();
 
             return importer =>
             {

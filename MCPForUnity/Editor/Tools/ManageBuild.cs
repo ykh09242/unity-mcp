@@ -389,7 +389,7 @@ namespace MCPForUnity.Editor.Tools
                 string path = item["path"]?.ToString();
                 if (string.IsNullOrEmpty(path))
                     return new ErrorResponse("Each scene must have a 'path' field.");
-                bool enabled = item["enabled"]?.Value<bool>() ?? true;
+                bool enabled = item["enabled"]?.ReadScalar<bool?>() ?? true;
                 newScenes.Add(new EditorBuildSettingsScene(path, enabled));
             }
 

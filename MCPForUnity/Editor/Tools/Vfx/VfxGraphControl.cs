@@ -1,3 +1,4 @@
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -58,7 +59,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "VisualEffect not found" };
             }
 
-            float rate = @params["playRate"]?.ToObject<float>() ?? 1f;
+            float rate = @params["playRate"]?.ReadScalar<float?>() ?? 1f;
             if (float.IsNaN(rate) || float.IsInfinity(rate))
                 return new { success = false, message = "playRate must be finite" };
             Undo.RecordObject(vfx, "Set VFX Play Rate");
@@ -76,8 +77,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = "VisualEffect not found" };
             }
 
-            uint seed = @params["seed"]?.ToObject<uint>() ?? 0;
-            bool resetOnPlay = @params["resetSeedOnPlay"]?.ToObject<bool>() ?? true;
+            uint seed = @params["seed"]?.ReadScalar<uint?>() ?? 0;
+            bool resetOnPlay = @params["resetSeedOnPlay"]?.ReadScalar<bool?>() ?? true;
 
             Undo.RecordObject(vfx, "Set VFX Seed");
             vfx.startSeed = seed;

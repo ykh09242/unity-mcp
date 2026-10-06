@@ -440,8 +440,8 @@ namespace MCPForUnity.Editor.Tools
 
                     if (p.GetRaw("reference_resolution") is JObject refRes)
                     {
-                        int w = refRes["width"]?.ToObject<int>() ?? 1920;
-                        int h = refRes["height"]?.ToObject<int>() ?? 1080;
+                        int w = refRes["width"]?.ReadScalar<int?>() ?? 1920;
+                        int h = refRes["height"]?.ReadScalar<int?>() ?? 1080;
                         panel.referenceResolution = new Vector2Int(w, h);
                         changes.Add("referenceResolution");
                     }
@@ -597,8 +597,8 @@ namespace MCPForUnity.Editor.Tools
                     case "referenceresolution":
                         if (val is JObject resObj)
                         {
-                            int w = resObj["width"]?.ToObject<int>() ?? pendingResolution.x;
-                            int h = resObj["height"]?.ToObject<int>() ?? pendingResolution.y;
+                            int w = resObj["width"]?.ReadScalar<int?>() ?? pendingResolution.x;
+                            int h = resObj["height"]?.ReadScalar<int?>() ?? pendingResolution.y;
                             pendingResolution = new Vector2Int(w, h);
                             var resolution = pendingResolution;
                             apply += () => ps.referenceResolution = resolution;
@@ -664,13 +664,13 @@ namespace MCPForUnity.Editor.Tools
         private static bool TryFloat(JToken token, out float result)
         {
             result = 0f;
-            if (token == null) return false;
-            if (token.Type == JTokenType.Float || token.Type == JTokenType.Integer)
+            if (token == null || token.Type == JTokenType.Null) return false;
+            try
             {
-                result = token.ToObject<float>();
+                result = token.ReadScalar<float>();
                 return true;
             }
-            return float.TryParse(token.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+            catch (ArgumentException) { return false; }
         }
 
         private static bool TryInt(JToken token, out int result)
@@ -679,7 +679,7 @@ namespace MCPForUnity.Editor.Tools
             if (token == null) return false;
             if (token.Type == JTokenType.Integer)
             {
-                result = token.ToObject<int>();
+                result = token.ReadScalar<int>();
                 return true;
             }
             return int.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
@@ -699,10 +699,10 @@ namespace MCPForUnity.Editor.Tools
             if (token is JObject cObj)
             {
                 color = new Color(
-                    cObj["r"]?.ToObject<float>() ?? 0f,
-                    cObj["g"]?.ToObject<float>() ?? 0f,
-                    cObj["b"]?.ToObject<float>() ?? 0f,
-                    cObj["a"]?.ToObject<float>() ?? 1f
+                    cObj["r"]?.ReadScalar<float?>() ?? 0f,
+                    cObj["g"]?.ReadScalar<float?>() ?? 0f,
+                    cObj["b"]?.ReadScalar<float?>() ?? 0f,
+                    cObj["a"]?.ReadScalar<float?>() ?? 1f
                 );
                 return true;
             }
@@ -1580,6 +1580,8 @@ namespace MCPForUnity.Editor.Tools
             var styleModifications = new List<string>();
             var inlineStyles = styleToken is JObject styleObj
                 ? PrepareInlineStyles(styleObj, styleModifications) : null;
+            bool? enabled = p.GetNullableBool("enabled");
+            bool? visibility = p.GetNullableBool("visible");
             var modifications = new List<string>();
 
             // Set text content (Label, Button, etc.)
@@ -1639,7 +1641,6 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Set enabled/disabled
-            bool? enabled = p.GetNullableBool("enabled");
             if (enabled.HasValue)
             {
                 element.SetEnabled(enabled.Value);
@@ -1647,11 +1648,9 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Set visibility
-            string visibility = p.Get("visible");
-            if (visibility != null)
+            if (visibility.HasValue)
             {
-                bool isVisible = visibility.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-                                 visibility == "1";
+                bool isVisible = visibility.Value;
                 element.style.display = isVisible ? DisplayStyle.Flex : DisplayStyle.None;
                 modifications.Add($"visible={isVisible}");
             }
@@ -1721,25 +1720,25 @@ namespace MCPForUnity.Editor.Tools
 
                     case "fontsize":
                     case "font-size":
-                        float fontSize = val.ToObject<float>();
+                        float fontSize = val.ReadScalar<float>();
                         setters.Add(element => element.style.fontSize = fontSize);
                         modifications.Add($"fontSize={val}");
                         break;
 
                     case "width":
-                        float width = val.ToObject<float>();
+                        float width = val.ReadScalar<float>();
                         setters.Add(element => element.style.width = width);
                         modifications.Add($"width={val}");
                         break;
 
                     case "height":
-                        float height = val.ToObject<float>();
+                        float height = val.ReadScalar<float>();
                         setters.Add(element => element.style.height = height);
                         modifications.Add($"height={val}");
                         break;
 
                     case "opacity":
-                        float opacity = val.ToObject<float>();
+                        float opacity = val.ReadScalar<float>();
                         setters.Add(element => element.style.opacity = opacity);
                         modifications.Add($"opacity={val}");
                         break;
@@ -1762,77 +1761,77 @@ namespace MCPForUnity.Editor.Tools
 
                     case "flexgrow":
                     case "flex-grow":
-                        float flexGrow = val.ToObject<float>();
+                        float flexGrow = val.ReadScalar<float>();
                         setters.Add(element => element.style.flexGrow = flexGrow);
                         modifications.Add($"flexGrow={val}");
                         break;
 
                     case "flexshrink":
                     case "flex-shrink":
-                        float flexShrink = val.ToObject<float>();
+                        float flexShrink = val.ReadScalar<float>();
                         setters.Add(element => element.style.flexShrink = flexShrink);
                         modifications.Add($"flexShrink={val}");
                         break;
 
                     case "marginleft":
                     case "margin-left":
-                        float marginLeft = val.ToObject<float>();
+                        float marginLeft = val.ReadScalar<float>();
                         setters.Add(element => element.style.marginLeft = marginLeft);
                         modifications.Add($"marginLeft={val}");
                         break;
 
                     case "marginright":
                     case "margin-right":
-                        float marginRight = val.ToObject<float>();
+                        float marginRight = val.ReadScalar<float>();
                         setters.Add(element => element.style.marginRight = marginRight);
                         modifications.Add($"marginRight={val}");
                         break;
 
                     case "margintop":
                     case "margin-top":
-                        float marginTop = val.ToObject<float>();
+                        float marginTop = val.ReadScalar<float>();
                         setters.Add(element => element.style.marginTop = marginTop);
                         modifications.Add($"marginTop={val}");
                         break;
 
                     case "marginbottom":
                     case "margin-bottom":
-                        float marginBottom = val.ToObject<float>();
+                        float marginBottom = val.ReadScalar<float>();
                         setters.Add(element => element.style.marginBottom = marginBottom);
                         modifications.Add($"marginBottom={val}");
                         break;
 
                     case "paddingleft":
                     case "padding-left":
-                        float paddingLeft = val.ToObject<float>();
+                        float paddingLeft = val.ReadScalar<float>();
                         setters.Add(element => element.style.paddingLeft = paddingLeft);
                         modifications.Add($"paddingLeft={val}");
                         break;
 
                     case "paddingright":
                     case "padding-right":
-                        float paddingRight = val.ToObject<float>();
+                        float paddingRight = val.ReadScalar<float>();
                         setters.Add(element => element.style.paddingRight = paddingRight);
                         modifications.Add($"paddingRight={val}");
                         break;
 
                     case "paddingtop":
                     case "padding-top":
-                        float paddingTop = val.ToObject<float>();
+                        float paddingTop = val.ReadScalar<float>();
                         setters.Add(element => element.style.paddingTop = paddingTop);
                         modifications.Add($"paddingTop={val}");
                         break;
 
                     case "paddingbottom":
                     case "padding-bottom":
-                        float paddingBottom = val.ToObject<float>();
+                        float paddingBottom = val.ReadScalar<float>();
                         setters.Add(element => element.style.paddingBottom = paddingBottom);
                         modifications.Add($"paddingBottom={val}");
                         break;
 
                     case "borderradius":
                     case "border-radius":
-                        float radius = val.ToObject<float>();
+                        float radius = val.ReadScalar<float>();
                         setters.Add(element =>
                         {
                             element.style.borderTopLeftRadius = radius;
@@ -1853,12 +1852,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool? GetNullableBool(this ToolParams p, string key)
         {
-            var raw = p.GetRaw(key);
-            if (raw == null) return null;
-            if (raw.Type == JTokenType.Boolean) return raw.ToObject<bool>();
-            string s = raw.ToString();
-            if (bool.TryParse(s, out bool result)) return result;
-            return null;
+            return p.GetRaw(key).ReadScalar<bool?>();
         }
 
         /// <summary>

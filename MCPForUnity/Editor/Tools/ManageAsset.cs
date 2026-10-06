@@ -118,7 +118,7 @@ namespace MCPForUnity.Editor.Tools
                     case "get_info":
                         return GetAssetInfo(
                             path,
-                            @params["generatePreview"]?.ToObject<bool>() ?? false
+                            @params["generatePreview"]?.ReadScalar<bool?>() ?? false
                         );
                     case "create_folder": // Added specific action for clarity
                         return CreateFolder(path);
@@ -712,7 +712,7 @@ namespace MCPForUnity.Editor.Tools
             string filterType = @params["filterType"]?.ToString();
             string pathScope = @params["path"]?.ToString(); // Use path as folder scope
             string filterDateAfterStr = @params["filterDateAfter"]?.ToString();
-            bool generatePreview = @params["generatePreview"]?.ToObject<bool>() ?? false;
+            bool generatePreview = @params["generatePreview"]?.ReadScalar<bool?>() ?? false;
             int maximum = generatePreview ? PaginationBounds.MaxPreviewPageSize : PaginationBounds.MaxPageSize;
             if (!PaginationBounds.TryRead(@params["page_size"] ?? @params["pageSize"], Math.Min(50, maximum),
                     1, maximum, "pageSize", out int pageSize, out string pageError)
@@ -977,7 +977,7 @@ namespace MCPForUnity.Editor.Tools
             if (properties["dynamicFriction"]?.Type == JTokenType.Float
                 || properties["dynamicFriction"]?.Type == JTokenType.Integer)
             {
-                float dynamicFriction = properties["dynamicFriction"].ToObject<float>();
+                float dynamicFriction = properties["dynamicFriction"].ReadScalar<float>();
                 pmat.dynamicFriction = dynamicFriction;
                 modified = true;
             }
@@ -986,7 +986,7 @@ namespace MCPForUnity.Editor.Tools
             if (properties["staticFriction"]?.Type == JTokenType.Float
                 || properties["staticFriction"]?.Type == JTokenType.Integer)
             {
-                float staticFriction = properties["staticFriction"].ToObject<float>();
+                float staticFriction = properties["staticFriction"].ReadScalar<float>();
                 pmat.staticFriction = staticFriction;
                 modified = true;
             }
@@ -995,7 +995,7 @@ namespace MCPForUnity.Editor.Tools
             if (properties["bounciness"]?.Type == JTokenType.Float
                 || properties["bounciness"]?.Type == JTokenType.Integer)
             {
-                float bounciness = properties["bounciness"].ToObject<float>();
+                float bounciness = properties["bounciness"].ReadScalar<float>();
                 pmat.bounciness = bounciness;
                 modified = true;
             }

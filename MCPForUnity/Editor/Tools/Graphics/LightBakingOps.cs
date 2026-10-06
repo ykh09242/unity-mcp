@@ -270,13 +270,13 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             var posToken = p.GetRaw("position") as JArray;
             Vector3 position = posToken != null && posToken.Count >= 3
-                ? new Vector3(posToken[0].Value<float>(), posToken[1].Value<float>(), posToken[2].Value<float>())
+                ? new Vector3(posToken[0].ReadScalar<float>(), posToken[1].ReadScalar<float>(), posToken[2].ReadScalar<float>())
                 : Vector3.zero;
 
             var gridToken = p.GetRaw("grid_size") as JArray;
-            int gridX = gridToken != null && gridToken.Count >= 1 ? gridToken[0].Value<int>() : 3;
-            int gridY = gridToken != null && gridToken.Count >= 2 ? gridToken[1].Value<int>() : 2;
-            int gridZ = gridToken != null && gridToken.Count >= 3 ? gridToken[2].Value<int>() : 3;
+            int gridX = gridToken != null && gridToken.Count >= 1 ? gridToken[0].ReadScalar<int>() : 3;
+            int gridY = gridToken != null && gridToken.Count >= 2 ? gridToken[1].ReadScalar<int>() : 2;
+            int gridZ = gridToken != null && gridToken.Count >= 3 ? gridToken[2].ReadScalar<int>() : 3;
 
             var go = new GameObject(name);
             bool completed = false;
@@ -345,12 +345,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             var posToken = p.GetRaw("position") as JArray;
             Vector3 position = posToken != null && posToken.Count >= 3
-                ? new Vector3(posToken[0].Value<float>(), posToken[1].Value<float>(), posToken[2].Value<float>())
+                ? new Vector3(posToken[0].ReadScalar<float>(), posToken[1].ReadScalar<float>(), posToken[2].ReadScalar<float>())
                 : Vector3.zero;
 
             var sizeToken = p.GetRaw("size") as JArray;
             Vector3 size = sizeToken != null && sizeToken.Count >= 3
-                ? new Vector3(sizeToken[0].Value<float>(), sizeToken[1].Value<float>(), sizeToken[2].Value<float>())
+                ? new Vector3(sizeToken[0].ReadScalar<float>(), sizeToken[1].ReadScalar<float>(), sizeToken[2].ReadScalar<float>())
                 : new Vector3(10f, 10f, 10f);
 
             if (!Enum.TryParse<ReflectionProbeMode>(modeStr, true, out var mode))
@@ -425,9 +425,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 if (arr == null || arr.Count < 3)
                     return new ErrorResponse($"Position at index {i} must be an array of [x, y, z].");
                 positions[i] = new Vector3(
-                    arr[0].Value<float>(),
-                    arr[1].Value<float>(),
-                    arr[2].Value<float>()
+                    arr[0].ReadScalar<float>(),
+                    arr[1].ReadScalar<float>(),
+                    arr[2].ReadScalar<float>()
                 );
             }
 

@@ -232,17 +232,17 @@ namespace MCPForUnity.Editor.Tools.Physics
                 switch (key)
                 {
                     case "mass":
-                        var newMass = prop.Value.Value<float>();
+                        var newMass = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb.mass = newMass);
                         changed.Add("mass");
                         break;
                     case "drag":
                     case "lineardamping":
 #if UNITY_6000_0_OR_NEWER
-                        var newLinearDamping = prop.Value.Value<float>();
+                        var newLinearDamping = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb.linearDamping = newLinearDamping);
 #else
-                        var newDrag = prop.Value.Value<float>();
+                        var newDrag = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb.drag = newDrag);
 #endif
                         changed.Add("linearDamping");
@@ -250,21 +250,21 @@ namespace MCPForUnity.Editor.Tools.Physics
                     case "angulardrag":
                     case "angulardamping":
 #if UNITY_6000_0_OR_NEWER
-                        var newAngularDamping = prop.Value.Value<float>();
+                        var newAngularDamping = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb.angularDamping = newAngularDamping);
 #else
-                        var newAngularDrag = prop.Value.Value<float>();
+                        var newAngularDrag = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb.angularDrag = newAngularDrag);
 #endif
                         changed.Add("angularDamping");
                         break;
                     case "usegravity":
-                        var newUseGravity = prop.Value.Value<bool>();
+                        var newUseGravity = prop.Value.ReadScalar<bool>();
                         changes.Add(() => rb.useGravity = newUseGravity);
                         changed.Add("useGravity");
                         break;
                     case "iskinematic":
-                        var newIsKinematic = prop.Value.Value<bool>();
+                        var newIsKinematic = prop.Value.ReadScalar<bool>();
                         changes.Add(() => rb.isKinematic = newIsKinematic);
                         changed.Add("isKinematic");
                         break;
@@ -303,7 +303,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var token = prop.Value;
                         if (token.Type == JTokenType.Integer)
                         {
-                            var newConstraints = (RigidbodyConstraints)token.Value<int>();
+                            var newConstraints = (RigidbodyConstraints)token.ReadScalar<int>();
                             changes.Add(() => rb.constraints = newConstraints);
                             changed.Add("constraints");
                         }
@@ -366,22 +366,22 @@ namespace MCPForUnity.Editor.Tools.Physics
                 switch (key)
                 {
                     case "mass":
-                        var newMass = prop.Value.Value<float>();
+                        var newMass = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb2d.mass = newMass);
                         changed.Add("mass");
                         break;
                     case "gravityscale":
-                        var newGravityScale = prop.Value.Value<float>();
+                        var newGravityScale = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb2d.gravityScale = newGravityScale);
                         changed.Add("gravityScale");
                         break;
                     case "drag":
                     case "lineardamping":
 #if UNITY_6000_0_OR_NEWER
-                        var newLinearDamping = prop.Value.Value<float>();
+                        var newLinearDamping = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb2d.linearDamping = newLinearDamping);
 #else
-                        var newDrag = prop.Value.Value<float>();
+                        var newDrag = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb2d.drag = newDrag);
 #endif
                         changed.Add("linearDamping");
@@ -389,10 +389,10 @@ namespace MCPForUnity.Editor.Tools.Physics
                     case "angulardrag":
                     case "angulardamping":
 #if UNITY_6000_0_OR_NEWER
-                        var newAngularDamping = prop.Value.Value<float>();
+                        var newAngularDamping = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb2d.angularDamping = newAngularDamping);
 #else
-                        var newAngularDrag = prop.Value.Value<float>();
+                        var newAngularDrag = prop.Value.ReadScalar<float>();
                         changes.Add(() => rb2d.angularDrag = newAngularDrag);
 #endif
                         changed.Add("angularDamping");
@@ -413,7 +413,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         break;
                     }
                     case "simulated":
-                        var newSimulated = prop.Value.Value<bool>();
+                        var newSimulated = prop.Value.ReadScalar<bool>();
                         changes.Add(() => rb2d.simulated = newSimulated);
                         changed.Add("simulated");
                         break;
@@ -437,7 +437,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         var token = prop.Value;
                         if (token.Type == JTokenType.Integer)
                         {
-                            var newConstraints = (RigidbodyConstraints2D)token.Value<int>();
+                            var newConstraints = (RigidbodyConstraints2D)token.ReadScalar<int>();
                             changes.Add(() => rb2d.constraints = newConstraints);
                             changed.Add("constraints");
                         }

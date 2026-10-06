@@ -78,7 +78,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
-            int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
+            int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
             if (layerIndex < 0 || layerIndex >= controller.layers.Length)
                 return new { success = false, message = $"Layer index {layerIndex} out of range (controller has {controller.layers.Length} layers)" };
 
@@ -104,8 +104,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return new { success = false, message = $"AnimationClip not found at '{clipPath}'." };
             }
 
-            float speed = @params["speed"]?.ToObject<float>() ?? 1f;
-            bool isDefault = @params["isDefault"]?.ToObject<bool>() ?? false;
+            float speed = @params["speed"]?.ReadScalar<float?>() ?? 1f;
+            bool isDefault = @params["isDefault"]?.ReadScalar<bool?>() ?? false;
 
             AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(controller));
             var state = rootStateMachine.AddState(stateName);
@@ -144,7 +144,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(fromStateName) || string.IsNullOrEmpty(toStateName))
                 return new { success = false, message = "'fromState' and 'toState' are required" };
 
-            int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
+            int layerIndex = @params["layerIndex"]?.ReadScalar<int?>() ?? 0;
             if (layerIndex < 0 || layerIndex >= controller.layers.Length)
                 return new { success = false, message = $"Layer index {layerIndex} out of range" };
 
@@ -177,9 +177,9 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             }
 
-            bool hasExitTime = @params["hasExitTime"]?.ToObject<bool>() ?? true;
-            float duration = @params["duration"]?.ToObject<float>() ?? 0.25f;
-            float exitTime = @params["exitTime"]?.ToObject<float>() ?? 0.75f;
+            bool hasExitTime = @params["hasExitTime"]?.ReadScalar<bool?>() ?? true;
+            float duration = @params["duration"]?.ReadScalar<float?>() ?? 0.25f;
+            float exitTime = @params["exitTime"]?.ReadScalar<float?>() ?? 0.75f;
 
             // Prepare all conditions before creating a transition subasset.
             JToken conditionsToken = @params["conditions"];
@@ -194,7 +194,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     if (string.IsNullOrEmpty(paramName)) continue;
 
                     string modeStr = condObj["mode"]?.ToString()?.ToLowerInvariant() ?? "greater";
-                    float threshold = condObj["threshold"]?.ToObject<float>() ?? 0f;
+                    float threshold = condObj["threshold"]?.ReadScalar<float?>() ?? 0f;
 
                     AnimatorConditionMode mode;
                     switch (modeStr)
@@ -294,13 +294,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                 switch (paramType)
                 {
                     case AnimatorControllerParameterType.Float:
-                        defaultFloat = defaultValue.ToObject<float>();
+                        defaultFloat = defaultValue.ReadScalar<float>();
                         break;
                     case AnimatorControllerParameterType.Int:
-                        defaultInt = defaultValue.ToObject<int>();
+                        defaultInt = defaultValue.ReadScalar<int>();
                         break;
                     case AnimatorControllerParameterType.Bool:
-                        defaultBool = defaultValue.ToObject<bool>();
+                        defaultBool = defaultValue.ReadScalar<bool>();
                         break;
                 }
             }

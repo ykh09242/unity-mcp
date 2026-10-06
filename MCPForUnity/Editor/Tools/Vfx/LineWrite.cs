@@ -51,7 +51,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             LineRenderer lr = LineRead.FindLineRenderer(@params);
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
-            int index = @params["index"]?.ToObject<int>() ?? -1;
+            int index = @params["index"]?.ReadScalar<int?>() ?? -1;
             if (index < 0 || index >= lr.positionCount) return new { success = false, message = $"Invalid index {index}" };
 
             if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
@@ -135,7 +135,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
             else if (@params["positionCount"] != null)
             {
-                positionCount = @params["positionCount"].ToObject<int>();
+                positionCount = @params["positionCount"].ReadScalar<int>();
                 if (positionCount < 0)
                     return new { success = false, message = "positionCount must be non-negative" };
             }

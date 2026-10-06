@@ -95,7 +95,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
                 if (prop.Value.Type != JTokenType.Boolean)
                     return new ErrorResponse($"Area '{prop.Name}' value must be a boolean (true/false), got: {prop.Value}");
-                bool enabled = prop.Value.ToObject<bool>();
+                bool enabled = prop.Value.ReadScalar<bool>();
                 pending.Add(new KeyValuePair<ProfilerArea, bool>(area, enabled));
                 updated[prop.Name] = enabled;
             }

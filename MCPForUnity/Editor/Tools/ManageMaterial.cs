@@ -199,7 +199,7 @@ namespace MCPForUnity.Editor.Tools
             string target = @params["target"]?.ToString();
             string searchMethod = @params["searchMethod"]?.ToString();
             string materialPath = NormalizePath(@params["materialPath"]?.ToString());
-            int slot = @params["slot"]?.ToObject<int>() ?? 0;
+            int slot = @params["slot"]?.ReadScalar<int?>() ?? 0;
             string mode = @params["mode"]?.ToString() ?? "shared";
 
             if (mode != "shared" && mode != "instance")

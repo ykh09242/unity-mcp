@@ -72,11 +72,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var main = ps.main;
             if (@params["playOnAwake"] != null)
             {
-                main.playOnAwake = @params["playOnAwake"].ToObject<bool>();
+                main.playOnAwake = @params["playOnAwake"].ReadScalar<bool>();
             }
             if (@params["looping"] != null)
             {
-                main.loop = @params["looping"].ToObject<bool>();
+                main.loop = @params["looping"].ReadScalar<bool>();
             }
 
             EditorUtility.SetDirty(go);
@@ -104,7 +104,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (ps == null) return new { success = false, message = ParticleCommon.FindParticleSystemError(@params) };
 
             string moduleName = @params["module"]?.ToString()?.ToLowerInvariant();
-            bool enabled = @params["enabled"]?.ToObject<bool>() ?? true;
+            bool enabled = @params["enabled"]?.ReadScalar<bool?>() ?? true;
 
             if (string.IsNullOrEmpty(moduleName)) return new { success = false, message = "Module name required" };
 
@@ -147,7 +147,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
             }
 
-            bool withChildren = @params["withChildren"]?.ToObject<bool>() ?? true;
+            bool withChildren = @params["withChildren"]?.ReadScalar<bool?>() ?? true;
 
             switch (action)
             {
@@ -186,16 +186,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(ps, "Add Burst");
             var emission = ps.emission;
 
-            float time = @params["time"]?.ToObject<float>() ?? 0f;
-            int minCountRaw = @params["minCount"]?.ToObject<int>() ?? @params["count"]?.ToObject<int>() ?? 30;
-            int maxCountRaw = @params["maxCount"]?.ToObject<int>() ?? @params["count"]?.ToObject<int>() ?? 30;
+            float time = @params["time"]?.ReadScalar<float?>() ?? 0f;
+            int minCountRaw = @params["minCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
+            int maxCountRaw = @params["maxCount"]?.ReadScalar<int?>() ?? @params["count"]?.ReadScalar<int?>() ?? 30;
             short minCount = (short)Math.Clamp(minCountRaw, 0, short.MaxValue);
             short maxCount = (short)Math.Clamp(maxCountRaw, 0, short.MaxValue);
-            int cycles = @params["cycles"]?.ToObject<int>() ?? 1;
-            float interval = @params["interval"]?.ToObject<float>() ?? 0.01f;
+            int cycles = @params["cycles"]?.ReadScalar<int?>() ?? 1;
+            float interval = @params["interval"]?.ReadScalar<float?>() ?? 0.01f;
 
             var burst = new ParticleSystem.Burst(time, minCount, maxCount, cycles, interval);
-            burst.probability = @params["probability"]?.ToObject<float>() ?? 1f;
+            burst.probability = @params["probability"]?.ReadScalar<float?>() ?? 1f;
 
             int idx = emission.burstCount;
             var bursts = new ParticleSystem.Burst[idx + 1];

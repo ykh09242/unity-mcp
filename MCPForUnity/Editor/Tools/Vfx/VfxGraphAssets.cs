@@ -1,3 +1,4 @@
+using MCPForUnity.Editor.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -80,7 +81,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             // Check if asset already exists
             if (AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath) != null)
             {
-                bool overwrite = @params["overwrite"]?.ToObject<bool>() ?? false;
+                bool overwrite = @params["overwrite"]?.ReadScalar<bool?>() ?? false;
                 if (!overwrite)
                 {
                     return new { success = false, message = $"Asset already exists at {assetPath}. Set overwrite=true to replace." };

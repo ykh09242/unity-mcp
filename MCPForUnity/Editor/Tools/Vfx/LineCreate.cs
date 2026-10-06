@@ -37,8 +37,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
-            float radius = @params["radius"]?.ToObject<float>() ?? 1f;
-            int segments = @params["segments"]?.ToObject<int>() ?? 32;
+            float radius = @params["radius"]?.ReadScalar<float?>() ?? 1f;
+            int segments = @params["segments"]?.ReadScalar<int?>() ?? 32;
             if (segments < 1) return new { success = false, message = "segments must be positive" };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
@@ -73,10 +73,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (lr == null) return new { success = false, message = LineRead.FindLineRendererError(@params) };
 
             Vector3 center = ManageVfxCommon.ParseVector3(@params["center"]);
-            float radius = @params["radius"]?.ToObject<float>() ?? 1f;
-            float startAngle = (@params["startAngle"]?.ToObject<float>() ?? 0f) * Mathf.Deg2Rad;
-            float endAngle = (@params["endAngle"]?.ToObject<float>() ?? 180f) * Mathf.Deg2Rad;
-            int segments = @params["segments"]?.ToObject<int>() ?? 16;
+            float radius = @params["radius"]?.ReadScalar<float?>() ?? 1f;
+            float startAngle = (@params["startAngle"]?.ReadScalar<float?>() ?? 0f) * Mathf.Deg2Rad;
+            float endAngle = (@params["endAngle"]?.ReadScalar<float?>() ?? 180f) * Mathf.Deg2Rad;
+            int segments = @params["segments"]?.ReadScalar<int?>() ?? 16;
             if (segments < 1 || segments == int.MaxValue)
                 return new { success = false, message = "segments must be positive and leave room for the final position" };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
@@ -118,7 +118,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Vector3 cp2 = @params["controlPoint2"] != null || @params["control2"] != null
                 ? ManageVfxCommon.ParseVector3(@params["controlPoint2"] ?? @params["control2"])
                 : cp1;
-            int segments = @params["segments"]?.ToObject<int>() ?? 32;
+            int segments = @params["segments"]?.ReadScalar<int?>() ?? 32;
             if (segments < 1 || segments == int.MaxValue)
                 return new { success = false, message = "segments must be positive and leave room for the final position" };
             bool isQuadratic = @params["controlPoint2"] == null && @params["control2"] == null;
@@ -157,9 +157,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         private static Action PrepareAppearance(JObject @params, LineRenderer lr)
         {
-            float? width = @params["width"]?.ToObject<float>();
-            float? startWidth = @params["startWidth"]?.ToObject<float>();
-            float? endWidth = @params["endWidth"]?.ToObject<float>();
+            float? width = @params["width"]?.ReadScalar<float?>();
+            float? startWidth = @params["startWidth"]?.ReadScalar<float?>();
+            float? endWidth = @params["endWidth"]?.ReadScalar<float?>();
             Color? color = @params["color"] != null ? ManageVfxCommon.ParseColor(@params["color"]) : (Color?)null;
             Color? startColor = @params["startColor"] != null ? ManageVfxCommon.ParseColor(@params["startColor"]) : (Color?)null;
             Color? endColor = @params["endColor"] != null ? ManageVfxCommon.ParseColor(@params["endColor"]) : (Color?)null;

@@ -27,9 +27,9 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             clipPath = AssetPathUtility.GetContainedAssetPath(clipPath);
 
-            float length = @params["length"]?.ToObject<float>() ?? 1f;
-            float frameRate = @params["frameRate"]?.ToObject<float>() ?? 60f;
-            bool loop = @params["loop"]?.ToObject<bool>() ?? false;
+            float length = @params["length"]?.ReadScalar<float?>() ?? 1f;
+            float frameRate = @params["frameRate"]?.ReadScalar<float?>() ?? 60f;
+            bool loop = @params["loop"]?.ReadScalar<bool?>() ?? false;
 
             // Check any existing asset before preparing directories or allocating a clip.
             var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(clipPath);
@@ -299,14 +299,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                 if (item is not JObject keyObj)
                     return new { success = false, message = "Each key must be an object with 'time' and 'value' (Vector3 array)" };
 
-                float time = keyObj["time"]?.ToObject<float>() ?? 0f;
+                float time = keyObj["time"]?.ReadScalar<float?>() ?? 0f;
                 JToken valueToken = keyObj["value"];
                 if (valueToken is not JArray valArray || valArray.Count < 3)
                     return new { success = false, message = $"Key at time {time}: 'value' must be a 3-element array [x, y, z]" };
 
-                float vx = valArray[0].ToObject<float>();
-                float vy = valArray[1].ToObject<float>();
-                float vz = valArray[2].ToObject<float>();
+                float vx = valArray[0].ReadScalar<float>();
+                float vy = valArray[1].ReadScalar<float>();
+                float vz = valArray[2].ReadScalar<float>();
 
                 if (!IsFinite(time) || !IsFinite(vx) || !IsFinite(vy) || !IsFinite(vz))
                     return new { success = false, message = "Vector keyframe time and values must be finite numbers" };
@@ -463,8 +463,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                     if (item is JArray pair && pair.Count >= 2)
                     {
                         // Shorthand: [time, value]
-                        float time = pair[0].ToObject<float>();
-                        float value = pair[1].ToObject<float>();
+                        float time = pair[0].ReadScalar<float>();
+                        float value = pair[1].ReadScalar<float>();
                         if (!IsFinite(time) || !IsFinite(value))
                             return null;
                         keyframes.Add(new Keyframe(time, value));
@@ -472,34 +472,37 @@ namespace MCPForUnity.Editor.Tools.Animation
                     else if (item is JObject obj)
                     {
                         // Full form: {"time":0, "value":0, "inTangent":0, "outTangent":0}
-                        float time = obj["time"]?.ToObject<float>() ?? 0f;
-                        float value = obj["value"]?.ToObject<float>() ?? 0f;
+                        float time = obj["time"]?.ReadScalar<float?>() ?? 0f;
+                        float value = obj["value"]?.ReadScalar<float?>() ?? 0f;
 
                         if (!IsFinite(time) || !IsFinite(value))
                             return null;
 
                         var kf = new Keyframe(time, value);
                         if (obj["inTangent"] != null)
-                            kf.inTangent = obj["inTangent"].ToObject<float>();
+                            kf.inTangent = obj["inTangent"].ReadScalar<float>();
                         if (obj["outTangent"] != null)
-                            kf.outTangent = obj["outTangent"].ToObject<float>();
+                            kf.outTangent = obj["outTangent"].ReadScalar<float>();
                         if (obj["inWeight"] != null)
                         {
-                            kf.inWeight = obj["inWeight"].ToObject<float>();
+                            kf.inWeight = obj["inWeight"].ReadScalar<float>();
                             if (!IsFinite(kf.inWeight) || kf.inWeight < 0f || kf.inWeight > 1f)
                                 return null;
                             kf.weightedMode |= WeightedMode.In;
                         }
                         if (obj["outWeight"] != null)
                         {
-                            kf.outWeight = obj["outWeight"].ToObject<float>();
+                            kf.outWeight = obj["outWeight"].ReadScalar<float>();
                             if (!IsFinite(kf.outWeight) || kf.outWeight < 0f || kf.outWeight > 1f)
                                 return null;
                             kf.weightedMode |= WeightedMode.Out;
                         }
                         if (obj["weightedMode"] != null)
                         {
-                            var mode = obj["weightedMode"].ToObject<WeightedMode>();
+                            var modeToken = obj["weightedMode"];
+                            if (modeToken.Type != JTokenType.Integer && modeToken.Type != JTokenType.String)
+                                return null;
+                            var mode = PropertyConversion.ConvertTo<WeightedMode>(modeToken);
                             if (!Enum.IsDefined(typeof(WeightedMode), mode))
                                 return null;
                             kf.weightedMode = mode;
@@ -567,7 +570,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (clip == null)
                 return new { success = false, message = $"AnimationClip not found at '{clipPath}'" };
 
-            float time = @params["time"]?.ToObject<float>() ?? 0f;
+            float time = @params["time"]?.ReadScalar<float?>() ?? 0f;
             string functionName = @params["functionName"]?.ToString();
             if (string.IsNullOrEmpty(functionName))
                 return new { success = false, message = "'functionName' is required" };
@@ -577,8 +580,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 time = time,
                 functionName = functionName,
                 stringParameter = @params["stringParameter"]?.ToString() ?? "",
-                floatParameter = @params["floatParameter"]?.ToObject<float>() ?? 0f,
-                intParameter = @params["intParameter"]?.ToObject<int>() ?? 0
+                floatParameter = @params["floatParameter"]?.ReadScalar<float?>() ?? 0f,
+                intParameter = @params["intParameter"]?.ReadScalar<int?>() ?? 0
             };
 
             var events = AnimationUtility.GetAnimationEvents(clip).ToList();
@@ -622,7 +625,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             var events = AnimationUtility.GetAnimationEvents(clip).ToList();
             int originalCount = events.Count;
 
-            int? eventIndex = @params["eventIndex"]?.ToObject<int?>();
+            int? eventIndex = @params["eventIndex"]?.ReadScalar<int?>();
             if (eventIndex.HasValue)
             {
                 if (eventIndex.Value < 0 || eventIndex.Value >= events.Count)
@@ -636,7 +639,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 if (string.IsNullOrEmpty(functionName))
                     return new { success = false, message = "Either 'eventIndex' or 'functionName' is required" };
 
-                float? timeFilter = @params["time"]?.ToObject<float?>();
+                float? timeFilter = @params["time"]?.ReadScalar<float?>();
                 events.RemoveAll(e =>
                 {
                     bool matchesFunction = e.functionName == functionName;
