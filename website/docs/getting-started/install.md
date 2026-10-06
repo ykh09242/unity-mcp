@@ -52,7 +52,7 @@ Unity can still restore tabs that were left open in its saved Editor layout.
 
 :::note Upgrading from 1.1.0
 The **1.1.1** release includes redesigned windows and manual setup: the package
-does not open setup automatically on Editor startup. **Start HTTP on Editor Startup**
+does not open it automatically on Editor startup. **Start HTTP on Editor Startup**
 remains optional and works without opening the MCP window. Editor Coroutines is
 resolved as a package dependency for UPM waits; server connections remain independent
 of window lifetime.
