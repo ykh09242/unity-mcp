@@ -271,7 +271,7 @@ async def test_reload_recovery_retries_once_and_preserves_last_response(
 
 
 @pytest.mark.asyncio
-async def test_model_ordinary_error_is_preserved_without_replaying_mutation(monkeypatch):
+async def test_model_ordinary_error_returns_without_replay_or_readiness_wait(monkeypatch):
     from unittest.mock import AsyncMock
     from models import MCPResponse
     from services.tools import refresh_unity as mod
@@ -291,7 +291,7 @@ async def test_model_ordinary_error_is_preserved_without_replaying_mutation(monk
 
     assert result is response
     send.assert_awaited_once()
-    ready.assert_awaited_once()
+    ready.assert_not_awaited()
 
 
 # --- is_connection_lost_after_send tests ---
@@ -472,19 +472,21 @@ async def test_send_mutation_keeps_initial_reload_wait_when_retry_requires_selec
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "response",
+    "response,should_wait",
     [
-        {"success": True},
-        {"success": False, "error": "busy", "hint": "retry", "data": {"reason": "tests_running"}},
-        {"success": False, "error": "timeout", "hint": "retry"},
-        {"success": False, "hint": "retry", "data": {"reason": "instance_selection_required"}},
-        {"success": False, "hint": "select_instance"},
-        {"success": False, "hint": "select_instance", "data": {"reason": "other"}},
-        {"success": True, "hint": "select_instance", "data": {"reason": "instance_selection_required"}},
+        ({"success": True}, True),
+        ({"success": False, "error": "busy", "hint": "retry", "data": {"reason": "tests_running"}}, False),
+        ({"success": False, "error": "timeout", "hint": "retry"}, True),
+        ({"success": False, "message": "Timed out waiting for response"}, True),
+        ({"success": False, "error": "Connection closed"}, True),
+        ({"success": False, "hint": "retry", "data": {"reason": "instance_selection_required"}}, False),
+        ({"success": False, "hint": "select_instance"}, False),
+        ({"success": False, "hint": "select_instance", "data": {"reason": "other"}}, False),
+        ({"success": True, "hint": "select_instance", "data": {"reason": "instance_selection_required"}}, True),
     ],
 )
-async def test_send_mutation_preserves_readiness_wait_outside_selection_contract(monkeypatch, response):
-    # Given: success, transient failures and partial selection markers retain the existing contract.
+async def test_send_mutation_waits_only_when_completion_may_be_pending(monkeypatch, response, should_wait):
+    # Given: definitive errors need no readiness poll; successful or uncertain mutations do.
     from services.tools import refresh_unity as mod
     from unittest.mock import AsyncMock
 
@@ -495,10 +497,13 @@ async def test_send_mutation_preserves_readiness_wait_outside_selection_contract
     # When
     ctx = DummyContext()
     result = await send_mutation(ctx, None, "manage_ugui", {"action": "create"})
-    # Then: no broad error shortcut or extra mutation attempt.
+    # Then: preserve the response without replay and wait only when recovery may be needed.
     assert result is response
     assert send.await_count == 1
-    ready.assert_awaited_once_with(ctx)
+    if should_wait:
+        ready.assert_awaited_once_with(ctx)
+    else:
+        ready.assert_not_awaited()
 
 
 @pytest.mark.asyncio
