@@ -13,6 +13,7 @@ namespace MCPForUnityTests.Editor.Helpers
     public class AssetPathUtilityOfflineTests
     {
         private const string PinnedSource = "git+https://github.com/ykh09242/unity-mcp.git@0123456789abcdef0123456789abcdef01234567#subdirectory=Server";
+        private const string ArchiveSource = "https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server";
         private bool _originalForceRefresh;
 
         [SetUp]
@@ -41,13 +42,35 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.DoesNotThrow(() => AssetPathUtility.ShouldUseUvxOffline());
         }
 
-        [Test]
-        public void PinnedSource_IsIndependentOfPackageVersion()
+        [TestCase(PinnedSource)]
+        [TestCase(ArchiveSource)]
+        public void PinnedSource_IsIndependentOfPackageVersion(string source)
         {
-            var package = new JObject { ["version"] = "10.3.1-beta.1", ["mcpServerSource"] = PinnedSource };
-            Assert.AreEqual(PinnedSource, AssetPathUtility.GetPinnedServerSource(package));
-            CollectionAssert.AreEqual(new[] { "--from", PinnedSource }, AssetPathUtility.GetBetaServerFromArgsList(null, PinnedSource));
-            Assert.AreEqual("--from \"" + PinnedSource + "\"", AssetPathUtility.GetBetaServerFromArgs(null, PinnedSource, true));
+            var package = new JObject { ["version"] = "10.3.1-beta.1", ["mcpServerSource"] = source };
+            Assert.AreEqual(source, AssetPathUtility.GetPinnedServerSource(package));
+            CollectionAssert.AreEqual(new[] { "--from", source }, AssetPathUtility.GetBetaServerFromArgsList(null, source));
+            Assert.AreEqual("--from \"" + source + "\"", AssetPathUtility.GetBetaServerFromArgs(null, source, true));
+        }
+
+        [Test]
+        public void CommitArchiveOverride_RemainsRemoteAndCacheable()
+        {
+            bool hadOverride = EditorPrefs.HasKey(EditorPrefKeys.GitUrlOverride);
+            string originalOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.DevModeForceServerRefresh, false);
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, ArchiveSource);
+                Assert.AreEqual(ArchiveSource, AssetPathUtility.GetMcpServerPackageSource());
+                Assert.IsFalse(AssetPathUtility.IsLocalServerPath());
+                Assert.IsFalse(AssetPathUtility.ShouldForceUvxRefresh());
+                Assert.IsNull(AssetPathUtility.GetLocalServerPath());
+            }
+            finally
+            {
+                if (hadOverride) EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, originalOverride);
+                else EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
+            }
         }
 
         [TestCase(null)]
@@ -59,6 +82,18 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("git+https://github.com/CoplayDev/unity-mcp.git@0123456789abcdef0123456789abcdef01234567#subdirectory=Server")]
         [TestCase("git+https://github.com/ykh09242/unity-mcp.git@0123456789abcdef0123456789abcdef01234567#subdirectory=Other")]
         [TestCase("git+https://github.com/ykh09242/unity-mcp.git@z123456789abcdef0123456789abcdef01234567#subdirectory=Server")]
+        [TestCase("https://github.com/ykh09242/unity-mcp/archive/beta.zip#subdirectory=Server")]
+        [TestCase("https://github.com/ykh09242/unity-mcp/archive/01234567.zip#subdirectory=Server")]
+        [TestCase("https://github.com/ykh09242/unity-mcp/archive/z123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server")]
+        [TestCase("https://github.com/CoplayDev/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server")]
+        [TestCase("https://github.com/ykh09242/other/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server")]
+        [TestCase("https://github.com.example/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server")]
+        [TestCase("http://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server")]
+        [TestCase("https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.tar.gz#subdirectory=Server")]
+        [TestCase("https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Other")]
+        [TestCase(ArchiveSource + "&extra=true")]
+        [TestCase(ArchiveSource + "\n")]
+        [TestCase(" " + ArchiveSource)]
         public void InvalidDefault_FailsWithoutPyPiOrEmptyFromFallback(string source)
         {
             var package = new JObject { ["mcpServerSource"] = source };
@@ -77,6 +112,7 @@ namespace MCPForUnityTests.Editor.Helpers
 
         [TestCase("mcpforunityserver==10.3.0")]
         [TestCase("git+https://github.com/example/development.git@main#subdirectory=Server")]
+        [TestCase(ArchiveSource)]
         public void ExplicitCallerOverride_RemainsSupported(string source)
         {
             Assert.AreEqual("--from " + source, AssetPathUtility.GetBetaServerFromArgs(source, null));

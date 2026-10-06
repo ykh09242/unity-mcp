@@ -36,6 +36,24 @@ Check bridge status and read `mcpforunity://instances`. A domain reload can temp
 
 Use smaller pages, fewer batch commands, lower capture resolution, or supported asynchronous job polling. Validation/budget rejection should not be worked around by bypassing checks. An error can follow partial writes in best-effort operations, and a timeout after dispatch can leave work running or applied. Inspect actual state before repeating mutations or starting another test/build job; do not assume failure rolled back the project.
 
+## Windows server startup: "Filename too long"
+
+Older server pins use `git+https://...#subdirectory=Server`. That fragment selects
+the Python build directory, not a partial Git checkout. Git for Windows can fail
+before the server runs because the uv cache path plus unrelated files under
+`TestProjects/AssetStoreUploads` exceed its default path limit.
+
+Update the Unity package and use its exact `mcpServerSource`, now a full-commit
+GitHub source archive. Clear an unintended **Server Source Override**, then
+regenerate stale stdio client configurations and reconnect the client. The
+archive still downloads repository sources, but uv extracts/builds them without
+Git checkout. No global `core.longpaths`, registry change, shortened project path,
+or persistent environment override is required for this default server source.
+Explicit Git development overrides still use Git and its platform limits.
+
+This fix concerns Python server installation, not a separate Unity Package Manager
+Git failure. Preserve the sanitized failing command and error when reporting one.
+
 ## Package Manager: "Error when executing git command" / "not in a git directory"
 
 Check `git --version` in a terminal and ensure Unity inherited the correct PATH. Verify the full [stable package URL](../getting-started/install.md#1-install-the-unity-package). If Git reports an ownership/safe-directory error, confirm who owns the exact project before trusting it; do not trust every repository globally. Keep the reported Git error for diagnosis.

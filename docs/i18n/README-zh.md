@@ -63,7 +63,7 @@
 
 当前英文操作指南：[安装与连接](../../website/docs/getting-started/install.md)、[迁移到 fork](../../website/docs/getting-started/migrate.md)、[安全与授权](../../website/docs/guides/security.md)、[故障排查](../../website/docs/guides/troubleshooting.md)。完整运行验证的限制见 [fork 1.1.2 发布说明](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.2)。
 
-此 fork 从稳定版本 `1.0.0` 开始独立管理版本，不沿用上游的 `10.3.x`。`ykh09242-v1.1.2` 是当前稳定发布标签，前缀用于区分上游历史标签；如需不可变安装，请使用完整 commit SHA。`#beta` 仅用于跟踪移动开发分支，分支名称不决定发布是否为测试版。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从 Git 安装；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的不可变 Git URL。详见 [服务器指南](../../Server/README.md)。
+此 fork 从稳定版本 `1.0.0` 开始独立管理版本，不沿用上游的 `10.3.x`。`ykh09242-v1.1.2` 是当前稳定发布标签，前缀用于区分上游历史标签；如需不可变安装，请使用完整 commit SHA。`#beta` 仅用于跟踪移动开发分支，分支名称不决定发布是否为测试版。UPM 包名为 `com.ykh09242.unity-mcp`。服务器发行名称为 `ykh09242-unity-mcp-server`，从固定完整 commit 的 GitHub 源码压缩包安装，无需 Git checkout；可执行命令仍为 `mcp-for-unity` 和 `unity-mcp`。下方 stdio 示例中的 `<mcpServerSource>` 必须替换为已安装的 `MCPForUnity/package.json` 中同名字段的固定源码 URL。详见 [服务器指南](../../Server/README.md)。
 
 <details>
 <summary><strong>手动配置</strong></summary>

@@ -8,12 +8,12 @@ import re
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_upm_and_bundle_use_the_same_immutable_server():
+def test_upm_and_bundle_use_the_same_commit_archive_without_git_checkout():
     package = json.loads((ROOT / "MCPForUnity/package.json").read_text(encoding="utf-8"))
     bundle = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     source = package["mcpServerSource"]
     assert re.fullmatch(
-        r"git\+https://github\.com/ykh09242/unity-mcp\.git@[0-9a-f]{40}#subdirectory=Server",
+        r"https://github\.com/ykh09242/unity-mcp/archive/[0-9a-f]{40}\.zip#subdirectory=Server",
         source,
     )
     assert bundle["server"]["mcp_config"]["args"] == ["--from", source, "mcp-for-unity"]

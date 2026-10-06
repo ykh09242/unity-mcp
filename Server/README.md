@@ -1,8 +1,8 @@
 # Unity MCP (ykh09242) Server
 
-Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The Git-distributed package is `ykh09242-unity-mcp-server`; executable names remain `mcp-for-unity` (server) and `unity-mcp` (local HTTP CLI). Python **3.10+**, FastMCP 4 and MCP SDK 2 are required.
+Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The GitHub-distributed package is `ykh09242-unity-mcp-server`; executable names remain `mcp-for-unity` (server) and `unity-mcp` (local HTTP CLI). Python **3.10+**, FastMCP 4 and MCP SDK 2 are required.
 
-Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` server baseline. Git source selects the implementation, not the version label alone. No fork PyPI distribution or prebuilt Docker image is advertised.
+Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` server baseline. The pinned source commit selects the implementation, not the version label alone. No fork PyPI distribution or prebuilt Docker image is advertised.
 
 ## Choose your task
 
@@ -22,10 +22,10 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@bcb5c418e125208a3208e4c000421347e83eceef#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --from "https://github.com/ykh09242/unity-mcp/archive/bcb5c418e125208a3208e4c000421347e83eceef.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
-Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving Git branch. First launch can require dependency downloads; a Git pin is not an offline-install guarantee.
+Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
 
 For stdio, use the same `uvx --from` source with `mcp-for-unity --transport stdio`. Each client launches its own process. See [manual configuration](../website/docs/getting-started/clients.md#stdio) for a complete JSON example.
 
@@ -60,8 +60,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@bcb5c418e125208a3208e4c000421347e83eceef#subdirectory=Server" mcp-for-unity --help
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@bcb5c418e125208a3208e4c000421347e83eceef#subdirectory=Server" unity-mcp --help
+uvx --from "https://github.com/ykh09242/unity-mcp/archive/bcb5c418e125208a3208e4c000421347e83eceef.zip#subdirectory=Server" mcp-for-unity --help
+uvx --from "https://github.com/ykh09242/unity-mcp/archive/bcb5c418e125208a3208e4c000421347e83eceef.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).

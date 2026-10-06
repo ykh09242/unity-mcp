@@ -242,8 +242,11 @@ namespace MCPForUnity.Editor.Helpers
 
         private static string ValidatePinnedServerSource(string source)
         {
-            const string prefix = "git+https://github.com/ykh09242/unity-mcp.git@";
-            const string suffix = "#subdirectory=Server";
+            // Commit archives avoid Git for Windows checking out unrelated long repository paths.
+            const string archivePrefix = "https://github.com/ykh09242/unity-mcp/archive/";
+            bool isArchive = source != null && source.StartsWith(archivePrefix, StringComparison.Ordinal);
+            string prefix = isArchive ? archivePrefix : "git+https://github.com/ykh09242/unity-mcp.git@";
+            string suffix = isArchive ? ".zip#subdirectory=Server" : "#subdirectory=Server";
             bool valid = source != null && source.StartsWith(prefix, StringComparison.Ordinal)
                 && source.EndsWith(suffix, StringComparison.Ordinal)
                 && source.Length == prefix.Length + 40 + suffix.Length;
@@ -257,7 +260,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
             }
             if (!valid)
-                throw new InvalidOperationException("package.json mcpServerSource must pin git+https://github.com/ykh09242/unity-mcp.git@<40-hex-commit>#subdirectory=Server. Reinstall a valid fork package or set an explicit development server source override.");
+                throw new InvalidOperationException("package.json mcpServerSource must pin https://github.com/ykh09242/unity-mcp/archive/<40-hex-commit>.zip#subdirectory=Server or the equivalent full-commit Git source. Reinstall a valid fork package or set an explicit development server source override.");
             return source;
         }
 

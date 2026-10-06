@@ -1,6 +1,6 @@
 # Releasing (Maintainers)
 
-This fork distributes the Unity package and Python server from Git. Publish fork releases through [GitHub Releases](https://github.com/ykh09242/unity-mcp/releases). The `beta` branch is the moving source branch; the version suffix and GitHub prerelease flag determine a release's channel independently of the branch name. A GitHub release is separate from documentation deployment and does not imply PyPI, Asset Store, OpenUPM, pre-built Docker image, or MCPB publication.
+This fork distributes the Unity package from Git and the Python server from a commit-addressed GitHub archive. Publish fork releases through [GitHub Releases](https://github.com/ykh09242/unity-mcp/releases). The `beta` branch is the moving source branch; the version suffix and GitHub prerelease flag determine a release's channel independently of the branch name. A GitHub release is separate from documentation deployment and does not imply PyPI, Asset Store, OpenUPM, pre-built Docker image, or MCPB publication.
 
 ## Fork versioning
 
@@ -23,10 +23,10 @@ python tools/update_versions.py --component server --version A.B.C
 
 After a server version change, test and commit the server files, then manually repin the Unity package and root manifest to that verified server commit using the procedure below. `--component all` is the legacy synchronized upstream mode, explicitly used by the upstream release workflow; use the independent modes for this fork.
 
-## Prepare a pinned Git version
+## Prepare a pinned source version
 
 1. Verify the server changes and commit them in the fork.
-2. Record the full immutable server commit in `MCPForUnity/package.json` as `mcpServerSource`, using the fork Git URL and `#subdirectory=Server`. Keep the root `manifest.json` server invocation's `--from` argument identical; the metadata contract test enforces this alignment.
+2. Record the full immutable server commit in `MCPForUnity/package.json` as `mcpServerSource`, using `https://github.com/ykh09242/unity-mcp/archive/<40-hex-commit>.zip#subdirectory=Server`. Keep the root `manifest.json` server invocation's `--from` argument identical; the metadata contract test enforces this alignment. The archive bypasses Git for Windows checkout limits without global Git or OS configuration changes.
 3. Verify the Unity package uses that source by default and that `Server/pyproject.toml` names the distribution `ykh09242-unity-mcp-server`.
 4. Run the relevant Python, Unity compile, metadata, and documentation checks.
 5. Commit the Unity package and documentation changes. Users can replace the preview URL's `#beta` with that Unity-package commit SHA for reproducibility.

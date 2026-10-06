@@ -90,8 +90,16 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
     launch = blocks[2]["mcpServers"]["unityMCP"]
     assert launch["args"] == ["--from", expected, "mcp-for-unity", "--transport", "stdio"]
     for relative in ("Server/README.md", "website/docs/guides/cli.md"):
-        for source in re.findall(r"git\+https://[^\s\"`]+", _read(ROOT / relative)):
-            assert source == expected
+        sources = []
+        for language, body in FENCES.findall(_read(ROOT / relative)):
+            if language != "bash":
+                continue
+            for line in body.splitlines():
+                words = shlex.split(line)
+                if words and words[0] == "uvx" and "--from" in words:
+                    sources.append(words[words.index("--from") + 1])
+        assert sources, relative
+        assert all(source == expected for source in sources), (relative, sources)
 
 
 def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None:
