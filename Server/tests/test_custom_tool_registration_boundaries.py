@@ -105,7 +105,7 @@ def test_nonfinite_registration_input_returns_validation_error(tmp_path, invalid
                 assert error["success"] is False
                 assert isinstance(error["error"], list) and error["error"]
                 assert error["error"][0]["loc"] == ["tools", 0, "max_poll_seconds"]
-                assert error["error"][0]["type"] == "finite_number"
+                assert error["error"][0]["type"] == "int_type"
                 assert error["error"][0]["msg"]
                 assert "input" not in error["error"][0]
                 assert service._project_tools == {}

@@ -32,7 +32,7 @@ def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
             service = CustomToolService(mcp)
             module.get_unity_instance_from_context = AsyncMock(return_value="Project@hash")
             module.resolve_project_id_for_unity_instance = lambda instance: "project"
-            service.execute_tool = AsyncMock(return_value=MCPResponse(success=True, data={"received": True}))
+            module.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": {"received": True}})
             service.register_global_tools([ToolDefinitionModel(name="custom_echo", parameters=[
                 ToolParameterModel(name="count", type="integer", required=False, default_value="3"),
                 ToolParameterModel(name="text", type="string", required=True),
@@ -41,15 +41,19 @@ def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
                 tools = await client.list_tools()
                 tool = next((tool for tool in tools if tool.name == "custom_echo"), None)
                 assert tool is not None, "Parameterized custom tool disappeared during SDK registration"
-                assert set(tool.inputSchema["properties"]) == {"count", "text"}
-                assert tool.inputSchema["properties"]["count"]["type"] == "integer"
-                assert tool.inputSchema["properties"]["count"]["default"] == 3
-                assert tool.inputSchema["required"] == ["text"]
+                assert set(tool.input_schema["properties"]) == {"count", "text"}
+                assert {branch["type"] for branch in tool.input_schema["properties"]["count"]["anyOf"]} == {"integer", "null"}
+                assert tool.input_schema["properties"]["count"]["default"] == 3
+                assert tool.input_schema["required"] == ["text"]
                 result = await client.call_tool("custom_echo", {"text": "hello"})
                 assert not result.is_error
-            service.execute_tool.assert_awaited_once_with(
-                "project", "custom_echo", "Project@hash", {"count": 3, "text": "hello"}, user_id=None,
-            )
+                module.send_with_unity_instance.assert_awaited_once()
+                assert module.send_with_unity_instance.call_args.args[3] == {"count": 3, "text": "hello"}
+                invalid = await client.call_tool("custom_echo", {"text": "hello", "count": True}, raise_on_error=False)
+                assert invalid.is_error
+                assert module.send_with_unity_instance.await_count == 1
+                await client.call_tool("custom_echo", {"text": "hello", "count": None})
+                assert module.send_with_unity_instance.call_args.args[3] == {"text": "hello"}
         asyncio.run(scenario())
     ''')
 

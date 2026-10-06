@@ -183,12 +183,30 @@ async def sync_tool_visibility_from_unity(
             len(enabled_tools), len(tools),
         )
 
-        if config.transport_mode.lower() == "http":
-            from models.models import ToolDefinitionModel
+        from models.models import ToolDefinitionModel
+        from pydantic import ValidationError
 
+        parsed_tools = []
+        valid_tools = []
+        for tool in enabled_tools:
+            try:
+                parsed = ToolDefinitionModel.model_validate(tool)
+            except ValidationError as exc:
+                issues = [
+                    {"loc": error["loc"], "type": error["type"]}
+                    for error in exc.errors(include_input=False, include_context=False, include_url=False)
+                ]
+                name = tool.get("name")
+                safe_name = name[:160] if isinstance(name, str) else "<invalid name>"
+                logger.warning("Skipping invalid Unity tool descriptor %r: %s", safe_name, issues)
+                continue
+            parsed_tools.append(parsed)
+            valid_tools.append(tool)
+        enabled_tools = valid_tools
+
+        if config.transport_mode.lower() == "http":
             session = await registry.get_session(session_id) if registry is not None and session_id else None
             if session is not None:
-                parsed_tools = [ToolDefinitionModel.model_validate(tool) for tool in enabled_tools]
                 await registry.register_tools_for_session(session_id, [
                     session.tools.get(tool.name, tool) for tool in parsed_tools
                 ])
@@ -205,37 +223,13 @@ async def sync_tool_visibility_from_unity(
             "is_built_in" in t for t in enabled_tools
         )
         if has_extended_metadata:
-            custom_tool_dicts = [
-                t for t in enabled_tools if not t.get("is_built_in", True)
+            custom_tool_models = [
+                parsed for tool, parsed in zip(enabled_tools, parsed_tools)
+                if not tool.get("is_built_in", True)
             ]
-            if custom_tool_dicts:
+            if custom_tool_models:
                 try:
-                    from models.models import ToolDefinitionModel, ToolParameterModel
                     from services.custom_tool_service import CustomToolService
-
-                    custom_tool_models = []
-                    for td in custom_tool_dicts:
-                        params = [
-                            ToolParameterModel(
-                                name=p.get("name", ""),
-                                description=p.get("description", ""),
-                                type=p.get("type", "string"),
-                                required=p.get("required", True),
-                                default_value=p.get("default_value"),
-                            )
-                            for p in td.get("parameters", [])
-                        ]
-                        custom_tool_models.append(
-                            ToolDefinitionModel(
-                                name=td["name"],
-                                description=td.get("description", ""),
-                                structured_output=td.get("structured_output", True),
-                                requires_polling=td.get("requires_polling", False),
-                                poll_action=td.get("poll_action") or "status",
-                                max_poll_seconds=td.get("max_poll_seconds", 0),
-                                parameters=params,
-                            )
-                        )
 
                     service = CustomToolService.get_instance()
                     service.register_global_tools(custom_tool_models)

@@ -89,7 +89,7 @@ def test_scalar_aliases_and_absent_defaults_keep_existing_sdk_behavior(tmp_path)
             service = module.CustomToolService(mcp)
             module.get_unity_instance_from_context = AsyncMock(return_value="Project@hash")
             module.resolve_project_id_for_unity_instance = lambda instance: "project"
-            service.execute_tool = AsyncMock(return_value=MCPResponse(success=True))
+            module.send_with_unity_instance = AsyncMock(return_value={"success": True})
             cases = [("integer", "3", 3), ("int", "4", 4),
                 ("number", "1.5", 1.5), ("float", "2.5", 2.5), ("double", "3.5", 3.5),
                 ("boolean", "true", True), ("bool", "false", False), ("string", "hello", "hello")]
@@ -107,26 +107,47 @@ def test_scalar_aliases_and_absent_defaults_keep_existing_sdk_behavior(tmp_path)
                     assert schema["properties"]["value"]["default"] == expected
                     assert schema["properties"]["absent"]["default"] is None
                     assert not (await client.call_tool(name, {})).is_error
-                    assert service.execute_tool.call_args.args[3] == {"value": expected}
+                    assert module.send_with_unity_instance.call_args.args[3] == {"value": expected}
         asyncio.run(scenario())
     ''', tmp_path)
 
 
-def test_invalid_container_defaults_keep_existing_string_fallback(tmp_path):
+def test_invalid_defaults_are_rejected_at_registration_boundary(tmp_path):
     _run_sdk_scenario('''
-        import sys
+        import asyncio, socket, sys
         sys.path.insert(0, "src")
+        import httpx
         from fastmcp import FastMCP
+        from core.config import config
         from services.custom_tool_service import CustomToolService
-        service = CustomToolService(FastMCP("custom-default-fallback"))
-        for kind in ("array", "list", "object", "dict"):
-            for raw in ("invalid-json", "null", "true", "3", '"text"'):
-                assert service._coerce_default(raw, kind) == raw
-            assert service._coerce_default(None, kind) is None
-        assert service._coerce_default("{}", "array") == "{}"
-        assert service._coerce_default("[]", "object") == "[]"
-        assert service._coerce_default("", "string") == ""
-        assert service._coerce_default("invalid-number", "integer") == "invalid-number"
+
+        def deny_outbound(*args, **kwargs):
+            raise AssertionError("Unexpected outbound socket connection")
+
+        async def scenario():
+            socket.socket.connect = deny_outbound
+            socket.socket.connect_ex = deny_outbound
+            config.http_remote_hosted = False
+            mcp = FastMCP("custom-default-validation")
+            service = CustomToolService(mcp)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp.http_app(), raise_app_exceptions=False), base_url="http://audit") as client:
+                cases = [(kind, raw) for kind in ("array", "list", "object", "dict")
+                    for raw in ("invalid-json", "null", "true", "3", '"text"')]
+                cases += [("array", "{}"), ("object", "[]"), ("integer", "invalid-number")]
+                for kind, raw in cases:
+                    response = await client.post("/register-tools", json={"project_id": "project", "tools": [
+                        {"name": "invalid", "parameters": [{"name": "value", "type": kind, "default_value": raw}]},
+                    ]})
+                    assert response.status_code == 400, response.text
+                    error = response.json()["error"][0]
+                    assert error["loc"] == ["tools", 0, "parameters", 0, "default_value"]
+                    assert error["type"] in ("value_error", "list_type", "dict_type")
+                    assert "input" not in error
+                    assert service._project_tools == {}
+                for kind in ("array", "list", "object", "dict"):
+                    assert service._coerce_default(None, kind) is None
+                assert service._coerce_default("", "string") == ""
+        asyncio.run(scenario())
     ''', tmp_path)
 
 

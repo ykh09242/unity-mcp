@@ -7,15 +7,16 @@ import logging
 import time
 from hashlib import sha256
 from threading import Lock
+from collections import OrderedDict
 from typing import Annotated, Optional
 
 from fastmcp import Context, FastMCP
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from core.config import config
-from models.models import MCPResponse, ToolDefinitionModel, ToolParameterModel
+from models.models import MCPResponse, ToolDefinitionModel, ToolParameterModel, parse_tool_parameter_default
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
 from transport.unity_transport import send_with_unity_instance
@@ -26,6 +27,7 @@ from transport.legacy.unity_connection import (
 from transport.plugin_hub import PluginHub
 from services.tools import get_unity_instance_from_context
 from services.registry import get_registered_tools
+from services.registry.scalar_validation import strict_scalar_annotation
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -34,6 +36,7 @@ _MAX_POLL_SECONDS = 600
 _MAX_ACTIVE_POLLS_PER_SESSION = 16
 _MAX_ACTIVE_POLLS_PER_USER = 32
 _MAX_ACTIVE_POLLS_GLOBAL = 256
+_MAX_INPUT_MODELS = 128
 
 
 async def get_user_id_from_context(ctx: Context) -> str | None:
@@ -76,6 +79,9 @@ class CustomToolService:
         self._project_tools: dict[str, dict[str, ToolDefinitionModel]] = {}
         self._hash_to_project: dict[str, str] = {}
         self._global_tools: dict[str, ToolDefinitionModel] = {}
+        self._input_models: OrderedDict[
+            tuple[tuple[str, str, bool, str | None, str | None], ...], type[BaseModel]
+        ] = OrderedDict()
         # Reservations include initial dispatch, sleeps and all subsequent polls.
         # The tenant/project key survives plugin reconnects and target name aliases.
         self._polling_lock = Lock()
@@ -106,7 +112,9 @@ class CustomToolService:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 return JSONResponse({"success": False, "error": "Request body must be valid JSON"}, status_code=400)
             except ValidationError as exc:
-                return JSONResponse({"success": False, "error": exc.errors(include_input=False)}, status_code=400)
+                return JSONResponse(
+                    {"success": False, "error": exc.errors(include_input=False, include_context=False)}, status_code=400,
+                )
 
             registered, replaced = self._register_project_tools(
                 payload.project_id, payload.tools, project_hash=payload.project_hash)
@@ -162,6 +170,8 @@ class CustomToolService:
         unity_instance: str | None,
         params: dict[str, object] | None = None,
         user_id: str | None = None,
+        *,
+        omit_nulls: bool = False,
     ) -> MCPResponse:
         params = params or {}
         logger.info("Executing custom tool")
@@ -174,6 +184,17 @@ class CustomToolService:
                 success=False,
                 message=f"Tool '{tool_name}' not found for project {project_id}",
             )
+
+        try:
+            inputs = self._get_input_model(definition)
+            supplied_names = set(params)
+            validated = inputs.model_validate(params)
+            params = {
+                name: value for name, value in validated.model_dump(by_alias=True).items()
+                if value is not None or (not omit_nulls and name in supplied_names)
+            }
+        except (ValidationError, ValueError):
+            return MCPResponse(success=False, message=f"Invalid parameters for custom tool '{tool_name}'")
 
         if not definition.requires_polling:
             response = await send_with_unity_instance(
@@ -216,6 +237,32 @@ class CustomToolService:
             self._release_polling(session_key)
 
     # --- Internal helpers ------------------------------------------------
+    def _get_input_model(self, definition: ToolDefinitionModel) -> type[BaseModel]:
+        # Cache only declaration data. Invocation values and tenant state never enter it.
+        contract = tuple(
+            (param.name, param.type, param.required, param.default_value, param.description)
+            for param in definition.parameters
+        )
+        cached = self._input_models.get(contract)
+        if cached is not None:
+            self._input_models.move_to_end(contract)
+            return cached
+        signature = self._build_signature(definition)
+        fields = {
+            f"parameter_{index}": (
+                parameter.annotation,
+                Field(default=... if parameter.default is inspect.Parameter.empty else parameter.default, alias=name),
+            )
+            for index, (name, parameter) in enumerate(signature.parameters.items()) if name != "ctx"
+        }
+        model = create_model(
+            "CustomToolInputs", __config__=ConfigDict(extra="allow", validate_default=True), **fields,
+        )
+        self._input_models[contract] = model
+        if len(self._input_models) > _MAX_INPUT_MODELS:
+            self._input_models.popitem(last=False)
+        return model
+
     @staticmethod
     def _bounded_poll_seconds(seconds: int) -> int:
         """Clamp again for definitions constructed or mutated without validation."""
@@ -492,7 +539,8 @@ class CustomToolService:
                     message=f"Could not resolve project id for {unity_instance}. Ensure Unity is running and reachable.",
                 )
 
-            params = {k: v for k, v in kwargs.items() if v is not None}
+            # Keep explicit nulls until descriptor validation so they suppress defaults.
+            params = dict(kwargs)
             user_id = await get_user_id_from_context(ctx)
             service = CustomToolService.get_instance()
             return await service.execute_tool(
@@ -501,6 +549,7 @@ class CustomToolService:
                 unity_instance,
                 params,
                 user_id=user_id,
+                omit_nulls=True,
             )
 
         _handler.__name__ = f"custom_tool_{definition.name}"
@@ -554,29 +603,15 @@ class CustomToolService:
             "array": list, "list": list,
             "object": dict, "dict": dict,
         }.get(ptype, str)
+        if not param.required:
+            mapped_type = Optional[mapped_type]
+        mapped_type = strict_scalar_annotation(mapped_type)
         if param.description:
             return Annotated[mapped_type, Field(description=param.description)]
         return mapped_type
 
     def _coerce_default(self, value: str | None, param_type: str | None):
-        if value is None:
-            return None
-        try:
-            ptype = (param_type or "string").lower()
-            if ptype in ("integer", "int"):
-                return int(value)
-            if ptype in ("number", "float", "double"):
-                return float(value)
-            if ptype in ("bool", "boolean"):
-                return str(value).lower() in ("1", "true", "yes", "on")
-            container_type = {"array": list, "list": list, "object": dict, "dict": dict}.get(ptype)
-            if container_type is not None:
-                decoded = json.loads(value)
-                if isinstance(decoded, container_type):
-                    return decoded
-            return value
-        except Exception:
-            return value
+        return parse_tool_parameter_default(value, param_type)
 
 
 def compute_project_id(project_name: str, project_path: str) -> str:

@@ -59,5 +59,5 @@ async def test_custom_tool_accepts_required_parameters_after_optional_parameters
 
     assert response.success is True
     service.execute_tool.assert_awaited_once_with(
-        "project", "build", "Project@hash", {"required": "target", "optional": 3}, user_id="user-a",
+        "project", "build", "Project@hash", {"required": "target", "optional": 3}, user_id="user-a", omit_nulls=True,
     )

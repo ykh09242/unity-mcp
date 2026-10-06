@@ -1,6 +1,29 @@
-from typing import Any
+import json
+from typing import Annotated, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, StrictStr, TypeAdapter, ValidationInfo, field_validator
+
+
+def parse_tool_parameter_default(value: str | None, param_type: str | None) -> object:
+    """Parse legacy descriptor strings without accepting malformed scalar defaults."""
+    if value is None:
+        return None
+    value = TypeAdapter(StrictStr).validate_python(value)
+    match (param_type or "string").lower():
+        case "integer" | "int":
+            return TypeAdapter(StrictInt).validate_python(int(value))
+        case "number" | "float" | "double":
+            return TypeAdapter(Annotated[StrictFloat, Field(allow_inf_nan=False)]).validate_python(float(value))
+        case "bool" | "boolean":
+            if value.lower() not in ("true", "false"):
+                raise ValueError("Boolean defaults must be 'true' or 'false'")
+            return value.lower() == "true"
+        case "array" | "list":
+            return TypeAdapter(list).validate_python(json.loads(value), strict=True)
+        case "object" | "dict":
+            return TypeAdapter(dict).validate_python(json.loads(value), strict=True)
+        case _:
+            return value
 
 
 class MCPResponse(BaseModel):
@@ -18,18 +41,24 @@ class ToolParameterModel(BaseModel):
     name: str
     description: str | None = None
     type: str = Field(default="string")
-    required: bool = Field(default=True)
+    required: StrictBool = Field(default=True)
     default_value: str | None = None
+
+    @field_validator("default_value")
+    @classmethod
+    def validate_default_value(cls, value: str | None, info: ValidationInfo) -> str | None:
+        parse_tool_parameter_default(value, info.data.get("type", "string"))
+        return value
 
 
 class ToolDefinitionModel(BaseModel):
     name: str
     description: str | None = None
-    structured_output: bool | None = True
-    requires_polling: bool | None = False
+    structured_output: StrictBool | None = True
+    requires_polling: StrictBool | None = False
     poll_action: str | None = "status"
     # Zero selects the server default; plugins cannot extend the server lifetime.
-    max_poll_seconds: int = Field(default=0, ge=0, le=600)
+    max_poll_seconds: StrictInt = Field(default=0, ge=0, le=600)
     parameters: list[ToolParameterModel] = Field(default_factory=list)
 
 
