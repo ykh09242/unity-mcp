@@ -10,6 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 from core.config import config
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 
@@ -20,7 +21,7 @@ def local_client(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "local_auth_token", "test-launch-token")
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, {})
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {})
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
     app = create_mcp_server(False).http_app()

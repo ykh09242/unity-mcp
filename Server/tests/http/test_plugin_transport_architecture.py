@@ -20,6 +20,7 @@ from services.api_key_service import ApiKeyService, ValidationResult
 from transport.editor_state_store import EditorStateStore
 from transport.large_result_assembler import CHUNK_PAYLOAD_BYTES, MAGIC, THRESHOLD_BYTES
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 FEATURES = ["large_result_v1", "editor_state_v1"]
@@ -33,7 +34,7 @@ def client(monkeypatch):
     monkeypatch.setattr(config, "transport_mode", "http")
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted",
                  "_retained_results", "_raw_results"):
-        monkeypatch.setattr(PluginHub, name, {}, raising=False)
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name in ('_retained_results', '_raw_results') else {}, raising=False)
     for name in ("_registry", "_lock", "_loop", "_mcp", "_large_results"):
         monkeypatch.setattr(PluginHub, name, None, raising=False)
     monkeypatch.setattr(PluginHub, "_editor_states", EditorStateStore(), raising=False)

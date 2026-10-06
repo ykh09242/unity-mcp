@@ -7,6 +7,7 @@ import pytest_asyncio
 
 from core.config import config
 from transport.plugin_hub import NoUnitySessionError, PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 
@@ -22,7 +23,7 @@ async def registry_hub(monkeypatch):
         monkeypatch.setattr(PluginHub, name, getattr(PluginHub, name))
     for name in ('_connections', '_pending', '_ping_tasks', '_last_pong', '_admitted',
                  '_raw_results', '_retained_results'):
-        monkeypatch.setattr(PluginHub, name, {})
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name in ('_raw_results', '_retained_results') else {})
     PluginHub.configure(registry)
     monkeypatch.setattr('transport.plugin_hub._read_bounded_wait_env', lambda *args, **kwargs: 2.0)
     return registry

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+from collections.abc import MutableMapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -22,7 +23,7 @@ _MIN_LARGE_ASCII_CHARS = 256 * 1024
 @dataclass(slots=True)
 class ResponseOwner:
     """Own result reservations through a request task's actual response cleanup."""
-    entries: list[tuple[dict, str]] = field(default_factory=list)
+    entries: list[tuple[MutableMapping, str]] = field(default_factory=list)
     on_release: list[Callable[[], None]] = field(default_factory=list)
     copy_reservations: list[Callable[[ResponseOwner], bool]] = field(default_factory=list)
     released: bool = False

@@ -14,6 +14,7 @@ from models.response_limits import response_size
 from services.api_key_service import ApiKeyService, ValidationResult
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 from transport.response_limit_middleware import ResponseLimitMiddleware, _http_response_owners
 
@@ -148,7 +149,7 @@ def remote_delivery(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(config, "http_behind_tls_proxy", True)
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, {})
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {})
     monkeypatch.setattr(ApiKeyService, "_instance", SimpleNamespace(
         validate=AsyncMock(return_value=ValidationResult(valid=True, user_id="alice")), aclose=AsyncMock()))
     _http_response_owners.clear()

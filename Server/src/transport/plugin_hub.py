@@ -10,8 +10,8 @@ import sys
 import time
 import uuid
 import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass
-from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import anyio
@@ -27,6 +27,7 @@ from models.response_limits import (
     ResponseOwner, response_owner,
 )
 from transport.plugin_registry import PluginRegistry
+from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
 from transport.editor_state_store import EditorStateStore
 from transport.large_result_assembler import (
@@ -195,7 +196,7 @@ class PluginHub(WebSocketEndpoint):
     _admitted: ClassVar[dict[int, tuple[WebSocket, str | None]]] = {}
     # Independent of routing/pending maps: disconnect must not release a result
     # still owned by the command coroutine during cancellation-sensitive cleanup.
-    _retained_results: ClassVar[dict[str, dict[str, Any]]] = {}
+    _retained_results: ClassVar[ChargeLedger] = ChargeLedger()
     CANCELLATION_CAPABILITY = "command_cancel_v1"
     CAPABILITIES = frozenset({"editor_state_v1", LARGE_RESULT_CAPABILITY,
                               COMPRESSION_CAPABILITY, CANCELLATION_CAPABILITY})
@@ -205,7 +206,7 @@ class PluginHub(WebSocketEndpoint):
     _ordinary_state_reads: ClassVar[SharedToolReads[dict[str, Any]]] = SharedToolReads()
     _NON_MUTATING_COMMANDS = frozenset({"ping", "get_editor_state", "get_test_job"})
     _large_results: ClassVar[LargeResultAssembler | None] = None
-    _raw_results: ClassVar[dict[tuple[str, str], dict[str, Any]]] = {}
+    _raw_results: ClassVar[ChargeLedger] = ChargeLedger()
 
     @classmethod
     def _supports(cls, websocket: WebSocket, capability: str) -> bool:
@@ -222,14 +223,11 @@ class PluginHub(WebSocketEndpoint):
                 and getattr(websocket.state, "plugin_generation", None) == generation)
 
     @classmethod
-    def _has_result_capacity(cls, entry: dict[str, Any], charge: int) -> bool:
-        total = user_total = session_total = 0
-        for retained in chain(cls._retained_results.values(), cls._raw_results.values()):
-            total += retained["bytes"]
-            if retained["user_id"] == entry.get("user_id"):
-                user_total += retained["bytes"]
-            if retained["session_id"] == entry["session_id"]:
-                session_total += retained["bytes"]
+    def _has_result_capacity(cls, entry: Mapping[str, Any], charge: int) -> bool:
+        user_id, session_id = entry.get('user_id'), entry['session_id']
+        total = cls._retained_results.total_bytes + cls._raw_results.total_bytes
+        user_total = cls._retained_results.user_bytes(user_id) + cls._raw_results.user_bytes(user_id)
+        session_total = cls._retained_results.session_bytes(session_id) + cls._raw_results.session_bytes(session_id)
         return (total + charge <= cls.MAX_RETAINED_RESULT_BYTES
                 and user_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_USER
                 and session_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION)
@@ -240,14 +238,17 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     def _reserve_compressed_transfer(cls, generation: str, command_id: str,
-                                     size: int, working_bytes: int) -> bool:
+                                     size: int, working_bytes: int, *, ledger: ChargeLedger | None = None) -> bool:
+        ledger = cls._raw_results if ledger is None else ledger
+        if ledger is not cls._raw_results:
+            return False
         entry = cls._pending.get(command_id)
         # The bytearray and its decoded Unicode text coexist during validation.
         # Inflation reserves its bounded native/output working set before allocation.
         charge = 5 * size + 4096 + working_bytes
         if entry is None or not cls._has_result_capacity(entry, charge):
             return False
-        cls._raw_results[generation, command_id] = {
+        ledger[generation, command_id] = {
             "bytes": charge, "user_id": entry.get("user_id"), "session_id": entry["session_id"]}
         return True
 
@@ -396,10 +397,17 @@ class PluginHub(WebSocketEndpoint):
         cls._editor_states = EditorStateStore()
         cls._readiness_reads = SharedToolReads()
         cls._ordinary_state_reads = SharedToolReads()
-        cls._raw_results = {}
+        cls._raw_results = ChargeLedger()
+        raw_ledger = cls._raw_results
+        def reserve(generation: str, command_id: str, size: int) -> bool:
+            return cls._reserve_compressed_transfer(generation, command_id, size, 0, ledger=raw_ledger)
+        def reserve_compressed(generation: str, command_id: str, size: int, working_bytes: int) -> bool:
+            return cls._reserve_compressed_transfer(generation, command_id, size, working_bytes, ledger=raw_ledger)
+        def release(generation: str, command_id: str) -> None:
+            raw_ledger.pop((generation, command_id), None)
         cls._large_results = LargeResultAssembler(
-            cls._transfer_pending, cls._reserve_transfer, cls._release_transfer,
-            reserve_compressed=cls._reserve_compressed_transfer)
+            cls._transfer_pending, reserve, release,
+            reserve_compressed=reserve_compressed)
         # Start tracking MCP client sessions for tool-change notifications
         if mcp is not None:
             _install_session_tracking(mcp)
@@ -851,10 +859,11 @@ class PluginHub(WebSocketEndpoint):
                 raise RuntimeError(
                     f"Duplicate command id generated: {command_id}")
             future: asyncio.Future = asyncio.get_running_loop().create_future()
+            result_ledger = cls._retained_results
             cls._pending[command_id] = {
                 "future": future, "session_id": session_id,
                 "user_id": user_id, "payload_bytes": payload_bytes,
-                "response_owner": response_owner.get()}
+                "response_owner": response_owner.get(), "result_ledger": result_ledger}
             generation = getattr(websocket.state, "plugin_generation", None)
 
         send_task: asyncio.Task | None = None
@@ -920,7 +929,7 @@ class PluginHub(WebSocketEndpoint):
                 # A disconnected or completed future still retains its result
                 # during send-task cleanup. Only its owner returns this capacity.
                 if response_owner.get() is None:
-                    cls._retained_results.pop(command_id, None)
+                    result_ledger.pop(command_id, None)
 
     @classmethod
     async def _cancel_command_on_owner(cls, websocket: WebSocket, session_id: str,
@@ -1436,24 +1445,30 @@ class PluginHub(WebSocketEndpoint):
                     if not cls._has_result_capacity(entry, charge):
                         future.set_result(response_limit_error("result_capacity"))
                         return
-                    cls._retained_results[command_id] = {
+                    result_ledger = entry.get('result_ledger', cls._retained_results)
+                    if result_ledger is not cls._retained_results:
+                        future.set_result(response_limit_error("result_capacity"))
+                        return
+                    result_ledger[command_id] = {
                         "bytes": charge, "user_id": user_id, "session_id": entry["session_id"]}
                     owner = entry.get("response_owner")
                     if owner is not None:
                         if owner.released:
-                            cls._retained_results.pop(command_id, None)
+                            result_ledger.pop(command_id, None)
                             future.set_result(response_limit_error("result_capacity"))
                             return
-                        owner.entries.append((cls._retained_results, command_id))
+                        owner.entries.append((result_ledger, command_id))
 
-                        def reserve_copy(copy_owner, source_id=command_id, reservation=cls._retained_results[command_id]):
+                        def reserve_copy(copy_owner, source_id=command_id,
+                                         reservation=result_ledger[command_id], ledger=result_ledger):
                             # Synchronous on the same owner loop: admission and
                             # insertion cannot interleave with another producer.
-                            if source_id not in cls._retained_results or not cls._has_result_capacity(reservation, reservation["bytes"]):
+                            if (ledger is not cls._retained_results or ledger.get(source_id) is not reservation
+                                    or not cls._has_result_capacity(reservation, reservation["bytes"])):
                                 return False
                             copy_id = "copy:" + str(uuid.uuid4())
-                            cls._retained_results[copy_id] = dict(reservation)
-                            copy_owner.entries.append((cls._retained_results, copy_id))
+                            ledger[copy_id] = reservation
+                            copy_owner.entries.append((ledger, copy_id))
                             copy_owner.copy_reservations.append(reserve_copy)
                             return True
 

@@ -16,6 +16,7 @@ from core.config import config
 from models.unity_response import normalize_unity_response
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 
@@ -23,7 +24,7 @@ from transport.plugin_registry import PluginRegistry
 def isolated(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, {}, raising=False)
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {}, raising=False)
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
     monkeypatch.setattr(PluginHub, "REGISTRATION_TIMEOUT", 0.05, raising=False)

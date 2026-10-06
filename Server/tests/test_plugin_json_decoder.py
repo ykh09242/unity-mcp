@@ -14,6 +14,7 @@ import pytest_asyncio
 from transport import plugin_hub as hub_module
 from transport.large_result_assembler import CAPABILITY, COMPRESSION_CAPABILITY, CHUNK_PAYLOAD_BYTES, MAGIC
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 COMMAND_ID = '11111111-2222-4333-8444-555555555555'
@@ -25,7 +26,7 @@ async def owned_hub():
         _registry = None
         _connections = {}
         _pending = {}
-        _retained_results = {}
+        _retained_results = ChargeLedger()
         _ping_tasks = {}
         _last_pong = {}
         _admitted = {}

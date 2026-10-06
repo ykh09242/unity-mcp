@@ -10,6 +10,7 @@ from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_tool_reads import SharedToolReads
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 
 RESULT = {"success": True, "data": {"status": "succeeded", "tests": [{"name": "owned-test"}]}}
 
@@ -31,8 +32,8 @@ def peer(monkeypatch):
     monkeypatch.setattr(PluginHub, "_lock", asyncio.Lock())
     monkeypatch.setattr(PluginHub, "_connections", {"owned-session": websocket})
     monkeypatch.setattr(PluginHub, "_pending", {})
-    monkeypatch.setattr(PluginHub, "_retained_results", {})
-    monkeypatch.setattr(PluginHub, "_raw_results", {})
+    monkeypatch.setattr(PluginHub, "_retained_results", ChargeLedger())
+    monkeypatch.setattr(PluginHub, "_raw_results", ChargeLedger())
     monkeypatch.setattr(PluginHub, "_large_results", None)
     handler = PluginHub({"type": "websocket"}, None, None)
 

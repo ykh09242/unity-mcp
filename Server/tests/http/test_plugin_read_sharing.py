@@ -14,6 +14,7 @@ from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_tool_reads import SharedToolReads
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 
 
@@ -63,7 +64,7 @@ async def peer(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(config, "transport_mode", "http")
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, {})
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {})
     registry = PluginRegistry()
     PluginHub.configure(registry)
     await registry.register("owned-session", "Owned", "ownedhash", "test", user_id="owned-user")

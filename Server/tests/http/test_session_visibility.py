@@ -15,6 +15,7 @@ from services.tools.set_active_instance import set_active_instance
 from services.tools.manage_tools import manage_tools
 from transport.models import RegisterMessage, RegisterToolsMessage
 from transport.plugin_hub import PluginHub
+from transport.charge_ledger import ChargeLedger
 from transport.plugin_registry import PluginRegistry
 from transport.unity_instance_middleware import UnityInstanceMiddleware
 
@@ -68,7 +69,7 @@ async def local_catalog(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "transport_mode", "http")
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong", "_admitted", "_retained_results"):
-        monkeypatch.setattr(PluginHub, name, {})
+        monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == '_retained_results' else {})
     for name in ("_registry", "_lock", "_loop", "_mcp", "_unity_transform_start"):
         monkeypatch.setattr(PluginHub, name, None)
     metadata = [
