@@ -179,9 +179,11 @@ class UnityConnection:
                         handshake_deadline = min(handshake_deadline, deadline)
                     while time.monotonic() < handshake_deadline and len(buf) < 512:
                         try:
-                            if deadline is not None:
-                                self._set_socket_deadline(self.sock, handshake_deadline)
-                            chunk = self.sock.recv(256)
+                            self._set_socket_deadline(self.sock, handshake_deadline)
+                            # TCP can coalesce the greeting with the next frame.
+                            # Consume only through LF, leaving framed bytes for
+                            # their existing reader (including v2 authentication).
+                            chunk = self.sock.recv(1)
                             self._check_deadline(deadline)
                             if not chunk:
                                 break

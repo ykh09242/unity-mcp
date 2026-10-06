@@ -7,8 +7,10 @@ import threading
 import time
 import select
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import transport.legacy.unity_connection as connection_module
 
 # locate server src dynamically to avoid hardcoded layout assumptions
 ROOT = Path(__file__).resolve().parents[2]  # tests/integration -> tests -> Server
@@ -155,49 +157,104 @@ def test_unframed_data_disconnect():
         sock.close()
 
 
-def test_zero_length_payload_heartbeat():
-    # Server that sends handshake and a zero-length heartbeat frame followed by a pong payload
-    import socket
-    import struct
-    import threading
-    import time
-
+@pytest.mark.parametrize('prefix_length', [0, 1, 27])
+def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
+    # A TCP read may contain the greeting newline and subsequent framed bytes.
+    greeting = b'WELCOME UNITY-MCP 1 FRAMING=1\n'
+    payload = b'{"type":"pong"}'
+    frames = struct.pack('>Q', 0) + struct.pack('>Q', len(payload)) + payload
+    wire = greeting + frames
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     sock.listen(1)
+    sock.settimeout(2)
     port = sock.getsockname()[1]
-    ready = threading.Event()
+    prefix_read, sent, finished = threading.Event(), threading.Event(), threading.Event()
+    failures, observed = [], []
 
     def _run():
-        ready.set()
-        conn, _ = sock.accept()
         try:
-            conn.sendall(b"WELCOME UNITY-MCP 1 FRAMING=1\n")
-            time.sleep(0.02)
-            # Heartbeat frame (length=0)
-            conn.sendall(struct.pack(">Q", 0))
-            time.sleep(0.02)
-            # Real payload frame
-            payload = b'{"type":"pong"}'
-            conn.sendall(struct.pack(">Q", len(payload)) + payload)
-            time.sleep(0.02)
+            with sock.accept()[0] as peer:
+                peer.settimeout(2)
+                if prefix_length:
+                    peer.sendall(greeting[:prefix_length])
+                    assert prefix_read.wait(2)
+                peer.sendall(wire[prefix_length:])
+                sent.set()
+                assert finished.wait(2)
+        except Exception as exc:
+            failures.append(exc)
         finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
             sock.close()
-
-    threading.Thread(target=_run, daemon=True).start()
-    ready.wait()
-
+    original_connect = socket.create_connection
+    class ObservedSocket:
+        def __init__(self, actual):
+            self.actual = actual
+            self.first = True
+        def __getattr__(self, name):
+            return getattr(self.actual, name)
+        def recv(self, count):
+            # Preserve legal recv size; force the coalescing schedule independently
+            # of OS packet splitting and CPU contention, using actual TCP bytes.
+            expected = prefix_length if self.first and prefix_length else len(wire) - prefix_length
+            if not (self.first and prefix_length):
+                assert sent.wait(2)
+            data = self.actual.recv(min(count, expected))
+            if count >= expected:
+                while len(data) < expected:
+                    chunk = self.actual.recv(expected - len(data))
+                    assert chunk
+                    data += chunk
+            observed.append(data)
+            self.first = False
+            prefix_read.set()
+            return data
+    def create_connection(*args, **kwargs):
+        return ObservedSocket(original_connect(*args, **kwargs))
+    monkeypatch.setattr(socket, 'create_connection', create_connection)
+    thread = threading.Thread(target=_run)
+    thread.start()
     conn = UnityConnection(host="127.0.0.1", port=port, allow_legacy_auth=True)
     try:
-        assert conn.connect() is True
-        # Receive should skip heartbeat and return the pong payload (or empty if only heartbeats seen)
+        assert conn.connect() is True, f'prefix={prefix_length}; recv_hex={[data.hex() for data in observed]}'
         resp = conn.receive_full_response(conn.sock)
-        assert resp in (b'{"type":"pong"}', b"")
+        assert resp == payload
     finally:
         conn.disconnect()
+        finished.set()
+        prefix_read.set()
+        thread.join(3)
+        assert not thread.is_alive()
+        assert not failures
+
+
+@pytest.mark.parametrize('outer_deadline', [None, 0.5])
+def test_fragmented_greeting_reads_share_absolute_deadline(monkeypatch, outer_deadline):
+    clock = SimpleNamespace(now=0.0)
+    observed = []
+    class FragmentedSocket:
+        closed = False
+        timeout = None
+        def setsockopt(self, *args):
+            pass
+        def settimeout(self, timeout):
+            self.timeout = timeout
+        def gettimeout(self):
+            return self.timeout
+        def recv(self, count):
+            observed.append(self.timeout)
+            clock.now += 0.25
+            return b'W'
+        def close(self):
+            self.closed = True
+    peer = FragmentedSocket()
+    monkeypatch.setattr(connection_module, 'time', SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(connection_module.socket, 'create_connection', lambda *args: peer)
+    monkeypatch.setattr(connection_module.config, 'handshake_timeout', 1.0)
+    conn = UnityConnection(host='127.0.0.1', port=1, allow_legacy_auth=True)
+    assert conn.connect(deadline=outer_deadline) is False
+    budget = 1.0 if outer_deadline is None else outer_deadline
+    assert observed == [budget - index * 0.25 for index in range(int(budget / 0.25))], f'per_recv_timeouts={observed}; expected_budget={budget}'
+    assert clock.now == budget and peer.closed and conn.sock is None
 
 
