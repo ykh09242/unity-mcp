@@ -24,6 +24,12 @@ This Git-only fork is maintained by ykh09242. Contributions are welcome: bug fix
 
 Use checks proportional to the change. For Python behavior, run focused tests from `Server/` with warnings as errors; for tooling, run the relevant `tools/tests` modules from the repository root. For Unity API/shim changes, use the affected version compile checks and state separately whether licensed EditMode/PlayMode execution ran. See [Testing](website/docs/contributing/testing.md).
 
+For Python changes, also run the repository-wide correctness check from the repository root:
+
+```bash
+uv run --directory Server --locked --extra dev python ../tools/lint_python.py
+```
+
 Markdown-only changes need link, example/schema and manifest-pin checks, not a Unity/server launch. Site layout changes also need rendered desktop/mobile verification. Generated references must be refreshed through `tools/generate_docs_reference.py`, not hand-edited; optional hooks live in `tools/install-hooks.sh`. Return to the repository root before running root-level tools.
 
 ## Pull Request Checklist

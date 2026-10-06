@@ -20,6 +20,7 @@ With the repository's existing toolchain, from `Server/`:
 
 ```bash
 uv sync --locked --extra dev
+uv run --locked --extra dev python ../tools/lint_python.py
 uv run --locked --extra dev pytest tests/test_manage_material.py -v -W error
 ```
 

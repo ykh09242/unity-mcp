@@ -21,6 +21,7 @@
 
 ## Testing/Screenshots/Recordings
 <!-- If applicable, add screenshots or recordings to demonstrate the changes -->
+- [ ] Python lint (`uv run --directory Server --locked --extra dev python ../tools/lint_python.py`)
 - [ ] Python tests (`cd Server && uv run pytest tests/ -v`)
 - [ ] Unity EditMode tests
 - [ ] Unity PlayMode tests
