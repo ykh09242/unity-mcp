@@ -400,7 +400,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 var logType = resourceMeta != null ? "resource" : toolMeta != null ? "tool" : "unknown";
                 var logName = resourceMeta?.Name ?? toolMeta?.Name ?? "unknown";
                 var sw = McpLogRecord.IsEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
-                var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource);
+                var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource, pending.CancellationToken);
 
                 if (result == null)
                 {
@@ -420,7 +420,7 @@ namespace MCPForUnity.Editor.Services.Transport
                         sw?.Stop();
                         if (McpLogRecord.IsEnabled)
                         {
-                            var logStatus = "SUCCESS";
+                            var logStatus = t.IsCanceled ? "CANCELED" : "SUCCESS";
                             string logError = null;
                             if (t.IsFaulted)
                             {
@@ -464,6 +464,11 @@ namespace MCPForUnity.Editor.Services.Transport
 
                 var response = new { status = "success", result };
                 pending.TrySetResult(response);
+                RemovePending(id, pending);
+            }
+            catch (OperationCanceledException) when (pending.CancellationToken.IsCancellationRequested)
+            {
+                pending.TrySetCanceled();
                 RemovePending(id, pending);
             }
             catch (Exception ex)

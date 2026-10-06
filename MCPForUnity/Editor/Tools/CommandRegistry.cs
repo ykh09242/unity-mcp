@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
@@ -20,8 +21,12 @@ namespace MCPForUnity.Editor.Tools
         public string CommandName { get; }
         public Func<JObject, object> SyncHandler { get; }
         public Func<JObject, Task<object>> AsyncHandler { get; }
+        public Func<JObject, CancellationToken, Task<object>> CooperativeAsyncHandler { get; private set; }
 
-        public bool IsAsync => AsyncHandler != null;
+        public bool IsAsync => AsyncHandler != null || CooperativeAsyncHandler != null;
+
+        internal static HandlerInfo Cooperative(string name, Func<JObject, CancellationToken, Task<object>> handler)
+            => new HandlerInfo(name, null, null) { CooperativeAsyncHandler = handler };
 
         public HandlerInfo(string commandName, Func<JObject, object> syncHandler, Func<JObject, Task<object>> asyncHandler)
         {
@@ -106,6 +111,12 @@ namespace MCPForUnity.Editor.Tools
 
         internal static MethodInfo GetCommandMethod(Type type)
         {
+            // Cancellation is an explicit opt-in async signature. Existing one-argument
+            // handlers remain unchanged, including tools called directly by other tools.
+            var cooperative = type.GetMethod("HandleCommand", BindingFlags.Public | BindingFlags.Static,
+                null, new[] { typeof(JObject), typeof(CancellationToken) }, null);
+            if (cooperative != null && !cooperative.ContainsGenericParameters && typeof(Task).IsAssignableFrom(cooperative.ReturnType))
+                return cooperative;
             var method = type.GetMethod("HandleCommand", BindingFlags.Public | BindingFlags.Static,
                 null, new[] { typeof(JObject) }, null);
             if (method == null || method.ContainsGenericParameters)
@@ -191,7 +202,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     McpLog.Warn(
                         $"MCP {typeLabel} {type.Name} is marked with [McpForUnity{(isResource ? "Resource" : "Tool")}] " +
-                        $"but has no supported closed public static HandleCommand(JObject) method"
+                        $"but has no supported closed public static HandleCommand(JObject) or async HandleCommand(JObject, CancellationToken) method"
                     );
                     return false;
                 }
@@ -200,8 +211,10 @@ namespace MCPForUnity.Editor.Tools
 
                 if (typeof(Task).IsAssignableFrom(method.ReturnType))
                 {
-                    var asyncHandler = CreateAsyncHandlerDelegate(method, commandName);
-                    handlerInfo = new HandlerInfo(commandName, null, asyncHandler);
+                    if (method.GetParameters().Length == 2)
+                        handlerInfo = HandlerInfo.Cooperative(commandName, CreateAsyncHandlerInvoker(method, commandName));
+                    else
+                        handlerInfo = new HandlerInfo(commandName, null, CreateAsyncHandlerDelegate(method, commandName));
                 }
                 else
                 {
@@ -272,12 +285,18 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="tcs">TaskCompletionSource to complete when async operation finishes</param>
         /// <returns>The result for synchronous commands, or null for async commands (TCS will be completed later)</returns>
         public static object ExecuteCommand(string commandName, JObject @params, TaskCompletionSource<string> tcs)
+            => ExecuteCommand(commandName, @params, tcs, CancellationToken.None);
+
+        // Additive token overload: never replace actual handler settlement with a canceled wait.
+        public static object ExecuteCommand(string commandName, JObject @params, TaskCompletionSource<string> tcs,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);
 
             if (handlerInfo.IsAsync)
             {
-                ExecuteAsyncHandler(handlerInfo, @params, commandName, tcs);
+                ExecuteAsyncHandler(handlerInfo, @params, tcs, cancellationToken);
                 return null;
             }
 
@@ -295,8 +314,8 @@ namespace MCPForUnity.Editor.Tools
                 ExecuteAsyncHandler(
                     new HandlerInfo(commandName, null, _ => returnedTask),
                     @params,
-                    commandName,
-                    tcs);
+                    tcs,
+                    cancellationToken);
                 return null;
             }
 
@@ -310,12 +329,18 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="commandName">The registered command to execute.</param>
         /// <param name="params">Parameters to pass to the command (optional).</param>
         public static Task<object> InvokeCommandAsync(string commandName, JObject @params)
+            => InvokeCommandAsync(commandName, @params, CancellationToken.None);
+
+        public static Task<object> InvokeCommandAsync(string commandName, JObject @params, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);
             var payload = @params ?? new JObject();
 
             if (handlerInfo.IsAsync)
             {
+                if (handlerInfo.CooperativeAsyncHandler != null)
+                    return handlerInfo.CooperativeAsyncHandler(payload, cancellationToken);
                 if (handlerInfo.AsyncHandler == null)
                 {
                     throw new InvalidOperationException($"Async handler for '{commandName}' is not configured correctly");
@@ -349,6 +374,12 @@ namespace MCPForUnity.Editor.Tools
         /// <exception cref="InvalidOperationException"></exception>
         private static Func<JObject, Task<object>> CreateAsyncHandlerDelegate(MethodInfo method, string commandName)
         {
+            var invoke = CreateAsyncHandlerInvoker(method, commandName);
+            return parameters => invoke(parameters, CancellationToken.None);
+        }
+
+        private static Func<JObject, CancellationToken, Task<object>> CreateAsyncHandlerInvoker(MethodInfo method, string commandName)
+        {
             // The declared Task contract determines whether a result exists; runtime
             // implementations of plain Task can be Task<VoidTaskResult> internally.
             Type resultTaskType = method.ReturnType;
@@ -357,13 +388,17 @@ namespace MCPForUnity.Editor.Tools
                 resultTaskType = resultTaskType.BaseType;
             var resultProperty = resultTaskType?.GetProperty("Result");
 
-            return async (JObject parameters) =>
+            bool cooperative = method.GetParameters().Length == 2;
+            return async (JObject parameters, CancellationToken cancellationToken) =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 object rawResult;
 
                 try
                 {
-                    rawResult = method.Invoke(null, new object[] { parameters });
+                    rawResult = method.Invoke(null, cooperative
+                        ? new object[] { parameters, cancellationToken }
+                        : new object[] { parameters });
                 }
                 catch (TargetInvocationException ex)
                 {
@@ -391,10 +426,11 @@ namespace MCPForUnity.Editor.Tools
         private static void ExecuteAsyncHandler(
             HandlerInfo handlerInfo,
             JObject parameters,
-            string commandName,
-            TaskCompletionSource<string> tcs)
+            TaskCompletionSource<string> tcs,
+            CancellationToken cancellationToken)
         {
-            if (handlerInfo.AsyncHandler == null)
+            string commandName = handlerInfo.CommandName;
+            if (!handlerInfo.IsAsync)
             {
                 throw new InvalidOperationException($"Async handler for '{commandName}' is not configured correctly");
             }
@@ -403,7 +439,14 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                handlerTask = handlerInfo.AsyncHandler(parameters);
+                handlerTask = handlerInfo.CooperativeAsyncHandler != null
+                    ? handlerInfo.CooperativeAsyncHandler(parameters, cancellationToken)
+                    : handlerInfo.AsyncHandler(parameters);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                tcs.TrySetCanceled(cancellationToken);
+                return;
             }
             catch (Exception ex)
             {
@@ -423,6 +466,10 @@ namespace MCPForUnity.Editor.Tools
                 {
                     var finalResult = await handlerTask.ConfigureAwait(true);
                     CompleteAsyncCommand(commandName, tcs, finalResult);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    tcs.TrySetCanceled(cancellationToken);
                 }
                 catch (Exception ex)
                 {

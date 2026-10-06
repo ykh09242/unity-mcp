@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -33,8 +34,11 @@ namespace MCPForUnity.Editor.Tools
             return Math.Clamp(configured, 1, AbsoluteMaxCommandsPerBatch);
         }
 
-        public static async Task<object> HandleCommand(JObject @params)
+        public static Task<object> HandleCommand(JObject @params) => HandleCommand(@params, CancellationToken.None);
+
+        public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (@params == null)
             {
                 return new ErrorResponse("'commands' payload is required.");
@@ -74,6 +78,7 @@ namespace MCPForUnity.Editor.Tools
 
             foreach (var token in commandsToken)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (token is not JObject commandObj)
                 {
                     invocationFailureCount++;
@@ -146,7 +151,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     var rawParams = commandObj["params"] as JObject ?? new JObject();
                     var commandParams = NormalizeParameterKeys(rawParams);
-                    var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams).ConfigureAwait(true);
+                    var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken).ConfigureAwait(true);
+                    cancellationToken.ThrowIfCancellationRequested();
                     bool callSucceeded = DetermineCallSucceeded(result);
                     if (callSucceeded)
                     {
@@ -170,6 +176,7 @@ namespace MCPForUnity.Editor.Tools
                         break;
                     }
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     invocationFailureCount++;

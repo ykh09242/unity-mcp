@@ -8,8 +8,10 @@ namespace MCPForUnity.Editor.Services.Transport
     /// <summary>Bounds and owns command tasks for one socket generation.</summary>
     internal sealed class ConnectionCommandWork
     {
+        public const string CancellationCapability = "command_cancel_v1";
         private readonly object _gate = new object();
         private readonly Dictionary<string, Task> _tasks = new Dictionary<string, Task>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Action> _cancellations = new Dictionary<string, Action>(StringComparer.Ordinal);
         private readonly CancellationToken _token;
         private readonly int _capacity;
         private Task _tail = Task.CompletedTask;
@@ -21,7 +23,7 @@ namespace MCPForUnity.Editor.Services.Transport
             _capacity = capacity;
         }
 
-        public string TryStart(string id, Func<Task, Task> work)
+        public string TryStart(string id, Func<Task, Task> work, Action cancel = null)
         {
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             Task predecessor;
@@ -31,6 +33,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 if (_tasks.ContainsKey(id)) return "Duplicate command id";
                 if (_tasks.Count >= _capacity) return "Command queue is full";
                 _tasks.Add(id, completion.Task);
+                if (cancel != null) _cancellations.Add(id, cancel);
                 predecessor = _tail;
                 _tail = completion.Task;
             }
@@ -43,13 +46,30 @@ namespace MCPForUnity.Editor.Services.Transport
             return null;
         }
 
+        public bool TryCancel(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return false;
+            Action cancel;
+            lock (_gate)
+            {
+                if (_token.IsCancellationRequested || !_cancellations.TryGetValue(id, out cancel)) return false;
+            }
+            // Cancellation can run user callbacks synchronously; never invoke under the queue lock.
+            try { cancel(); return true; }
+            catch (ObjectDisposedException) { return false; }
+        }
+
         private async Task ObserveAsync(string id, Task operation, TaskCompletionSource<bool> completion)
         {
             try { await operation.ConfigureAwait(false); }
             catch (Exception) { /* The owning transport reports failures; observe every owned task. */ }
             finally
             {
-                lock (_gate) _tasks.Remove(id);
+                lock (_gate)
+                {
+                    _tasks.Remove(id);
+                    _cancellations.Remove(id);
+                }
                 completion.TrySetResult(true);
             }
         }
