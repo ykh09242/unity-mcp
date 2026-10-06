@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Final
 
 REPO: Final = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-from tools.bench_transport_process import native_python
+sys.path.insert(0, str(REPO / 'tools'))
+from bench_transport_process import native_python
 
 
 @asynccontextmanager
