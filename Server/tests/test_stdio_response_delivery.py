@@ -2,8 +2,6 @@
 import asyncio
 import gc
 import json
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from contextlib import asynccontextmanager
 
@@ -16,6 +14,7 @@ from services.tools.shared_read_budget import SharedReadBudget
 from services.tools.shared_tool_reads import SharedToolReads
 from transport.response_limit_middleware import ResponseLimitMiddleware
 from transport.stdio_response_delivery import StdioResponseDelivery, retained_stdio_server, stdio_delivery
+from .stdio_process import owned_sdk_process
 
 
 @pytest.fixture(autouse=True)
@@ -336,10 +335,9 @@ async def test_cancel_during_sdk_channel_send_retains_ambiguous_handoff_until_di
 
 @pytest.mark.asyncio
 async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_diversion(tmp_path):
-    src = Path(__file__).resolve().parents[1] / "src"
     program = (
         "import os,sys\n"
-        f"sys.path.insert(0,{str(src)!r})\n"
+        "print('owned pid:'+str(os.getpid()),file=sys.stderr,flush=True)\n"
         f"os.environ['UNITY_MCP_LOG_DIR']={str(tmp_path)!r}\n"
         "os.environ['UNITY_MCP_TELEMETRY_ENABLED']='0'\n"
         "from main import UnityMCP\n"
@@ -352,9 +350,9 @@ async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_d
         " return {'ok':True}\n"
         "server.run(transport='stdio',show_banner=False)\n"
     )
-    process = await asyncio.create_subprocess_exec(sys.executable, "-c", program,
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
+    async with owned_sdk_process(program, tmp_path) as process:
+        pid_line = await asyncio.wait_for(process.stderr.readline(), 5)
+        assert int(pid_line.removeprefix(b'owned pid:')) == process.pid
         async def send(message):
             process.stdin.write((json.dumps(message) + "\n").encode())
             await process.stdin.drain()
@@ -371,7 +369,3 @@ async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_d
         assert process.returncode == 0
         assert await process.stdout.read() == b""
         assert b"owned stray print stays off wire" in await process.stderr.read()
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()

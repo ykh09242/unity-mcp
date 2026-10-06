@@ -3,8 +3,6 @@ import asyncio
 import io
 import threading
 import json
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from contextvars import ContextVar
 
@@ -15,6 +13,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from models.response_limits import ResponseOwner
 from transport.stdio_response_delivery import retained_stdio_server, stdio_delivery
+from .stdio_process import owned_sdk_process
 
 
 class IdleInput:
@@ -222,10 +221,9 @@ async def test_default_binary_claim_is_restored_after_worker_settles(monkeypatch
 @pytest.mark.asyncio
 async def test_real_subprocess_cancel_restores_protected_stdout(tmp_path):
     # The child owns its descriptors; no parent/global stdout mutation occurs.
-    src = Path(__file__).resolve().parents[1] / 'src'
     program = (
-        'import asyncio,sys\n'
-        f'sys.path.insert(0,{str(src)!r})\n'
+        'import asyncio,sys,os\n'
+        "print('owned pid:'+str(os.getpid()),file=sys.stderr,flush=True)\n"
         'from mcp.shared.message import SessionMessage\n'
         'from mcp.types import JSONRPCResponse\n'
         'from transport.stdio_response_delivery import retained_stdio_server\n'
@@ -243,19 +241,15 @@ async def test_real_subprocess_cancel_restores_protected_stdout(tmp_path):
         " print('owned restored stdout',flush=True)\n"
         'asyncio.run(run())\n'
     )
-    process = await asyncio.create_subprocess_exec(sys.executable, '-c', program, cwd=tmp_path,
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
+    async with owned_sdk_process(program, tmp_path) as process:
+        pid_line = await asyncio.wait_for(process.stderr.readline(), 5)
+        assert int(pid_line.removeprefix(b'owned pid:')) == process.pid
         output, error = await asyncio.wait_for(process.communicate(), 10)
         assert process.returncode == 0
         lines = output.splitlines()
         assert json.loads(lines[0]) == {'jsonrpc': '2.0', 'id': 'owned', 'result': {'ok': True}}
         assert lines[1:] == [b'owned restored stdout']
         assert b'owned diverted print' in error
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
 
 
 @pytest.mark.asyncio
