@@ -4,6 +4,8 @@ import sys
 import tracemalloc
 
 import pytest
+from pydantic import AnyUrl, BaseModel
+from pydantic_core import PydanticSerializationError
 
 from models import response_limits as limits
 
@@ -78,8 +80,8 @@ def test_large_ascii_keys_and_numeric_metadata_keep_exact_json_length():
 
 
 @pytest.mark.parametrize("tail", ['\n', '\x00', '\x7f', '경로🎮', '\ud800'])
-def test_large_scalar_fallback_keeps_unicode_escape_and_byte_boundaries(tail):
-    # Given a large scalar outside the printable ASCII subset.
+def test_large_scalar_keeps_unicode_escape_and_byte_boundaries(tail):
+    # Given a large scalar with escaping, control characters or Unicode.
     value = 'A' * (256 * 1024) + tail
     try:
         encoded_bytes = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
@@ -118,6 +120,93 @@ def test_large_ascii_does_not_bypass_invalid_numeric_nodes(number):
     charge = limits.response_size(value)
     # Then exact byte sizing cannot admit an invalid numeric node.
     assert charge is None
+
+
+@pytest.mark.parametrize("text", [
+    ''.join(chr(i) for i in range(128)) * 2048,
+    ('A' * 4095 + '"\\\x00\n') * 64,
+    '\x00' * (256 * 1024),
+], ids=["all-ascii", "chunk-edges", "controls"])
+def test_all_ascii_and_chunk_boundary_escaping_keeps_bounded_peak(text):
+    # Given exact ASCII content with controls/DEL/escaping crossing chunk boundaries.
+    encoded_bytes = len(json.dumps(text, ensure_ascii=False).encode("utf-8"))
+    # When exact native string-only chunks inspect it.
+    tracemalloc.start()
+    try:
+        charge = limits.response_size(text, max_bytes=encoded_bytes)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # Then the stdlib byte boundary is admitted without any full document buffer.
+    assert charge is not None
+    assert limits.response_size(text, max_bytes=encoded_bytes - 1) is None
+    assert peak < 65_536
+
+
+def test_proven_ascii_encoded_overflow_rejects_without_full_json_buffer():
+    # Given an eligible graph whose escaping exceeds its permitted encoded bytes.
+    text = '"' * (256 * 1024)
+    # When the bounded size calculation reaches the byte ceiling.
+    tracemalloc.start()
+    try:
+        charge = limits.response_size(text, max_bytes=len(text) + 2)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # Then it rejects directly instead of falling back to an oversized full buffer.
+    assert charge is None
+    assert peak < 65_536
+
+
+@pytest.mark.parametrize("order", ["first", "last"])
+@pytest.mark.parametrize("kind", ["unicode", "model", "url", "subclass"])
+def test_known_fallback_graphs_skip_native_encoding_and_printable_scans(monkeypatch, order, kind):
+    # Given a large leaf with a known unsupported node on either side.
+    class ResultModel(BaseModel):
+        label: str
+
+    class DerivedString(str):
+        pass
+
+    unsupported = {"unicode": "경로🎮", "model": ResultModel(label="ASCII"),
+                   "url": AnyUrl("https://example.test/owned"), "subclass": DerivedString("ASCII")}[kind]
+    large = 'A' * (256 * 1024)
+    value = [unsupported, large] if order == "first" else [large, unsupported]
+    printable_scans = []
+    previous = sys.getprofile()
+
+    def profile(_frame, event, function):
+        if event == "c_call" and getattr(function, "__name__", None) == "isprintable":
+            printable_scans.append(function)
+
+    def forbid_native(*_args, **_kwargs):
+        raise AssertionError("Whole-graph fallback must not invoke native string encoding")
+
+    monkeypatch.setattr(limits, "to_json", forbid_native, raising=False)
+    # When the original visitor proves whole-graph eligibility.
+    try:
+        sys.setprofile(profile)
+        charge = limits.response_size(value)
+    finally:
+        sys.setprofile(previous)
+    # Then known fallback serialization succeeds without wasted large scans/native work.
+    assert charge is not None
+    assert printable_scans == []
+
+
+def test_native_string_error_keeps_original_serialization_fallback(monkeypatch):
+    # Given a recoverable native sizing failure on a graph admitted by stdlib JSON.
+    value = {'data': 'A' * (256 * 1024)}
+    expected = limits.response_size(value)
+
+    def unavailable(*_args, **_kwargs):
+        raise PydanticSerializationError("owned diagnostic failure")
+
+    monkeypatch.setattr(limits, "to_json", unavailable)
+    # When native sizing fails before it can prove a result.
+    actual = limits.response_size(value)
+    # Then the original complete encoder supplies the same charge.
+    assert actual == expected
 
 
 def test_large_ascii_does_not_bypass_cycles():

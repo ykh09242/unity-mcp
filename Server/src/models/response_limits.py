@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from pydantic import BaseModel, AnyUrl
+from pydantic_core import to_json
 
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_DEPTH = 64
@@ -18,6 +19,7 @@ MAX_RESPONSE_RETAINED_BYTES = 256 * 1024 * 1024
 # Limit whole-document encoding to a small, conservatively bounded allocation.
 _MAX_FAST_JSON_BYTES = 2 * 1024 * 1024
 _MIN_LARGE_ASCII_CHARS = 256 * 1024
+_ASCII_JSON_CHUNK_CHARS = 4096
 
 
 @dataclass(slots=True)
@@ -73,25 +75,34 @@ def response_limit_error(reason: str = "response_payload_limit") -> dict[str, An
             "data": {"reason": reason}}
 
 
-def _large_ascii_json_size(value: object, proven_ascii: str, *, max_bytes: int,
+def _large_ascii_json_size(value: object, *, max_bytes: int,
                            max_depth: int, max_nodes: int) -> int | None:
-    """Size exact builtin graphs; unsupported values select normal encoding.
+    """Size exact builtin graphs using bounded native ASCII string chunks.
 
-    The original visitor proves retained bounds first. One immutable ASCII leaf
-    was already checked, so its printable-character scan need not be repeated.
+    The original visitor proves retained bounds and whole-graph eligibility
+    first. Native serialization receives only exact strings, never numbers or
+    models; their original representation and fallback semantics remain intact.
+    Return max_bytes + 1 for proven overflow, None for unsupported/failed sizing.
     """
     total = nodes = 0
+    overflow = False
 
     def visit(item: object, depth: int) -> bool:
-        nonlocal total, nodes
+        nonlocal total, nodes, overflow
         nodes += 1
         if depth > max_depth or nodes > max_nodes:
             return False
         item_type = type(item)
         if item_type is str:
-            if item is not proven_ascii and (not item.isascii() or not item.isprintable()):
+            if not item.isascii():
                 return False
-            total += 2 + len(item) + item.count('"') + item.count("\\")
+            total += 2
+            for offset in range(0, len(item), _ASCII_JSON_CHUNK_CHARS):
+                total += len(to_json(item[offset:offset + _ASCII_JSON_CHUNK_CHARS],
+                                     ensure_ascii=False)) - 2
+                if total > max_bytes:
+                    overflow = True
+                    return False
         elif item_type is dict:
             total += 2 + 2 * len(item) + 2 * max(0, len(item) - 1)
             for key, child in item.items():
@@ -116,10 +127,15 @@ def _large_ascii_json_size(value: object, proven_ascii: str, *, max_bytes: int,
             total += len(float.__repr__(item))
         else:
             return False
-        return total <= max_bytes
+        if total > max_bytes:
+            overflow = True
+            return False
+        return True
 
     try:
-        return total if visit(value, 0) else None
+        if visit(value, 0):
+            return total
+        return max_bytes + 1 if overflow else None
     except (ValueError, RecursionError):
         return None
 
@@ -138,10 +154,11 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
     nodes = 0
     encoded_bound: int | None = 0
     fast_limit = min(_MAX_FAST_JSON_BYTES, max_bytes)
-    large_ascii: str | None = None
+    has_large_ascii = False
+    exact_ascii_graph = True
 
     def visit(item: Any, depth: int) -> bool:
-        nonlocal retained, nodes, encoded_bound, large_ascii
+        nonlocal retained, nodes, encoded_bound, has_large_ascii, exact_ascii_graph
         nodes += 1
         if depth > max_depth or nodes > max_nodes:
             return False
@@ -172,14 +189,17 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
         # Common JSON nodes need no model/URL/subclass dispatch. Keep the
         # original ordered fallback below for user-defined types and their hooks.
         if item_type is str:
-            if len(item) > max_bytes:
+            length = len(item)
+            if length > max_bytes:
                 return False
-            retained += 4 * len(item)
+            retained += 4 * length
             if retained > max_retained:
                 return False
-            if (large_ascii is None and len(item) >= _MIN_LARGE_ASCII_CHARS
-                    and item.isascii() and item.isprintable()):
-                large_ascii = item
+            ascii_only = item.isascii()
+            if not ascii_only:
+                exact_ascii_graph = False
+            if length >= _MIN_LARGE_ASCII_CHARS and ascii_only:
+                has_large_ascii = True
             return True
         if item_type is dict:
             return all(isinstance(key, str) and visit(key, depth + 1)
@@ -192,6 +212,7 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             return item.bit_length() <= 14_000
         if item_type is bool or item is None:
             return True
+        exact_ascii_graph = False
         if isinstance(item, BaseModel):
             return visit(item.__dict__, depth)
         if isinstance(item, AnyUrl):
@@ -217,10 +238,12 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
         return None
     encoded_bytes = 0
     try:
-        if large_ascii is not None:
-            exact_bytes = _large_ascii_json_size(value, large_ascii, max_bytes=max_bytes,
+        if has_large_ascii and exact_ascii_graph:
+            exact_bytes = _large_ascii_json_size(value, max_bytes=max_bytes,
                                                 max_depth=max_depth, max_nodes=max_nodes)
             if exact_bytes is not None:
+                if exact_bytes > max_bytes:
+                    return None
                 retained += exact_bytes
                 return retained if retained <= max_retained else None
         encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False,
