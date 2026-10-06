@@ -156,6 +156,8 @@ def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> No
     assert job["timeout-minutes"] <= 10
     steps = {step["name"]: step for step in job["steps"]}
     assert steps["Checkout source metadata"]["with"]["persist-credentials"] is False
+    assert "tools/check_server_startup.py" in steps["Checkout source metadata"]["with"]["sparse-checkout"]
+    assert steps["Install uv"]["with"]["python-version"] == "3.11"
     probe = steps["Verify cold and offline server bootstrap"]
     assert probe["shell"] == "pwsh"
     assert probe["env"]["GIT_CONFIG_KEY_0"] == "core.longpaths"
@@ -163,7 +165,9 @@ def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> No
     assert "mcpServerSource" in probe["run"]
     assert "--offline" in probe["run"]
     assert probe["run"].count("mcp-for-unity --help") == 2
-    assert probe["run"].count("$LASTEXITCODE -ne 0") == 2
+    assert probe["run"].count("python tools/check_server_startup.py") == 2
+    assert probe["run"].count("$LASTEXITCODE -ne 0") == 4
+    assert "--python 3.10" not in probe["run"]
     assert not probe.get("continue-on-error", False)
 
 
@@ -175,7 +179,7 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
     # Then: diagnostics cannot be ignored and CI uses the committed dependency lock.
     assert not lint.get("continue-on-error", False)
     assert "--locked --extra dev" in lint["run"]
-    assert lint["if"] == "matrix.python-version != '3.10'"
+    assert lint["if"] == "matrix.python-version != '3.11'"
 
 
 @pytest.mark.parametrize("step_name", [
@@ -205,7 +209,8 @@ def test_python_validation_selects_minimum_and_current_interpreters() -> None:
     steps = {step["name"]: step for step in job["steps"]}
     # Then: every environment is explicitly selected and uploads cannot collide.
     assert job["strategy"]["fail-fast"] is False
-    assert "3.10" in versions
+    assert "3.11" in versions
+    assert "3.10" not in versions
     assert any(version.startswith("3.14.") for version in versions)
     assert "${{ matrix.python-version }}" in job["name"]
     assert 'uv python install "${{ matrix.python-version }}"' in steps["Set up Python"]["run"]
@@ -213,6 +218,11 @@ def test_python_validation_selects_minimum_and_current_interpreters() -> None:
         assert '--python "${{ matrix.python-version }}"' in steps[name]["run"]
     assert "${{ matrix.python-version }}" in steps["Upload test results"]["with"]["name"]
     assert "${{ matrix.python-version }}" in steps["Upload coverage reports"]["with"]["name"]
+    candidate = steps["Verify unlocked candidate startup"]
+    assert '--python "${{ matrix.python-version }}" --from ./Server' in candidate["run"]
+    assert "python tools/check_server_startup.py" in candidate["run"]
+    assert "--locked" not in candidate["run"]
+    assert not candidate.get("continue-on-error", False)
 
 
 @pytest.mark.parametrize("path", sorted((ROOT / ".github" / "workflows").glob("*.yml")), ids=lambda path: path.name)

@@ -10,7 +10,7 @@
 #
 # Modes:
 #   - Default (local): looks for Unity editors under Unity Hub. Versions not installed are skipped.
-#   - --docker: uses manifest-pinned images or builds official previews (Python 3.10+ required).
+#   - --docker: uses manifest-pinned images or builds official previews (Python 3.11+ required).
 #     A nondefault --docker-image-tag overrides this with a public GameCI tag. Requires UNITY_LICENSE env
 #     (contents of a .ulf file). On macOS arm64, expect ~5-10× slowdown from amd64 emulation.
 #
@@ -109,13 +109,13 @@ EOF
   if [[ "$DOCKER_IMAGE_TAG" == "base-3" ]]; then
     for candidate in python3 python; do
       if command -v "$candidate" >/dev/null 2>&1 && \
-         "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+         "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
         PYTHON_BIN="$candidate"
         break
       fi
     done
     if [[ -z "$PYTHON_BIN" ]]; then
-      echo "error: default --docker images require Python 3.10+ (python3 or python on PATH)" >&2
+      echo "error: default --docker images require Python 3.11+ (python3 or python on PATH)" >&2
       exit 2
     fi
   fi

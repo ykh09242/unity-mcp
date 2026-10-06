@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = []
 # ///
 # Run: python tools/unity_ci_packages.py prepare --unity-version VERSION --image IMAGE --output .unity-ci/VERSION

@@ -14,7 +14,7 @@ Install stable **Unity MCP (ykh09242) 1.1.3**, then connect an MCP client to you
 
 - Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.3).
 - Git available to Unity Package Manager.
-- Python **3.10+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
+- Python **3.11+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
 
 **Coming from upstream?** First follow [Migrate To The Fork](./migrate.md). Never co-install `com.coplaydev.unity-mcp` and `com.ykh09242.unity-mcp`: assembly names and asset GUIDs are shared.

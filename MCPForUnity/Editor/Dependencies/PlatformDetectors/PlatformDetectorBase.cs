@@ -125,6 +125,12 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             return version.Length > 0 && char.IsDigit(version[0]);
         }
 
+        internal bool IsSupportedPythonVersion(string version)
+        {
+            return TryParseVersion(version, out int major, out int minor)
+                && (major > 3 || (major == 3 && minor >= 11));
+        }
+
         protected bool TryParseVersion(string version, out int major, out int minor)
         {
             major = 0;

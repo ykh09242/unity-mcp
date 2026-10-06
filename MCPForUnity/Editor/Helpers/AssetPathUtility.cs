@@ -338,13 +338,13 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Builds the uvx package source arguments for the MCP server.
+        /// Builds the uvx Python requirement and package source arguments for the MCP server.
         /// Uses the pinned fork source or an explicit development override for all transports.
         /// NOTE: This overload reads from EditorPrefs/cache and MUST be called from the main thread.
         /// For background threads, use the overload that accepts pre-captured parameters.
         /// </summary>
         /// <param name="quoteFromPath">Whether to quote the --from path (needed for command-line strings, not for arg lists)</param>
-        /// <returns>The --from package source arguments</returns>
+        /// <returns>The --python requirement and --from package source arguments</returns>
         public static string GetBetaServerFromArgs(bool quoteFromPath = false)
         {
             string gitUrlOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
@@ -363,11 +363,11 @@ namespace MCPForUnity.Editor.Helpers
         {
             string source = GetEffectiveServerSource(gitUrlOverride, packageSource);
             string fromValue = quoteFromPath ? $"\"{source}\"" : source;
-            return $"--from {fromValue}";
+            return $"--python \">=3.11\" --from {fromValue}";
         }
 
         /// <summary>
-        /// Builds the uvx package source arguments as a list (for JSON config builders).
+        /// Builds the uvx Python requirement and package source arguments as a list (for JSON config builders).
         /// Priority: explicit development override > pinned fork source.
         /// NOTE: This overload reads from EditorPrefs/cache and MUST be called from the main thread.
         /// For background threads, use the overload that accepts pre-captured parameters.
@@ -389,7 +389,7 @@ namespace MCPForUnity.Editor.Helpers
         public static System.Collections.Generic.IList<string> GetBetaServerFromArgsList(string gitUrlOverride, string packageSource)
         {
             return new System.Collections.Generic.List<string>
-            { "--from", GetEffectiveServerSource(gitUrlOverride, packageSource) };
+            { "--python", ">=3.11", "--from", GetEffectiveServerSource(gitUrlOverride, packageSource) };
         }
 
         private static string GetEffectiveServerSource(string sourceOverride, string packageSource)

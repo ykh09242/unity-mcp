@@ -4,7 +4,7 @@ from importlib import metadata
 from pathlib import Path
 
 import pytest
-import tomli
+import tomllib
 
 from core import telemetry
 from core.config import ServerConfig, config
@@ -14,7 +14,7 @@ def test_distribution_includes_preserved_mit_notice() -> None:
     # Given the server's declared packaging metadata.
     server_root = Path(__file__).parents[1]
     with (server_root / "pyproject.toml").open("rb") as manifest:
-        project = tomli.load(manifest)["project"]
+        project = tomllib.load(manifest)["project"]
 
     # When resolving the license files included by the package backend.
     license_files = [server_root / name for name in project["license-files"]]
@@ -49,13 +49,25 @@ def test_version_uses_checkout_when_fork_is_not_installed(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(telemetry.metadata, "version", unavailable_version)
     with (Path(__file__).parents[1] / "pyproject.toml").open("rb") as manifest:
-        expected_version = tomli.load(manifest)["project"]["version"]
+        expected_version = tomllib.load(manifest)["project"]["version"]
 
     # When resolving the version without installed metadata.
     version = telemetry.get_package_version()
 
     # Then the checkout manifest provides the existing release version.
     assert version == expected_version
+
+
+def test_checkout_version_skips_invalid_nested_toml(tmp_path, monkeypatch):
+    core = tmp_path / "src" / "core"
+    core.mkdir(parents=True)
+    (core / "pyproject.toml").write_text("[project", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "ykh09242-unity-mcp-server"\nversion = "9.8.7"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(telemetry, "__file__", str(core / "telemetry.py"))
+    assert telemetry._version_from_local_pyproject() == "9.8.7"
 
 
 @pytest.fixture

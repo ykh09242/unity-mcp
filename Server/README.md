@@ -1,6 +1,6 @@
 # Unity MCP (ykh09242) Server
 
-Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The GitHub-distributed package is `ykh09242-unity-mcp-server`; executable names remain `mcp-for-unity` (server) and `unity-mcp` (local HTTP CLI). Python **3.10+**, FastMCP 4 and MCP SDK 2 are required.
+Python MCP server for the [Unity Editor plugin](../MCPForUnity/README.md). The GitHub-distributed package is `ykh09242-unity-mcp-server`; executable names remain `mcp-for-unity` (server) and `unity-mcp` (local HTTP CLI). Python **3.11+**, FastMCP 4 and MCP SDK 2 are required.
 
 Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` server baseline. The pinned source commit selects the implementation, not the version label alone. No fork PyPI distribution or prebuilt Docker image is advertised.
 

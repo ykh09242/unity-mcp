@@ -11,7 +11,7 @@ description: Install or repair uv and Python — the runtime MCP for Unity needs
 The key to configuring MCP with **Cursor, VS Code, Windsurf, and Rider is [`uv`](https://docs.astral.sh/uv/)**.
 
 - `uv` is a fast Python package manager used to install and run the Unity MCP Server (`mcp-for-unity`).
-- **How it's used:** your MCP client config points to `command: uvx` with args like `--from "<mcpServerSource>" mcp-for-unity --transport stdio`. Replace `<mcpServerSource>` with the full-commit GitHub archive URL from the installed Unity package's `package.json`; see [installation](../getting-started/install.md). The client invokes `uvx` directly to launch the server without a Git checkout. Git is still needed for the Unity Package Manager Git installation.
+- **How it's used:** your MCP client config points to `command: uvx` with args like `--python ">=3.11" --from "<mcpServerSource>" mcp-for-unity --transport stdio`. Replace `<mcpServerSource>` with the full-commit GitHub archive URL from the installed Unity package's `package.json`; see [installation](../getting-started/install.md). The client invokes `uvx` directly to launch the server without a Git checkout. Git is still needed for the Unity Package Manager Git installation.
 - **Why it matters:** if `uv` isn't installed or on PATH, Cursor / Windsurf / VS Code can't start the server. The Unity MCP (ykh09242) window will show **"uv Not Found"** until fixed.
 - **Detection / override:** the Unity MCP (ykh09242) window auto-detects `uv` in common locations and on PATH. If not found, use **"Choose UV Install Location"** to navigate to your `uv` binary and save the path.
 
@@ -21,16 +21,18 @@ Clients like Claude Code or JetBrains Rider can get confused if you switch from 
 
 ## Requirements
 
-You need **Python 3.10+** and the **`uv`** package manager.
+You need **Python 3.11+** and the **`uv`** package manager. Starting with fork release **1.1.4**, Python 3.10 is no longer supported. Generated launch commands request a compatible interpreter explicitly.
 
 ### Verify
 
 ```bash
-python3 --version   # should be 3.10+
+python3 --version   # should be 3.11+
 uv --version        # should print a version like "uv 0.x"
 ```
 
 ## Install Python
+
+With uv already installed, `uv python install 3.11` installs the minimum supported interpreter. After updating the Unity package, regenerate existing stdio client configurations so they use the new server source and Python request. Custom commands that explicitly select Python 3.10 must be updated; do not patch `enum` or change unrelated environment variables to work around `StrEnum` import errors.
 
 **macOS:**
 

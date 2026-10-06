@@ -56,7 +56,7 @@ Connect an MCP assistant to the Unity Editor to inspect scenes, create objects, 
 
 **Switching from upstream:** Remove the existing `com.coplaydev.unity-mcp` package in Package Manager before adding this fork. Do not install both together: they retain the same assembly names and asset GUIDs. After installing the fork, reconfigure your MCP clients to use its pinned server.
 
-**Requirements:** Unity **2021.3 LTS → 6.x** · Python **3.10+** (via [`uv`](https://docs.astral.sh/uv/)). Works with **any MCP client** — Claude Desktop & Code, Cursor, VS Code, Windsurf, Cline, Gemini CLI, and more.
+**Requirements:** Unity **2021.3 LTS → 6.x** · Python **3.11+** (via [`uv`](https://docs.astral.sh/uv/)). Works with **any MCP client** — Claude Desktop & Code, Cursor, VS Code, Windsurf, Cline, Gemini CLI, and more.
 
 1. **Install** — Unity → Package Manager → Add from git URL:
    `https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.3`

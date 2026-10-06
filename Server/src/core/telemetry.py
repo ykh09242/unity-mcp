@@ -25,7 +25,7 @@ from typing import Any, Callable, Literal, get_args, get_origin, get_type_hints
 from urllib.parse import urlparse
 import uuid
 
-import tomli
+import tomllib
 
 try:
     import httpx
@@ -47,8 +47,8 @@ def _version_from_local_pyproject() -> str:
             continue
         try:
             with candidate.open("rb") as f:
-                data = tomli.load(f)
-        except (OSError, tomli.TOMLDecodeError):
+                data = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError):
             continue
 
         project_table = data.get("project") or {}

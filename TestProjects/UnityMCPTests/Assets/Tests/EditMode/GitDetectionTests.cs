@@ -9,6 +9,27 @@ using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor
 {
+    public class PythonVersionDetectionTests
+    {
+        [TestCase("3.10.20", false)]
+        [TestCase("3.11.0", true)]
+        [TestCase("3.11.14", true)]
+        [TestCase("3.12.0", true)]
+        [TestCase("2.7.18", false)]
+        [TestCase("invalid", false)]
+        [TestCase(null, false)]
+        public void PlatformDetectors_EnforceMinimumPythonVersion(string version, bool supported)
+        {
+            foreach (var detector in new PlatformDetectorBase[]
+            {
+                new WindowsPlatformDetector(), new MacOSPlatformDetector(), new LinuxPlatformDetector()
+            })
+            {
+                Assert.AreEqual(supported, detector.IsSupportedPythonVersion(version), detector.PlatformName);
+            }
+        }
+    }
+
     public class GitDetectionTests
     {
         [TestCase("git version 2.45.1.windows.1", "2.45.1.windows.1")]

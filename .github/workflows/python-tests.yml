@@ -52,14 +52,16 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.ref }}
-          sparse-checkout: MCPForUnity/package.json
+          sparse-checkout: |
+            MCPForUnity/package.json
+            tools/check_server_startup.py
           sparse-checkout-cone-mode: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.22"
-          python-version: "3.10"
+          python-version: "3.11"
           enable-cache: false
 
       - name: Verify cold and offline server bootstrap
@@ -75,14 +77,18 @@ jobs:
           if ($source -cnotmatch '^https://github\.com/ykh09242/unity-mcp/archive/[0-9a-f]{40}\.zip#subdirectory=Server$') {
             throw 'The default server source must be a full-commit fork archive'
           }
-          $cold = & uvx --no-config --no-progress --no-env-file --python 3.10 --from $source mcp-for-unity --help
+          $cold = & uvx --no-config --no-progress --no-env-file --python 3.11 --from $source mcp-for-unity --help
           if ($LASTEXITCODE -ne 0) { throw 'Cold server bootstrap failed' }
           if (($cold -join "`n") -notmatch 'Unity MCP \(ykh09242\)') { throw 'Server help was not rendered' }
-          $offline = & uvx --no-config --no-progress --no-env-file --offline --python 3.10 --from $source mcp-for-unity --help
+          & uvx --no-config --no-progress --no-env-file --python 3.11 --from $source python tools/check_server_startup.py
+          if ($LASTEXITCODE -ne 0) { throw 'Cold server registration failed' }
+          $offline = & uvx --no-config --no-progress --no-env-file --offline --python 3.11 --from $source mcp-for-unity --help
           if ($LASTEXITCODE -ne 0) { throw 'Offline server bootstrap failed' }
           if (($offline -join "`n") -notmatch 'Unity MCP \(ykh09242\)') { throw 'Offline help was not rendered' }
+          & uvx --no-config --no-progress --no-env-file --offline --python 3.11 --from $source python tools/check_server_startup.py
+          if ($LASTEXITCODE -ne 0) { throw 'Offline server registration failed' }
           if (Test-Path -LiteralPath (Join-Path $env:UV_CACHE_DIR 'git-v0')) { throw 'Server bootstrap unexpectedly used Git checkout' }
-          Write-Output 'Cold and offline bootstrap passed without Git checkout or a server listener.'
+          Write-Output 'Cold and offline bootstrap and registration passed without Git checkout or a server listener.'
 
   test:
     name: Run Python Tests (${{ matrix.python-version }})
@@ -91,7 +97,7 @@ jobs:
       fail-fast: false
       matrix:
         # Keep the declared support floor alongside the latest stable interpreter.
-        python-version: ["3.10", "3.14.8"]
+        python-version: ["3.11", "3.14.8"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,6 +115,12 @@ jobs:
       - name: Set up Python
         run: uv python install "${{ matrix.python-version }}"
 
+      - name: Verify unlocked candidate startup
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/unity-mcp-candidate-cache
+        run: |
+          uvx --no-config --no-progress --no-env-file --python "${{ matrix.python-version }}" --from ./Server python tools/check_server_startup.py
+
       - name: Install dependencies
         run: |
           cd Server
@@ -120,7 +132,7 @@ jobs:
 
       - name: Run Pylint
         # One interpreter is enough for static analysis; tests retain the full matrix.
-        if: matrix.python-version != '3.10'
+        if: matrix.python-version != '3.11'
         run: |
           cd Server
           uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/lint_python.py

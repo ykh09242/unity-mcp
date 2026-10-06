@@ -7,7 +7,7 @@
   Reads tools\unity-versions.json (the shared source of truth used by .github\workflows\unity-tests.yml)
   and runs a compile-only batchmode pass on each Unity version installed via Unity Hub.
 
-  -Docker uses manifest-pinned GameCI images or builds official previews (requires Python 3.10+) instead
+  -Docker uses manifest-pinned GameCI images or builds official previews (requires Python 3.11+) instead
   of looking for local Unity Hub installs. Requires Docker Desktop running and $env:UNITY_LICENSE set
   to the contents of a Unity_lic.ulf file.
 
@@ -91,12 +91,12 @@ if ($Docker) {
     foreach ($name in @("python3", "python")) {
       $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
       if ($candidate) {
-        & $candidate.Source -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' *> $null
+        & $candidate.Source -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' *> $null
         if ($LASTEXITCODE -eq 0) { $PythonBin = $candidate.Source; break }
       }
     }
     if (-not $PythonBin) {
-      Write-Error "Default -Docker images require Python 3.10+ (python3 or python on PATH)."
+      Write-Error "Default -Docker images require Python 3.11+ (python3 or python on PATH)."
       exit 2
     }
   }

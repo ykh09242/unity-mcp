@@ -48,8 +48,8 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             var package = new JObject { ["version"] = "10.3.1-beta.1", ["mcpServerSource"] = source };
             Assert.AreEqual(source, AssetPathUtility.GetPinnedServerSource(package));
-            CollectionAssert.AreEqual(new[] { "--from", source }, AssetPathUtility.GetBetaServerFromArgsList(null, source));
-            Assert.AreEqual("--from \"" + source + "\"", AssetPathUtility.GetBetaServerFromArgs(null, source, true));
+            CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", source }, AssetPathUtility.GetBetaServerFromArgsList(null, source));
+            Assert.AreEqual("--python \">=3.11\" --from \"" + source + "\"", AssetPathUtility.GetBetaServerFromArgs(null, source, true));
         }
 
         [Test]
@@ -115,14 +115,14 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase(ArchiveSource)]
         public void ExplicitCallerOverride_RemainsSupported(string source)
         {
-            Assert.AreEqual("--from " + source, AssetPathUtility.GetBetaServerFromArgs(source, null));
-            CollectionAssert.AreEqual(new[] { "--from", source }, AssetPathUtility.GetBetaServerFromArgsList(source, null));
+            Assert.AreEqual("--python \">=3.11\" --from " + source, AssetPathUtility.GetBetaServerFromArgs(source, null));
+            CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", source }, AssetPathUtility.GetBetaServerFromArgsList(source, null));
         }
 
         [Test]
         public void LocalRepoOverride_IsCanonicalizedInBothBuilders()
         {
-            string root = Path.Combine(Path.GetTempPath(), "unity-mcp-source-test-" + Guid.NewGuid().ToString("N"));
+            string root = Path.Combine(Path.GetTempPath(), "unity mcp source test-" + Guid.NewGuid().ToString("N"));
             string server = Path.Combine(root, "Server");
             Directory.CreateDirectory(server);
             bool hadOverride = EditorPrefs.HasKey(EditorPrefKeys.GitUrlOverride);
@@ -130,14 +130,14 @@ namespace MCPForUnityTests.Editor.Helpers
             try
             {
                 File.WriteAllText(Path.Combine(server, "pyproject.toml"), "[project]\nname = 'test'\n");
-                Assert.AreEqual("--from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(root, null, true));
-                CollectionAssert.AreEqual(new[] { "--from", server }, AssetPathUtility.GetBetaServerFromArgsList(root, null));
-                CollectionAssert.AreEqual(new[] { "--from", "file://" + server }, AssetPathUtility.GetBetaServerFromArgsList("file://" + root, null));
+                Assert.AreEqual("--python \">=3.11\" --from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(root, null, true));
+                CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", server }, AssetPathUtility.GetBetaServerFromArgsList(root, null));
+                CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", "file://" + server }, AssetPathUtility.GetBetaServerFromArgsList("file://" + root, null));
                 EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, root);
                 Assert.AreEqual(server, AssetPathUtility.GetMcpServerPackageSource());
                 Assert.AreEqual(server, EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride));
-                CollectionAssert.AreEqual(new[] { "--from", server }, AssetPathUtility.GetBetaServerFromArgsList());
-                Assert.AreEqual("--from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(true));
+                CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", server }, AssetPathUtility.GetBetaServerFromArgsList());
+                Assert.AreEqual("--python \">=3.11\" --from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(true));
             }
             finally
             {
