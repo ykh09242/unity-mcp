@@ -51,10 +51,11 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
 
 def test_remote_mode_rejects_legacy_pool_and_existing_connection(monkeypatch):
     connection = unity_connection.UnityConnection(port=6400)
-    connection.sock = Mock()
+    socket_mock = Mock()
+    connection.sock = socket_mock
     monkeypatch.setattr(config, "http_remote_hosted", True)
     for operation in (unity_connection.get_unity_connection_pool, connection.connect,
                       lambda: connection.send_command("manage_script", {"action": "read"})):
         with pytest.raises(RuntimeError, match="disabled in remote-hosted"):
             operation()
-    connection.sock.sendall.assert_not_called()
+    socket_mock.sendall.assert_not_called()
