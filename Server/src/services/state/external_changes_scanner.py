@@ -8,6 +8,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISLNK
 from typing import Iterable
 from urllib.request import url2pathname
 
@@ -123,7 +124,7 @@ class ExternalChangesScanner:
             entries += 1
             try:
                 root_stat = root.stat(follow_symlinks=False)
-                if root.is_symlink() or getattr(root_stat, "st_file_attributes", 0) & 1024:
+                if S_ISLNK(root_stat.st_mode) or getattr(root_stat, "st_file_attributes", 0) & 1024:
                     continue
                 with os.scandir(root) as children:
                     for entry in children:
