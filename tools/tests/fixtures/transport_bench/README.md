@@ -64,3 +64,31 @@ Accounting is sampled reservation ownership, not continuous peak allocation, RSS
 `--resource-contract` adds four actual MCP `resources/read` calls after the four latency workloads and lifecycle probes, outside their observations. Two ordinary and two authoritative reads exercise the product editor-state resource with an owned empty project directory (`Assets` only), no pushed-state capability, and actual routing/authentication. This limits the scanner to an owned empty tree. The fixture holds two actual ASGI response bodies before their sends finish, preserving positive source/delivery ownership until release, then requires bounded reservations and eventual zero.
 
 The historical phase8 baseline ordinary reads issued two state RPCs and two readiness pings; its candidate ordinary fallback shared one state RPC and one ping. For any selected version, the declared ordinary-resource strategy determines the exact paired contract: per-call is 2/2, shared is 1/1. Authoritative reads remain two private RPCs and two pings. Raw resource outputs are preserved. Semantic parity validates and removes exactly `data.observed_at_unix_ms` and `data.staleness.age_ms`; all other fields, including sequence, staleness flags and advice, remain significant. The comparator rejects extra normalization, invalid timestamps, schema/runtime/harness mismatches, output drift, unexpected call counts, missing positive ownership or leaks.
+
+## Optional diagnostic observation
+
+`--diagnostic` is OFF by default. OFF installs no diagnostic wrappers, records no diagnostic events, adds no control tool/RPC, and preserves public schemas/output and natural call budgets. ON labels the capture `data_kind=diagnostic` and writes a separate `<output-stem>-diagnostic.json` sidecar. The natural comparator rejects diagnostic kind/flag markers before validating normal counts or comparing latency. Diagnostic wrapper/recorder overhead remains included; these samples must never be pooled with natural or historical phase9 results.
+
+After an explicit coordinated measurement slot, an example selected-product diagnostic command is:
+
+```powershell
+Server/.venv/Scripts/python.exe tools/bench_transport.py --product-root . --product-revision 'caller-asserted-product-pin' --output reports/CS-20261006-mcp-usability/phase10/diagnostic/candidate-C1.json --samples 10 --warmup 3 --large-bytes 4194304 --work-ms 0 --concurrency 1 --diagnostic
+```
+
+Use `--concurrency 2` for a separate concurrent diagnostic profile; natural gate/resource flags remain off. Revision labels remain caller assertions, with actual selected-product/common-harness fingerprints in both the capture and sidecar. Supported diagnostics require the source-reviewed MCP 2.3.0 and FastMCP 4.0.11. Parameter-name/coroutine mismatch, wrapper stacking, unsupported versions or missing seam source fail clearly; installed seam file hashes and expected parameter names are retained. Every added class/instance patch is scoped and restored on success, failure or cancellation.
+
+| Diagnostic span | Actual observed boundary and limit |
+| --- | --- |
+| `fixture_tool` | actual public/representative fixture delegate entry to return; includes its waits, not end-to-end MCP/SDK time |
+| `hub_command_result`, `hub_large_result` | actual product PluginHub result/chunk handler entry to return; local elapsed time with owned command correlation |
+| `mcp_envelope_validation` | synchronous `response_size` alias used by the actual product response middleware; elapsed and current-thread CPU, not all validation sites |
+| `stdio_handoff` | actual `DeliverySendStream.send` entry to return; typed JSON-RPC identity rather than a fabricated workload link |
+| `stdio_write_flush` | actual synchronous `_BinaryWriteOperation.run` around bytes write/flush; elapsed and writer-thread CPU, batch scoped/unlinked to a specific request |
+| `client_sdk_request` | actual installed `ClientSession.send_request`, including its prepare/typed result validation and dispatcher await |
+| `client_dispatch_wait` | actual installed session dispatcher `send_raw_request`; includes transport/decode/dispatcher handling, not pure wire time |
+
+These local spans overlap and must not be added. Nested client spans narrow the remaining SDK preparation/typed-validation envelope but include observer overhead; they do not isolate raw JSON decode CPU. Client and child clocks are never subtracted across processes. Batch labels identify a workload envelope, not per-request CPU attribution or unobserved framework queue time.
+
+ON adds exactly eight diagnostic controls per mode: begin/end for each of four workload batches. Their count is separate in the sidecar; `client_rpc_counts` still exposes the actual total, and `normal_tools_call_count` discounts only those eight controls. Public/Unity command counts and payload/schema parity remain unchanged. Child end waits for every warmed peer completion and actual product delivery accounting drain before sampling CPU. Client process CPU includes all client threads and harness output parsing/parity/hash work, excluding batch-control waits. Child process CPU includes all child threads, synthetic peer work and control overhead through the drain boundary. Await spans never carry a request-CPU field. CPU clocks can be quantized on Windows: small snapshots may read zero and do not prove zero work. Functional smoke CPU values are compatibility evidence, not performance conclusions.
+
+Storage is bounded to 8192 numeric/short-label events per recorder, 1024 owned aliases, 16 seam descriptions and 4MiB per encoded sidecar; diagnostic profiles permit at most 30 samples and three warmups. Recorder overflow preserves delegated exceptions/cancellation, records incompleteness, and fails only after owned cleanup and bounded evidence saving. Encoded byte overflow saves an explicit failure stub instead of an oversized sidecar. `snapshot_scope` distinguishes pre-metadata child snapshots from graceful/error-finally snapshots after patch restoration. A hard OS kill can prevent Python `finally` or an early child snapshot; client trace, available child snapshot and existing stderr/peer evidence are preserved where available. These observations do not extend the existing sampled reservation evidence into an RSS/transient-allocation proof.

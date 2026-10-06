@@ -17,7 +17,7 @@ import struct
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from functools import partial
 from pathlib import Path
@@ -42,6 +42,7 @@ from transport.plugin_registry import PluginRegistry
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection as legacy
 from transport.response_limit_middleware import ResponseLimitMiddleware
+from tools.bench_transport_diagnostic import Trace, patch, require_sdk, traced_tool, write_sidecar
 
 CORRELATION: ContextVar[str] = ContextVar("bench_correlation", default="")
 
@@ -60,7 +61,7 @@ class MeasuredConnection(UnityConnection):
             yield
 
 
-async def main(args: argparse.Namespace) -> None:
+async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
     console = importlib.import_module("services.tools.read_console")
     jobs = importlib.import_module("services.tools.run_tests")
     state = PeerState(Path(args.directory) / "peer.jsonl", args.large_bytes, args.work_ms, os.environ["BENCH_AUTH"])
@@ -116,6 +117,8 @@ async def main(args: argparse.Namespace) -> None:
         async def send_json(data: dict[str, JsonValue], mode: str = "text") -> None:
             if data.get("type") == "execute" and data.get("name") == "ping":
                 state.command_correlations[str(data["id"])] = CORRELATION.get() + ":readiness"
+            if diagnostic is not None and data.get('type') == 'execute':
+                diagnostic.alias(str(data['id']), CORRELATION.get())
             await original_send(data, mode=mode)
 
         websocket.send_json = send_json
@@ -203,6 +206,7 @@ async def main(args: argparse.Namespace) -> None:
         resources.install(mcp)
 
     @mcp.tool(name="read_console")
+    @traced_tool(diagnostic, 'filter_text')
     async def read_console(ctx: Context, filter_text: str) -> dict[str, JsonValue]:
         await ctx.set_state("unity_instance", INSTANCE)
         token = CORRELATION.set(filter_text)
@@ -213,6 +217,7 @@ async def main(args: argparse.Namespace) -> None:
             CORRELATION.reset(token)
 
     @mcp.tool(name="get_test_job")
+    @traced_tool(diagnostic, 'job_id')
     async def get_test_job(ctx: Context, job_id: str) -> dict[str, JsonValue]:
         await ctx.set_state("unity_instance", INSTANCE)
         token = CORRELATION.set(job_id)
@@ -224,6 +229,7 @@ async def main(args: argparse.Namespace) -> None:
             CORRELATION.reset(token)
 
     @mcp.tool(name="get_editor_state")
+    @traced_tool(diagnostic, 'correlation')
     async def get_editor_state(correlation: str) -> object:
         token = CORRELATION.set(correlation)
         state.enter_call(correlation)
@@ -278,6 +284,9 @@ async def main(args: argparse.Namespace) -> None:
 
     @mcp.tool(name="bench_metadata")
     async def metadata() -> dict[str, JsonValue]:
+        if diagnostic is not None:
+            write_sidecar(Path(args.directory) / 'diagnostic-child.json',
+                          {**diagnostic.export(), 'snapshot_scope': 'pre_metadata_response'})
         return {"product_imports": product_imports(), "accounting_sampled_high_water": accounting.peaks,
                 "readiness_strategy": "inflight_shared" if hasattr(PluginHub, "_readiness_reads") else "per_call",
                 "ordinary_resource_strategy": "inflight_shared" if hasattr(PluginHub, "_ordinary_state_reads") else "per_call",
@@ -303,6 +312,31 @@ async def main(args: argparse.Namespace) -> None:
                     await state.registered.wait()
         return {"success": True}
 
+    if diagnostic is not None:
+        batches: dict[str, tuple[int, int]] = {}
+
+        @mcp.tool(name='bench_diagnostic_batch')
+        async def diagnostic_batch(workload: str, begin: bool) -> dict[str, JsonValue]:
+            if workload not in {'small', 'state', 'large', 'job'}:
+                raise ValueError('Unknown diagnostic workload')
+            if begin:
+                if workload in batches:
+                    raise ValueError('Diagnostic batch already started')
+                batches[workload] = time.process_time_ns(), time.perf_counter_ns()
+                diagnostic.batch = workload
+                return {'started': True}
+            cpu_started, wall_started = batches.pop(workload)
+            # Sender completion alone is insufficient for byte ownership: both
+            # peer execution and actual product delivery accounting must drain.
+            for index in range(args.samples):
+                await state.wait_event('complete', f'{workload}:warm:{index}')
+            await accounting.wait_drained()
+            diagnostic.batch = ''
+            return {'process_cpu_ms': (time.process_time_ns() - cpu_started) / 1e6,
+                    'wall_ms': (time.perf_counter_ns() - wall_started) / 1e6,
+                    'scope': 'whole_child_process_including_owned_peers_all_threads_and_controls',
+                    'peer_completed_and_accounting_drained': True}
+
     match args.transport:
         case "stdio":
             await mcp.run_async(transport="stdio", show_banner=False)
@@ -319,6 +353,48 @@ async def main(args: argparse.Namespace) -> None:
                     listener.close()
 
 
+async def main(args: argparse.Namespace) -> None:
+    """OFF installs no diagnostic patches; ON restores every seam even on failure."""
+    if not args.diagnostic:
+        await serve(args, None)
+        return
+    require_sdk()
+    diagnostic = Trace()
+    import transport.response_limit_middleware as limits
+    import transport.stdio_response_delivery as delivery
+
+    def command_label(identity: str) -> str:
+        return diagnostic.aliases.get(identity, 'unity:' + identity)
+
+    try:
+        with ExitStack() as patches:
+            if args.transport == 'http':
+                patches.enter_context(patch(PluginHub, '_handle_command_result', ('self', 'websocket', 'payload'),
+                    diagnostic, 'hub_command_result', correlation=lambda _hub, _ws, payload: command_label(payload.id)))
+                def large_label(_hub, _ws, data) -> str:
+                    identity = data[4:40].decode('ascii', errors='replace') if isinstance(data, bytes) else str(data.get('id', ''))
+                    return command_label(identity)
+                patches.enter_context(patch(PluginHub, '_handle_large_result', ('self', 'websocket', 'data'),
+                    diagnostic, 'hub_large_result', correlation=large_label))
+            patches.enter_context(patch(limits, 'response_size',
+                ('value', 'max_bytes', 'max_depth', 'max_nodes', 'max_retained'),
+                diagnostic, 'mcp_envelope_validation', synchronous=True))
+            if args.transport == 'stdio':
+                def rpc_label(_stream, message) -> str:
+                    identity = getattr(message.message, 'id', None)
+                    return f'rpc:{type(identity).__name__}:{identity}'
+                patches.enter_context(patch(delivery.DeliverySendStream, 'send', ('self', 'message'),
+                    diagnostic, 'stdio_handoff', correlation=rpc_label))
+                patches.enter_context(patch(delivery._BinaryWriteOperation, 'run', ('self',),
+                    diagnostic, 'stdio_write_flush', synchronous=True))
+            await serve(args, diagnostic)
+    finally:
+        # A hard OS kill can bypass Python finally; metadata provides the last
+        # successful snapshot. Graceful/error exits also preserve the latest one.
+        write_sidecar(Path(args.directory) / 'diagnostic-child.json',
+                      {**diagnostic.export(), 'snapshot_scope': 'server_finally_after_patch_restore'})
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--transport", choices=("stdio", "http"), required=True)
@@ -330,5 +406,6 @@ if __name__ == "__main__":
     parser.add_argument("--samples", type=int, required=True)
     parser.add_argument("--cohort-gate", action="store_true")
     parser.add_argument("--resource-contract", action="store_true")
+    parser.add_argument('--diagnostic', action='store_true')
     args = parser.parse_args()
     anyio.run(main, args)

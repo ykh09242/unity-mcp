@@ -28,6 +28,7 @@ class FrozenModel(BaseModel):
 
 
 class Profile(FrozenModel):
+    diagnostic: Literal[False] = False
     samples: int
     warmup: int
     large_bytes: int
@@ -151,6 +152,7 @@ def check_resources(row: ModeCapture) -> None:
 
 
 class Capture(FrozenModel):
+    data_kind: Literal["natural"] = "natural"
     schema_id: Literal["unity-mcp-transport-bench-v2"]
     runtime: dict[str, JsonValue]
     options: Profile

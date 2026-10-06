@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 from tools.bench_transport_report import Observation, attach_stages, equivalent_outputs, fingerprint, parse_output, summarize
 from tools.bench_transport_process import cleanup_process, native_python
 from tools.bench_transport_resource import observe_resources
+from tools.bench_transport_diagnostic import DiagnosticError, Trace, patch, require_sdk, write_sidecar
 
 FIXTURE = ROOT / "tools/tests/fixtures/transport_bench"
 WORKLOADS = ("small", "state", "large", "job")
@@ -58,6 +59,7 @@ class Options(BaseModel):
     product_revision: str = "current-checkout"
     cohort_gate: bool = False
     resource_contract: bool = False
+    diagnostic: bool = False
 
 
 async def invoke(session: ClientSession, correlation: str) -> CallToolResult:
@@ -94,6 +96,9 @@ def validate_output(result: CallToolResult) -> JsonValue:
 
 async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str, JsonValue]:
     directory.mkdir()
+    diagnostic = Trace() if options.diagnostic else None
+    cpu_batches: list[dict[str, JsonValue]] = []
+    diagnostic_calls = 0
     token = secrets.token_hex(32)
     # Explicitly allow only process essentials; never inherit credential variables.
     environment = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP") if key in os.environ}
@@ -110,6 +115,9 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
         command.append("--cohort-gate")
     if options.resource_contract:
         command.append("--resource-contract")
+    if diagnostic is not None:
+        require_sdk()
+        command.append("--diagnostic")
     observations: list[Observation] = []
     started = time.perf_counter()
     process: anyio.abc.Process | None = None
@@ -139,6 +147,12 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                     case other:
                         raise ValueError(f"Unknown mode {other}")
                 session = await stack.enter_async_context(ClientSession(read, write))
+                if diagnostic is not None:
+                    stack.enter_context(patch(session, 'send_request',
+                        ('request', 'result_type', 'request_read_timeout_seconds', 'metadata', 'progress_callback'),
+                        diagnostic, 'client_sdk_request'))
+                    stack.enter_context(patch(session._dispatcher, 'send_raw_request',
+                        ('method', 'params', 'opts', '_related_request_id'), diagnostic, 'client_dispatch_wait'))
                 await session.initialize()
                 initialized_ms = (time.perf_counter() - started) * 1000
                 tool_list = await session.list_tools()
@@ -156,7 +170,11 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                     client_counts["tools/call"] += 1
                     client_counts["public_tools/call"] += 1
                     begin = time.perf_counter()
-                    response = await invoke(session, correlation)
+                    if diagnostic is None:
+                        response = await invoke(session, correlation)
+                    else:
+                        with diagnostic.correlated(correlation):
+                            response = await invoke(session, correlation)
                     total = (time.perf_counter() - begin) * 1000
                     value = validate_output(response)
                     digest, size = fingerprint(value)
@@ -165,6 +183,10 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                                                     output_sha256=digest, output_bytes=size))
 
                 for workload in WORKLOADS:
+                    if diagnostic is not None:
+                        await control('bench_diagnostic_batch', {'workload': workload, 'begin': True})
+                        diagnostic_calls += 1
+                        cpu_started, wall_started = time.process_time_ns(), time.perf_counter_ns()
                     await observe(f"{workload}:cold", "cold")
                     for index in range(options.warmup):
                         await observe(f"{workload}:warmup:{index}", "warmup")
@@ -172,6 +194,14 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                         async with anyio.create_task_group() as group:
                             for index in range(start, min(start + options.concurrency, options.samples)):
                                 group.start_soon(observe, f"{workload}:warm:{index}", "warm")
+                    if diagnostic is not None:
+                        client_cpu_ms = (time.process_time_ns() - cpu_started) / 1e6
+                        client_wall_ms = (time.perf_counter_ns() - wall_started) / 1e6
+                        child = await control('bench_diagnostic_batch', {'workload': workload, 'begin': False})
+                        diagnostic_calls += 1
+                        cpu_batches.append({'workload': workload, 'client_process_cpu_ms': client_cpu_ms,
+                            'client_wall_ms': client_wall_ms, 'child': child,
+                            'client_scope': 'whole_client_process_including_harness_parity_hash_excluding_batch_control_waits'})
 
                 async def pending_call(*, task_status: anyio.abc.TaskStatus[anyio.CancelScope]) -> None:
                     with anyio.CancelScope() as scope:
@@ -233,20 +263,32 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                 evidence = options.output.parent / (options.output.stem + "-traces")
                 evidence.mkdir(parents=True, exist_ok=True)
                 errors.flush()
-                for filename in ("peer.jsonl", "queue.jsonl", "active.jsonl", "server.stderr.log"):
+                filenames = ("peer.jsonl", "queue.jsonl", "active.jsonl", "server.stderr.log")
+                if diagnostic is not None:
+                    filenames += ('diagnostic-child.json',)
+                    write_sidecar(evidence / f'{mode}-diagnostic-client.json', diagnostic.export())
+                for filename in filenames:
                     source = directory / filename
                     if source.exists():
                         (evidence / f"{mode}-{filename}").write_bytes(source.read_bytes())
     observations = attach_stages(observations, directory)
-    return {"mode": mode, "cold_launch_to_initialized_ms": initialized_ms,
+    result = {"mode": mode, "cold_launch_to_initialized_ms": initialized_ms,
             "cold_first_calls": {item.workload: item.client_total_ms for item in observations if item.phase == "cold"},
             "warmed": summarize(observations), "observations": [item.model_dump(mode="json") for item in observations],
             "lifecycle": lifecycle, "tool_schemas": schemas, "client_rpc_counts": client_counts,
             "fixture_metadata": metadata, "native_child_interpreter": command[0], "text_structured_parity": True,
             "resource_contract": resource_results}
+    if diagnostic is not None:
+        result['diagnostic'] = {'mode': mode, 'client': diagnostic.export(),
+            'child': json.loads((directory / 'diagnostic-child.json').read_text(encoding='utf-8')),
+            'cpu_batches': cpu_batches, 'diagnostic_control_rpc_count': diagnostic_calls,
+            'normal_tools_call_count': client_counts['tools/call'] - diagnostic_calls}
+    return result
 
 
 async def run(options: Options) -> dict[str, JsonValue]:
+    if options.diagnostic and (options.samples > 30 or options.warmup > 3):
+        raise DiagnosticError('Diagnostic captures are bounded to 30 samples and 3 warmups per workload')
     def source_hashes() -> dict[str, str]:
         product_paths = (options.product_root / "Server/src").rglob("*.py")
         sources = {path.relative_to(options.product_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -269,7 +311,7 @@ async def run(options: Options) -> dict[str, JsonValue]:
         "schema_id": "unity-mcp-transport-bench-v2", "created_utc": datetime.now(timezone.utc).isoformat(),
         "runtime": {"python": platform.python_version(), "platform": platform.platform(),
                     "packages": {name: importlib.metadata.version(name) for name in ("fastmcp", "mcp", "anyio", "uvicorn", "httpx2", "websockets", "pydantic", "pydantic-core")}},
-        "options": options.model_dump(mode="json"), "output_equivalent": equivalent, "results": results,
+        "options": options.model_dump(mode="json", exclude={'diagnostic'} if not options.diagnostic else set()), "output_equivalent": equivalent, "results": results,
         "peer_profile": {"stdio_authentication": "reciprocal_hmac_v2", "http_capabilities": ["large_result_v1"],
                          "http_gzip_negotiated": False, "editor_execution": "owned_synthetic_peer"},
         "source": {"harness_repository_head": head, "asserted_product_revision": options.product_revision,
@@ -289,7 +331,28 @@ async def run(options: Options) -> dict[str, JsonValue]:
                    "Reconnect is deliberate peer replacement inside the same MCP session; HTTP process restart/client session resumption excluded.",
                    "Nearest-rank p95/p99 have low confidence at small sample counts; cold startup is one observation per mode."]}
     options.output.parent.mkdir(parents=True, exist_ok=True)
+    diagnostic_complete = True
+    if options.diagnostic:
+        result['data_kind'] = 'diagnostic'
+        sidecar = {'data_kind': 'diagnostic', 'schema_id': 'unity-mcp-transport-diagnostic-v1',
+            'runtime': result['runtime'], 'source': result['source'], 'options': result['options'],
+            'modes': [row.pop('diagnostic') for row in results],
+            'limits': ['Overlapping local spans must not be added or subtracted across processes.',
+                'Diagnostic wrapper/recorder overhead is included; these timings are not natural latency.',
+                'Client batch CPU includes harness parity/hash verification; child batch CPU includes all threads, synthetic peers and begin/end control work through peer completion/accounting drain.',
+                'Await spans are elapsed time, never per-request CPU. Only synchronous write/validation spans have current-thread CPU.',
+                'CPU clock observations can be quantized on Windows; zero or tiny samples are not proof of zero CPU work.',
+                'Child snapshot_scope distinguishes pre-metadata snapshots from graceful/error-finally snapshots; a hard OS kill may prevent a final or early child snapshot.',
+                'Stdio write/flush events are uncorrelated worker spans; handoff events carry typed RPC IDs.',
+                'Envelope validation samples one product middleware alias, not every product validation site.']}
+        sidecar_path = options.output.with_name(options.output.stem + '-diagnostic.json')
+        sidecar_written = write_sidecar(sidecar_path, sidecar)
+        diagnostic_complete = sidecar_written and all(mode[process_name]['complete']
+            for mode in sidecar['modes'] for process_name in ('client', 'child'))
+        result['diagnostic_sidecar'] = {'path': str(sidecar_path), 'sha256': hashlib.sha256(sidecar_path.read_bytes()).hexdigest()}
     options.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if not diagnostic_complete:
+        raise DiagnosticError('Diagnostic event/byte overflow; bounded evidence saved after cleanup')
     if not equivalent:
         raise RuntimeError("Product transport outputs differ; see saved report")
     if sources_before != sources_after:
@@ -310,6 +373,7 @@ if __name__ == "__main__":
     parser.add_argument("--product-revision", default="current-checkout")
     parser.add_argument("--cohort-gate", action="store_true", help="Owned event rendezvous for deterministic concurrent readiness tests")
     parser.add_argument("--resource-contract", action="store_true", help="Separate held HTTP ordinary/authoritative resource CI contract")
+    parser.add_argument('--diagnostic', action='store_true', help='Separate bounded diagnostic sidecar; never natural timing evidence')
     options = Options.model_validate(vars(parser.parse_args()))
     options = options.model_copy(update={"product_root": options.product_root.resolve()})
     if not (options.product_root / "Server/src/main.py").is_file():
