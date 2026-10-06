@@ -426,6 +426,125 @@ cleanup and reconnect checks also passed. These snapshots are not continuous
 allocation peaks or RSS. Immutable source checks covered 165 selected files per
 revision and all 161 product Python files captured by the benchmark.
 
+### Permission lookup, reconnect and optional diagnostics
+
+Product revision `ea52dd42`, compared with `6659ab3f`, removes two remaining
+ASCII sizing copies, checks selected remote tool membership without building a
+session/tool catalog, and wakes missing-session waiters when the registry changes.
+Permission checks retain the principal, session, socket and generation boundary.
+Tool disabling takes effect immediately. Resource and listing requests do not
+capture a tool permission identity, and explicit selectors retain their existing
+fresh selection validation. Reconnect notification preserves the absolute
+deadline, independent cancellation and server shutdown/replacement behavior.
+
+The actual ASCII input scanner produced these component medians on the same
+Windows host. Each runtime was measured once, with 11 untraced elapsed-time
+samples per fixture. Small inputs use 500 calls per sample; larger inputs use 11.
+All 398 differential comparisons per runtime preserved results and accounting.
+
+| Raw ASCII input | Python 3.14.6, before → after | Python 3.11.15, before → after |
+| --- | ---: | ---: |
+| 64 characters | 1.197 → 0.699 µs | 1.634 → 0.620 µs |
+| 128 KiB | 14.300 → 7.036 µs | 12.736 → 7.064 µs |
+| 8 MiB | 748.491 → 403.982 µs | 766.245 → 414.782 µs |
+
+The 8 MiB scanner took about 46% less time. Separately traced temporary peaks
+for the 128 KiB and 8 MiB ASCII fixtures fell from 131,762 to 200 bytes on 3.14
+and from 131,818 to 320 bytes on 3.11. These peaks exclude existing inputs and
+are not process RSS. Small Unicode and string-subclass inputs were 0.014–0.051 µs
+slower. A larger Unicode fixture (131,070 characters, 436,902 quoted UTF-8 bytes)
+was essentially unchanged. Whole-document JSON sizing showed no material time
+or peak improvement: all four fixtures stayed within 1% in elapsed time, and
+some 3.14 peaks rose by 64 bytes. Removing a copy does not by itself prove a
+whole-request or peak-memory improvement.
+
+A separate middleware/registry benchmark used three alternating baseline and
+candidate rounds per runtime, 500 uninstrumented calls per fixture after five
+warmups. Each cell below is the median of the three run medians, not a pooled
+1,500-sample percentile. Every session in these owned fixtures belongs to the
+same synthetic principal, with a persisted selected instance and no inline
+selector. HTTP, SDK argument/result conversion, IPC and actual Unity work are
+excluded.
+
+| Sessions / tools per session | Python 3.14.6, before → after (ms) | Python 3.11.15, before → after (ms) |
+| --- | ---: | ---: |
+| 1 / 16 | 0.0190 → 0.0155 | 0.0188 → 0.0160 |
+| 4 / 64 | 0.0331 → 0.0159 | 0.0303 → 0.0164 |
+| 32 / 256 | 0.1290 → 0.0165 | 0.1155 → 0.0166 |
+
+A separate 20-call operation count eliminated 20 catalog listings and reduced
+hash lookups from 40 to 20, retaining 20 session reads and adding 20 atomic
+membership checks. Counting wrappers were removed before timing. An inline
+selector still requires its existing catalog validation; the optimization
+removes the additional permission catalog. List output remains complete.
+
+In a controlled reconnect seam, registration occurs immediately after the
+first missing-session lookup. The median of three run medians (12 observations
+each) for registration-to-resume fell from 252.887 to 0.011 ms on 3.14 and
+253.115 to 0.015 ms on 3.11. This demonstrates removal of the remaining polling
+interval in that scenario; it excludes Editor reload and registration work and
+does not predict the average saving for arbitrary registration timing. Connected
+lookups were also recorded, but baseline observations followed a polling wait
+while candidate observations ran immediately after notification, so their
+scheduler/cache conditions do not establish a standalone normal-path speedup.
+
+The common harness now offers `--diagnostic`, OFF by default. It records actual
+product and pinned SDK boundaries plus whole-process batch CPU in a bounded,
+separate sidecar. It adds eight visible diagnostic control calls per mode and
+marks its captures so the natural comparator rejects them. Overlapping spans,
+observer overhead and CPU clock quantization prevent treating these values as
+natural latency or per-request CPU. See the [diagnostic commands and exact
+boundaries](../../tools/tests/fixtures/transport_bench/README.md#optional-diagnostic-observation).
+
+The same-product comparison also ran with diagnostics OFF on Python 3.14.6,
+MCP 2.3.0 and FastMCP 4.0.11. Each profile alternated baseline/candidate order
+over three serial rounds, with 30 warmed observations, three warmups and a
+4 MiB large payload per capture. The table reports the median of three run p50s
+in milliseconds; these are not pooled 90-sample percentiles or significance
+claims. Positive change means the candidate was slower.
+
+| Concurrency | Mode | Workload | Baseline p50 | Candidate p50 | Change |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 | stdio | small | 2.385 | 2.421 | +1.50% |
+| 1 | stdio | state | 3.187 | 3.190 | +0.09% |
+| 1 | stdio | large | 283.217 | 280.751 | −0.87% |
+| 1 | stdio | job | 2.552 | 2.516 | −1.41% |
+| 1 | HTTP | small | 3.867 | 3.863 | −0.09% |
+| 1 | HTTP | state | 5.522 | 5.541 | +0.34% |
+| 1 | HTTP | large | 115.839 | 126.732 | +9.40% |
+| 1 | HTTP | job | 3.113 | 3.200 | +2.80% |
+| 2 | stdio | small | 3.756 | 3.663 | −2.47% |
+| 2 | stdio | state | 5.627 | 5.589 | −0.66% |
+| 2 | stdio | large | 332.112 | 327.481 | −1.39% |
+| 2 | stdio | job | 3.733 | 3.810 | +2.07% |
+| 2 | HTTP | small | 6.620 | 6.647 | +0.40% |
+| 2 | HTTP | state | 9.632 | 9.129 | −5.22% |
+| 2 | HTTP | large | 138.472 | 146.317 | +5.67% |
+| 2 | HTTP | job | 5.979 | 6.045 | +1.09% |
+
+Nine of the sixteen candidate medians were higher, including both large HTTP
+profiles. These observations do not establish an overall MCP latency improvement.
+The remote permission component and registration-after-miss fixture above are
+different workloads, so their gains cannot explain these local steady-state
+results. Per-round p50/p95/p99, individual samples, source fingerprints and all
+slower conditions remain in the Phase10 evidence. With 30 observations per run,
+nearest-rank p99 is that run's maximum; independent stage quantiles are not
+additive. A separate small gated/resource capture verified sharing, payload
+parity, positive bounded reservations and cancellation/final-frame drain to zero;
+its deliberately synchronized timing is excluded from this table. Actual Editor
+execution, full catalog setup and global selection remain outside this harness.
+
+Separate diagnostic-ON captures used ten warmed observations per workload,
+three warmups and one cold call. Their large HTTP p50 was 131.288 to 130.828 ms
+at concurrency one and 140.971 to 140.619 ms at concurrency two. The candidate's
+nested client SDK/dispatcher p50s were 130.720/130.584 ms and
+140.501/140.351 ms, respectively; these include transport/framework waiting,
+not just client CPU or wire time. They are overlapping spans, not components
+to add. The natural large-HTTP increase was not reproduced in these observed
+runs, but diagnostic overhead and a single run per condition prevent using
+them to dismiss or explain that increase. Its cause remains unresolved.
+The natural results above remain the before/after evidence.
+
 ### Earlier cross-protocol measurements
 
 The earlier v1 subset harness, before the actual `UnityMCP` adapter was included,
