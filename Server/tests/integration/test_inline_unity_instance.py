@@ -15,6 +15,7 @@ import pytest
 # Load the real transport before fixtures replace PluginHub, so its cached
 # imports cannot retain a fake hub after fixture teardown.
 import transport.unity_transport
+from transport.plugin_hub import _ConnectionReadIdentity
 
 from .test_helpers import DummyContext
 from core.config import config
@@ -58,6 +59,7 @@ def _make_middleware(monkeypatch, *, transport="stdio", plugin_hub_configured=Fa
             return None
 
     plugin_hub_mod.PluginHub = FakePluginHub
+    plugin_hub_mod._ConnectionReadIdentity = _ConnectionReadIdentity
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub_mod)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 

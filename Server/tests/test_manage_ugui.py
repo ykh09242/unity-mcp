@@ -759,15 +759,13 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
     # Given: production selection refuses two sessions before any command can run.
     from services.tools.preflight import preflight
     from transport.plugin_hub import InstanceSelectionRequiredError, PluginHub
+    from transport.plugin_registry import PluginRegistry
 
-    registry = SimpleNamespace(
-        list_sessions=AsyncMock(
-            return_value={
-                "A": SimpleNamespace(project_name="SceneA", project_hash="hashA"),
-                "B": SimpleNamespace(project_name="SceneB", project_hash="hashB"),
-            }
-        )
-    )
+    registry = PluginRegistry()
+    await registry.register("A", "SceneA", "hashA", "test")
+    await registry.register("B", "SceneB", "hashB", "test")
+    listing = AsyncMock(wraps=registry.list_sessions)
+    monkeypatch.setattr(registry, "list_sessions", listing)
     send = AsyncMock()
     ready = AsyncMock(return_value=(False, 0.0))
     boundary.instance.return_value = None
@@ -795,4 +793,4 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
     ).model_dump()
     send.assert_not_awaited()
     ready.assert_not_awaited()
-    assert registry.list_sessions.await_count == 3
+    assert listing.await_count == 3

@@ -3,6 +3,7 @@ import pytest
 # Load the real transport before fixtures replace PluginHub, so its cached
 # imports cannot retain a fake hub after fixture teardown.
 import transport.unity_transport
+from transport.plugin_hub import _ConnectionReadIdentity
 import sys
 import types
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ async def test_auto_selects_single_instance_via_pluginhub(monkeypatch):
             raise AssertionError("get_sessions should be stubbed in test")
 
     plugin_hub.PluginHub = PluginHub
+    plugin_hub._ConnectionReadIdentity = _ConnectionReadIdentity
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
@@ -77,6 +79,7 @@ async def test_auto_selects_single_instance_via_stdio(monkeypatch):
             return False
 
     plugin_hub.PluginHub = PluginHub
+    plugin_hub._ConnectionReadIdentity = _ConnectionReadIdentity
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
@@ -119,6 +122,7 @@ async def test_auto_select_handles_stdio_errors(monkeypatch):
             return False
 
     plugin_hub.PluginHub = PluginHub
+    plugin_hub._ConnectionReadIdentity = _ConnectionReadIdentity
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
