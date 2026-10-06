@@ -25,12 +25,12 @@ The Python distribution is `ykh09242-unity-mcp-server`; executables remain `mcp-
 
 | Source | What it selects |
 |---|---|
-| `#ykh09242-v1.1.1` | The current stable fork release tag. |
+| `#ykh09242-v1.1.2` | The current stable fork release tag. |
 | Full 40-character SHA | A commit-addressed Unity package revision. |
 | `#beta` | The moving development branch, not an immutable release. |
 | Installed `mcpServerSource` | Matching Python source at a full SHA and `Server` subdirectory. |
 
-Unity and Python versions can evolve independently. Stable `1.1.1` pins Python `1.1.1` to `bcb5c418e125208a3208e4c000421347e83eceef`; it need not match the Unity package's later release commit. Default launch validates the same-fork Git pin and does not silently fall back to PyPI or a floating branch.
+Unity and Python versions can evolve independently. Stable `1.1.2` pins the unchanged Python `1.1.1` to `bcb5c418e125208a3208e4c000421347e83eceef`; this patch changes only the Unity package and installation documentation. The server pin need not match the Unity package's later release commit. Default launch validates the same-fork Git pin and does not silently fall back to PyPI or a floating branch.
 
 Update checks are **notifications**, not changes to the installed pin. Tagged/SHA/default fork installs check `beta` metadata. Explicit `#main` checks inherited `main`; explicit `#beta` checks `beta`. Other revision spellings do not imply a preserved separate update channel. Local-copy/Asset Store update routing is unsupported; manage local copies manually.
 
