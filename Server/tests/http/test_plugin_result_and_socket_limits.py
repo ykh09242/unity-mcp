@@ -135,6 +135,7 @@ async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeyp
     PluginHub.configure(isolated)
     monkeypatch.setattr(config, "http_remote_hosted", True)
     first_owner = ResponseOwner()
+    next_owner = ResponseOwner()
     token = response_owner.set(first_owner)
     hub = PluginHub({"type": "websocket"}, None, None)
     result = {"success": True, "data": "base64-preview" * 100}
@@ -167,7 +168,13 @@ async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeyp
         assert reply["data"]["reason"] == "result_capacity"
         assert len(PluginHub._retained_results) == 1
         first_owner.release()
-        assert (await PluginHub.send_command(second, "run_tests", {}))["success"]
+        # The previous delivery is closed; a fresh request owns the next result.
+        next_token = response_owner.set(next_owner)
+        try:
+            assert (await PluginHub.send_command(second, "run_tests", {}))["success"]
+        finally:
+            next_owner.release()
+            response_owner.reset(next_token)
     finally:
         first_owner.release()
         response_owner.reset(token)

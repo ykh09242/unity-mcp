@@ -46,7 +46,7 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[
     while time.monotonic() < deadline:
         try:
             state_resp = await asyncio.wait_for(
-                editor_state.get_editor_state(ctx), timeout=max(0.0, deadline - time.monotonic()),
+                editor_state.get_editor_state_authoritative(ctx), timeout=max(0.0, deadline - time.monotonic()),
             )
             if time.monotonic() >= deadline:
                 break

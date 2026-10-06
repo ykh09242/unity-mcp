@@ -247,14 +247,31 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     description="Canonical editor readiness snapshot. Includes advice and server-computed staleness.\n\nURI: mcpforunity://editor/state",
 )
 async def get_editor_state(ctx: Context) -> MCPResponse:
+    return await _read_editor_state(ctx, require_fresh=False)
+
+
+async def get_editor_state_authoritative(ctx: Context) -> MCPResponse:
+    """Read through the editor RPC for strict preflight and mutation workflows."""
+    return await _read_editor_state(ctx, require_fresh=True)
+
+
+async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPResponse:
     unity_instance = await get_unity_instance_from_context(ctx)
 
-    response = await unity_transport.send_with_unity_instance(
-        async_send_command_with_retry,
-        unity_instance,
-        "get_editor_state",
-        {},
-    )
+    response = None
+    if (not require_fresh and (config.transport_mode or "stdio").lower() == "http"
+            and PluginHub.is_configured()):
+        user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
+        cached = await PluginHub.get_cached_editor_state(unity_instance, user_id=user_id)
+        if cached is not None:
+            response = {"success": True, "data": cached}
+    if response is None:
+        response = await unity_transport.send_with_unity_instance(
+            async_send_command_with_retry,
+            unity_instance,
+            "get_editor_state",
+            {},
+        )
 
     if isinstance(response, MCPResponse):
         response = response.model_dump()

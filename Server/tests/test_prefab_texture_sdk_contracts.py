@@ -47,7 +47,7 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
         for module in (texture, prefabs):
             module.preflight = preflight
             module.send_with_unity_instance = send
-        state_module.get_editor_state = editor_state
+        state_module.get_editor_state_authoritative = editor_state
         refresh_module.refresh_unity = refresh
         class FixtureUnityState(Middleware):
             async def on_call_tool(self, context, call_next):

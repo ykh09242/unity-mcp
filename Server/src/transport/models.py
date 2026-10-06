@@ -1,6 +1,8 @@
-from typing import Any
-from pydantic import BaseModel, Field, field_validator
+from typing import Annotated, Any
+from pydantic import BaseModel, Field, StrictInt, field_validator
 from models.models import ToolDefinitionModel
+
+PluginCapability = Annotated[str, Field(max_length=64)]
 
 # Outgoing (Server -> Plugin)
 
@@ -9,11 +11,13 @@ class WelcomeMessage(BaseModel):
     type: str = "welcome"
     serverTimeout: int
     keepAliveInterval: int
+    capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
 
 
 class RegisteredMessage(BaseModel):
     type: str = "registered"
     session_id: str
+    capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
 
 
 class ExecuteCommandMessage(BaseModel):
@@ -37,6 +41,7 @@ class RegisterMessage(BaseModel):
     project_hash: str = Field(max_length=256)
     unity_version: str = Field(default="Unknown", max_length=64)
     project_path: str | None = Field(default=None, max_length=4096)
+    capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
 
     @field_validator("project_name", "project_hash")
     @classmethod
@@ -60,6 +65,13 @@ class CommandResultMessage(BaseModel):
     type: str = "command_result"
     id: str
     result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResultStartMessage(BaseModel):
+    type: str = "result_start"
+    id: str = Field(max_length=36)
+    total_bytes: StrictInt
+    chunk_count: StrictInt
 
 # Session Info (API response)
 

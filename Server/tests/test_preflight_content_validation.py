@@ -29,7 +29,7 @@ def editor_io(monkeypatch):
     transport = AsyncMock(return_value={"success": True, "data": {
         "contents": "class Foo {}\n", "sha256": "a" * 64,
     }})
-    monkeypatch.setattr(state, "get_editor_state", readiness)
+    monkeypatch.setattr(state, "get_editor_state_authoritative", readiness)
     monkeypatch.setattr(refresh, "refresh_unity", refresh_call)
     monkeypatch.setattr(wire, "send_with_unity_instance", transport)
     for module in (scripts, edits, scenes, textures, finder):

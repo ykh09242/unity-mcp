@@ -100,9 +100,9 @@ def boundaries(monkeypatch):
     monkeypatch.setattr(PluginHub, "send_command_for_instance", staticmethod(send))
     monkeypatch.setattr(editor_state, "_local_project_root", AsyncMock(return_value=None))
     monkeypatch.setattr(editor_state.external_changes_scanner, "update_and_get_async", AsyncMock(return_value={"external_changes_dirty": True}))
-    readiness = AsyncMock(wraps=editor_state.get_editor_state)
+    readiness = AsyncMock(wraps=editor_state.get_editor_state_authoritative)
     refresh = AsyncMock(return_value={"success": True})
-    monkeypatch.setattr(editor_state, "get_editor_state", readiness)
+    monkeypatch.setattr(editor_state, "get_editor_state_authoritative", readiness)
     monkeypatch.setattr(refresh_unity, "refresh_unity", refresh)
     lookups = {}
     for name, module in modules.items():

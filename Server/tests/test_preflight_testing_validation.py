@@ -20,7 +20,7 @@ def editor_boundary(monkeypatch):
     })
     monkeypatch.setattr(preflight, "_in_pytest", lambda: False)
     monkeypatch.setattr(refresh_unity, "_in_pytest", lambda: False)
-    monkeypatch.setattr(editor_state, "get_editor_state", state)
+    monkeypatch.setattr(editor_state, "get_editor_state_authoritative", state)
     monkeypatch.setattr(run_tests.unity_transport, "send_with_unity_instance", send)
     ctx = SimpleNamespace(get_state=AsyncMock(return_value="Selected@fixture"))
     return ctx, state, send

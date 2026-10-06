@@ -20,7 +20,7 @@ async def test_returns_immediately_in_pytest(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_polls_until_ready(monkeypatch):
-    """When not in pytest, the helper polls get_editor_state until ready_for_tools."""
+    """The helper polls authoritative editor state until ready_for_tools."""
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
     from services.tools import refresh_unity as mod
@@ -34,7 +34,7 @@ async def test_polls_until_ready(monkeypatch):
             return {"data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}}}
         return {"data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}}}
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", fake_get_editor_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
     ctx = DummyContext()
     ready, elapsed = await mod.wait_for_editor_ready(ctx, timeout_s=10.0)
@@ -53,7 +53,7 @@ async def test_timeout_returns_false(monkeypatch):
     async def fake_get_editor_state(ctx):
         return {"data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}}}
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", fake_get_editor_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
     ctx = DummyContext()
     ready, elapsed = await mod.wait_for_editor_ready(ctx, timeout_s=0.6)
@@ -71,7 +71,7 @@ async def test_stale_only_treated_as_ready(monkeypatch):
     async def fake_get_editor_state(ctx):
         return {"data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["stale_status"]}}}
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", fake_get_editor_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
     ctx = DummyContext()
     ready, elapsed = await mod.wait_for_editor_ready(ctx, timeout_s=5.0)
@@ -92,7 +92,7 @@ async def test_blocked_state_request_is_cancelled_at_readiness_timeout(monkeypat
         finally:
             cancelled.append(True)
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", blocked_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", blocked_state)
     # When: readiness is allowed twenty milliseconds, with a separate test watchdog.
     ready, elapsed = await asyncio.wait_for(
         mod.wait_for_editor_ready(DummyContext(), timeout_s=0.02), timeout=1,
@@ -116,7 +116,7 @@ async def test_state_ready_after_deadline_is_not_accepted(monkeypatch):
         now[0] = 2.0
         return {"data": {"advice": {"ready_for_tools": True}}}
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", delayed_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", delayed_state)
     # When: readiness is requested with a one-second deadline.
     ready, elapsed = await mod.wait_for_editor_ready(DummyContext(), timeout_s=1)
     # Then: a late response cannot turn an expired wait into success.
@@ -134,7 +134,7 @@ async def test_nonpositive_readiness_timeout_does_not_poll(monkeypatch, timeout)
     monkeypatch.setattr(mod, "_in_pytest", lambda: False)
     monkeypatch.setattr(mod, "time", SimpleNamespace(monotonic=lambda: 0.0))
     state = AsyncMock()
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", state)
     # When: readiness is requested with a nonpositive timeout.
     result = await mod.wait_for_editor_ready(DummyContext(), timeout_s=timeout)
     # Then: preserve the immediate timeout result without dispatching state I/O.
@@ -158,7 +158,7 @@ async def test_readiness_caller_cancellation_reaches_state_request(monkeypatch):
         finally:
             cancelled.append(True)
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", blocked_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", blocked_state)
     task = asyncio.create_task(mod.wait_for_editor_ready(DummyContext(), timeout_s=30))
     try:
         await asyncio.wait_for(entered.wait(), timeout=1)
@@ -175,7 +175,7 @@ async def test_readiness_caller_cancellation_reaches_state_request(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_exception_during_poll_keeps_trying(monkeypatch):
-    """If get_editor_state throws, the helper keeps polling until ready."""
+    """If authoritative state throws, the helper keeps polling until ready."""
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
     from services.tools import refresh_unity as mod
@@ -189,7 +189,7 @@ async def test_exception_during_poll_keeps_trying(monkeypatch):
             raise ConnectionError("Unity disconnected")
         return {"data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}}}
 
-    monkeypatch.setattr(mod.editor_state, "get_editor_state", fake_get_editor_state)
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
     ctx = DummyContext()
     ready, elapsed = await mod.wait_for_editor_ready(ctx, timeout_s=10.0)

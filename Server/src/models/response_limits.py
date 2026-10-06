@@ -23,11 +23,40 @@ class ResponseOwner:
     """Own result reservations through a request task's actual response cleanup."""
     entries: list[tuple[dict, str]] = field(default_factory=list)
     on_release: list[Callable[[], None]] = field(default_factory=list)
+    copy_reservations: list[Callable[[ResponseOwner], bool]] = field(default_factory=list)
+    released: bool = False
+
+    def reserve_copy(self) -> ResponseOwner | None:
+        """Admit every detached copy before allocation, rolling back on refusal."""
+        if self.released or len(self.copy_reservations) != len(self.entries):
+            return None
+        copy_owner = ResponseOwner()
+        for reserve in self.copy_reservations:
+            if not reserve(copy_owner):
+                copy_owner.release()
+                return None
+        return copy_owner
+
+    def adopt(self, other: ResponseOwner) -> bool:
+        """Move copy reservations to the consumer's existing delivery lifetime."""
+        if self.released or other.released:
+            other.release()
+            return False
+        self.entries.extend(other.entries)
+        self.copy_reservations.extend(other.copy_reservations)
+        self.on_release.extend(other.on_release)
+        other.entries.clear()
+        other.copy_reservations.clear()
+        other.on_release.clear()
+        other.released = True
+        return True
 
     def release(self) -> None:
+        self.released = True
         for mapping, key in self.entries:
             mapping.pop(key, None)
         self.entries.clear()
+        self.copy_reservations.clear()
         for callback in self.on_release:
             callback()
         self.on_release.clear()

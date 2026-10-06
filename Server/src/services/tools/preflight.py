@@ -44,8 +44,8 @@ async def preflight(
 
     # Load canonical editor state (server enriches advice + staleness).
     try:
-        from services.resources.editor_state import get_editor_state
-        state_resp = await get_editor_state(ctx)
+        from services.resources.editor_state import get_editor_state_authoritative
+        state_resp = await get_editor_state_authoritative(ctx)
         state = state_resp.model_dump() if hasattr(
             state_resp, "model_dump") else state_resp
     except Exception:
@@ -100,8 +100,8 @@ async def preflight(
 
             # Refresh state for the next loop iteration.
             try:
-                from services.resources.editor_state import get_editor_state
-                state_resp = await get_editor_state(ctx)
+                from services.resources.editor_state import get_editor_state_authoritative
+                state_resp = await get_editor_state_authoritative(ctx)
                 state = state_resp.model_dump() if hasattr(
                     state_resp, "model_dump") else state_resp
                 data = state.get("data") if isinstance(state, dict) else None

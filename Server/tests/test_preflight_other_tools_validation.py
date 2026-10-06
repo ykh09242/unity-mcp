@@ -28,7 +28,7 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> Boundary:
         mutate=AsyncMock(return_value={"success": True}),
     )
     monkeypatch.setattr("services.tools.preflight._in_pytest", lambda: False)
-    monkeypatch.setattr("services.resources.editor_state.get_editor_state", fixture.state)
+    monkeypatch.setattr("services.resources.editor_state.get_editor_state_authoritative", fixture.state)
     monkeypatch.setattr("services.tools.refresh_unity.refresh_unity", fixture.refresh)
     monkeypatch.setattr("services.tools.manage_ugui.send_with_unity_instance", fixture.read)
     monkeypatch.setattr("services.tools.manage_ugui.send_mutation", fixture.mutate)
