@@ -256,6 +256,15 @@ class ExternalChangesScanner:
             return _EMPTY_RESULT.copy()
         if not self._scan_lock.acquire(blocking=False):
             return self._cached_result(instance_id)
+        # A throttled read needs no filesystem work. Avoid queuing its cached
+        # snapshot behind unrelated commands in the shared executor, while
+        # retaining the same state expiry and LRU updates as a worker read.
+        with self._state_lock:
+            st = self._get_state(instance_id)
+            if (st.last_scan_unix_ms is not None
+                    and _now_unix_ms() - st.last_scan_unix_ms < self._scan_interval_ms):
+                self._scan_lock.release()
+                return self._cached_result(instance_id)
         stop = threading.Event()
         try:
             future = asyncio.get_running_loop().run_in_executor(None, self._run_update_locked, instance_id, stop)
