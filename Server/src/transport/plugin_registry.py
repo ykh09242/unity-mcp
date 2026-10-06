@@ -170,6 +170,19 @@ class PluginRegistry:
         async with self._lock:
             return self._sessions.get(session_id)
 
+    async def has_tool_for_session(
+        self, session_id: str, project_hash: str, user_id: str, names: tuple[str, ...],
+    ) -> bool:
+        """Check current tenant mapping and membership in one registry critical section."""
+        if not user_id:
+            return False
+        async with self._lock:
+            session = self._sessions.get(session_id)
+            if (session is None or session.user_id != user_id or session.project_hash != project_hash
+                    or self._user_hash_to_session.get((user_id, project_hash)) != session_id):
+                return False
+            return any(name in session.tools for name in names)
+
     async def get_session_id_by_hash(self, project_hash: str, user_id: str | None = None) -> str | None:
         """Resolve a ``project_hash`` (Unity instance id) to a session id."""
 

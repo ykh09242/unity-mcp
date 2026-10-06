@@ -15,7 +15,7 @@ from fastmcp.exceptions import ValidationError
 
 from core.config import config
 from services.registry import get_registered_tools
-from transport.plugin_hub import PluginHub
+from transport.plugin_hub import PluginHub, _ConnectionReadIdentity
 from transport.tool_input_validation import validate_tool_arguments
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -61,6 +61,7 @@ class UnityInstanceMiddleware(Middleware):
 
     # Key used in FastMCP's session-scoped state store for the active instance.
     _ACTIVE_INSTANCE_STATE_KEY = "mcpforunity.active_instance"
+    _TOOL_IDENTITY_STATE_KEY = "mcpforunity.tool_permission_identity"
 
     def __init__(self):
         super().__init__()
@@ -463,12 +464,36 @@ class UnityInstanceMiddleware(Middleware):
                 validate_tool_arguments(tool, supplied, strict=True if server.strict_input_validation else None)
         await self._inject_unity_instance(context, authenticated_user_id=user_id)
         if config.http_remote_hosted:
+            session_id = await ctx.get_state("unity_session_id")
+            identity = await PluginHub.capture_tool_identity(session_id) if session_id is not None else None
+            await ctx.set_state(self._TOOL_IDENTITY_STATE_KEY, identity, serializable=False)
             self._refresh_tool_visibility_metadata_from_registry()
             tool_name = getattr(context.message, "name", None)
-            enabled_names = await self._resolve_enabled_tool_names_for_context(context)
-            if not self._is_tool_visible(tool_name, enabled_names or set()):
+            allowed = await self._selected_tool_is_visible(context, tool_name, user_id)
+            if allowed is None:
+                enabled_names = await self._resolve_enabled_tool_names_for_context(context)
+                allowed = self._is_tool_visible(tool_name, enabled_names or set())
+            if not allowed:
                 raise ValueError(f"Tool '{tool_name}' is disabled or unavailable for this Unity instance")
         return await call_next(context)
+
+    async def _selected_tool_is_visible(self, context, tool_name: str | None, user_id: str) -> bool | None:
+        """Use live selected membership; None alone permits the existing fallback."""
+        if not isinstance(tool_name, str) or not tool_name or tool_name in self._server_only_tool_names:
+            return True
+        ctx = context.fastmcp_context
+        identity = await ctx.get_state(self._TOOL_IDENTITY_STATE_KEY)
+        if identity is False:
+            return False
+        if not isinstance(identity, _ConnectionReadIdentity):
+            return None
+        active_instance = await ctx.get_state('unity_instance')
+        project_hashes = self._resolve_candidate_project_hashes(active_instance)
+        if not project_hashes:
+            return False
+        target = self._tool_alias_to_unity_target.get(tool_name)
+        names = (tool_name, target) if target else (tool_name,)
+        return await PluginHub.has_tool_for_identity(identity, project_hashes[0], user_id, names)
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""

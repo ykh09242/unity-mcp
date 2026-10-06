@@ -975,6 +975,57 @@ class PluginHub(WebSocketEndpoint):
         return list(session.tools.values())
 
     @classmethod
+    async def has_tool_for_identity(
+        cls, identity: _ConnectionReadIdentity, project_hash: str, user_id: str,
+        names: tuple[str, ...],
+    ) -> bool:
+        """Authorize selected membership against the captured live connection generation."""
+        lock, registry = cls._lock, cls._registry
+        if lock is None or registry is None or identity.user_id != user_id:
+            return False
+        async with lock:
+            if cls._registry is not registry:
+                return False
+            websocket = cls._connections.get(identity.session_id)
+            if websocket is None:
+                return False
+            state = websocket.state
+            if (id(websocket) != identity.socket_id
+                    or getattr(state, 'plugin_generation', None) != identity.generation
+                    or getattr(state, 'plugin_session_id', None) != identity.session_id
+                    or not getattr(state, 'plugin_registered', False)
+                    or getattr(state, 'user_id', None) != user_id
+                    or websocket.client_state != WebSocketState.CONNECTED
+                    or websocket.application_state != WebSocketState.CONNECTED):
+                return False
+            # Command/read epochs concern observation sharing, not tool permission.
+            allowed = await registry.has_tool_for_session(identity.session_id, project_hash, user_id, names)
+            # configure is synchronous and may replace owners while the registry
+            # lock acquisition awaited, even though this old Hub lock is held.
+            return (allowed and cls._registry is registry and cls._lock is lock
+                    and cls._connections.get(identity.session_id) is websocket
+                    and getattr(state, 'plugin_generation', None) == identity.generation
+                    and getattr(state, 'user_id', None) == user_id
+                    and getattr(state, 'plugin_registered', False)
+                    and getattr(state, 'plugin_session_id', None) == identity.session_id
+                    and websocket.client_state == WebSocketState.CONNECTED
+                    and websocket.application_state == WebSocketState.CONNECTED)
+
+    @classmethod
+    async def capture_tool_identity(cls, session_id: str) -> _ConnectionReadIdentity | Literal[False] | None:
+        """None permits never-live shims; a lost required live capture denies access."""
+        websocket = cls._connections.get(session_id)
+        if websocket is None:
+            return None
+        registry, lock = cls._registry, cls._lock
+        identity = await cls._read_identity(session_id)
+        if (identity is None or identity.socket_id != id(websocket)
+                or cls._registry is not registry or cls._lock is not lock
+                or cls._connections.get(session_id) is not websocket):
+            return False
+        return identity
+
+    @classmethod
     async def get_tool_definition(
         cls,
         project_hash: str,
