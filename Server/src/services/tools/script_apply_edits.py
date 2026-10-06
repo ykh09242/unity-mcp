@@ -17,7 +17,8 @@ from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
 from services.tools.manage_script import (
     _edit_integer, _lsp_position_to_line_col, _normalize_edit_coordinates,
-    _normalize_script_options, _script_lines_and_starts, _split_uri,
+    _normalize_script_options, _script_lines_and_starts, _split_uri, _validate_text_edit_shape,
+    _validate_script_name,
 )
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import coerce_bool, coerce_int, parse_json_payload
@@ -964,18 +965,24 @@ async def script_apply_edits(
         options = _normalize_script_options(options)
     except ValueError as exc:
         return _err("invalid_options", str(exc))
-    unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing script_apply_edits")
 
     # Parse edits if they came as a stringified JSON
     edits = parse_json_payload(edits)
     if not isinstance(edits, list):
         return {"success": False, "message": f"Edits must be a list or JSON string of a list, got {type(edits)}"}
+    if not edits:
+        return _err("missing_field", "At least one edit is required")
+    if not all(isinstance(edit, dict) for edit in edits):
+        return _err("missing_field", "Each edit must be an object")
     if len(edits) > 32:
         return {"success": False, "message": "At most 32 edits are permitted per request"}
 
     # Normalize locator first so downstream calls target the correct script file.
     name, path = _normalize_script_locator(name, path)
+    name_error = _validate_script_name(name)
+    if name_error:
+        return _err("bad_name", name_error)
     # Normalize unsupported or aliased ops to known structured/text paths
 
     def _unwrap_and_alias(edit: dict[str, Any]) -> dict[str, Any]:
@@ -1063,10 +1070,10 @@ async def script_apply_edits(
 
     normalized_edits: list[dict[str, Any]] = []
     for raw in edits or []:
-        e = _unwrap_and_alias(raw)
         try:
+            e = _unwrap_and_alias(raw)
             e = _normalize_edit_scalars(e)
-        except ValueError as exc:
+        except (ValueError, TypeError, AttributeError) as exc:
             return _err("invalid_range", str(exc))
         op = (e.get("op") or e.get("operation") or e.get(
             "type") or e.get("mode") or "").strip().lower()
@@ -1106,6 +1113,30 @@ async def script_apply_edits(
 
     for e in edits or []:
         op = e.get("op", "")
+        # Text edits are evaluated in Python. Validate their shape and regex
+        # syntax before reading the document; structured anchors use .NET regex.
+        if op in ("prepend", "append", "replace_range", "regex_replace"):
+            payload = next((e[field] for field in ("text", "insert", "content", "replacement")
+                            if e.get(field) is not None), "")
+            if not isinstance(payload, str):
+                return _err("missing_field", "Text edit payload must be a string")
+            if op == "replace_range":
+                try:
+                    _validate_text_edit_shape({**e, "newText": payload})
+                except ValueError as exc:
+                    return _err("missing_field", str(exc))
+            if op == "regex_replace":
+                try:
+                    flags = re.MULTILINE | (re.IGNORECASE if e.get("ignore_case") else 0)
+                    bounded_regex._compile(e.get("pattern") or "", "", flags)
+                except (ValueError, TypeError, bounded_regex.regex.error) as exc:
+                    return _err("bad_regex", f"Invalid regex pattern: {exc}")
+        if op == "replace_class" and not (e.get("replacement") or e.get("replacementBase64")):
+            return error_with_hint(
+                "replace_class requires 'replacement' (inline or base64).",
+                {"op": "replace_class", "required": ["className", "replacement"]},
+                {"edits[0].replacement": f"class {name} {{}}"},
+            )
         if op == "replace_method":
             if not e.get("methodName"):
                 return error_with_hint(
@@ -1180,6 +1211,8 @@ async def script_apply_edits(
     preview = options.get("preview", False)
     if preview and mixed:
         return _err("unsupported_preview", "Mixed text/structured preview is unsupported; no changes were made.")
+
+    unity_instance = await get_unity_instance_from_context(ctx)
 
     # If everything is structured (method/class/anchor ops), forward directly to Unity's structured editor.
     if all_struct:

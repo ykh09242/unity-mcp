@@ -12,6 +12,8 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
+from services.tools.manage_script import _validate_script_name
+from services.tools.utils import coerce_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -93,13 +95,28 @@ async def find_in_file(
                            "Case insensitive search"] = True,
 ) -> dict[str, Any]:
     # project_root is currently unused but kept for interface consistency
-    unity_instance = await get_unity_instance_from_context(ctx)
-    logger.info("Processing find_in_file")
-
     try:
         name, directory = _split_uri(uri)
-    except ValueError as exc:
+        name_error = _validate_script_name(name)
+        if name_error:
+            return {"success": False, "message": name_error}
+        flags = re.MULTILINE
+        ic = ignore_case
+        if isinstance(ic, str):
+            ic = ic.lower() in ("true", "1", "yes")
+        if ic:
+            flags |= re.IGNORECASE
+        max_results = max(1, min(coerce_int(max_results, default=200), 1000))
+    except (ValueError, TypeError) as exc:
         return {"success": False, "message": str(exc)}
+    try:
+        # Compile against an empty buffer: syntax and pattern limits need no file read.
+        bounded_regex._compile(pattern, "", flags)
+    except (ValueError, TypeError, bounded_regex.regex.error) as exc:
+        return {"success": False, "message": f"Regex search rejected: {exc}"}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
+    logger.info("Processing find_in_file")
 
     # 1. Read file content via Unity
     read_resp = await send_with_unity_instance(
@@ -129,19 +146,10 @@ async def find_in_file(
         return {"success": False, "message": "Could not read file content."}
 
     # 2. Perform regex search
-    flags = re.MULTILINE
-    # Handle ignore_case which can be boolean or string from some clients
-    ic = ignore_case
-    if isinstance(ic, str):
-        ic = ic.lower() in ("true", "1", "yes")
-    if ic:
-        flags |= re.IGNORECASE
-
     try:
         found = await asyncio.to_thread(bounded_regex.find_matches, pattern, contents, flags)
     except (ValueError, TimeoutError, bounded_regex.regex.error) as e:
         return {"success": False, "message": f"Regex search rejected: {e}"}
-    max_results = max(1, min(max_results, 1000))
 
     selected = found[:max_results]
     line_metadata = {}

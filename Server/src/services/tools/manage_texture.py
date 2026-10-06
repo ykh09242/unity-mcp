@@ -34,6 +34,13 @@ def _validate_encoded_pixels(value: str, width: int, height: int) -> str | None:
     prefix = 7 if value.startswith("base64:") else 0
     if len(value) - prefix > ((width * height * 4 + 2) // 3) * 4:
         return "encoded pixels exceed the region's RGBA byte budget"
+    try:
+        # Convert.FromBase64String accepts whitespace; retain that behavior.
+        decoded = base64.b64decode("".join(value[prefix:].split()), validate=True)
+    except (ValueError, base64.binascii.Error):
+        return "pixels must contain valid base64 RGBA32 data"
+    if len(decoded) != width * height * 4:
+        return f"encoded pixels must contain exactly {width * height * 4} RGBA32 bytes"
     return None
 
 
@@ -520,6 +527,8 @@ async def manage_texture(
 
 ) -> dict[str, Any]:
     # --- Normalize parameters ---
+    if not path:
+        return {"success": False, "message": "path is required."}
     try:
         gradient_angle = coerce_float(gradient_angle)
         noise_scale = coerce_float(noise_scale)
@@ -585,6 +594,11 @@ async def manage_texture(
     import_settings_normalized, import_error = _normalize_import_settings(import_settings)
     if import_error:
         return {"success": False, "message": import_error}
+    if (action_lower in ("modify", "set_import_settings")
+            and import_settings_normalized is not None and sprite_settings is not None):
+        return {"success": False, "message": "Cannot specify both import_settings and as_sprite."}
+    if action_lower == "set_import_settings" and not import_settings_normalized and not sprite_settings:
+        return {"success": False, "message": "Either import_settings or as_sprite is required."}
 
     # Normalize set_pixels for modify action
     set_pixels_normalized = None
@@ -596,6 +610,8 @@ async def manage_texture(
             set_pixels = parsed
         if not isinstance(set_pixels, dict):
             return {"success": False, "message": "set_pixels must be a JSON object"}
+        if set_pixels.get("color") is None and set_pixels.get("pixels") is None:
+            return {"success": False, "message": "set_pixels requires color or pixels."}
 
         set_pixels_normalized = set_pixels.copy()
         for field in ("x", "y"):

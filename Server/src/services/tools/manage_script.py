@@ -48,6 +48,13 @@ def _normalize_script_options(options: dict[str, Any] | None) -> dict[str, Any]:
     return parsed
 
 
+def _validate_script_name(name: str) -> str | None:
+    """Mirror the Unity handler's content-independent name requirement."""
+    if not name or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name):
+        return "Script name must use letters, numbers, underscores, and cannot start with a number."
+    return None
+
+
 class _EditCoordinateError(ValueError):
     """A supplied edit coordinate could not be parsed at the JSON boundary."""
 
@@ -66,6 +73,8 @@ def _edit_integer(value: Any, field: str) -> int:
 
 def _normalize_edit_coordinates(edit: dict[str, Any]) -> dict[str, Any]:
     """Parse all supplied coordinate representations before document reads."""
+    if not isinstance(edit, dict):
+        raise _EditCoordinateError("edit", "Each edit must be an object")
     parsed = dict(edit)
     for field in ("startLine", "startCol", "endLine", "endCol"):
         if field in parsed:
@@ -80,10 +89,28 @@ def _normalize_edit_coordinates(edit: dict[str, Any]) -> dict[str, Any]:
             position = dict(position)
             for field in ("line", "character"):
                 position[field] = _edit_integer(position.get(field, 0), field)
+                if position[field] < 0:
+                    raise _EditCoordinateError(field, "LSP offsets must be nonnegative")
             rng[end] = position
         parsed["range"] = rng
     elif isinstance(rng, (list, tuple)) and len(rng) == 2:
         parsed["range"] = [_edit_integer(value, "range index") for value in rng]
+        if any(value < 0 for value in parsed["range"]):
+            raise _EditCoordinateError("range", "Text edit indices must be nonnegative")
+    return parsed
+
+
+def _validate_text_edit_shape(edit: dict[str, Any]) -> dict[str, Any]:
+    """Validate content-independent requirements and normalize the text alias."""
+    parsed = dict(edit)
+    if "newText" not in parsed and "text" in parsed:
+        parsed["newText"] = parsed.pop("text")
+    if not isinstance(parsed.get("newText"), str):
+        raise ValueError("Each text edit requires a string newText or text")
+    if not all(field in parsed for field in ("startLine", "startCol", "endLine", "endCol")):
+        rng = parsed.get("range")
+        if not isinstance(rng, dict) and not (isinstance(rng, (list, tuple)) and len(rng) == 2):
+            raise ValueError("Text edits require startLine/startCol/endLine/endCol or a normalizable range")
     return parsed
 
 
@@ -201,9 +228,18 @@ async def apply_text_edits(
         edits = [_normalize_edit_coordinates(edit) for edit in edits]
     except ValueError as exc:
         return {"success": False, "code": "invalid_range", "message": str(exc)}
-    unity_instance = await get_unity_instance_from_context(ctx)
+    try:
+        if not edits:
+            raise ValueError("At least one text edit is required")
+        edits = [_validate_text_edit_shape(edit) for edit in edits]
+    except ValueError as exc:
+        return {"success": False, "code": "missing_field", "message": str(exc)}
     logger.info("Processing apply_text_edits")
     name, directory = _split_uri(uri)
+    name_error = _validate_script_name(name)
+    if name_error:
+        return {"success": False, "code": "bad_name", "message": name_error}
+    unity_instance = None
 
     # Normalize common aliases/misuses for resilience:
     # - Accept LSP-style range objects: {range:{start:{line,character}, end:{...}}, newText|text}
@@ -219,6 +255,7 @@ async def apply_text_edits(
     warnings: list[str] = []
     if _needs_normalization(edits):
         # Read file to support index->line/col conversion when needed
+        unity_instance = await get_unity_instance_from_context(ctx)
         read_resp = await send_with_unity_instance(
             transport.legacy.unity_connection.async_send_command_with_retry,
             unity_instance,
@@ -415,6 +452,9 @@ async def apply_text_edits(
     }
     params = {k: v for k, v in params.items() if v is not None}
 
+    if not _needs_normalization(edits):
+        unity_instance = await get_unity_instance_from_context(ctx)
+
     if opts.get("preview"):
         from services.tools.script_apply_edits import _prepared_handoff
         params["action"] = "preview_text_edits"
@@ -497,7 +537,6 @@ async def create_script(
     script_type: Annotated[str, "Script type (e.g., 'C#')"] | None = None,
     namespace: Annotated[str, "Namespace for the script"] | None = None,
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing create_script")
     name = os.path.splitext(os.path.basename(path))[0]
     directory = os.path.dirname(path)
@@ -512,6 +551,9 @@ async def create_script(
         return {"success": False, "code": "bad_path", "message": "path must include a script file name."}
     if not norm_path.lower().endswith(".cs"):
         return {"success": False, "code": "bad_extension", "message": "script file must end with .cs."}
+    name_error = _validate_script_name(name)
+    if name_error:
+        return {"success": False, "code": "bad_name", "message": name_error}
     params: dict[str, Any] = {
         "action": "create",
         "name": name,
@@ -524,6 +566,7 @@ async def create_script(
             contents.encode("utf-8")).decode("utf-8")
         params["contentsEncoded"] = True
     params = {k: v for k, v in params.items() if v is not None}
+    unity_instance = await get_unity_instance_from_context(ctx)
 
     async def _verify_create():
         verify = await send_with_unity_instance(
@@ -552,12 +595,15 @@ async def delete_script(
     uri: Annotated[str, "URI of the script to delete under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/..."],
 ) -> dict[str, Any]:
     """Delete a C# script by URI."""
-    unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing delete_script")
     name, directory = _split_uri(uri)
     if not directory or directory.split("/")[0].lower() != "assets":
         return {"success": False, "code": "path_outside_assets", "message": "URI must resolve under 'Assets/'."}
+    name_error = _validate_script_name(name)
+    if name_error:
+        return {"success": False, "code": "bad_name", "message": name_error}
     params = {"action": "delete", "name": name, "path": directory}
+    unity_instance = await get_unity_instance_from_context(ctx)
 
     async def _verify_delete():
         verify = await send_with_unity_instance(
@@ -592,13 +638,16 @@ async def validate_script(
     include_diagnostics: Annotated[bool,
                                    "Include full diagnostics and summary"] = False,
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing validate_script")
     name, directory = _split_uri(uri)
     if not directory or directory.split("/")[0].lower() != "assets":
         return {"success": False, "code": "path_outside_assets", "message": "URI must resolve under 'Assets/'."}
     if level not in ("basic", "standard"):
         return {"success": False, "code": "bad_level", "message": "level must be 'basic' or 'standard'."}
+    name_error = _validate_script_name(name)
+    if name_error:
+        return {"success": False, "code": "bad_name", "message": name_error}
+    unity_instance = await get_unity_instance_from_context(ctx)
     params = {
         "action": "validate",
         "name": name,
@@ -641,9 +690,11 @@ async def manage_script(
                            "Type hint (e.g., 'MonoBehaviour')"] | None = None,
     namespace: Annotated[str, "Namespace for the script"] | None = None,
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing manage_script")
     try:
+        name_error = _validate_script_name(name)
+        if name_error:
+            return {"success": False, "code": "bad_name", "message": name_error}
         # Prepare parameters for Unity
         params = {
             "action": action,
@@ -663,6 +714,7 @@ async def manage_script(
                 params["contents"] = contents
 
         params = {k: v for k, v in params.items() if v is not None}
+        unity_instance = await get_unity_instance_from_context(ctx)
 
         if action == "read":
             response = await send_with_unity_instance(
@@ -770,10 +822,13 @@ async def get_sha(
     ctx: Context,
     uri: Annotated[str, "URI of the script to edit under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/..."],
 ) -> dict[str, Any]:
-    unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing get_sha")
     try:
         name, directory = _split_uri(uri)
+        name_error = _validate_script_name(name)
+        if name_error:
+            return {"success": False, "code": "bad_name", "message": name_error}
+        unity_instance = await get_unity_instance_from_context(ctx)
         params = {"action": "get_sha", "name": name, "path": directory}
         resp = await send_with_unity_instance(
             transport.legacy.unity_connection.async_send_command_with_retry,

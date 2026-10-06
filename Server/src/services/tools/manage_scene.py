@@ -2,7 +2,6 @@ from typing import Annotated, Literal, Any
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BeforeValidator
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -10,12 +9,6 @@ from services.tools.utils import coerce_int, coerce_bool
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
-
-
-def _reject_boolean_build_index(value: Any) -> Any:
-    if isinstance(value, bool):
-        raise ValueError("build_index must be an integer, not a boolean.")
-    return value
 
 
 @mcp_for_unity_tool(
@@ -51,8 +44,7 @@ async def manage_scene(
     name: Annotated[str, "Scene name."] | None = None,
     path: Annotated[str, "Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/."] | None = None,
     build_index: Annotated[int | str,
-                           "Unity build index (quote as string, e.g., '0').",
-                           BeforeValidator(_reject_boolean_build_index)] | None = None,
+                           "Unity build index (quote as string, e.g., '0')."] | None = None,
     # --- scene_view_frame params ---
     scene_view_target: Annotated[str | int,
                                  "GameObject reference for scene_view_frame (name, path, or instance ID)."] | None = None,
@@ -116,6 +108,23 @@ async def manage_scene(
         coerced_max_depth = integer_options["max_depth"]
         coerced_max_children_per_node = integer_options["max_children_per_node"]
         coerced_include_transform = boolean_options["include_transform"]
+
+        if action == "create":
+            if not name:
+                return {"success": False, "message": "name is required for create."}
+            if template and template.lower() not in ("empty", "default", "3d_basic", "2d_basic"):
+                return {"success": False, "message": "Unknown template; use empty, default, 3d_basic, or 2d_basic."}
+        if action == "load" and not name and not path and coerced_build_index is None:
+            return {"success": False, "message": "load requires name, path, or build_index."}
+        if (action == "load" and not name and not path
+                and coerced_build_index is not None and coerced_build_index < 0):
+            return {"success": False, "message": "build_index must be nonnegative."}
+        if action in ("close_scene", "set_active_scene", "move_to_scene"):
+            selected_name = scene_name if scene_name is not None else name
+            if not selected_name and not scene_path:
+                return {"success": False, "message": f"{action} requires scene_name or scene_path."}
+        if action == "move_to_scene" and (target is None or target == ""):
+            return {"success": False, "message": "target is required for move_to_scene."}
 
         params: dict[str, Any] = {"action": action}
         if name:

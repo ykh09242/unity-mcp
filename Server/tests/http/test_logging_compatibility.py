@@ -39,7 +39,9 @@ def test_server_handlers_do_not_call_deprecated_context_logging() -> None:
     ("manage_script", "validate_script", {"uri": "Assets/Private.cs"}),
     ("manage_script", "get_sha", {"uri": "Assets/Private.cs"}),
     ("manage_script", "manage_script", {"action": "read", "name": "Private", "path": "Assets"}),
-    ("manage_script", "apply_text_edits", {"uri": "Assets/Private.cs", "edits": []}),
+    ("manage_script", "apply_text_edits", {"uri": "Assets/Private.cs", "edits": [
+        {"startLine": 1, "startCol": 1, "endLine": 1, "endCol": 1, "newText": "private-payload"},
+    ]}),
     ("manage_asset", "manage_asset", {"action": "search", "path": "t:Material", "asset_type": "Material"}),
 ])
 async def test_legacy_tool_errors_preserve_selected_editor_routing(
@@ -100,7 +102,7 @@ async def test_legacy_scriptable_object_response_is_returned_without_logging_pay
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module_name, tool_name, arguments, expected", [
-    ("manage_asset", "manage_asset", {"action": "create", "path": "Assets/Private.asset", "properties": "private-payload"},
+    ("manage_asset", "manage_asset", {"action": "create", "path": "Assets/Private.asset", "asset_type": "Material", "properties": "private-payload"},
      {"success": False, "message": "properties must be a JSON object (dict), got string that parsed to str"}),
     ("script_apply_edits", "script_apply_edits", {"name": "Private", "path": "Assets", "edits": [{"op": "invalid"}]},
      {"success": False, "code": "unsupported_op"}),

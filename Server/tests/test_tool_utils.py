@@ -149,11 +149,11 @@ def test_material_tool_sends_opaque_byte_rgb(value, fake_tool_transport):
 
 @pytest.mark.parametrize("tool_name, kwargs, field", [
     ("manage_material", {"action": "set_material_color", "color": json.dumps([10**400, 0, 0])}, "color"),
-    ("manage_gameobject", {"action": "modify", "position": json.dumps([10**400, 0, 0])}, "position"),
+    ("manage_gameobject", {"action": "modify", "target": "Fixture", "position": json.dumps([10**400, 0, 0])}, "position"),
     ("manage_camera", {"action": "screenshot", "orbit_distance": 10**400}, "orbit_distance"),
     ("manage_camera", {"action": "screenshot", "orbit_elevations": [10**400]}, "orbit_elevations"),
     ("manage_camera", {"action": "screenshot", "orbit_elevations": "[true, 0]"}, "orbit_elevations"),
-    ("manage_texture", {"action": "create", "fill_color": json.dumps([10**400, 0, 0])}, "color"),
+    ("manage_texture", {"action": "create", "path": "Assets/Fixture.png", "fill_color": json.dumps([10**400, 0, 0])}, "color"),
 ])
 def test_tool_overflow_returns_error_before_transport(tool_name, kwargs, field, fake_tool_transport):
     module = importlib.import_module("services.tools." + tool_name)

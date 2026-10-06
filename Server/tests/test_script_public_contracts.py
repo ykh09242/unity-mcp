@@ -353,8 +353,9 @@ async def main():
                 check(response and response.get('success') is False
                       and response.get('code') == 'invalid_range',
                       'invalid absolute index rejected ' + label)
-                check([row[2]['action'] for row in wires] == ['read'],
-                      'invalid absolute index read only ' + label)
+                expected_reads = [] if min(bounds) < 0 else ['read']
+                check([row[2]['action'] for row in wires] == expected_reads,
+                      'invalid absolute index validation order ' + label)
             source = ''
             plain = 'class Fixture { string s = "😀"; }'
             raw = {'success': True, 'data': {

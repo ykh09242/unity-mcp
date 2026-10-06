@@ -48,7 +48,16 @@ ALL_ACTIONS = [
 
 @pytest.mark.parametrize("action_name", ALL_ACTIONS)
 def test_every_action_forwards_to_unity(mock_unity, action_name):
-    result = asyncio.run(manage_scene(SimpleNamespace(), action=action_name))
+    required = {}
+    if action_name == "create":
+        required["name"] = "Fixture"
+    if action_name == "load":
+        required["build_index"] = 0
+    if action_name in ("close_scene", "set_active_scene", "move_to_scene"):
+        required["scene_name"] = "Fixture"
+    if action_name == "move_to_scene":
+        required["target"] = 0
+    result = asyncio.run(manage_scene(SimpleNamespace(), action=action_name, **required))
     assert result["success"] is True
     assert mock_unity["params"]["action"] == action_name
     assert mock_unity["tool_name"] == "manage_scene"

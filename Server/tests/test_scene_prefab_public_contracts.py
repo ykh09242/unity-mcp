@@ -235,7 +235,7 @@ server = FastMCP('scene-prefab-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
 scene_cases = [
-    ({'action': 'load'}, {'action': 'load'}),
+    ({'action': 'load', 'name': 'Same'}, {'action': 'load', 'name': 'Same'}),
     ({'action': 'load', 'name': 'Same', 'additive': False},
      {'action': 'load', 'name': 'Same', 'additive': False}),
     ({'action': 'load', 'path': 'Assets/Second/Same.unity', 'additive': 'true'},
@@ -263,22 +263,24 @@ scene_cases = [
       'removeScene': False}),
     ({'action': 'set_active_scene', 'scene_name': 'Same', 'scene_path': 'Assets/Second/Same.unity'},
      {'action': 'set_active_scene', 'sceneName': 'Same', 'scenePath': 'Assets/Second/Same.unity'}),
-    ({'action': 'close_scene', 'scene_name': None, 'scene_path': ''},
-     {'action': 'close_scene', 'scenePath': ''}),
+    ({'action': 'close_scene', 'name': 'Same', 'scene_name': None, 'scene_path': ''},
+     {'action': 'close_scene', 'name': 'Same', 'scenePath': ''}),
     ({'action': 'validate', 'auto_repair': False}, {'action': 'validate', 'autoRepair': False}),
 ]
 for action in ('get_active', 'get_build_settings', 'get_loaded_scenes'):
     scene_cases.append(({'action': action}, {'action': action}))
-for index in (0, 1, -1, '0', '1', None):
+for index in (0, 1, '0', '1', None):
     for additive in (False, True):
         payload = {'action': 'load', 'build_index': index, 'additive': additive}
         wire = {'action': 'load', 'additive': additive}
         if index is not None:
             wire['buildIndex'] = int(index)
+        else:
+            payload['name'] = wire['name'] = 'Same'
         scene_cases.append((payload, wire))
 for selector in (
     {'scene_name': 'Same'}, {'scene_path': 'Assets/Second/Same.unity'},
-    {'scene_name': '', 'scene_path': None},
+    {'scene_name': '', 'scene_path': 'Assets/Second/Same.unity'},
 ):
     wire = {'action': 'set_active_scene'}
     for key, value in selector.items():
@@ -363,6 +365,10 @@ async def main():
                     'requests': requests[before:],
                 }))
             for name, payload in (
+                ('manage_scene', {'action': 'load'}),
+                ('manage_scene', {'action': 'load', 'build_index': -1}),
+                ('manage_scene', {'action': 'close_scene', 'scene_name': None, 'scene_path': ''}),
+                ('manage_scene', {'action': 'set_active_scene', 'scene_name': '', 'scene_path': None}),
                 ('manage_scene', {'action': 'load', 'build_index': 'bad'}),
                 ('manage_scene', {'action': 'get_hierarchy', 'cursor': 'bad'}),
                 ('manage_scene', {'action': 'load', 'additive': 'bad'}),
