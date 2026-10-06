@@ -165,7 +165,8 @@ def test_argument_guard_preserves_aliases_and_runs_callbacks_only_in_sdk(tmp_pat
     run_dispatch_scenario('''
         import asyncio, sys
         from enum import Enum
-        from typing import Annotated, TypeAliasType
+        from typing import Annotated
+        from typing_extensions import TypeAliasType
         sys.path.insert(0, "src")
         from fastmcp import Client, FastMCP
         from pydantic import AfterValidator, BeforeValidator, Discriminator, Field, StrictBool, StrictInt, Tag

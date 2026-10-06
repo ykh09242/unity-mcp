@@ -121,7 +121,7 @@ def test_vfx_renderer_at_actual_sdk_registry_and_transport(tmp_path):
                 async with Client(server, mode=mode) as client:
                     tools = {tool.name: tool for tool in await client.list_tools()}
                     check("manage_vfx" in tools, "registry discovery " + mode)
-                    index_schema = tools["manage_vfx"].inputSchema["properties"]["component_index"]
+                    index_schema = tools["manage_vfx"].input_schema["properties"]["component_index"]
                     check(index_schema == {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None, "description": "Zero-based index to select which component when multiple of the same type exist (e.g., multiple ParticleSystems). If omitted, targets the first instance."}, "full optional integer schema/help unchanged " + mode)
                     for value in (True, False, 1.0, 0.5, '0', '1', '1e0'):
                         before = len(requests)
