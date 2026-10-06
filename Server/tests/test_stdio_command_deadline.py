@@ -167,7 +167,7 @@ if mode == "handshake": assert conn._needs_tool_resync is True
 ''', tmp_path)
 
 
-@pytest.mark.parametrize("case", ["direct_receive", "direct_connect", "required_framing", "heartbeat_limit"])
+@pytest.mark.parametrize("case", ["direct_receive", "direct_connect", "direct_connect_local_deadline", "required_framing", "heartbeat_limit"])
 def test_direct_protocol_calls_preserve_existing_contracts(case, tmp_path):
     _run(f'''
 # Given the direct API without an absolute command deadline.
@@ -177,10 +177,20 @@ if case == "direct_receive":
     assert conn.receive_full_response(sock, 4) == payload
     assert clock.now == 1.2 and sock.timeout == 1.0
 if case == "direct_connect":
-    sock = ClockedSocket(clock, [(0.6, b"WELCOME UNITY-MCP 1 FRAM"), (0.6, b"ING=1\\n")])
+    # Direct connect ignores a command budget, but obeys its local greeting budget.
+    config.command_total_timeout = 0.5
+    sock = ClockedSocket(clock, [(0.3, b"WELCOME UNITY-MCP 1 FRAM"), (0.3, b"ING=1\\n")])
     module.socket.create_connection = lambda endpoint, timeout: sock
     assert conn.connect() is True
-    assert clock.now == 1.2 and conn.use_framing and sock.timeout == 1.0
+    assert clock.now == 0.6 and clock.now > config.command_total_timeout
+    assert conn.use_framing and sock.timeout == 1.0
+if case == "direct_connect_local_deadline":
+    sock = ClockedSocket(clock, [(0.6, b"WELCOME UNITY-MCP 1 FRAM"), (0.6, b"ING=1\\n")])
+    module.socket.create_connection = lambda endpoint, timeout: sock
+    assert conn.connect() is False
+    assert clock.now == config.handshake_timeout == 1.0
+    assert sock.closed and conn.sock is None and sock.timeout == 1.0
+    assert abs(sock.read_timeouts[-1] - 0.4) < 1e-9
 if case == "required_framing":
     sock = ClockedSocket(clock, [(0.0, b"LEGACY\\n")])
     module.socket.create_connection = lambda endpoint, timeout: sock
