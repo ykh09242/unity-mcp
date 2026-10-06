@@ -32,6 +32,7 @@
         "com.unity.test-framework": {"source": "registry", "version": "1.4.6"},
         "com.unity.ext.nunit": {"source": "registry", "version": "2.0.5"},
         "com.unity.nuget.newtonsoft-json": {"source": "registry", "version": "3.2.2"},
+        "com.unity.editorcoroutines": {"source": "registry", "version": "1.0.1"},
         "com.unity.ugui": {"source": "editor"}
       }
     },
@@ -41,6 +42,7 @@
         "com.unity.test-framework": {"source": "editor"},
         "com.unity.ext.nunit": {"source": "editor"},
         "com.unity.nuget.newtonsoft-json": {"source": "registry", "version": "3.2.2"},
+        "com.unity.editorcoroutines": {"source": "registry", "version": "1.1.0"},
         "com.unity.ugui": {"source": "editor"}
       }
     }

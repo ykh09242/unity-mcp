@@ -6,7 +6,8 @@
     "MCPForUnity.Runtime",
     "TestAsmdef",
     "UnityEngine.TestRunner",
-    "UnityEditor.TestRunner"
+    "UnityEditor.TestRunner",
+    "Unity.EditorCoroutines.Editor"
   ],
   "includePlatforms": [
     "Editor"

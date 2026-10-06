@@ -59,11 +59,21 @@ def environment(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     (json_package / "package.json").write_text(json.dumps(metadata), encoding="utf-8")
     (json_package / "Runtime").mkdir()
     (json_package / "Runtime" / "Newtonsoft.Json.dll").write_bytes(b"selected json")
+    for version, minimum in (("1.0.1", "2018.1"), ("1.1.0", "2022.3")):
+        coroutines = make_package(cache, f"com.unity.editorcoroutines@{version}", version, unity=minimum)
+        metadata = json.loads((coroutines / "package.json").read_text(encoding="utf-8"))
+        metadata["name"] = "com.unity.editorcoroutines"
+        (coroutines / "package.json").write_text(json.dumps(metadata), encoding="utf-8")
+        (coroutines / "Editor").mkdir()
+        (coroutines / "Editor/Fixture.cs").write_text("class EditorCoroutineFixture {}", encoding="utf-8")
+        (coroutines / "Editor/Unity.EditorCoroutines.Editor.asmdef").write_text(
+            json.dumps({"name": "Unity.EditorCoroutines.Editor", "includePlatforms": ["Editor"]}), encoding="utf-8")
     profiles = repo / "profiles.json"
     profiles.write_text(json.dumps({"schemaVersion": 1, "requiredModules": [], "profiles": {
         "modern": {"unityMajors": [6000], "packages": {
             "com.unity.test-framework": {"source": "editor"}, "com.unity.ext.nunit": {"source": "editor"},
-            "com.unity.ugui": {"source": "editor"}, "com.unity.nuget.newtonsoft-json": {"source": "registry", "version": "3.2.2"}}}}}), encoding="utf-8")
+            "com.unity.ugui": {"source": "editor"}, "com.unity.nuget.newtonsoft-json": {"source": "registry", "version": "3.2.2"},
+            "com.unity.editorcoroutines": {"source": "registry", "version": "1.1.0"}}}}}), encoding="utf-8")
     return repo, data, cache, profiles
 
 
@@ -82,7 +92,7 @@ def test_modern_profile_uses_editor_framework_and_preserves_originals(environmen
     assert (repo / result.refs / "nunit.framework.dll").read_bytes() == b"selected nunit"
     manifest = json.loads((project / "Packages" / "manifest.json").read_text(encoding="utf-8"))
     assert "legacy.ide" not in manifest["dependencies"]
-    for name in ("com.unity.test-framework", "com.unity.ext.nunit", "com.unity.ugui", "com.unity.nuget.newtonsoft-json", "com.coplaydev.unity-mcp"):
+    for name in ("com.unity.test-framework", "com.unity.ext.nunit", "com.unity.ugui", "com.unity.nuget.newtonsoft-json", "com.unity.editorcoroutines", "com.coplaydev.unity-mcp"):
         target = (project / "Packages" / manifest["dependencies"][name].removeprefix("file:")).resolve()
         assert target.is_dir()
     copied = json.loads((repo / ".unity-ci" / "6000.0.69f1" / "package" / "package.json").read_text(encoding="utf-8"))
@@ -92,6 +102,26 @@ def test_modern_profile_uses_editor_framework_and_preserves_originals(environmen
     assert not (project / "Packages" / "packages-lock.json").exists()
     assert (project / "ProjectSettings" / "ProjectVersion.txt").read_bytes() == (repo / "TestProjects" / "UnityMCPTests" / "ProjectSettings" / "ProjectVersion.txt").read_bytes()
     assert all(path.read_bytes() == original for path, original in originals.items())
+    assert (repo / result.editor_coroutines_source / "Editor/Fixture.cs").is_file()
+
+
+@pytest.mark.parametrize("missing", ["Editor", "asmdef", "sources", "assembly-name"])
+def test_editor_coroutines_requires_verified_editor_assembly_sources(
+    environment: tuple[Path, Path, Path, Path], missing: str,
+) -> None:
+    repo, _, cache, _ = environment
+    editor = cache / "com.unity.editorcoroutines@1.1.0/Editor"
+    if missing == "Editor":
+        shutil.rmtree(editor)
+    elif missing == "asmdef":
+        (editor / "Unity.EditorCoroutines.Editor.asmdef").unlink()
+    elif missing == "sources":
+        (editor / "Fixture.cs").unlink()
+    else:
+        (editor / "Unity.EditorCoroutines.Editor.asmdef").write_text('{"name":"Wrong.Assembly"}', encoding="utf-8")
+    with pytest.raises(packages.PreparationError, match="Editor Coroutines"):
+        prepare(environment)
+    assert not (repo / ".unity-ci/6000.0.69f1").exists()
 
 
 def test_missing_builtin_fails_without_registry_fallback(environment: tuple[Path, Path, Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -316,6 +346,10 @@ def test_real_profile_matrix_selects_verified_legacy_or_editor_sources(
     resolved = {item["name"]: item for item in report["packages"]}
     assert resolved["com.unity.test-framework"]["version"] == framework
     assert resolved["com.unity.test-framework"]["source"] == ("editor" if profile == "unity-six" else "registry-cache")
+    assert resolved["com.unity.editorcoroutines"]["version"] == ("1.1.0" if profile == "unity-six" else "1.0.1")
+    assert resolved["com.unity.editorcoroutines"]["source"] == "registry-cache"
+    assert resolved["com.unity.editorcoroutines"]["minimumUnity"] == ("2022.3" if profile == "unity-six" else "2018.1")
+    assert (repo / result.editor_coroutines_source / "Editor/Unity.EditorCoroutines.Editor.asmdef").is_file()
     assert {"com.unity.ugui", "com.unity.modules.ai"} <= resolved.keys()
     assert not {"com.unity.ai.navigation", "com.unity.textmeshpro", "com.unity.timeline"} & resolved.keys()
 
@@ -347,12 +381,13 @@ def test_main_exports_all_outputs_only_after_success(tmp_path: Path, monkeypatch
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.setattr(sys, "argv", ["unity_ci_packages.py", "prepare", "--unity-version", "6000.7.0b2",
                                       "--unity-data", str(tmp_path), "--output", ".unity-ci/profile"])
-    expected = packages.Preparation("a/refs", "a/framework", "a/project", "a/resolved-packages.json")
+    expected = packages.Preparation("a/refs", "a/framework", "a/project", "a/resolved-packages.json", "a/coroutines")
     monkeypatch.setattr(packages, "prepare", lambda *args, **kwargs: expected)
     assert packages.main() == 0
     assert dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines()) == {
         "refs": expected.refs, "test_framework_source": expected.test_framework_source,
-        "project_path": expected.project_path, "resolution_report": expected.resolution_report}
+        "project_path": expected.project_path, "resolution_report": expected.resolution_report,
+        "editor_coroutines_source": expected.editor_coroutines_source}
     def fail(*args, **kwargs):
         raise packages.PreparationError("missing bundle")
     monkeypatch.setattr(packages, "prepare", fail)

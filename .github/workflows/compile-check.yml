@@ -150,6 +150,7 @@ jobs:
           UNITY_DATA: ${{ steps.sdk.outputs.unity_data }}
           EXTRA_REFS: ${{ steps.packages.outputs.refs }}
           TEST_FRAMEWORK_SOURCE: ${{ steps.packages.outputs.test_framework_source }}
+          EDITOR_COROUTINES_SOURCE: ${{ steps.packages.outputs.editor_coroutines_source }}
           TEST_PROJECT: ${{ steps.packages.outputs.project_path }}
         run: |
           set -euo pipefail
@@ -160,6 +161,7 @@ jobs:
             -e REPO=/repo \
             -e EXTRA_REFS="/repo/$EXTRA_REFS" \
             -e TEST_FRAMEWORK_SOURCE="/repo/$TEST_FRAMEWORK_SOURCE" \
+            -e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE" \
             -e TEST_PROJECT="/repo/$TEST_PROJECT" \
             "$UNITY_IMAGE" /repo/tools/compile-check.sh
 
@@ -183,6 +185,7 @@ jobs:
               echo "MCP runtime, Editor and EditMode test assemblies compiled against Unity"
               echo "\`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) reference assemblies for **win, osx and linux**."
               echo "CustomTools Roslyn examples also compiled with USE_ROSLYN **off and on**, with warnings treated as errors."
+              echo "The pinned Editor Coroutines package's actual Editor assembly was compiled and referenced."
               echo
               echo "No Unity license was used, so this runs on fork PRs too."
               echo "Note: this compiles the code, it does not run the test suite."

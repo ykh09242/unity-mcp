@@ -62,6 +62,7 @@ class Preparation:
     test_framework_source: str
     project_path: str
     resolution_report: str
+    editor_coroutines_source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +349,14 @@ def prepare(unity_version: str, unity_data: Path, output: Path, *, repo: Path = 
         for assembly in ("UnityEngine.TestRunner", "UnityEditor.TestRunner"):
             if not (framework / assembly).is_dir():
                 raise PreparationError(f"Test Framework source missing: {assembly}")
+        coroutines_editor = scratch / "packages" / "com.unity.editorcoroutines" / "Editor"
+        coroutines_asmdef = coroutines_editor / "Unity.EditorCoroutines.Editor.asmdef"
+        if not coroutines_asmdef.is_file():
+            raise PreparationError("Editor Coroutines assembly definition missing: Unity.EditorCoroutines.Editor")
+        if read_json(coroutines_asmdef).get("name") != "Unity.EditorCoroutines.Editor":
+            raise PreparationError("Editor Coroutines assembly name must be Unity.EditorCoroutines.Editor")
+        if not any(path.is_file() for path in coroutines_editor.rglob("*.cs")):
+            raise PreparationError("Editor Coroutines Editor sources missing")
         copy_source(package_root, scratch / "package")
         isolated_package = dict(original_package)
         isolated_package["dependencies"] = {name: resolved[name].version for name in original_package.get("dependencies", {})}
@@ -367,7 +376,8 @@ def prepare(unity_version: str, unity_data: Path, output: Path, *, repo: Path = 
         (scratch / "resolved-packages.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         scratch.replace(output)
     relative = output.relative_to(repo).as_posix()
-    return Preparation(f"{relative}/refs", f"{relative}/packages/com.unity.test-framework", f"{relative}/project", f"{relative}/resolved-packages.json")
+    return Preparation(f"{relative}/refs", f"{relative}/packages/com.unity.test-framework", f"{relative}/project",
+                       f"{relative}/resolved-packages.json", f"{relative}/packages/com.unity.editorcoroutines")
 
 
 def copy_image_packages(image: str, destination: Path, *, unity_version: str | None = None) -> Path:

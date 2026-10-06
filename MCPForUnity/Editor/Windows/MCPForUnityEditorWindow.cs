@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -15,6 +16,7 @@ using MCPForUnity.Editor.Windows.Components.Tools;
 using MCPForUnity.Editor.Setup;
 using MCPForUnity.Editor.Windows.Components.Validation;
 using UnityEditor;
+using Unity.EditorCoroutines.Editor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -50,6 +52,8 @@ namespace MCPForUnity.Editor.Windows
         private VisualElement assetGenPanel;
 
         private static readonly HashSet<MCPForUnityEditorWindow> OpenWindows = new();
+        private static bool dependencyActionInFlight;
+        private VisualElement dependencySection;
         private bool guiCreated = false;
         private bool toolsLoaded = false;
         private bool resourcesLoaded = false;
@@ -57,6 +61,7 @@ namespace MCPForUnity.Editor.Windows
         private const double RefreshDebounceSeconds = 0.5;
         private bool updateCheckQueued = false;
         private bool updateCheckInFlight = false;
+        private bool updateCheckPending = false;
         private ActivePanel activePanel;
 
         private enum ActivePanel
@@ -416,7 +421,12 @@ namespace MCPForUnity.Editor.Windows
 
         private void QueueUpdateCheck()
         {
-            if (updateCheckQueued || updateCheckInFlight)
+            if (updateCheckInFlight)
+            {
+                updateCheckPending = true;
+                return;
+            }
+            if (updateCheckQueued)
             {
                 return;
             }
@@ -425,7 +435,7 @@ namespace MCPForUnity.Editor.Windows
             EditorApplication.delayCall += CheckForPackageUpdates;
         }
 
-        private void CheckForPackageUpdates()
+        private async void CheckForPackageUpdates()
         {
             updateCheckQueued = false;
 
@@ -456,38 +466,52 @@ namespace MCPForUnity.Editor.Windows
 
             // Background thread: network I/O only (no EditorPrefs or Unity API access)
             updateCheckInFlight = true;
-            Task.Run(() =>
+            try
             {
-                try
+                var result = await Task.Run(() =>
                 {
                     return updateService.FetchAndCompare(currentVersion, isGitInstallation, gitBranch);
-                }
-                catch (Exception ex)
+                });
+
+                bool current = IsUpdateCheckCurrent(updateService, currentVersion, isGitInstallation, gitBranch);
+                if (current && result != null && result.CheckSucceeded && !string.IsNullOrEmpty(result.LatestVersion))
                 {
-                    McpLog.Info($"Package update check skipped: {ex.Message}");
-                    return null;
+                    updateService.CacheFetchResult(currentVersion, result.LatestVersion);
                 }
-            }).ContinueWith(t =>
-            {
-                EditorApplication.delayCall += () =>
-                {
-                    updateCheckInFlight = false;
+                if (this == null || !guiCreated || updateNotification == null || updateNotificationText == null)
+                    return;
 
-                    // Main thread: cache the result in EditorPrefs
-                    var result = t.Status == TaskStatus.RanToCompletion ? t.Result : null;
-                    if (result != null && result.CheckSucceeded && !string.IsNullOrEmpty(result.LatestVersion))
-                    {
-                        updateService.CacheFetchResult(currentVersion, result.LatestVersion);
-                    }
-
-                    if (this == null || updateNotification == null || updateNotificationText == null)
-                    {
-                        return;
-                    }
-
+                if (current)
                     ApplyUpdateCheckResult(result, currentVersion);
-                };
-            }, TaskScheduler.Default);
+                else
+                    updateCheckPending = true;
+            }
+            catch (Exception ex)
+            {
+                McpLog.Info($"Package update check skipped: {ex.Message}");
+                if (this != null && guiCreated && updateNotification != null && updateNotificationText != null)
+                    ApplyUpdateCheckResult(null, currentVersion);
+            }
+            finally
+            {
+                updateCheckInFlight = false;
+                if (updateCheckPending)
+                {
+                    updateCheckPending = false;
+                    if (this != null && guiCreated)
+                        QueueUpdateCheck();
+                }
+            }
+        }
+
+        private static bool IsUpdateCheckCurrent(IPackageUpdateService service, string version, bool isGitInstallation, string branch)
+        {
+            if (!ReferenceEquals(service, MCPServiceLocator.Updates) ||
+                !string.Equals(version, AssetPathUtility.GetPackageVersion(), StringComparison.Ordinal) ||
+                isGitInstallation != service.IsGitInstallation())
+                return false;
+
+            return !isGitInstallation || string.Equals(branch, service.GetGitUpdateBranch(version), StringComparison.OrdinalIgnoreCase);
         }
 
         private void ApplyUpdateCheckResult(UpdateCheckResult result, string currentVersion)
@@ -576,6 +600,7 @@ namespace MCPForUnity.Editor.Windows
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.delayCall -= CheckForPackageUpdates;
             updateCheckQueued = false;
+            updateCheckPending = false;
             OpenWindows.Remove(this);
             guiCreated = false;
             toolsLoaded = false;
@@ -742,9 +767,11 @@ namespace MCPForUnity.Editor.Windows
             };
         }
 
-        private static void BuildDependenciesSection(VisualElement container)
+        private void BuildDependenciesSection(VisualElement container)
         {
             var section = new VisualElement();
+            dependencySection = section;
+            section.SetEnabled(!dependencyActionInFlight);
             section.AddToClassList("section");
 
             var title = new Label("Optional Dependencies");
@@ -766,13 +793,18 @@ namespace MCPForUnity.Editor.Windows
                 if (!EditorUtility.DisplayDialog("Install All Dependencies",
                     "This will install Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
                     "Install All", "Cancel")) return;
-                installAllButton.SetEnabled(false);
-                installAllButton.text = "Installing...";
-                if (!RoslynInstaller.IsInstalled()) RoslynInstaller.Install(interactive: false);
-                BatchUpmAdd(upmPackages, () =>
+                RunDependencyAction(installAllButton, "Installing...", "Install All", async done =>
                 {
-                    installAllButton.SetEnabled(true);
-                    installAllButton.text = "Install All";
+                    try
+                    {
+                        if (!RoslynInstaller.IsInstalled()) await RoslynInstaller.InstallAsync(interactive: false);
+                        BatchUpmAdd(upmPackages, done);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[MCP] Install failed: {ex.Message}");
+                        done();
+                    }
                 });
             });
             installAllButton.text = "Install All";
@@ -785,13 +817,10 @@ namespace MCPForUnity.Editor.Windows
                 if (!EditorUtility.DisplayDialog("Uninstall All Dependencies",
                     "This will remove Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
                     "Uninstall All", "Cancel")) return;
-                uninstallAllButton.SetEnabled(false);
-                uninstallAllButton.text = "Removing...";
-                UninstallRoslyn();
-                BatchUpmRemove(upmPackages, () =>
+                RunDependencyAction(uninstallAllButton, "Removing...", "Uninstall All", done =>
                 {
-                    uninstallAllButton.SetEnabled(true);
-                    uninstallAllButton.text = "Uninstall All";
+                    UninstallRoslyn();
+                    BatchUpmRemove(upmPackages, done);
                 });
             });
             uninstallAllButton.text = "Uninstall All";
@@ -812,7 +841,7 @@ namespace MCPForUnity.Editor.Windows
                     ? "Installed via Plugins/Roslyn \u2014 execute_code uses Roslyn"
                     : "Available (loaded from NuGet/external) \u2014 execute_code uses Roslyn",
                 "Not installed \u2014 execute_code falls back to C# 6 (CodeDom)",
-                done => { RoslynInstaller.Install(interactive: true); done?.Invoke(); },
+                async done => { try { await RoslynInstaller.InstallAsync(interactive: true); } finally { done(); } },
                 roslynInstalledLocally
                     ? (Action<Action>)(done => { UninstallRoslyn(); done?.Invoke(); })
                     : null);
@@ -900,19 +929,7 @@ namespace MCPForUnity.Editor.Windows
                 Button btn = null;
                 btn = new Button(() =>
                 {
-                    btn.SetEnabled(false);
-                    btn.text = "Installing...";
-                    Action restore = () =>
-                    {
-                        btn.SetEnabled(true);
-                        btn.text = "Install";
-                    };
-                    try { installAction(restore); }
-                    catch (Exception e)
-                    {
-                        Debug.LogError($"[MCP] Install failed: {e.Message}");
-                        restore();
-                    }
+                    RunDependencyAction(btn, "Installing...", "Install", installAction);
                 });
                 btn.text = "Install";
                 btn.AddToClassList("action-button");
@@ -926,19 +943,7 @@ namespace MCPForUnity.Editor.Windows
                 {
                     if (!EditorUtility.DisplayDialog("Remove " + name,
                         $"Are you sure you want to remove {name}?", "Remove", "Cancel")) return;
-                    btn.SetEnabled(false);
-                    btn.text = "Removing...";
-                    Action restore = () =>
-                    {
-                        btn.SetEnabled(true);
-                        btn.text = "Uninstall";
-                    };
-                    try { uninstallAction(restore); }
-                    catch (Exception e)
-                    {
-                        Debug.LogError($"[MCP] Uninstall failed: {e.Message}");
-                        restore();
-                    }
+                    RunDependencyAction(btn, "Removing...", "Uninstall", uninstallAction);
                 });
                 btn.text = "Uninstall";
                 btn.AddToClassList("action-button");
@@ -949,6 +954,34 @@ namespace MCPForUnity.Editor.Windows
                 row.Add(buttonRow);
 
             parent.Add(row);
+        }
+
+        private static void RunDependencyAction(Button button, string busyText, string idleText, Action<Action> action)
+        {
+            if (dependencyActionInFlight) return;
+            dependencyActionInFlight = true;
+            button.SetEnabled(false);
+            button.text = busyText;
+            foreach (var window in OpenWindows)
+                window.dependencySection?.SetEnabled(false);
+
+            bool completed = false;
+            Action restore = () =>
+            {
+                if (completed) return;
+                completed = true;
+                dependencyActionInFlight = false;
+                button.SetEnabled(true);
+                button.text = idleText;
+                foreach (var window in OpenWindows)
+                    window.dependencySection?.SetEnabled(true);
+            };
+            try { action(restore); }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MCP] Dependency action failed: {ex.Message}");
+                restore();
+            }
         }
 
         private static void InstallUpmPackage(string packageId, Action onComplete = null)
@@ -965,31 +998,52 @@ namespace MCPForUnity.Editor.Windows
         {
             var request = UnityEditor.PackageManager.Client.AddAndRemove(packageIds, null);
             EditorUtility.DisplayProgressBar("Installing Packages", $"Installing {packageIds.Length} package(s)...", 0.5f);
-            PollUpmRequest(request, "install", onComplete);
+            EditorCoroutineUtility.StartCoroutineOwnerless(PollUpmRequest(request, "install", onComplete));
         }
 
         private static void BatchUpmRemove(string[] packageIds, Action onComplete = null)
         {
             var request = UnityEditor.PackageManager.Client.AddAndRemove(null, packageIds);
             EditorUtility.DisplayProgressBar("Removing Packages", $"Removing {packageIds.Length} package(s)...", 0.5f);
-            PollUpmRequest(request, "remove", onComplete);
+            EditorCoroutineUtility.StartCoroutineOwnerless(PollUpmRequest(request, "remove", onComplete));
         }
 
-        private static void PollUpmRequest(UnityEditor.PackageManager.Requests.AddAndRemoveRequest request, string verb, Action onComplete)
+        private static IEnumerator PollUpmRequest(UnityEditor.PackageManager.Requests.AddAndRemoveRequest request, string verb, Action onComplete)
         {
-            EditorApplication.CallbackFunction pollCallback = null;
-            pollCallback = () =>
+            try
             {
-                if (!request.IsCompleted) return;
-                EditorApplication.update -= pollCallback;
+                while (true)
+                {
+                    bool completed = false;
+                    bool failed = false;
+                    try { completed = request.IsCompleted; }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[MCP] Package {verb} failed: {ex.Message}");
+                        failed = true;
+                    }
+                    if (failed) yield break;
+                    if (completed) break;
+                    yield return null;
+                }
+
+                try
+                {
+                    if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
+                        Debug.Log($"[MCP] Package {verb} succeeded.");
+                    else
+                        Debug.LogError($"[MCP] Package {verb} failed: {request.Error?.message}");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[MCP] Package {verb} failed: {ex.Message}");
+                }
+            }
+            finally
+            {
                 EditorUtility.ClearProgressBar();
-                if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
-                    Debug.Log($"[MCP] Package {verb} succeeded.");
-                else
-                    Debug.LogError($"[MCP] Package {verb} failed: {request.Error?.message}");
                 onComplete?.Invoke();
-            };
-            EditorApplication.update += pollCallback;
+            }
         }
 
         private static void UninstallRoslyn()

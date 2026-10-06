@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -38,7 +39,7 @@ namespace MCPForUnity.Editor.Setup
                 // shadowing the v6 we actually need) would still satisfy file-existence but
                 // leave Roslyn unable to load. Compare the on-disk assembly version against
                 // each entry's declared NuGet version, treating "older or unreadable" as not
-                // installed so Install() can rewrite it.
+                // installed so InstallAsync() can rewrite it.
                 if (Version.TryParse(entry.version, out var requiredVersion))
                 {
                     try
@@ -56,7 +57,7 @@ namespace MCPForUnity.Editor.Setup
             return true;
         }
 
-        public static void Install(bool interactive = true)
+        public static async Task InstallAsync(bool interactive = true)
         {
             if (IsInstalled() && interactive)
             {
@@ -91,9 +92,13 @@ namespace MCPForUnity.Editor.Setup
                     using (var request = UnityWebRequest.Get(url))
                     {
                         request.timeout = 30;
-                        request.SendWebRequest();
-                        while (!request.isDone)
-                            System.Threading.Thread.Sleep(50);
+                        var operation = request.SendWebRequest();
+                        var completion = new TaskCompletionSource<bool>();
+                        if (operation.isDone)
+                            completion.TrySetResult(true);
+                        else
+                            operation.completed += _ => completion.TrySetResult(true);
+                        await completion.Task;
 
                         if (request.result != UnityWebRequest.Result.Success)
                             throw new Exception($"Failed to download {packageId}: {request.error}");

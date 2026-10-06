@@ -192,8 +192,10 @@ def test_compilation_and_editor_tests_share_isolated_package_preparation(name, j
         compile_step = next(step for step in job["steps"] if step.get("name") == "Compile")
         assert compile_step["env"]["EXTRA_REFS"] == "${{ steps.packages.outputs.refs }}"
         assert compile_step["env"]["TEST_FRAMEWORK_SOURCE"] == "${{ steps.packages.outputs.test_framework_source }}"
+        assert compile_step["env"]["EDITOR_COROUTINES_SOURCE"] == "${{ steps.packages.outputs.editor_coroutines_source }}"
         assert compile_step["env"]["TEST_PROJECT"] == "${{ steps.packages.outputs.project_path }}"
         assert '-e TEST_PROJECT="/repo/$TEST_PROJECT"' in compile_step["run"]
+        assert '-e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE"' in compile_step["run"]
         artifact = next(step for step in job["steps"] if step.get("name") == "Upload package resolution")
         assert artifact["with"]["path"] == "${{ steps.packages.outputs.resolution_report }}"
         assert artifact["with"]["if-no-files-found"] == "error"

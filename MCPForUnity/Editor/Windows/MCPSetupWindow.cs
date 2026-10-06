@@ -55,8 +55,15 @@ namespace MCPForUnity.Editor.Windows
         {
             var window = GetWindow<MCPSetupWindow>("MCP Setup");
             window.minSize = new Vector2(480, 320);
-            window._dependencyResult = dependencyResult ?? DependencyManager.CheckAllDependencies();
+            window.SetDependencyResult(dependencyResult ?? DependencyManager.CheckAllDependencies());
             window.Show();
+        }
+
+        private void SetDependencyResult(DependencyCheckResult dependencyResult)
+        {
+            _dependencyResult = dependencyResult;
+            if (statusMessage != null && installationSection != null && doneButton != null)
+                UpdateUI();
         }
 
         public void CreateGUI()

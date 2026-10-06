@@ -169,8 +169,10 @@ tools/check-unity-versions.sh --full    # full EditMode test run
 # License-free Roslyn compile of MCPForUnity, the same gate compile-check.yml runs on every PR.
 # No Editor launch, ~1 min per version. EXTRA_REFS must hold Newtonsoft.Json.dll and
 # nunit.framework.dll (copy them from TestProjects/UnityMCPTests/Library/PackageCache);
-# the script header has the full recipe, including the Windows/Git Bash form.
-UNITY_DATA=/path/to/Editor/Data UNITY_VERSION=2021.3.45f2 EXTRA_REFS=/path/to/refs tools/compile-check.sh
+# EDITOR_COROUTINES_SOURCE must point to the extracted, compatible Editor Coroutines
+# package. The script header has the full recipe, including the Windows/Git Bash form.
+UNITY_DATA=/path/to/Editor/Data UNITY_VERSION=2021.3.45f2 EXTRA_REFS=/path/to/refs \
+  EDITOR_COROUTINES_SOURCE=/path/to/editor-coroutines tools/compile-check.sh
 ```
 
 #### Local headless test harness

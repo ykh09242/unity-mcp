@@ -16,6 +16,7 @@ ROSLYN_DIRECTORY = "MonoBleedingEdge/lib/mono/4.5"
 ROSLYN_REFERENCES = ("Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
                      "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll")
 OPTIONAL_ASSEMBLIES = ("MCPForUnity.CustomTools.RoslynOff", "MCPForUnity.CustomTools.RoslynOn")
+COROUTINES_ASSEMBLY = "Unity.EditorCoroutines.Editor"
 STALE_REFERENCES = {
     "DATA/Managed/UnityEngine/UnityEditor.PackageManagerUIModule.dll",
     "DATA/Managed/UnityEngine/UnityEditor.UIServiceModule.dll",
@@ -37,13 +38,15 @@ class CompileHarness:
     output: Path
     calls: Path
     bash: str
+    coroutines: Path
 
     def run(self, version: str, platforms: str = "linux", *, test_project: Path | None = None,
-            framework: Path | None = None) -> subprocess.CompletedProcess[str]:
+            framework: Path | None = None, coroutines: Path | None = None) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ, UNITY_DATA=self.data.as_posix(), REPO=self.repo.as_posix(),
                    UNITY_VERSION=version, EXTRA_REFS=self.extra.as_posix(),
                    TEST_FRAMEWORK_SOURCE=framework.as_posix() if framework else "",
                    TEST_PROJECT=test_project.as_posix() if test_project else "",
+                   EDITOR_COROUTINES_SOURCE=(coroutines or self.coroutines).as_posix(),
                    PLATFORMS=platforms, OUT=self.output.as_posix(),
                    FAKE_COMPILER_CALLS=self.calls.as_posix())
         return subprocess.run([self.bash, SCRIPT.as_posix()], env=env, capture_output=True, text=True)
@@ -97,7 +100,14 @@ done < "$rsp"
 ''', encoding="utf-8")
     compiler.chmod(0o755)
     (tmp_path / "output" / "linux").mkdir(parents=True)
-    result = CompileHarness(repo, data, extra, tmp_path / "output", tmp_path / "calls.txt", bash)
+    coroutines = repo / "editor coroutines"
+    (coroutines / "Editor").mkdir(parents=True)
+    (coroutines / "Editor/Fixture.cs").write_text("class EditorCoroutineFixture {}", encoding="utf-8")
+    (coroutines / f"Editor/{COROUTINES_ASSEMBLY}.asmdef").write_text(
+        json.dumps({"name": COROUTINES_ASSEMBLY, "includePlatforms": ["Editor"]}), encoding="utf-8")
+    (coroutines / "Tests").mkdir()
+    (coroutines / "Tests/Excluded.cs").write_text("#error Package tests must not compile", encoding="utf-8")
+    result = CompileHarness(repo, data, extra, tmp_path / "output", tmp_path / "calls.txt", bash, coroutines)
     modern_sdk(result)
     return result
 
@@ -132,7 +142,10 @@ def test_matrix_compiles_all_platforms_with_selected_explicit_profile(
             rsp = (harness.output / platform / f"MCPForUnity.{assembly}.rsp").read_text(encoding="utf-8")
             assert '/Managed/Selected.dll"' in rsp
             assert f"-define:UNITY_EDITOR_{platform.upper()}" in rsp
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 12
+        coroutine_rsp = (harness.output / platform / f"{COROUTINES_ASSEMBLY}.rsp").read_text(encoding="utf-8")
+        assert '/Managed/Selected.dll"' in coroutine_rsp
+        assert f"-define:UNITY_EDITOR_{platform.upper()}" in coroutine_rsp
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 15
 
 
 @pytest.mark.parametrize("version", ["6000.7.0b2", "6000.7.0a6", "6000.8.0a1"])
@@ -153,7 +166,7 @@ def test_windows_compiler_layout_uses_bundled_runtime(harness: CompileHarness) -
     shim.rename(shim.with_suffix(".exe"))
     result = harness.run("2021.3.45f2")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 4
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 5
 
 
 def test_missing_compiler_reports_distribution_candidates_without_selecting_them(harness: CompileHarness) -> None:
@@ -189,7 +202,7 @@ def test_modern_sdk_uses_one_coherent_bundled_toolchain(harness: CompileHarness,
     assert "Tools/Scripting/DotNetSdk/sdk/9.0.100/Roslyn/bincore/csc.dll" in result.stdout
     assert "Runtime       : " in result.stdout
     assert "Tools/Scripting/DotNetSdk/dotnet" in result.stdout
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 4
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 5
 
 
 @pytest.mark.parametrize("failure", ["absent", "compiler", "runtime", "two_roots", "two_versions", "partial_version", "two_runtimes"])
@@ -220,7 +233,7 @@ def test_modern_sdk_supports_explicit_executable_suffix(harness: CompileHarness)
     (sdk / "dotnet").rename(sdk / "dotnet.exe")
     result = harness.run("6000.6.4f1")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 4
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 5
 
 
 def test_modern_sdk_rejects_external_symlinks(harness: CompileHarness) -> None:
@@ -425,12 +438,62 @@ def test_explicit_staged_project_compiles_fixture_and_editmode_all_platforms(
         (harness.output / platform).mkdir()
     result = harness.run("6000.7.0b2", "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 24
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 27
     for platform in ("win", "osx", "linux"):
         rsp = (harness.output / platform / "MCPForUnityTests.EditMode.rsp").read_text(encoding="utf-8")
         assert "/Assets/Tests/EditMode/Fixture.cs" in rsp
-        for name in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "TestAsmdef", "UnityEngine.TestRunner", "UnityEditor.TestRunner"):
+        for name in ("MCPForUnity.Runtime", "MCPForUnity.Editor", "TestAsmdef", "UnityEngine.TestRunner", "UnityEditor.TestRunner", COROUTINES_ASSEMBLY):
             assert f'/{name}.dll"' in rsp
+
+
+@pytest.mark.parametrize("missing", ["package", "Editor", "asmdef", "sources"])
+def test_required_editor_coroutines_sources_fail_before_compiler(harness: CompileHarness, missing: str) -> None:
+    if missing == "package":
+        shutil.rmtree(harness.coroutines)
+    elif missing == "Editor":
+        shutil.rmtree(harness.coroutines / "Editor")
+    elif missing == "asmdef":
+        (harness.coroutines / f"Editor/{COROUTINES_ASSEMBLY}.asmdef").unlink()
+    else:
+        (harness.coroutines / "Editor/Fixture.cs").unlink()
+    result = harness.run("2021.3.45f2")
+    assert result.returncode == 2
+    assert not harness.calls.exists()
+
+
+def test_editor_coroutines_source_environment_is_required(harness: CompileHarness) -> None:
+    env = dict(os.environ, UNITY_DATA=harness.data.as_posix(), REPO=harness.repo.as_posix(),
+               EDITOR_COROUTINES_SOURCE="", OUT=harness.output.as_posix())
+    result = subprocess.run([harness.bash, SCRIPT.as_posix()], env=env, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "EDITOR_COROUTINES_SOURCE must be set" in result.stderr
+    assert not harness.calls.exists()
+
+
+def test_editor_coroutines_compiles_only_editor_sources_and_is_referenced(harness: CompileHarness) -> None:
+    result = harness.run("2021.3.45f2", "win osx linux")
+    assert result.returncode == 0, result.stdout + result.stderr
+    for platform in ("win", "osx", "linux"):
+        rsp = (harness.output / platform / f"{COROUTINES_ASSEMBLY}.rsp").read_text(encoding="utf-8")
+        assert "/Editor/Fixture.cs" in rsp
+        assert "/Tests/" not in rsp
+        editor = (harness.output / platform / "MCPForUnity.Editor.rsp").read_text(encoding="utf-8")
+        assert f'/{COROUTINES_ASSEMBLY}.dll"' in editor
+
+
+def test_missing_editor_coroutines_output_blocks_editor_and_tests(
+    harness: CompileHarness, staged_tests: tuple[Path, Path],
+) -> None:
+    project, framework = staged_tests
+    compiler = harness.data / "Tools/Scripting/DotNetSdk/dotnet"
+    compiler.write_text(compiler.read_text(encoding="utf-8").replace('touch "$output"',
+                        f'case "$output" in *{COROUTINES_ASSEMBLY}.dll) ;; *) touch "$output" ;; esac'), encoding="utf-8")
+    result = harness.run("6000.7.0b2", test_project=project, framework=framework)
+    assert result.returncode != 0
+    assert f"{COROUTINES_ASSEMBLY} failed to compile" in result.stdout
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    assert "MCPForUnity.Editor" not in calls
+    assert "MCPForUnityTests.EditMode" not in calls
 
 
 @pytest.mark.parametrize("missing", ["Assets/Scripts/TestAsmdef", "Assets/Tests/EditMode"])
@@ -523,7 +586,9 @@ def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
     assert not fixture["noEngineReferences"]
     assert tests["name"] == "MCPForUnityTests.EditMode"
     assert set(tests["references"]) == {"MCPForUnity.Editor", "MCPForUnity.Runtime", "TestAsmdef",
-                                        "UnityEngine.TestRunner", "UnityEditor.TestRunner"}
+                                        "UnityEngine.TestRunner", "UnityEditor.TestRunner", COROUTINES_ASSEMBLY}
+    editor = json.loads((ROOT / "MCPForUnity/Editor/MCPForUnity.Editor.asmdef").read_text(encoding="utf-8"))
+    assert COROUTINES_ASSEMBLY in editor["references"]
     assert tests["defineConstraints"] == ["UNITY_INCLUDE_TESTS"]
     assert tests["versionDefines"] == []
     assert tests["includePlatforms"] == ["Editor"]
@@ -544,7 +609,7 @@ def test_optional_examples_complete_matrix_preserves_sources_defines_and_referen
     nested.write_text("class Additional {}", encoding="utf-8")
     result = harness.run(version, "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
-    core = ("UnityEngine.TestRunner", "UnityEditor.TestRunner", "MCPForUnity.Runtime", "MCPForUnity.Editor")
+    core = ("UnityEngine.TestRunner", "UnityEditor.TestRunner", "MCPForUnity.Runtime", COROUTINES_ASSEMBLY, "MCPForUnity.Editor")
     expected = (*core, *OPTIONAL_ASSEMBLIES, "TestAsmdef", "MCPForUnityTests.EditMode")
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
     assert calls == list(expected) * 3

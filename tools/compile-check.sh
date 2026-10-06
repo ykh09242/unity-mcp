@@ -11,11 +11,12 @@
 # It does NOT run tests -- that still needs a licensed Editor.
 #
 # Usage (inside unityci/editor, or against a local Hub install):
-#   UNITY_DATA=/opt/unity/Editor/Data UNITY_VERSION=2021.3.45f2 tools/compile-check.sh
+#   UNITY_DATA=/opt/unity/Editor/Data UNITY_VERSION=2021.3.45f2 \
+#   EDITOR_COROUTINES_SOURCE=.unity-ci/2021.3.45f2/packages/com.unity.editorcoroutines tools/compile-check.sh
 #
 # Windows, from Git Bash against a Hub install (no Docker, no license):
 #   UNITY_DATA="C:/Program Files/Unity/Hub/Editor/2021.3.45f2/Editor/Data" UNITY_VERSION=2021.3.45f2 \
-#   EXTRA_REFS=/c/refs tools/compile-check.sh
+#   EXTRA_REFS=/c/refs EDITOR_COROUTINES_SOURCE=/c/packages/com.unity.editorcoroutines@1.0.1 tools/compile-check.sh
 # where /c/refs holds Newtonsoft.Json.dll and nunit.framework.dll, e.g. copied from
 # TestProjects/UnityMCPTests/Library/PackageCache/com.unity.nuget.newtonsoft-json@*/Runtime/ and
 # .../com.unity.ext.nunit@*/net40/unity-custom/. Takes ~1 min per Unity version.
@@ -26,6 +27,7 @@
 #   REPO           repo root                             (default: this script's parent)
 #   EXTRA_REFS     dir holding Newtonsoft/nunit DLLs     (default $REPO/.compile-refs)
 #   TEST_FRAMEWORK_SOURCE  extracted pinned UPM package   (optional; compiles its TestRunner APIs)
+#   EDITOR_COROUTINES_SOURCE extracted pinned UPM package (required; compiles its Editor assembly)
 #   TEST_PROJECT   isolated test project                 (optional; compiles fixture and EditMode tests)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
@@ -57,6 +59,13 @@ TEST_FRAMEWORK_SOURCE=${TEST_FRAMEWORK_SOURCE:-}
 if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
   TEST_FRAMEWORK_SOURCE=$(winpath "$TEST_FRAMEWORK_SOURCE") || exit 2
 fi
+EDITOR_COROUTINES_SOURCE=${EDITOR_COROUTINES_SOURCE:-}
+[ -n "$EDITOR_COROUTINES_SOURCE" ] || die "EDITOR_COROUTINES_SOURCE must be set to the pinned Editor Coroutines package"
+EDITOR_COROUTINES_SOURCE=$(winpath "$EDITOR_COROUTINES_SOURCE") || exit 2
+[ -f "$EDITOR_COROUTINES_SOURCE/Editor/Unity.EditorCoroutines.Editor.asmdef" ] \
+  || die "Editor Coroutines assembly definition not found: Unity.EditorCoroutines.Editor"
+[ -n "$(find "$EDITOR_COROUTINES_SOURCE/Editor" -name '*.cs' -type f -print -quit)" ] \
+  || die "Editor Coroutines Editor sources not found"
 TEST_PROJECT=${TEST_PROJECT:-}
 if [ -n "$TEST_PROJECT" ]; then
   TEST_PROJECT=$(winpath "$TEST_PROJECT") || exit 2
@@ -133,6 +142,7 @@ echo "Unity version : $UNITY_VERSION"
 echo "Unity data    : $UNITY_DATA"
 echo "Compiler      : $CSC"
 echo "Runtime       : $DOTNET"
+echo "Editor Coroutines: $EDITOR_COROUTINES_SOURCE"
 if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
   echo "Test Framework: $TEST_FRAMEWORK_SOURCE"
   for assembly in UnityEngine.TestRunner UnityEditor.TestRunner; do
@@ -236,7 +246,7 @@ compile() {
         [ -n "$entry" ] || continue
         # Compile the pinned package itself without referencing the template's TestRunner.
         case "$name:$entry" in
-          UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll) continue ;;
+          UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll|Unity.EditorCoroutines.Editor:LIBCACHE/*TestRunner.dll) continue ;;
         esac
         local p; p=$(resolve_ref "$entry")
         if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
@@ -294,8 +304,11 @@ for platform in $PLATFORMS; do
   fi
   compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
     "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+  compile Unity.EditorCoroutines.Editor "$EDITOR_COROUTINES_SOURCE/Editor" "$platform" \
+    "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
   compile MCPForUnity.Editor "$REPO/MCPForUnity/Editor" "$platform" \
-    "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+    "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
+    "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || { failed=1; continue; }
   # Use Unity's coherent Mono/.NET Framework Roslyn group in both modes: the
   # compiler helper still references CodeAnalysis under UNITY_EDITOR when off.
   roslyn_refs=()
@@ -314,7 +327,8 @@ for platform in $PLATFORMS; do
       "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
     compile MCPForUnityTests.EditMode "$TEST_PROJECT/Assets/Tests/EditMode" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
-      "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/TestAsmdef.dll" || failed=1
+      "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/TestAsmdef.dll" \
+      "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || failed=1
   fi
 done
 
