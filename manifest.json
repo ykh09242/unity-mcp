@@ -21,7 +21,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/ykh09242/unity-mcp.git@4ddd83dadca78bd8e4e711f6cb53ad9af2a2d188#subdirectory=Server",
+        "git+https://github.com/ykh09242/unity-mcp.git@00d7cb18a6649453fdc95bc0a6ed12dc1422518e#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
