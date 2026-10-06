@@ -17,9 +17,11 @@ from pydantic import BaseModel
 
 from core.config import config
 from models import MCPResponse
+from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
+from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 import transport.unity_transport as unity_transport
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.plugin_hub import PluginHub
@@ -35,6 +37,9 @@ _MAX_JOB_NUDGES = 3
 _NUDGE_STATE_TTL_S = 3600.0
 _MAX_NUDGE_STATES = 256
 _poll_observation_order = count()
+# Unity job responses are parsed at the public tool boundary below. Preserve
+# transport errors and the original observation order while sharing raw reads.
+_job_status_reads: SharedToolReads[tuple[Any, int]] = SharedToolReads(freshness_s=2.0)
 
 
 @dataclass
@@ -465,54 +470,67 @@ async def get_test_job(
 
     # If wait_timeout is specified, poll server-side until complete or timeout
     if wait_timeout and wait_timeout > 0:
+        http_session = await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http" else None
         deadline = asyncio.get_event_loop().time() + wait_timeout
         poll_interval = 2.0  # Poll Unity every 2 seconds
         response = None
+        # The selected instance and authenticated owner must match. An absent
+        # selection may route through caller context, so those reads stay private.
+        poll_key = (
+            config.transport_mode, user_id, unity_instance, http_session, job_id,
+            bool(include_failed_tests), bool(include_details),
+        ) if unity_instance and (
+            not config.http_remote_hosted or isinstance(user_id, str) and bool(user_id)
+        ) and (
+            config.transport_mode.lower() == "http" and isinstance(http_session, str) and bool(http_session)
+        ) else None
+        async with _job_status_reads.session(poll_key) as shared_read:
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    if response is None:
+                        return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
+                    return GetTestJobResponse.model_validate(response)
+                try:
+                    response, observation_order = await asyncio.wait_for(shared_read.fetch(_fetch_status), timeout=remaining)
+                except SharedReadCapacityError:
+                    return MCPResponse(**response_limit_error("result_capacity"))
+                except asyncio.TimeoutError:
+                    if response is None:
+                        return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
+                    return GetTestJobResponse.model_validate(response)
 
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                if response is None:
-                    return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
-                return GetTestJobResponse.model_validate(response)
-            try:
-                response, observation_order = await asyncio.wait_for(_fetch_status(), timeout=remaining)
-            except asyncio.TimeoutError:
-                if response is None:
-                    return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
-                return GetTestJobResponse.model_validate(response)
+                if isinstance(response, MCPResponse):
+                    return response
+                if not isinstance(response, dict):
+                    return MCPResponse(success=False, error=str(response))
 
-            if isinstance(response, MCPResponse):
-                return response
-            if not isinstance(response, dict):
-                return MCPResponse(success=False, error=str(response))
+                if not response.get("success", True):
+                    return MCPResponse(**response)
 
-            if not response.get("success", True):
-                return MCPResponse(**response)
+                # Check if tests are done
+                data = response.get("data", {})
+                status = data.get("status", "")
+                try:
+                    await asyncio.wait_for(
+                        _update_job_nudge(
+                            unity_instance, user_id, job_id, data, wait=True, observation_order=observation_order,
+                        ),
+                        timeout=max(0.0, deadline - asyncio.get_event_loop().time()),
+                    )
+                except asyncio.TimeoutError:
+                    return GetTestJobResponse(**response)
+                if status in ("succeeded", "failed", "cancelled"):
+                    return GetTestJobResponse(**response)
 
-            # Check if tests are done
-            data = response.get("data", {})
-            status = data.get("status", "")
-            try:
-                await asyncio.wait_for(
-                    _update_job_nudge(
-                        unity_instance, user_id, job_id, data, wait=True, observation_order=observation_order,
-                    ),
-                    timeout=max(0.0, deadline - asyncio.get_event_loop().time()),
-                )
-            except asyncio.TimeoutError:
-                return GetTestJobResponse(**response)
-            if status in ("succeeded", "failed", "cancelled"):
-                return GetTestJobResponse(**response)
+                # Check timeout
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    # Timeout reached, return current status
+                    return GetTestJobResponse(**response)
 
-            # Check timeout
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                # Timeout reached, return current status
-                return GetTestJobResponse(**response)
-
-            # Wait before next poll (but don't exceed remaining time)
-            await asyncio.sleep(min(poll_interval, remaining))
+                # Wait before next poll (but don't exceed remaining time)
+                await asyncio.sleep(min(poll_interval, remaining))
     
     # No wait_timeout - return immediately (original behavior)
     response, observation_order = await _fetch_status()

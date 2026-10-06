@@ -8,8 +8,11 @@ from typing import Annotated, Any
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from core.config import config
+from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -25,7 +28,10 @@ ABSOLUTE_MAX_COMMANDS_PER_BATCH = 100
 # Settings are mutable and belong to a selected user's editor instance.
 _LIMIT_CACHE_TTL_SECONDS = 5.0
 _LIMIT_CACHE_MAX_ENTRIES = 128
-_cached_max_commands: dict[tuple[str | None, str], tuple[int, float]] = {}
+_cached_max_commands: dict[tuple[str, str | None, str, str | None], tuple[int, float]] = {}
+_limit_cache_generation = 0
+# Transport responses remain untyped until the settings boundary below.
+_limit_reads: SharedToolReads[Any] = SharedToolReads(freshness_s=_LIMIT_CACHE_TTL_SECONDS)
 
 
 async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str | None) -> int:
@@ -34,23 +40,34 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     Falls back to DEFAULT_MAX_COMMANDS_PER_BATCH if unavailable.
     """
     cache_key = None
-    if unity_instance:
+    if unity_instance and config.transport_mode.lower() == "http":
         try:
             user_id = await ctx.get_state("user_id")
-            if user_id is None or isinstance(user_id, str):
-                cache_key = (user_id, unity_instance)
+            http_session = await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http" else None
+            if (user_id is None or isinstance(user_id, str)) and (
+                not config.http_remote_hosted or bool(user_id)
+            ):
+                if isinstance(http_session, str) and bool(http_session):
+                    cache_key = (config.transport_mode, user_id, unity_instance, http_session)
         except Exception:
             pass
     cached = _cached_max_commands.get(cache_key) if cache_key is not None else None
     if cached is not None and time.monotonic() < cached[1]:
         return cached[0]
 
-    try:
+    generation = _limit_cache_generation
+    read_key = (generation, cache_key) if cache_key is not None else None
+
+    async def fetch_editor_settings() -> Any:
         # The enriched resource also scans external assets and reads project_info;
         # batch validation only needs the editor's settings snapshot.
-        state_resp = await send_with_unity_instance(
+        return await send_with_unity_instance(
             async_send_command_with_retry, unity_instance, "get_editor_state", {},
         )
+
+    try:
+        async with _limit_reads.session(read_key) as shared_read:
+            state_resp = await shared_read.fetch(fetch_editor_settings)
         data = state_resp.data if hasattr(state_resp, "data") else (
             state_resp.get("data") if isinstance(state_resp, dict) else None
         )
@@ -59,11 +76,13 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
             if isinstance(settings, dict):
                 limit = settings.get("batch_execute_max_commands")
                 if type(limit) is int and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-                    if cache_key is not None:
+                    if cache_key is not None and generation == _limit_cache_generation:
                         if cache_key not in _cached_max_commands and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES:
                             _cached_max_commands.pop(next(iter(_cached_max_commands)))
                         _cached_max_commands[cache_key] = (limit, time.monotonic() + _LIMIT_CACHE_TTL_SECONDS)
                     return limit
+    except SharedReadCapacityError:
+        raise
     except Exception as exc:
         logger.debug("Could not read batch limit from editor state: %s", exc)
 
@@ -72,6 +91,8 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
 
 def invalidate_cached_max_commands() -> None:
     """Reset the cached limit so the next call re-reads from editor state."""
+    global _limit_cache_generation
+    _limit_cache_generation += 1
     _cached_max_commands.clear()
 
 
@@ -147,7 +168,10 @@ async def batch_execute(
         })
 
     unity_instance = await get_unity_instance_from_context(ctx)
-    max_commands = await _get_max_commands_from_editor_state(ctx, unity_instance)
+    try:
+        max_commands = await _get_max_commands_from_editor_state(ctx, unity_instance)
+    except SharedReadCapacityError:
+        return response_limit_error("result_capacity")
     if len(commands) > max_commands:
         raise ValueError(
             f"batch_execute supports up to {max_commands} commands (configured in Unity); received {len(commands)}"

@@ -10,6 +10,8 @@ from models.models import MCPResponse
 def batch_module(monkeypatch):
     module = importlib.import_module("services.tools.batch_execute")
     module.invalidate_cached_max_commands()
+    monkeypatch.setattr(module.config, "transport_mode", "http")
+    monkeypatch.setattr(module.config, "http_remote_hosted", False)
     monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(
         side_effect=lambda ctx: ctx.instance,
     ))
@@ -20,7 +22,9 @@ def batch_module(monkeypatch):
 class Context:
     def __init__(self, instance, user="user-a"):
         self.instance = instance
-        self.get_state = AsyncMock(side_effect=lambda key: user if key == "user_id" else None)
+        self.get_state = AsyncMock(side_effect=lambda key: {
+            "user_id": user, "unity_session_id": "owned-session:" + str(instance),
+        }.get(key))
 
 
 @pytest.mark.asyncio
