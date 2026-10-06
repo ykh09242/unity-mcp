@@ -45,7 +45,7 @@ class ClockedSocket:
     def __init__(self, clock, reads, writes=(), timeout=1.0):
         self.clock, self.reads, self.writes = clock, list(reads), list(writes)
         self.timeout, self.closed = timeout, False
-        self.sent = []
+        self.sent, self.send_attempts, self.read_timeouts, self.write_timeouts = [], [], [], []
     def getblocking(self): return True
     def setblocking(self, value): pass
     def setsockopt(self, *a): pass
@@ -54,11 +54,14 @@ class ClockedSocket:
     def close(self): self.closed = True
     def recv(self, count, flags=0):
         if flags: raise BlockingIOError()
+        self.read_timeouts.append(self.timeout)
         duration, data = self.reads.pop(0)
         self.clock.advance(duration, self.timeout)
         if len(data) > count: self.reads.insert(0, (0.0, data[count:]))
         return data[:count]
     def sendall(self, data):
+        self.send_attempts.append(data)
+        self.write_timeouts.append(self.timeout)
         duration = self.writes.pop(0) if self.writes else 0.0
         self.clock.advance(duration, self.timeout)
         self.sent.append(data)
@@ -118,14 +121,20 @@ module.socket.create_connection = create
 if case not in ("connect", "handshake"): conn.sock = sock
 # When the complete production send_command runs.
 try:
-    conn.send_command("fixture_query", {{}}, max_attempts=0, deadline=budget)
+    result = conn.send_command("fixture_query", {{}}, max_attempts=2, deadline=budget)
 except (TimeoutError, ConnectionError):
-    pass
+    assert case in ("connect", "handshake"), "Dispatched failure lost outcome-unknown response"
 else:
-    raise AssertionError("exhausted deadline returned success")
+    assert result.success is False, "Exhausted deadline returned success"
+    assert result.data == {{"reason": "outcome_unknown", "command": "fixture_query"}}
+    assert result.hint == "inspect_state_before_retry"
+    assert result.error
 # Then I/O ends within budget and the unusable socket is discarded.
 assert clock.now <= budget + 1e-9
 assert sock.closed and conn.sock is None
+# Header/payload failure must never automatically dispatch the command again.
+expected_attempts = 0 if case in ("connect", "handshake") else (1 if case == "legacy" else 2)
+assert len(sock.send_attempts) == expected_attempts
 ''', tmp_path)
 
 
@@ -186,9 +195,14 @@ if case == "heartbeat_limit":
 
 def test_retry_receive_limit_does_not_shorten_writes(tmp_path):
     _run('''
-# Given the first socket closes; retry writes take longer than the receive limit.
+# Given the first header write fails before payload dispatch; retry writes exceed the receive limit.
 config.connection_timeout = 5.0
-conn.sock = ClockedSocket(clock, [(0.0, b"")], timeout=5.0)
+class PreDispatchSocket(ClockedSocket):
+    def sendall(self, data):
+        self.send_attempts.append(data)
+        raise ConnectionResetError("controlled reset before payload dispatch")
+first = PreDispatchSocket(clock, [], timeout=5.0)
+conn.sock = first
 retry = ClockedSocket(clock, [(0.0, b"FRAMING=1\\n"), (0.0, header), (0.0, payload)], [1.2, 0.0], timeout=5.0)
 module.socket.create_connection = lambda endpoint, timeout: retry
 module.time.sleep = lambda seconds: clock.advance(seconds, None)
@@ -198,6 +212,10 @@ result = conn.send_command("fixture_query", {}, max_attempts=1, deadline=5.0)
 # Then only receive keeps its historical short retry limit.
 assert result == {"ok": True} and clock.now < 5.0
 assert retry.timeout == 5.0 and not retry.closed
+assert first.closed and first.send_attempts == [struct.pack(">Q", len(b'{"type": "fixture_query", "params": {}}'))]
+assert retry.write_timeouts[0] > 1.2
+assert retry.read_timeouts[-2:] == [1.0, 1.0]
+assert len(retry.send_attempts) == 2
 ''', tmp_path)
 
 
@@ -211,14 +229,14 @@ class BlockingModeSocket(ClockedSocket):
 sock = BlockingModeSocket(clock, [(0.0, header), (6.0, payload)], timeout=5.0)
 conn.sock = sock
 # When a long overall deadline still receives a wedged first-attempt response.
-try:
-    conn.send_command("fixture_query", {}, max_attempts=0, deadline=90.0)
-except TimeoutError:
-    pass
-else:
-    raise AssertionError("overall deadline replaced configured idle receive limit")
+result = conn.send_command("fixture_query", {}, max_attempts=2, deadline=90.0)
+assert result.success is False
+assert result.data == {"reason": "outcome_unknown", "command": "fixture_query"}
+assert result.hint == "inspect_state_before_retry"
 # Then the previous configured receive timeout remains effective and restored.
-assert clock.now == 5.0 and sock.closed and sock.timeout is None
+assert clock.now == 5.0 and sock.closed and sock.timeout == 5.0
+assert sock.read_timeouts == [5.0, 5.0]
+assert len(sock.send_attempts) == 2
 ''', tmp_path)
 
 

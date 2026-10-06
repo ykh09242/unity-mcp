@@ -83,8 +83,11 @@ def test_send_command_against_wedged_socket_is_bounded(silent_bridge, monkeypatc
     monkeypatch.setattr(config, "connection_timeout", 5.0)
     conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef")
     start = time.monotonic()
-    with pytest.raises(TimeoutError, match="exceeded total deadline"):
-        conn.send_command("get_editor_state", {})
+    response = conn.send_command("get_editor_state", {})
+    assert response.success is False
+    assert response.data["reason"] == "outcome_unknown"
+    assert response.hint == "inspect_state_before_retry"
+    assert "timeout" in response.error.lower() or "deadline" in response.error.lower()
     assert time.monotonic() - start < 4.0
 
 
