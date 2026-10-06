@@ -1,7 +1,7 @@
 """Preserve declared scalar types before FastMCP can coerce tool arguments."""
 from copy import copy
 import inspect
-from types import UnionType
+from types import ModuleType, UnionType
 from typing import Annotated, Any, Callable, Literal, Union, get_args, get_origin, get_type_hints
 
 from pydantic import AllowInfNan, Field, Strict
@@ -78,8 +78,12 @@ def strict_scalar_annotation(annotation: Any) -> Any:
 
 def enforce_strict_tool_inputs(func: Callable) -> Callable:
     """Update input annotations in place without wrapping or changing defaults."""
-    hints = get_type_hints(func, include_extras=True)
     annotations = dict(func.__annotations__)
+    # Python 3.10 adds Optional around function annotations with None defaults,
+    # nesting Annotated metadata. Resolve declared types in the original globals.
+    annotation_scope = ModuleType(func.__module__)
+    annotation_scope.__annotations__ = annotations
+    hints = get_type_hints(annotation_scope, globalns=func.__globals__, include_extras=True)
     for name in inspect.signature(func).parameters:
         if name == "ctx" or name not in hints:
             continue
