@@ -11,6 +11,8 @@ cannot be disabled by the group system (used for server meta-tools like
 """
 from typing import Callable, Any
 
+from services.registry.scalar_validation import enforce_strict_tool_inputs
+
 # Global registry to collect decorated tools
 _tool_registry: list[dict[str, Any]] = []
 
@@ -96,6 +98,7 @@ def mcp_for_unity_tool(
                 "Expected None or a non-empty string."
             )
 
+        enforce_strict_tool_inputs(func)
         _tool_registry.append({
             'func': func,
             'name': tool_name,
