@@ -16,6 +16,7 @@ MAX_RESPONSE_NODES = 100_000
 MAX_RESPONSE_RETAINED_BYTES = 256 * 1024 * 1024
 # Limit whole-document encoding to a small, conservatively bounded allocation.
 _MAX_FAST_JSON_BYTES = 2 * 1024 * 1024
+_MIN_LARGE_ASCII_CHARS = 256 * 1024
 
 
 @dataclass(slots=True)
@@ -71,6 +72,57 @@ def response_limit_error(reason: str = "response_payload_limit") -> dict[str, An
             "data": {"reason": reason}}
 
 
+def _large_ascii_json_size(value: object, proven_ascii: str, *, max_bytes: int,
+                           max_depth: int, max_nodes: int) -> int | None:
+    """Size exact builtin graphs; unsupported values select normal encoding.
+
+    The original visitor proves retained bounds first. One immutable ASCII leaf
+    was already checked, so its printable-character scan need not be repeated.
+    """
+    total = nodes = 0
+
+    def visit(item: object, depth: int) -> bool:
+        nonlocal total, nodes
+        nodes += 1
+        if depth > max_depth or nodes > max_nodes:
+            return False
+        item_type = type(item)
+        if item_type is str:
+            if item is not proven_ascii and (not item.isascii() or not item.isprintable()):
+                return False
+            total += 2 + len(item) + item.count('"') + item.count("\\")
+        elif item_type is dict:
+            total += 2 + 2 * len(item) + 2 * max(0, len(item) - 1)
+            for key, child in item.items():
+                if type(key) is not str or not visit(key, depth + 1) or not visit(child, depth + 1):
+                    return False
+        elif item_type is list or item_type is tuple:
+            total += 2 + 2 * max(0, len(item) - 1)
+            for child in item:
+                if not visit(child, depth + 1):
+                    return False
+        elif item_type is bool:
+            total += 4 if item else 5
+        elif item is None:
+            total += 4
+        elif item_type is int:
+            if item.bit_length() > 14_000:
+                return False
+            total += len(int.__repr__(item))
+        elif item_type is float:
+            if not math.isfinite(item):
+                return False
+            total += len(float.__repr__(item))
+        else:
+            return False
+        return total <= max_bytes
+
+    try:
+        return total if visit(value, 0) else None
+    except (ValueError, RecursionError):
+        return None
+
+
 def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
                   max_depth: int = MAX_RESPONSE_DEPTH,
                   max_nodes: int = MAX_RESPONSE_NODES,
@@ -85,9 +137,10 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
     nodes = 0
     encoded_bound: int | None = 0
     fast_limit = min(_MAX_FAST_JSON_BYTES, max_bytes)
+    large_ascii: str | None = None
 
     def visit(item: Any, depth: int) -> bool:
-        nonlocal retained, nodes, encoded_bound
+        nonlocal retained, nodes, encoded_bound, large_ascii
         nodes += 1
         if depth > max_depth or nodes > max_nodes:
             return False
@@ -121,7 +174,12 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             if len(item) > max_bytes:
                 return False
             retained += 4 * len(item)
-            return retained <= max_retained
+            if retained > max_retained:
+                return False
+            if (large_ascii is None and len(item) >= _MIN_LARGE_ASCII_CHARS
+                    and item.isascii() and item.isprintable()):
+                large_ascii = item
+            return True
         if item_type is dict:
             return all(isinstance(key, str) and visit(key, depth + 1)
                        and visit(child, depth + 1) for key, child in item.items())
@@ -158,6 +216,12 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
         return None
     encoded_bytes = 0
     try:
+        if large_ascii is not None:
+            exact_bytes = _large_ascii_json_size(value, large_ascii, max_bytes=max_bytes,
+                                                max_depth=max_depth, max_nodes=max_nodes)
+            if exact_bytes is not None:
+                retained += exact_bytes
+                return retained if retained <= max_retained else None
         encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False,
                                    default=lambda model: model.__dict__ if isinstance(model, BaseModel) else str(model))
         # Leave room for strings/buffers and older C encoders' temporary chunks
