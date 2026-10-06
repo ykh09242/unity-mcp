@@ -11,7 +11,7 @@ import pytest
 @pytest.mark.parametrize("case", [
     "tests_start_during_compile", "known_tests_dirty", "compile_finishes_ready",
     "clear_stuck", "unknown_state", "malformed_state", "stale_idle",
-    "refresh_error_best_effort", "requires_no_tests_false",
+    "refresh_error_best_effort", "requires_no_tests_false", "invalid_init_timeout",
 ])
 def test_preflight_public_contract(case, tmp_path):
     owned = tmp_path / case
@@ -115,10 +115,16 @@ async def _scenario(case):
             continue
 
         async with Client(app, mode=protocol) as client:
-            result = await client.call_tool("run_tests", {"clear_stuck": True} if case == "clear_stuck" else {})
+            arguments = {"clear_stuck": True} if case == "clear_stuck" else (
+                {"init_timeout": 2**31} if case == "invalid_init_timeout" else {}
+            )
+            result = await client.call_tool("run_tests", arguments)
         response = json.loads(result.content[0].text)
         commands = [r["command"] for r in requests]
-        if case in ("tests_start_during_compile", "known_tests_dirty"):
+        if case == "invalid_init_timeout":
+            assert response["success"] is False and "init_timeout" in response["error"]
+            assert commands == []
+        elif case in ("tests_start_during_compile", "known_tests_dirty"):
             assert response["success"] is False and response["error"] == "busy"
             assert response["hint"] == "retry"
             assert response["data"] == {"reason": "tests_running", "retry_after_ms": 5000}

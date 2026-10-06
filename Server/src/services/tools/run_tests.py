@@ -348,7 +348,7 @@ async def run_tests(
     include_details: Annotated[bool,
                                "Include details for all tests (default: false)"] = False,
     init_timeout: Annotated[int | None,
-                            "Initialization timeout in milliseconds. PlayMode tests may need longer "
+                            "Initialization timeout in milliseconds (1..2147483647). PlayMode tests may need longer "
                             "due to domain reload (default: 15000). Recommended: 120000 for PlayMode."] = None,
     clear_stuck: Annotated[bool,
                            "Clear an orphaned running job instead of starting a run. Use when a job "
@@ -372,8 +372,8 @@ async def run_tests(
             return MCPResponse(**response)
         return MCPResponse(success=False, error=str(response))
 
-    if init_timeout is not None and init_timeout <= 0:
-        return MCPResponse(success=False, error="init_timeout must be a positive integer (milliseconds) or None")
+    if init_timeout is not None and not 0 < init_timeout <= 2**31 - 1:
+        return MCPResponse(success=False, error="init_timeout must be a positive 32-bit integer (milliseconds) or None")
 
     gate = await preflight(ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True)
     if isinstance(gate, MCPResponse):

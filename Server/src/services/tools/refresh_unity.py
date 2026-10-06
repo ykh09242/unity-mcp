@@ -118,7 +118,7 @@ async def send_mutation(
     1. Send with retry_on_reload=False (don't re-send if Unity is reloading)
     2. If reloading rejection (command never executed) → wait + retry once
     3. If connection lost after send → wait + verify via callback
-    4. Wait for editor readiness before returning
+    4. Wait for editor readiness after successful or disconnected mutations
 
     Args:
         verify_after_disconnect: async callable returning a replacement response
@@ -155,6 +155,18 @@ async def send_mutation(
         verified = await verify_after_disconnect()
         if verified is not None:
             resp = verified
+    failed = resp.get("success") is False if isinstance(resp, dict) else (
+        isinstance(resp, MCPResponse) and resp.success is False
+    )
+    error = (resp.get("error") or resp.get("message") or "") if isinstance(resp, dict) else (
+        getattr(resp, "error", "") or getattr(resp, "message", "") or ""
+    )
+    timed_out = "timeout" in error.lower() or "timed out" in error.lower()
+    if failed and not timed_out and not is_connection_lost_after_send(resp) and not is_reloading_rejection(resp):
+        # Return definitive tool errors without delaying them behind an
+        # unrelated readiness poll. Timeouts can occur after a mutation was
+        # sent, so keep their readiness wait alongside reload/disconnect recovery.
+        return resp
     await wait_for_editor_ready(ctx)
     return resp
 
