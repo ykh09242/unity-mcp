@@ -64,6 +64,15 @@ serialized with their final response envelope. This removes an intermediate
 string serialization and parse. Existing asynchronous string-returning tools and
 the legacy JSON API retain their compatibility adapters.
 
+The Python TCP receiver fills a bytearray with `recv_into`, growing it at most
+64 KiB ahead of received data. It does not allocate the entire declared frame
+before data arrives. Framed results reach the existing decoder without another
+full bytes copy; the original frame limits, absolute deadline and EOF checks
+still apply. Exact builtin bytes and bytearray JSON inputs need one strict UTF-8
+decode, while subclasses retain their validation fallback. Streaming JSON size
+checks count ASCII characters directly and encode non-ASCII chunks as needed.
+Encoded-size, retained-memory, depth and node limits still apply independently.
+
 ## `editor_state_v1`
 
 Unity publishes the existing complete v2 state snapshot, with an epoch, sequence
@@ -167,6 +176,22 @@ and formatted. Projection does not add an Editor call.
 
 ## Shared reads
 
+The HTTP bridge shares a pending readiness ping only among callers with the
+same registered principal, Unity session, socket generation and command epoch.
+An ordinary state resource that misses the pushed-state cache can likewise
+share a pending raw state RPC; each caller enriches its own detached copy.
+These two pools have no completed-result freshness window. A later call starts
+a new RPC unless the existing pushed-state cache can serve it.
+
+Authoritative, private and parameterized state reads remain independent and
+prevent later ordinary reads from joining an older pending observation.
+Mutation admission also separates reads before and after the command, including
+console clear and unknown/custom/batch commands. A generation or mutation change
+between readiness and dispatch returns a bounded retry response. Independent
+fresh state reads can both complete; their state observation epochs govern
+sharing rather than rejecting one another. Capacity refusal does not trigger
+repeated readiness probes.
+
 On the HTTP/WebSocket bridge, positive `get_test_job.wait_timeout` callers can
 share a status fetch for the same transport, authenticated user, registered
 Unity session, job and detail flags. A running
@@ -204,6 +229,13 @@ and string request IDs and the SDK's stdout descriptor protection. The adapter
 targets the verified FastMCP 4.0.11 / MCP 2.3.0 runner and fails clearly for an
 unsupported runner or stream shape; dependency upgrades must rerun its real
 subprocess and blocked-writer tests.
+
+The default stdout path serializes with the SDK's public JSON-RPC bytes adapter
+and writes the payload, one LF and flush in the same worker. It supports partial
+writes and retains response ownership through actual worker completion, even
+when cancellation is requested repeatedly. A blocked OS pipe can therefore
+delay cancellation until the reader drains or disconnects. Explicit text
+streams keep the SDK text adapter.
 
 Duplicate active IDs are rejected before tool execution. A duplicate error or
 cancellation during an uncertain SDK handoff can make output ownership
@@ -246,14 +278,19 @@ them against the optimized persistent connection before adding a new transport.
 
 The [owned transport benchmark](../../tools/tests/fixtures/transport_bench/README.md)
 compares real MCP stdio/HTTP subprocess paths through the production TCP/WS
-routing with deterministic simulated Editor responses. It separates measured
-queue/work/peer encoding from the combined wire/framework residual and records
-payload equality, cancellation cleanup, reconnect and source fingerprints.
-It excludes real Editor execution, full server startup/catalog and state-resource
-caching; its results are not a before/after product speedup.
+routing with deterministic simulated Editor responses. Its v2 harness imports
+the selected source's actual `UnityMCP` adapter and response middleware. It
+separates measured queue/work/peer encoding from the combined wire/framework
+residual and records payload equality, cancellation cleanup, reconnect and
+source fingerprints. It excludes real Editor execution and full catalog
+registration. A separate resource contract exercises ordinary and authoritative
+resource delivery with positive held reservations; its forced overlap is not a
+natural latency measurement.
 
-On Windows 10 with Python 3.14.6, FastMCP 4.0.11 and MCP 2.3.0, 30 warmed calls
-per workload with no synthetic delay produced these client latency medians:
+The earlier v1 subset harness, before the actual `UnityMCP` adapter was included,
+produced the following client latency medians on Windows 10 with Python 3.14.6,
+FastMCP 4.0.11 and MCP 2.3.0. It used 30 warmed calls per workload with no
+synthetic delay. These historical measurements cannot serve as a v2 baseline:
 
 | Workload | stdio | Local HTTP |
 | --- | ---: | ---: |
