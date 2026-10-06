@@ -53,6 +53,10 @@ Parameters explicitly declaring a string alternative retain canonical `"true"`/`
 
 Explicit Unity domain conversions remain supported, including boolean shader toggles and stepped animation-curve tangents.
 
+Tools with readiness guards validate request-local requirements before querying Editor readiness or refreshing assets. Script search and edit tools likewise reject malformed patterns and edit coordinates before reading a file. Checks requiring scene contents, component availability, or a custom-tool catalog still use the selected Editor's state.
+
+The routing middleware checks built-in tool signatures before instance discovery. Custom coercing validators and proxy tools retain SDK validation. Authentication remains first, and conditional tool requirements are checked by the handler after instance routing. A definitive script-mutation error returns immediately; successful mutations and reload/disconnect recovery retain readiness waits. Timeouts also retain the wait because the mutation may already have been sent.
+
 ## CLI and environment reference
 
 ```bash
