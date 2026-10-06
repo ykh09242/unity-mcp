@@ -32,6 +32,12 @@ namespace MCPForUnity.Editor.Services
 
         static HttpBridgeReloadHandler()
         {
+            if (UnityEngine.Application.isBatchMode &&
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
+            {
+                return;
+            }
+
             // Migration: the flag lived in EditorPrefs before it moved to SessionState — the
             // key STRING is shared, so renaming ResumeSessionKey would silently break this
             // cleanup. Once per session, not per reload: the EditorPrefs key is machine-global,

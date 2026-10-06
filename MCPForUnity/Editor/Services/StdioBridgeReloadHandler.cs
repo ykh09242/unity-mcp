@@ -30,6 +30,12 @@ namespace MCPForUnity.Editor.Services
 
         static StdioBridgeReloadHandler()
         {
+            if (UnityEngine.Application.isBatchMode &&
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
+            {
+                return;
+            }
+
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
             AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
             EditorApplication.quitting += CancelRetries;
