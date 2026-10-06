@@ -1,6 +1,7 @@
 """Bounded whole-document encoding preserves streaming admission decisions."""
 import json
 import sys
+import tracemalloc
 
 from pydantic import AnyUrl, BaseModel
 import pytest
@@ -113,3 +114,106 @@ def test_runtime_integer_conversion_limit_is_preserved(monkeypatch):
             assert limits.response_size(value) is None
     finally:
         sys.set_int_max_str_digits(old_limit)
+
+
+def test_streaming_ascii_size_avoids_whole_utf8_copy():
+    # The source is already allocated; measure only the bounded size inspection.
+    value = "A" * (4 * 1024 * 1024)
+    tracemalloc.start()
+    try:
+        charge = limits.response_size(value)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert charge is not None
+    # JSON's quoted string remains; a second complete UTF-8 array must not.
+    assert peak < len(value) * 3 // 2
+
+
+@pytest.mark.parametrize("value", ["A" * 262_144, "한🧪" * 65_536, "\x00" * 65_536],
+                         ids=["ascii", "unicode", "escaped-controls"])
+def test_streaming_scalar_keeps_exact_encoded_and_retained_limits(value, monkeypatch):
+    monkeypatch.setattr(limits, "_MAX_FAST_JSON_BYTES", 0)
+    encoded_bytes = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+    charge = limits.response_size(value)
+    assert charge is not None
+    assert limits.response_size(value, max_bytes=encoded_bytes) == charge
+    assert limits.response_size(value, max_bytes=encoded_bytes - 1) is None
+    assert limits.response_size(value, max_retained=charge) == charge
+    assert limits.response_size(value, max_retained=charge - 1) is None
+
+
+def test_streaming_string_subclass_cannot_understate_ascii_size():
+    value = ShortString("A" * 65_536)
+    assert limits.response_size(value, max_bytes=1024) is None
+
+
+@pytest.mark.parametrize("raw_type", [str, bytes, bytearray])
+def test_raw_utf8_input_preserves_exact_byte_boundary(raw_type):
+    text = '{"label":"한🧪"}'
+    encoded = text.encode("utf-8")
+    raw = text if raw_type is str else raw_type(encoded)
+    kwargs = {"max_depth": 64, "max_nodes": 100_000}
+    assert limits.bounded_json_text(raw, max_bytes=len(encoded), **kwargs) == text
+    assert limits.bounded_json_text(raw, max_bytes=len(encoded) - 1, **kwargs) is None
+
+
+@pytest.mark.parametrize("raw_type", [bytes, bytearray])
+@pytest.mark.parametrize("raw", [b'"\xff"', b'"\xc0\x80"', b'"\xed\xa0\x80"',
+                                 b'"\xf4\x90\x80\x80"', b'"\xf0\x9f"'])
+def test_raw_utf8_input_rejects_malformed_sequences(raw_type, raw):
+    assert limits.bounded_json_text(raw_type(raw), max_bytes=4096,
+                                    max_depth=64, max_nodes=100_000) is None
+
+
+@pytest.mark.parametrize("raw_type", [str, bytes, bytearray])
+def test_raw_input_preserves_graph_boundaries(raw_type):
+    def convert(text):
+        return text if raw_type is str else raw_type(text.encode("utf-8"))
+
+    assert limits.bounded_json_text(convert("[0,1]"), max_bytes=4096,
+                                    max_depth=1, max_nodes=3) == "[0,1]"
+    assert limits.bounded_json_text(convert("[0,1]"), max_bytes=4096,
+                                    max_depth=1, max_nodes=2) is None
+    assert limits.bounded_json_text(convert("[[0]]"), max_bytes=4096,
+                                    max_depth=1, max_nodes=100_000) is None
+
+
+def test_raw_bytes_subclass_keeps_decoded_utf8_recount():
+    class DifferentDecodedBytes(bytes):
+        def decode(self, *_args, **_kwargs):
+            return '"한🧪"'
+
+    raw = DifferentDecodedBytes(b'"x"')
+    assert limits.bounded_json_text(raw, max_bytes=8, max_depth=64, max_nodes=100_000) is None
+    assert limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == '"한🧪"'
+
+
+def test_raw_bytearray_subclass_keeps_normal_utf8_decoding():
+    class DerivedBytearray(bytearray):
+        pass
+
+    text = '"한🧪"'
+    raw = DerivedBytearray(text.encode("utf-8"))
+    assert limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == text
+    assert limits.bounded_json_text(raw, max_bytes=8, max_depth=64, max_nodes=100_000) is None
+    assert limits.bounded_json_text(DerivedBytearray(b'"\xff"'), max_bytes=4096,
+                                    max_depth=64, max_nodes=100_000) is None
+
+
+def test_raw_bytearray_subclass_keeps_decoded_utf8_recount():
+    class DifferentDecodedBytearray(bytearray):
+        def decode(self, *_args, **_kwargs):
+            return '"한🧪"'
+
+    raw = DifferentDecodedBytearray(b'"x"')
+    assert limits.bounded_json_text(raw, max_bytes=8, max_depth=64, max_nodes=100_000) is None
+    assert limits.bounded_json_text(raw, max_bytes=9, max_depth=64, max_nodes=100_000) == '"한🧪"'
+
+
+def test_raw_text_keeps_strict_surrogate_behavior():
+    assert limits.bounded_json_text('"\ud800"', max_bytes=4096,
+                                    max_depth=64, max_nodes=100_000) is None
+    escaped = b'"\\ud800"'
+    assert limits.bounded_json_text(bytearray(escaped), max_bytes=4096,
+                                    max_depth=64, max_nodes=100_000) == escaped.decode("utf-8")

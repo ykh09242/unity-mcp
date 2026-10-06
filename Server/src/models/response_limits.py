@@ -149,7 +149,8 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
             encoded_bytes = len(encoder.encode(value).encode("utf-8"))
         else:
             for chunk in encoder.iterencode(value):
-                encoded_bytes += len(chunk.encode("utf-8"))
+                # JSON encoder chunks are strings; ASCII bytes equal their length.
+                encoded_bytes += len(chunk) if chunk.isascii() else len(chunk.encode("utf-8"))
                 if encoded_bytes > max_bytes:
                     return None
         if encoded_bytes > max_bytes:
@@ -165,7 +166,7 @@ def bound_response(value: Any) -> Any:
     return response_limit_error() if response_size(value) is None else value
 
 
-def bounded_json_text(raw: str | bytes, *, max_bytes: int, max_depth: int,
+def bounded_json_text(raw: str | bytes | bytearray, *, max_bytes: int, max_depth: int,
                       max_nodes: int) -> str | None:
     """Reject large, deep or wide raw frames before allocating a decoded graph.
 
@@ -176,9 +177,13 @@ def bounded_json_text(raw: str | bytes, *, max_bytes: int, max_depth: int,
     if len(raw) > max_bytes:
         return None
     try:
-        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-        if sum(len(text[offset:offset + 65_536].encode("utf-8"))
-               for offset in range(0, len(text), 65_536)) > max_bytes:
+        raw_type = type(raw)
+        exact_bytes = raw_type is bytes or raw_type is bytearray
+        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+        # Strict built-in decoding already proves the checked byte length.
+        # Subclasses retain recounting because decode() may change the content.
+        if not exact_bytes and sum(len(text[offset:offset + 65_536].encode("utf-8"))
+                                   for offset in range(0, len(text), 65_536)) > max_bytes:
             return None
     except UnicodeError:
         return None
