@@ -268,6 +268,34 @@ async def test_replacement_does_not_join_old_active_stdio_job(monkeypatch, budge
 async def test_stdio_resource_ttl_generation_and_authoritative_bypass(monkeypatch, budget):
     state = importlib.import_module("services.resources.editor_state")
     reads = SharedToolReads(freshness_s=.03, retention_s=.03, max_entries=128)
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    expiry_waits = []
+
+    async def controlled_sleep(delay):
+        future = loop.create_future()
+        if delay == .03:
+            expiry_waits.append(future)
+        else:
+            loop.call_soon(future.set_result, None)
+        await future
+
+    async def expire_snapshots():
+        tasks = [read.expiry_task for read in reads._loops.get(loop, {}).values()
+                 if read.expiry_task is not None]
+        # Start each expiry waiter before releasing its explicit timer barrier.
+        future = loop.create_future()
+        loop.call_soon(future.set_result, None)
+        await future
+        for waiting in expiry_waits:
+            if not waiting.done():
+                waiting.set_result(None)
+        await asyncio.gather(*tasks)
+
+    # Keep response enrichment independent of the intended cache age; advance
+    # the same clock used by freshness and release expiry at its exact boundary.
+    monkeypatch.setattr(loop, "time", lambda: now)
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
     monkeypatch.setattr(state, "_stdio_state_reads", reads)
     monkeypatch.setattr(state.config, "transport_mode", "stdio")
     monkeypatch.setattr(state.config, "http_remote_hosted", False)
@@ -281,18 +309,28 @@ async def test_stdio_resource_ttl_generation_and_authoritative_bypass(monkeypatc
         return {"success": True, "data": {"sequence": 1}}
     sender = AsyncMock(side_effect=send)
     monkeypatch.setattr(state.unity_transport, "send_with_unity_instance", sender)
-    replies = await asyncio.gather(*(state.get_editor_state(context()) for _ in range(20)))
-    assert all(reply.success for reply in replies) and sender.await_count == 1
-    await state.get_editor_state(context())
-    assert sender.await_count == 1
-    await state.get_editor_state_authoritative(context())
-    assert sender.await_count == 2
-    await state.get_editor_state(context())
-    assert sender.await_count == 3
-    await asyncio.sleep(.04)
-    await state.get_editor_state(context())
-    assert sender.await_count == 4
-    generation = "authenticated-replacement"
-    await state.get_editor_state(context())
-    assert sender.await_count == 5
-    await asyncio.sleep(.04)
+    callers = [asyncio.create_task(state.get_editor_state(context())) for _ in range(20)]
+    try:
+        replies = await asyncio.gather(*callers)
+        assert all(reply.success for reply in replies) and sender.await_count == 1
+        await state.get_editor_state(context())
+        assert sender.await_count == 1
+        await state.get_editor_state_authoritative(context())
+        assert sender.await_count == 2
+        await state.get_editor_state(context())
+        assert sender.await_count == 3
+        now += .04
+        await expire_snapshots()
+        await state.get_editor_state(context())
+        assert sender.await_count == 4
+        generation = "authenticated-replacement"
+        await state.get_editor_state(context())
+        assert sender.await_count == 5
+        now += .04
+        await expire_snapshots()
+    finally:
+        for caller in callers:
+            caller.cancel()
+        await asyncio.gather(*callers, return_exceptions=True)
+        for key in tuple(reads._loops.get(loop, {})):
+            await reads.invalidate(key)

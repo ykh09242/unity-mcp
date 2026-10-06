@@ -142,8 +142,23 @@ async def test_shared_response_mutations_are_private_to_each_caller(transport, m
 
 
 @pytest.mark.asyncio
-async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_order(transport):
+async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_order(transport, monkeypatch):
+    # Given: polling deadlines and snapshot freshness use one controlled clock.
     received = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    sleeping = {}
+    parked = asyncio.Queue()
+
+    async def controlled_sleep(delay):
+        future = loop.create_future()
+        task = asyncio.current_task()
+        sleeping[task] = (future, now + delay)
+        parked.put_nowait(task)
+        await future
+
+    monkeypatch.setattr(loop, "time", lambda: now)
+    monkeypatch.setattr(jobs.asyncio, "sleep", controlled_sleep)
 
     async def fetch(*args, **kwargs):
         received.set()
@@ -151,11 +166,26 @@ async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_or
 
     transport.side_effect = fetch
     first = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=0.2))
-    await received.wait()
-    await asyncio.sleep(0.02)
-    second = await jobs.get_test_job(context(), "job", wait_timeout=0.1)
-    assert second.data.status == "running"
-    assert (await first).data.status == "running"
+    second = None
+    try:
+        await received.wait()
+        assert await parked.get() is first
+        # When: a staggered second waiter observes the same still-fresh snapshot.
+        now += 0.02
+        second = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=0.1))
+        assert await parked.get() is second
+        now = sleeping[second][1]
+        sleeping[second][0].set_result(None)
+        assert (await second).data.status == "running"
+        now = sleeping[first][1]
+        sleeping[first][0].set_result(None)
+        assert (await first).data.status == "running"
+    finally:
+        callers = [first, second] if second is not None else [first]
+        for caller in callers:
+            caller.cancel()
+        await asyncio.gather(*callers, return_exceptions=True)
+    # Then: each waiter observes once, with exactly one backend observation.
     assert transport.await_count == 1
     observations = [call.kwargs["observation_order"] for call in jobs._update_job_nudge.call_args_list]
     assert len(observations) == 2 and len(set(observations)) == 1
