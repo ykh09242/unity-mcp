@@ -224,21 +224,30 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
             var client = configurators[selectedClientIndex];
 
-            string configPath = client.GetConfigPath();
-            configPathField.value = configPath;
-
-            string configJson = client.GetManualSnippet();
-            configJsonField.value = configJson;
-
-            var steps = client.GetInstallationSteps();
-            if (steps != null && steps.Count > 0)
+            try
             {
-                var numbered = steps.Select((s, i) => $"{i + 1}. {s}");
-                installationStepsLabel.text = string.Join("\n", numbered);
+                string configPath = client.GetConfigPath();
+                string configJson = client.GetManualSnippet();
+                var steps = client.GetInstallationSteps();
+                string instructions = steps != null && steps.Count > 0
+                    ? string.Join("\n", steps.Select((s, i) => $"{i + 1}. {s}"))
+                    : "Configuration steps not available for this client.";
+
+                configPathField.value = configPath;
+                configJsonField.value = configJson;
+                installationStepsLabel.text = instructions;
+                copyPathButton.SetEnabled(true);
+                openFileButton.SetEnabled(true);
+                copyJsonButton.SetEnabled(true);
             }
-            else
+            catch (Exception ex)
             {
-                installationStepsLabel.text = "Configuration steps not available for this client.";
+                configPathField.value = string.Empty;
+                configJsonField.value = string.Empty;
+                installationStepsLabel.text = $"Configuration unavailable: {ex.Message}";
+                copyPathButton.SetEnabled(false);
+                openFileButton.SetEnabled(false);
+                copyJsonButton.SetEnabled(false);
             }
         }
 
@@ -378,88 +387,95 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 return;
 
             statusRefreshInFlight.Add(client);
-            bool isCurrentlyConfigured = client.Status == McpStatus.Configured;
-            ApplyStatusToUi(client, showChecking: true, customMessage: isCurrentlyConfigured ? "Unregistering..." : "Configuring...");
-
-            // Capture ALL main-thread-only values before async task
-            string projectDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
-            bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
-            string claudePath = MCPServiceLocator.Paths.GetClaudeCliPath();
-            string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
-            var (uvxPath, _, packageName) = AssetPathUtility.GetUvxCommandParts();
-            string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
-            string uvxDevFlags = AssetPathUtility.GetUvxDevFlags();
-            string apiKey = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
-
-            // Compute pathPrepend on main thread
-            string pathPrepend = null;
-            if (Application.platform == RuntimePlatform.OSXEditor)
-                pathPrepend = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-            else if (Application.platform == RuntimePlatform.LinuxEditor)
-                pathPrepend = "/usr/local/bin:/usr/bin:/bin";
             try
             {
-                string claudeDir = Path.GetDirectoryName(claudePath);
-                if (!string.IsNullOrEmpty(claudeDir))
-                    pathPrepend = string.IsNullOrEmpty(pathPrepend) ? claudeDir : $"{claudeDir}:{pathPrepend}";
-            }
-            catch { }
+                bool isCurrentlyConfigured = client.Status == McpStatus.Configured;
+                ApplyStatusToUi(client, showChecking: true, customMessage: isCurrentlyConfigured ? "Unregistering..." : "Configuring...");
 
-            Task.Run(() =>
-            {
+                // Capture ALL main-thread-only values before async task
+                string projectDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
+                bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
+                var serverTransport = HttpEndpointUtility.GetCurrentServerTransport();
+                string claudePath = MCPServiceLocator.Paths.GetClaudeCliPath();
+                string httpUrl = !isCurrentlyConfigured && useHttpTransport ? HttpEndpointUtility.GetMcpRpcUrl() : null;
+                string uvxPath = null, packageName = null, fromArgs = null, uvxDevFlags = null;
+                if (!isCurrentlyConfigured && !useHttpTransport)
+                {
+                    (uvxPath, _, packageName) = AssetPathUtility.GetUvxCommandParts();
+                    fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
+                    uvxDevFlags = AssetPathUtility.GetUvxDevFlags();
+                }
+                string apiKey = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
+
+                // Compute pathPrepend on main thread
+                string pathPrepend = null;
+                if (Application.platform == RuntimePlatform.OSXEditor)
+                    pathPrepend = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+                else if (Application.platform == RuntimePlatform.LinuxEditor)
+                    pathPrepend = "/usr/local/bin:/usr/bin:/bin";
                 try
                 {
-                    if (client is ClaudeCliMcpConfigurator cliConfigurator)
-                    {
-                        var serverTransport = HttpEndpointUtility.GetCurrentServerTransport();
-                        cliConfigurator.ConfigureWithCapturedValues(
-                            projectDir, claudePath, pathPrepend,
-                            useHttpTransport, httpUrl,
-                            uvxPath, fromArgs, packageName, uvxDevFlags,
-                            apiKey, serverTransport);
-                    }
-                    return (success: true, error: (string)null);
+                    string claudeDir = Path.GetDirectoryName(claudePath);
+                    if (!string.IsNullOrEmpty(claudeDir))
+                        pathPrepend = string.IsNullOrEmpty(pathPrepend) ? claudeDir : $"{claudeDir}:{pathPrepend}";
                 }
-                catch (Exception ex)
-                {
-                    return (success: false, error: ex.Message);
-                }
-            }).ContinueWith(t =>
-            {
-                string errorMessage = null;
-                if (t.IsFaulted && t.Exception != null)
-                {
-                    errorMessage = t.Exception.GetBaseException()?.Message ?? "Configuration failed";
-                }
-                else if (!t.Result.success)
-                {
-                    errorMessage = t.Result.error;
-                }
+                catch { }
 
-                EditorApplication.delayCall += () =>
+                Task.Run(() =>
                 {
-                    statusRefreshInFlight.Remove(client);
-                    lastStatusChecks.Remove(client);
-
-                    if (errorMessage != null)
+                    try
                     {
-                        if (client is McpClientConfiguratorBase baseConfigurator)
+                        if (client is ClaudeCliMcpConfigurator cliConfigurator)
                         {
-                            baseConfigurator.Client.SetStatus(McpStatus.Error, errorMessage);
+                            cliConfigurator.ConfigureWithCapturedValues(
+                                projectDir, claudePath, pathPrepend,
+                                useHttpTransport, httpUrl,
+                                uvxPath, fromArgs, packageName, uvxDevFlags,
+                                apiKey, serverTransport, unregister: isCurrentlyConfigured);
                         }
-                        McpLog.Error($"Configuration failed: {errorMessage}");
-                        RefreshClientStatus(client, forceImmediate: true);
+                        return (success: true, error: (string)null);
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        // Registration succeeded - trust the status set by RegisterWithCapturedValues
-                        // and update UI without re-verifying (which could fail due to CLI timing/scope issues)
-                        lastStatusChecks[client] = DateTime.UtcNow;
-                        ApplyStatusToUi(client);
+                        return (success: false, error: ex.Message);
                     }
-                    UpdateManualConfiguration();
-                };
-            });
+                }).ContinueWith(t =>
+                {
+                    string errorMessage = null;
+                    if (t.IsFaulted && t.Exception != null)
+                    {
+                        errorMessage = t.Exception.GetBaseException()?.Message ?? "Configuration failed";
+                    }
+                    else if (!t.Result.success)
+                    {
+                        errorMessage = t.Result.error;
+                    }
+
+                    EditorApplication.delayCall += () =>
+                    {
+                        statusRefreshInFlight.Remove(client);
+                        lastStatusChecks.Remove(client);
+
+                        if (errorMessage != null)
+                        {
+                            HandleClientOperationError(client, errorMessage);
+                        }
+                        else
+                        {
+                            // Registration succeeded - trust the status set by RegisterWithCapturedValues
+                            // and update UI without re-verifying (which could fail due to CLI timing/scope issues)
+                            lastStatusChecks[client] = DateTime.UtcNow;
+                            ApplyStatusToUi(client);
+                        }
+                        UpdateManualConfiguration();
+                    };
+                });
+            }
+            catch (Exception ex)
+            {
+                HandleClientOperationError(client, ex.Message);
+                UpdateManualConfiguration();
+            }
         }
 
         private void UpdateInstallSkillsVisibility()
@@ -650,54 +666,73 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             if ((forceImmediate || needsRefresh) && !statusRefreshInFlight.Contains(client))
             {
                 statusRefreshInFlight.Add(client);
-                ApplyStatusToUi(client, showChecking: true);
-
-                // Capture main-thread-only values before async task
-                string projectDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
-                bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
-                string claudePath = MCPServiceLocator.Paths.GetClaudeCliPath();
-                RuntimePlatform platform = Application.platform;
-                bool isRemoteScope = HttpEndpointUtility.IsRemoteScope();
-                // Get expected package source based on installed package version and overrides.
-                string expectedPackageSource = GetExpectedPackageSourceForCurrentPackage();
-                bool hasProjectDirOverride = ClaudeCliMcpConfigurator.HasClientProjectDirOverride;
-
-                Task.Run(() =>
+                try
                 {
-                    // Defensive: RefreshClientStatus routes Claude CLI clients here, but avoid hard-cast
-                    // so accidental future call sites can't crash the UI.
-                    if (client is ClaudeCliMcpConfigurator claudeConfigurator)
-                    {
-                        // Use thread-safe version with captured main-thread values
-                        claudeConfigurator.CheckStatusWithProjectDir(projectDir, useHttpTransport, claudePath, platform, isRemoteScope, expectedPackageSource, attemptAutoRewrite: false, hasProjectDirOverride: hasProjectDirOverride);
-                    }
-                }).ContinueWith(t =>
-                {
-                    bool faulted = false;
-                    string errorMessage = null;
-                    if (t.IsFaulted && t.Exception != null)
-                    {
-                        var baseException = t.Exception.GetBaseException();
-                        errorMessage = baseException?.Message ?? "Status check failed";
-                        McpLog.Error($"Failed to refresh Claude CLI status: {errorMessage}");
-                        faulted = true;
-                    }
+                    ApplyStatusToUi(client, showChecking: true);
 
-                    EditorApplication.delayCall += () =>
+                    // Capture main-thread-only values before async task
+                    string projectDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
+                    bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
+                    string claudePath = MCPServiceLocator.Paths.GetClaudeCliPath();
+                    RuntimePlatform platform = Application.platform;
+                    bool isRemoteScope = HttpEndpointUtility.IsRemoteScope();
+                    // HTTP status needs no stdio source; transport mismatch detection is independent.
+                    string expectedPackageSource = useHttpTransport ? null : GetExpectedPackageSourceForCurrentPackage();
+                    bool hasProjectDirOverride = ClaudeCliMcpConfigurator.HasClientProjectDirOverride;
+
+                    Task.Run(() =>
                     {
-                        statusRefreshInFlight.Remove(client);
-                        lastStatusChecks[client] = DateTime.UtcNow;
-                        if (faulted)
+                        // Defensive: RefreshClientStatus routes Claude CLI clients here, but avoid hard-cast
+                        // so accidental future call sites can't crash the UI.
+                        if (client is ClaudeCliMcpConfigurator claudeConfigurator)
                         {
-                            if (client is McpClientConfiguratorBase baseConfigurator)
-                            {
-                                baseConfigurator.Client.SetStatus(McpStatus.Error, errorMessage ?? "Status check failed");
-                            }
+                            // Use thread-safe version with captured main-thread values
+                            claudeConfigurator.CheckStatusWithProjectDir(projectDir, useHttpTransport, claudePath, platform, isRemoteScope, expectedPackageSource, attemptAutoRewrite: false, hasProjectDirOverride: hasProjectDirOverride);
                         }
-                        ApplyStatusToUi(client);
-                    };
-                });
+                    }).ContinueWith(t =>
+                    {
+                        bool faulted = false;
+                        string errorMessage = null;
+                        if (t.IsFaulted && t.Exception != null)
+                        {
+                            var baseException = t.Exception.GetBaseException();
+                            errorMessage = baseException?.Message ?? "Status check failed";
+                            McpLog.Error($"Failed to refresh Claude CLI status: {errorMessage}");
+                            faulted = true;
+                        }
+
+                        EditorApplication.delayCall += () =>
+                        {
+                            statusRefreshInFlight.Remove(client);
+                            lastStatusChecks[client] = DateTime.UtcNow;
+                            if (faulted)
+                            {
+                                if (client is McpClientConfiguratorBase baseConfigurator)
+                                {
+                                    baseConfigurator.Client.SetStatus(McpStatus.Error, errorMessage ?? "Status check failed");
+                                }
+                            }
+                            ApplyStatusToUi(client);
+                        };
+                    });
+                }
+                catch (Exception ex)
+                {
+                    HandleClientOperationError(client, ex.Message);
+                }
             }
+        }
+
+        private void HandleClientOperationError(IMcpClientConfigurator client, string errorMessage)
+        {
+            statusRefreshInFlight.Remove(client);
+            lastStatusChecks[client] = DateTime.UtcNow;
+            if (client is McpClientConfiguratorBase baseConfigurator)
+            {
+                baseConfigurator.Client.SetStatus(McpStatus.Error, errorMessage);
+            }
+            McpLog.Error($"Client configuration failed: {errorMessage}");
+            ApplyStatusToUi(client);
         }
 
         private bool ShouldRefreshClient(IMcpClientConfigurator client)

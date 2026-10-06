@@ -749,7 +749,7 @@ namespace MCPForUnity.Editor.Clients
                         McpLog.Info($"{reason}. Re-registering...");
                         try
                         {
-                            // Force re-register by ensuring status is not Configured (which would toggle to Unregister)
+                            // Mark the mismatch before idempotent synchronous re-registration.
                             client.SetStatus(McpStatus.IncorrectPath);
                             Configure();
                             return client.status;
@@ -792,14 +792,7 @@ namespace MCPForUnity.Editor.Clients
 
         public override void Configure()
         {
-            if (client.status == McpStatus.Configured)
-            {
-                Unregister();
-            }
-            else
-            {
-                Register();
-            }
+            Register();
         }
 
         /// <summary>
@@ -811,9 +804,9 @@ namespace MCPForUnity.Editor.Clients
             bool useHttpTransport, string httpUrl,
             string uvxPath, string fromArgs, string packageName, string uvxDevFlags,
             string apiKey,
-            Models.ConfiguredTransport serverTransport)
+            Models.ConfiguredTransport serverTransport, bool unregister)
         {
-            if (client.status == McpStatus.Configured)
+            if (unregister)
             {
                 UnregisterWithCapturedValues(projectDir, claudePath, pathPrepend);
             }
