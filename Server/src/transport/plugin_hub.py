@@ -1644,10 +1644,13 @@ class PluginHub(WebSocketEndpoint):
                 # In remote-hosted mode with user_id, use user-scoped lookup
                 if config.http_remote_hosted and user_id:
                     session_id = await cls._registry.get_session_id_by_hash(target_hash, user_id)
-                    sessions = await cls._registry.list_sessions(user_id=user_id)
                 else:
                     session_id = await cls._registry.get_session_id_by_hash(target_hash)
-                    sessions = await cls._registry.list_sessions(user_id=user_id)
+                # Explicit selection never uses the count. Keep the remote
+                # principal guard and miss paths in list_sessions below.
+                if session_id is not None and (not config.http_remote_hosted or user_id):
+                    return session_id, 0, explicit_required
+                sessions = await cls._registry.list_sessions(user_id=user_id)
                 return session_id, len(sessions), explicit_required
 
             # No target provided: determine if we can auto-select

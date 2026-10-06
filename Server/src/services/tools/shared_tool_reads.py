@@ -173,7 +173,10 @@ class SharedToolReads(Generic[T]):
     async def session(self, key: Hashable | None) -> AsyncIterator[SharedRead[T]]:
         """Lease loop-local state, or use an untracked read at the capacity limit."""
         loop = asyncio.get_running_loop()
-        entries = self._loops.setdefault(loop, WeakValueDictionary())
+        entries = self._loops.get(loop)
+        if entries is None:
+            entries = WeakValueDictionary()
+            self._loops[loop] = entries
         read = entries.get(key) if key is not None else None
         if read is None:
             read = SharedRead[T](self._freshness_s)
