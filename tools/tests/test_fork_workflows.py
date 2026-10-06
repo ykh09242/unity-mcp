@@ -101,6 +101,8 @@ def test_beta_pushes_select_license_free_compilation(path: str) -> None:
 
 @pytest.mark.parametrize("path", [
     "tools/tests/test_generate_docs_reference.py",
+    "mcp_source.py",
+    ".github/scripts/mark_skipped.py",
     ".github/workflows/python-tests.yml",
     ".github/workflows/fork-beta-tools.yml",
     ".github/workflows/docs-deploy.yml",
@@ -124,7 +126,10 @@ def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> 
     assert "secrets" not in job
 
 
-@pytest.mark.parametrize("path", [".github/workflows/release.yml", ".github/actions/publish-pypi/action.yml", ".github/actionlint.yaml"])
+@pytest.mark.parametrize("path", [
+    ".github/workflows/release.yml", ".github/actions/publish-pypi/action.yml",
+    ".github/actionlint.yaml", ".github/scripts/mark_skipped.py", "mcp_source.py",
+])
 def test_ci_policy_changes_select_python_push_and_pull_request_validation(path: str) -> None:
     assert push_selects("python-tests.yml", "feature-policy", path)
     config = workflow("python-tests.yml")
@@ -141,6 +146,17 @@ def test_reusable_python_validation_includes_hermetic_tool_tests() -> None:
     runs = "\n".join(step.get("run", "") for step in config["jobs"]["test"]["steps"])
     # Then: the real tools suite is invoked alongside the server tests.
     assert 'python -m pytest "$GITHUB_WORKSPACE/tools/tests/"' in runs
+
+
+def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
+    # Given: reusable Python validation gates both ordinary PRs and release callers.
+    steps = workflow("python-tests.yml")["jobs"]["test"]["steps"]
+    # When: the step invoking the real lint entry point is selected.
+    lint = next(step for step in steps if "tools/lint_python.py" in step.get("run", ""))
+    # Then: diagnostics cannot be ignored and CI uses the committed dependency lock.
+    assert not lint.get("continue-on-error", False)
+    assert "--locked --extra dev" in lint["run"]
+    assert lint["if"] == "matrix.python-version != '3.10'"
 
 
 @pytest.mark.parametrize("step_name", [

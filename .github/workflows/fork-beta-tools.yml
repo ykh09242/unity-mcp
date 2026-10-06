@@ -7,6 +7,8 @@ on:
     branches: [beta]
     paths:
       - tools/**
+      - mcp_source.py
+      - .github/scripts/**
       - .github/workflows/**
       - .github/actions/**
       - .github/actionlint.yaml

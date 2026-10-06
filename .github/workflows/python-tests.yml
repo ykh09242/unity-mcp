@@ -10,6 +10,8 @@ on:
     paths:
       - Server/**
       - tools/**
+      - mcp_source.py
+      - .github/scripts/**
       - .github/workflows/**
       - .github/actions/**
       - .github/actionlint.yaml
@@ -18,6 +20,8 @@ on:
     paths:
       - Server/**
       - tools/**
+      - mcp_source.py
+      - .github/scripts/**
       - .github/workflows/**
       - .github/actions/**
       - .github/actionlint.yaml
@@ -67,6 +71,13 @@ jobs:
           # The dev extra is resolved in the lock too, so pytest runs against pinned versions
           # instead of whatever `uv pip install` would fetch today.
           uv sync --python "${{ matrix.python-version }}" --locked --extra dev
+
+      - name: Run Pylint
+        # One interpreter is enough for static analysis; tests retain the full matrix.
+        if: matrix.python-version != '3.10'
+        run: |
+          cd Server
+          uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/lint_python.py
 
       - name: Run tests with coverage
         run: |

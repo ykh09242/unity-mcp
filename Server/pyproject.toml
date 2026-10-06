@@ -44,6 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pylint>=4.1.1,<5",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
@@ -72,6 +73,46 @@ where = ["src"]
 
 [tool.setuptools]
 py-modules = ["main"]
+
+[tool.pylint.main]
+py-version = "3.10"
+recursive = true
+persistent = false
+jobs = 2
+
+[tool.pylint.messages_control]
+# Enforce correctness across production code, tests and repository tools.
+# Naming, formatting, complexity and fixture conventions are outside this check.
+disable = ["all"]
+enable = [
+    "E",
+    "F",
+    "anomalous-backslash-in-string",
+    "assert-on-string-literal",
+    "assert-on-tuple",
+    "bad-format-string",
+    "bad-open-mode",
+    "binary-op-exception",
+    "cell-var-from-loop",
+    "dangerous-default-value",
+    "duplicate-except",
+    "duplicate-key",
+    "invalid-envvar-default",
+    "lost-exception",
+    "return-in-finally",
+    "self-assigning-variable",
+    "unbalanced-dict-unpacking",
+    "unbalanced-tuple-unpacking",
+    "undefined-loop-variable",
+    "unknown-option-value",
+    "unreachable",
+    "using-constant-test",
+    "useless-with-lock",
+]
+
+[tool.pylint.reports]
+reports = false
+score = false
 
 [tool.coverage.run]
 source = ["src"]
