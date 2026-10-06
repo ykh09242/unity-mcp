@@ -14,6 +14,8 @@ MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_DEPTH = 64
 MAX_RESPONSE_NODES = 100_000
 MAX_RESPONSE_RETAINED_BYTES = 256 * 1024 * 1024
+# Limit whole-document encoding to a small, conservatively bounded allocation.
+_MAX_FAST_JSON_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -52,15 +54,38 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
     """
     retained = 1024
     nodes = 0
+    encoded_bound: int | None = 0
+    fast_limit = min(_MAX_FAST_JSON_BYTES, max_bytes)
 
     def visit(item: Any, depth: int) -> bool:
-        nonlocal retained, nodes
+        nonlocal retained, nodes, encoded_bound
         nodes += 1
         if depth > max_depth or nodes > max_nodes:
             return False
         retained += 128 + 2 * sys.getsizeof(item)
         if retained > max_retained:
             return False
+        if encoded_bound is not None:
+            # Only exact builtins have predictable length/serialization. Models,
+            # URLs and subclasses keep the existing streaming encoder behavior.
+            item_type = type(item)
+            if item_type is str:
+                encoded_bound += 6 * len(item) + 2
+            elif item_type is int:
+                # 30103/100000 > log10(2); include the sign and zero.
+                encoded_bound += item.bit_length() * 30103 // 100000 + 2
+            elif item_type is float:
+                encoded_bound += 32
+            elif item_type is bool or item is None:
+                encoded_bound += 5
+            elif item_type is dict:
+                encoded_bound += 2 + 4 * len(item)
+            elif item_type is list or item_type is tuple:
+                encoded_bound += 2 + 2 * len(item)
+            else:
+                encoded_bound = None
+            if encoded_bound is not None and encoded_bound > fast_limit:
+                encoded_bound = None
         if isinstance(item, BaseModel):
             return visit(item.__dict__, depth)
         if isinstance(item, AnyUrl):
@@ -86,11 +111,20 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
         return None
     encoded_bytes = 0
     try:
-        for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False,
-                                      default=lambda model: model.__dict__ if isinstance(model, BaseModel) else str(model)).iterencode(value):
-            encoded_bytes += len(chunk.encode("utf-8"))
-            if encoded_bytes > max_bytes:
-                return None
+        encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False,
+                                   default=lambda model: model.__dict__ if isinstance(model, BaseModel) else str(model))
+        # Leave room for strings/buffers and older C encoders' temporary chunks
+        # and item tuples. A conservative bound selects a path, never a rejection.
+        if (encoded_bound is not None
+                and 8 * encoded_bound + 128 * nodes + 4096 <= max_retained - retained):
+            encoded_bytes = len(encoder.encode(value).encode("utf-8"))
+        else:
+            for chunk in encoder.iterencode(value):
+                encoded_bytes += len(chunk.encode("utf-8"))
+                if encoded_bytes > max_bytes:
+                    return None
+        if encoded_bytes > max_bytes:
+            return None
     except (ValueError, TypeError, UnicodeError, RecursionError):
         return None
     retained += encoded_bytes
