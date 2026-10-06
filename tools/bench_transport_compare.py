@@ -29,6 +29,7 @@ class FrozenModel(BaseModel):
 
 class Profile(FrozenModel):
     diagnostic: Literal[False] = False
+    order: Literal["stdio-first", "http-first"]
     samples: int
     warmup: int
     large_bytes: int
@@ -168,6 +169,9 @@ def check_contract(capture: Capture) -> None:
         raise ValueError("Product or common harness changed during capture")
     if {row.mode for row in capture.results} != {"stdio", "http"} or len(capture.results) != 2:
         raise ValueError("Capture requires exactly one stdio and HTTP result")
+    expected_order = ["stdio", "http"] if capture.options.order == "stdio-first" else ["http", "stdio"]
+    if [row.mode for row in capture.results] != expected_order:
+        raise ValueError("Recorded transport order differs from the requested order")
     n = 1 + capture.options.warmup + capture.options.samples
     for row in capture.results:
         lifecycle = row.lifecycle
@@ -242,6 +246,8 @@ def check_contract(capture: Capture) -> None:
 
 def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
     """Compare same-protocol rows only after compatibility and semantic checks."""
+    if baseline.options.order != candidate.options.order:
+        raise ValueError("Transport order differs between baseline and candidate")
     check_contract(baseline)
     check_contract(candidate)
     if baseline.runtime != candidate.runtime or baseline.options != candidate.options or baseline.peer_profile != candidate.peer_profile:
@@ -296,7 +302,11 @@ async def execute(arguments: argparse.Namespace) -> None:
     """Run alternating baseline/candidate captures serially, preserving raw evidence."""
     pairs = []
     frozen_sources = {}
+    control_sources = None
+    schedule = []
     manifest = None
+    if arguments.same_source_control and arguments.baseline_revision != arguments.candidate_revision:
+        raise ValueError("Same-source control requires the same revision assertion for both roots")
     if arguments.baseline_manifest:
         path = arguments.baseline_manifest
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -308,22 +318,39 @@ async def execute(arguments: argparse.Namespace) -> None:
     for iteration in range(arguments.rounds):
         reports = {}
         labels = ("baseline", "candidate") if iteration % 2 == 0 else ("candidate", "baseline")
+        order = arguments.order
+        if order == "alternating":
+            order = "stdio-first" if iteration % 2 == 0 else "http-first"
         for label in labels:
             root = getattr(arguments, label + "_root").resolve()
             revision = getattr(arguments, label + "_revision")
             path = arguments.output.parent / f"{arguments.output.stem}-round{iteration + 1}-{label}.json"
             options = Options(output=path, samples=arguments.samples, warmup=arguments.warmup,
                 large_bytes=arguments.large_bytes, work_ms=arguments.work_ms, concurrency=arguments.concurrency,
-                cohort_gate=arguments.cohort_gate, order="stdio-first" if iteration % 2 == 0 else "http-first",
+                cohort_gate=arguments.cohort_gate, order=order,
                 resource_contract=arguments.resource_contract,
                 product_root=root, product_revision=revision)
             reports[label] = Capture.model_validate(await run(options))
             sources = reports[label].source.sha256_before
+            if arguments.same_source_control:
+                if (not reports[label].source.unchanged_during_measurement
+                        or sources != reports[label].source.sha256_after
+                        or not any(name.startswith("Server/src/") for name in sources)
+                        or not any(name.startswith("harness:") for name in sources)
+                        or (control_sources is not None and sources != control_sources)):
+                    raise ValueError("Same-source control product/common-harness maps differ or are incomplete")
+                control_sources = sources
             if label in frozen_sources and frozen_sources[label] != sources:
                 raise ValueError("Selected source or common harness changed between rounds")
             frozen_sources[label] = sources
+            schedule.append({"round": iteration + 1, "label": label, "transport_order": order,
+                             "raw_capture": str(path), "asserted_product_revision": revision})
         pairs.append(compare(reports["baseline"], reports["candidate"]))
     result = {"schema_id": "unity-mcp-product-comparison-v1", "rounds": pairs,
+              "transport_order_policy": arguments.order, "capture_schedule": schedule,
+              "comparison_kind": "same_source_control" if arguments.same_source_control else "product_comparison",
+              "same_source_control_verified": arguments.same_source_control,
+              "same_source_control_sha256": control_sources,
               "baseline_revision_label": arguments.baseline_revision, "candidate_revision_label": arguments.candidate_revision,
               "baseline_root": str(arguments.baseline_root.resolve()), "candidate_root": str(arguments.candidate_root.resolve()),
               "baseline_archive_manifest": manifest,
@@ -341,6 +368,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--candidate-revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--order", choices=("alternating", "stdio-first", "http-first"), default="alternating",
+                        help="Transport order within every capture; revision order still alternates AB/BA")
+    parser.add_argument("--same-source-control", action="store_true",
+                        help="Require equal revision assertions and all actual product/common-harness source maps")
     parser.add_argument("--samples", type=int, default=30)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--large-bytes", type=int, default=4 * 1024 * 1024)

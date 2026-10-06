@@ -52,7 +52,8 @@ def report() -> Capture:
                                   "public_tools/call": 11 + (mode == "http")},
             "native_child_interpreter": "owned-python", "text_structured_parity": True})
     return Capture.model_validate({"schema_id": "unity-mcp-transport-bench-v2", "runtime": {"packages": {"mcp": "owned"}},
-        "options": {"samples": 1, "warmup": 0, "large_bytes": 262144, "work_ms": 0, "concurrency": 1, "cohort_gate": False},
+        "options": {"samples": 1, "warmup": 0, "large_bytes": 262144, "work_ms": 0, "concurrency": 1,
+                    "cohort_gate": False, "order": "stdio-first"},
         "source": {"asserted_product_revision": "caller-label", "unchanged_during_measurement": True,
                    "sha256_before": {"harness:owned.py": "a", "Server/src/main.py": "b"},
                    "sha256_after": {"harness:owned.py": "a", "Server/src/main.py": "b"}},
@@ -69,6 +70,128 @@ def test_same_protocol_rows_when_product_source_fingerprint_changes(report: Capt
     # Then: eight workload rows remain valid; product fingerprints need not match.
     assert result["semantic_parity"] is True
     assert len(result["same_protocol_rows"]) == 8
+
+
+@pytest.mark.parametrize("order", ["stdio-first", "http-first"])
+def test_transport_order_mismatch_is_rejected_before_output_comparison(report: Capture, monkeypatch, order: str) -> None:
+    baseline = report.model_dump(mode="json")
+    candidate = report.model_dump(mode="json")
+    baseline["options"]["order"] = order
+    candidate["options"]["order"] = "http-first" if order == "stdio-first" else "stdio-first"
+    def forbidden_fingerprint(*_args, **_kwargs):
+        pytest.fail("Different transport positions must not reach output comparison")
+    monkeypatch.setattr(comparator, "fingerprint", forbidden_fingerprint)
+    with pytest.raises(ValueError, match="Transport order"):
+        compare(Capture.model_validate(baseline), Capture.model_validate(candidate))
+
+
+@pytest.mark.parametrize("order", [None, "alternating", "unknown"])
+def test_capture_requires_actual_transport_order(report: Capture, order: str | None) -> None:
+    raw = report.model_dump(mode="json")
+    raw["options"].pop("order", None)
+    if order is not None:
+        raw["options"]["order"] = order
+    with pytest.raises(ValueError):
+        Capture.model_validate(raw)
+
+
+def test_declared_order_requires_matching_result_sequence(report: Capture) -> None:
+    raw = report.model_dump(mode="json")
+    raw["results"].reverse()
+    with pytest.raises(ValueError, match="Recorded transport order"):
+        compare(report, Capture.model_validate(raw))
+
+
+@pytest.mark.parametrize("policy,rounds,orders", [
+    (None, 3, ["stdio-first", "stdio-first", "http-first", "http-first", "stdio-first", "stdio-first"]),
+    ("alternating", 2, ["stdio-first", "stdio-first", "http-first", "http-first"]),
+    ("http-first", 2, ["http-first"] * 4),
+    ("stdio-first", 2, ["stdio-first"] * 4),
+])
+def test_serial_revision_schedule_and_transport_order(report: Capture, monkeypatch, tmp_path: Path,
+                                                     policy: str | None, rounds: int, orders: list[str]) -> None:
+    argv = ["--baseline-root", str(tmp_path / "baseline"), "--candidate-root", str(tmp_path / "candidate"),
+            "--baseline-revision", "baseline-pin", "--candidate-revision", "candidate-pin",
+            "--output", str(tmp_path / "comparison.json"), "--rounds", str(rounds),
+            "--samples", "1", "--warmup", "0", "--large-bytes", "262144"]
+    if policy is not None:
+        argv.extend(("--order", policy))
+    arguments = comparator.parse_args(argv)
+    calls = []
+    active = False
+    async def owned_fake_run(options):
+        nonlocal active
+        assert not active, "Capture calls must remain serial"
+        active = True
+        await anyio.lowlevel.checkpoint()
+        calls.append(options)
+        raw = report.model_dump(mode="json")
+        raw["options"].update(options.model_dump(mode="json"))
+        raw["results"].sort(key=lambda row: row["mode"] != ("stdio" if options.order == "stdio-first" else "http"))
+        raw["source"]["asserted_product_revision"] = options.product_revision
+        for phase in ("sha256_before", "sha256_after"):
+            raw["source"][phase]["Server/src/main.py"] = options.product_revision
+        active = False
+        return raw
+    monkeypatch.setattr(comparator, "run", owned_fake_run)
+    anyio.run(comparator.execute, arguments)
+    labels = ["baseline-pin", "candidate-pin", "candidate-pin", "baseline-pin"]
+    if rounds == 3:
+        labels += ["baseline-pin", "candidate-pin"]
+    assert [call.product_revision for call in calls] == labels
+    assert [call.order for call in calls] == orders
+    assert all(not call.diagnostic and not call.resource_contract and not call.cohort_gate for call in calls)
+    saved = json.loads(arguments.output.read_text())
+    assert saved["transport_order_policy"] == (policy or "alternating")
+    assert [(item["label"], item["transport_order"]) for item in saved["capture_schedule"]] == [
+        ("baseline" if label == "baseline-pin" else "candidate", order) for label, order in zip(labels, orders)]
+    assert len(saved["rounds"]) == rounds and all(len(pair["same_protocol_rows"]) == 8 for pair in saved["rounds"])
+
+
+def test_same_source_control_rejects_different_pins_before_capture(monkeypatch, tmp_path: Path) -> None:
+    arguments = comparator.parse_args(["--baseline-root", str(tmp_path), "--baseline-revision", "baseline-pin",
+        "--candidate-revision", "other-pin", "--same-source-control", "--output", str(tmp_path / "control.json")])
+    def forbidden_capture(*_args, **_kwargs):
+        pytest.fail("A control with different asserted pins must not launch a child")
+    monkeypatch.setattr(comparator, "run", forbidden_capture)
+    with pytest.raises(ValueError, match="same revision"):
+        anyio.run(comparator.execute, arguments)
+
+
+@pytest.mark.parametrize("mutation", [None, "product", "harness", "during", "later"])
+def test_same_source_control_requires_every_actual_source_map(report: Capture, monkeypatch,
+                                                            tmp_path: Path, mutation: str | None) -> None:
+    arguments = comparator.parse_args(["--baseline-root", str(tmp_path / "baseline"),
+        "--candidate-root", str(tmp_path / "copy"), "--baseline-revision", "same-pin",
+        "--candidate-revision", "same-pin", "--same-source-control", "--order", "http-first",
+        "--rounds", "2", "--samples", "1", "--warmup", "0", "--large-bytes", "262144",
+        "--output", str(tmp_path / "control.json")])
+    calls = 0
+    async def owned_fake_run(options):
+        nonlocal calls
+        calls += 1
+        raw = report.model_dump(mode="json")
+        raw["options"].update(options.model_dump(mode="json"))
+        raw["results"].reverse()
+        raw["source"]["asserted_product_revision"] = options.product_revision
+        if mutation is not None and calls == (3 if mutation == "later" else 2):
+            name = "harness:owned.py" if mutation == "harness" else "Server/src/main.py"
+            raw["source"]["sha256_after"][name] = "different-bytes"
+            if mutation != "during":
+                raw["source"]["sha256_before"][name] = "different-bytes"
+        return raw
+    monkeypatch.setattr(comparator, "run", owned_fake_run)
+    if mutation is None:
+        anyio.run(comparator.execute, arguments)
+        saved = json.loads(arguments.output.read_text())
+        assert calls == 4 and saved["comparison_kind"] == "same_source_control"
+        assert saved["same_source_control_verified"] is True
+        assert saved["same_source_control_sha256"] == report.source.sha256_before
+        assert len(saved["rounds"]) == 2
+    else:
+        with pytest.raises(ValueError, match="Same-source control"):
+            anyio.run(comparator.execute, arguments)
+        assert calls == (3 if mutation == "later" else 2)
 
 
 def concurrent_report(report: Capture, pings: int, *, strategy: str = "inflight_shared",
