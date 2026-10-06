@@ -13,7 +13,11 @@ import socket
 import struct
 import threading
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
+import weakref
+
+if TYPE_CHECKING:
+    import asyncio
 
 from models.models import MCPResponse, UnityInstanceInfo
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
@@ -90,7 +94,21 @@ class UnityConnection:
         # lock. Lifecycle helpers are also called from a command transaction.
         self._conn_lock = self._io_lock
         self._resync_lock = threading.Lock()
+        # Weak keys AND values avoid retaining a closed loop through a bound
+        # asyncio.Lock. Active callers/completion callbacks retain their gate.
+        self._async_admissions = weakref.WeakKeyDictionary()
         self._needs_tool_resync = False  # Set True after reconnection
+
+    def _async_admission(self, loop: "asyncio.AbstractEventLoop") -> "asyncio.Lock":
+        """Share one worker admission per connection and event loop."""
+        import asyncio
+        with self._resync_lock:
+            reference = self._async_admissions.get(loop)
+            gate = reference() if reference is not None else None
+            if gate is None:
+                gate = asyncio.Lock()
+                self._async_admissions[loop] = weakref.ref(gate)
+            return gate
 
     def claim_tool_resync(self) -> bool:
         """Claim reconnect metadata work without waiting for socket I/O."""
@@ -1002,6 +1020,14 @@ def send_command_with_retry(
     return response
 
 
+def _command_deadline(command_type: str, params: dict[str, Any]) -> float | None:
+    """Use the existing command/Blender budget across selection and admission."""
+    total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
+    if command_type == "blender_bridge":
+        total_timeout = blender_command_timeout(params) + SERVER_RESPONSE_GRACE
+    return time.monotonic() + total_timeout if total_timeout > 0 else None
+
+
 def _send_command_with_retry(
     command_type: str,
     params: dict[str, Any],
@@ -1010,6 +1036,8 @@ def _send_command_with_retry(
     max_retries: int | None = None,
     retry_ms: int | None = None,
     retry_on_reload: bool = True,
+    _connection: UnityConnection | None = None,
+    _deadline: float | None = None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
     """Retain dispatch provenance for async completion without another lookup.
 
@@ -1019,7 +1047,7 @@ def _send_command_with_retry(
     t_retry_start = time.time()
     logger.info("[TIMING-STDIO] send_command_with_retry START command=%s", command_type)
     t_get_conn = time.time()
-    conn = get_unity_connection(instance_id)
+    conn = _connection if _connection is not None else get_unity_connection(instance_id)
     logger.info("[TIMING-STDIO] get_unity_connection took %.3fs command=%s", time.time() - t_get_conn, command_type)
     if max_retries is None:
         max_retries = getattr(config, "reload_max_retries", 40)
@@ -1047,10 +1075,7 @@ def _send_command_with_retry(
     # Clamp to [0, 20] to prevent misconfiguration from causing excessive waits
     max_wait_s = max(0.0, min(max_wait_s, 20.0))
 
-    total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
-    if command_type == "blender_bridge":
-        total_timeout = blender_command_timeout(params) + SERVER_RESPONSE_GRACE
-    deadline = time.monotonic() + total_timeout if total_timeout > 0 else None
+    deadline = _deadline if _deadline is not None else _command_deadline(command_type, params)
 
     # If retry_on_reload=False, disable connection-level retries too (issue #577)
     # Commands that trigger compilation/reload shouldn't retry on disconnect
@@ -1134,6 +1159,37 @@ def _send_command_with_retry(
     return response, conn
 
 
+class _AsyncDispatchState:
+    """Atomically abort an executor-queued request without stopping running I/O."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._started = False
+        self._aborted = False
+
+    def start(self) -> bool:
+        """Claim dispatch only if cancellation/deadline did not win the race."""
+        with self._lock:
+            if self._aborted:
+                return False
+            self._started = True
+            return True
+
+    def abort_before_start(self) -> bool:
+        """Return whether no worker has begun this command."""
+        with self._lock:
+            if self._started:
+                return False
+            self._aborted = True
+            return True
+
+
+def _consume_async_exception(future: "asyncio.Future") -> None:
+    """Retrieve worker failures even after their awaiting caller is cancelled."""
+    if not future.cancelled():
+        future.exception()
+
+
 async def async_send_command_with_retry(
     command_type: str,
     params: dict[str, Any],
@@ -1144,7 +1200,11 @@ async def async_send_command_with_retry(
     retry_ms: int | None = None,
     retry_on_reload: bool = True
 ) -> dict[str, Any] | MCPResponse:
-    """Async wrapper that runs the blocking retry helper in a thread pool.
+    """Admit one blocking command worker per actual connection and event loop.
+
+    Selection and admission share the command deadline. Cancellation before
+    worker dispatch aborts the queued command; running I/O keeps its admission
+    until completion and retains the existing unknown-outcome/retry contract.
 
     Args:
         command_type: The command type to send
@@ -1162,12 +1222,66 @@ async def async_send_command_with_retry(
         import asyncio  # local import to avoid mandatory asyncio dependency for sync callers
         if loop is None:
             loop = asyncio.get_running_loop()
-        result, conn = await loop.run_in_executor(
-            None,
-            lambda: _send_command_with_retry(
-                command_type, params, instance_id=instance_id, max_retries=max_retries,
-                retry_ms=retry_ms, retry_on_reload=retry_on_reload),
-        )
+        deadline = _command_deadline(command_type, params)
+        selection = loop.run_in_executor(None, get_unity_connection, instance_id)
+        selection.add_done_callback(_consume_async_exception)
+        if deadline is None:
+            conn = await asyncio.shield(selection)
+        else:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    conn = await asyncio.shield(selection)
+            except TimeoutError as exc:
+                raise TimeoutError("Unity command exceeded total deadline during connection selection") from exc
+
+        gate = conn._async_admission(loop)
+        if deadline is None:
+            await gate.acquire()
+        else:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    await gate.acquire()
+            except TimeoutError as exc:
+                raise TimeoutError("Unity command exceeded total deadline waiting for connection") from exc
+
+        state = _AsyncDispatchState()
+        def dispatch() -> tuple[dict[str, Any] | MCPResponse, UnityConnection] | None:
+            if not state.start():
+                # Only a caller already exiting on cancellation/deadline sets
+                # aborted. No public await consumes this private sentinel.
+                return None
+            conn._check_deadline(deadline)
+            return _send_command_with_retry(
+                command_type, params, instance_id=conn.instance_id, max_retries=max_retries,
+                retry_ms=retry_ms, retry_on_reload=retry_on_reload,
+                _connection=conn, _deadline=deadline)
+
+        try:
+            completion = loop.run_in_executor(None, dispatch)
+        except Exception:
+            gate.release()
+            raise
+        def completed(future):
+            # A cancelled await never releases a still-running worker's gate.
+            gate.release()
+            _consume_async_exception(future)
+        completion.add_done_callback(completed)
+        try:
+            if deadline is None:
+                result, conn = await asyncio.shield(completion)
+            else:
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        result, conn = await asyncio.shield(completion)
+                except TimeoutError as exc:
+                    if state.abort_before_start():
+                        raise TimeoutError("Unity command exceeded total deadline waiting for command worker") from exc
+                    # Running transport owns deadline classification, including
+                    # a lost response's outcome_unknown. Do not replace it.
+                    result, conn = await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            state.abort_before_start()
+            raise
 
         # After a successful command, check if the connection was freshly
         # established (reconnection after domain reload).  If so, re-sync

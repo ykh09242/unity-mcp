@@ -196,6 +196,9 @@ async def test_reconnection_flag_triggers_resync():
         "transport.legacy.unity_connection._send_command_with_retry",
         return_value=({"success": True, "message": "ok"}, mock_conn),
     ), patch(
+        "transport.legacy.unity_connection.get_unity_connection",
+        return_value=mock_conn,
+    ), patch(
         "transport.legacy.unity_connection._resync_tools_after_reconnect",
         new_callable=AsyncMock,
     ) as mock_resync:
@@ -222,6 +225,9 @@ async def test_no_resync_for_get_tool_states():
         "transport.legacy.unity_connection._send_command_with_retry",
         return_value=({"data": {"tools": []}}, mock_conn),
     ), patch(
+        "transport.legacy.unity_connection.get_unity_connection",
+        return_value=mock_conn,
+    ), patch(
         "transport.legacy.unity_connection._resync_tools_after_reconnect",
         new_callable=AsyncMock,
     ) as mock_resync:
@@ -242,6 +248,9 @@ async def test_no_resync_when_not_reconnected():
     with patch(
         "transport.legacy.unity_connection._send_command_with_retry",
         return_value=({"success": True}, mock_conn),
+    ), patch(
+        "transport.legacy.unity_connection.get_unity_connection",
+        return_value=mock_conn,
     ), patch(
         "transport.legacy.unity_connection._resync_tools_after_reconnect",
         new_callable=AsyncMock,
