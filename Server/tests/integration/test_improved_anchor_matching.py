@@ -131,21 +131,4 @@ public class TestClass : MonoBehaviour
 
 
 if __name__ == "__main__":
-    print("Testing improved anchor matching...")
-    print("="*60)
-
-    success1 = test_improved_anchor_matching()
-
-    print("\n" + "="*60)
-    print("Comparing old vs new behavior...")
-    success2 = test_old_vs_new_matching()
-
-    print("\n" + "="*60)
-    print("Testing _apply_edits_locally with improved matching...")
-    success3 = test_apply_edits_with_improved_matching()
-
-    print("\n" + "="*60)
-    if success1 and success2 and success3:
-        print("🎉 ALL TESTS PASSED! Improved anchor matching is working!")
-    else:
-        print("💥 Some tests failed. Need more work on anchor matching.")
+    raise SystemExit(pytest.main([__file__, "-v", "-W", "error"]))

@@ -891,7 +891,7 @@ class TestSchemaConsistency:
             }
         )
 
-        assert response.data["tool"]["name"] == "test_tool"
+        assert response.data == {"tool": tool.model_dump()}
 
     def test_tool_definition_with_all_parameter_types(self):
         """Test ToolDefinitionModel can represent all parameter types."""

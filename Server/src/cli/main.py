@@ -321,7 +321,8 @@ register_commands()
 
 def main():
     """Main entry point for the CLI."""
-    cli()
+    # Click supplies the context and option values when invoking this command.
+    cli()  # pylint: disable=no-value-for-parameter
 
 
 if __name__ == "__main__":

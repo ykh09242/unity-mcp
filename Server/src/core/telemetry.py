@@ -276,7 +276,8 @@ class TelemetryConfig:
             base_dir = Path(os.environ.get(
                 'APPDATA', Path.home() / 'AppData' / 'Roaming'))
         elif os.name == 'posix':  # macOS/Linux
-            if 'darwin' in os.uname().sysname.lower():  # macOS
+            # uname exists on POSIX; Windows never reaches this branch.
+            if 'darwin' in os.uname().sysname.lower():  # pylint: disable=no-member
                 base_dir = Path.home() / 'Library' / 'Application Support'
             else:  # Linux
                 base_dir = Path(os.environ.get('XDG_DATA_HOME',

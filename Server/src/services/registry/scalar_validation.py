@@ -97,7 +97,8 @@ def enforce_strict_tool_inputs(func: Callable) -> Callable:
         # Python 3.14 wraps() copies __annotate__, rather than __annotations__.
         # Assigning annotations clears that provider, so publish the new values
         # through the public deferred-annotation interface as well.
-        from annotationlib import Format, annotations_to_string
+        # The __annotate__ guard excludes interpreters without annotationlib.
+        from annotationlib import Format, annotations_to_string  # pylint: disable=import-error
 
         def annotate(format, /):
             if format == Format.STRING:

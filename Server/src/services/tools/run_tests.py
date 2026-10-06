@@ -474,13 +474,13 @@ async def get_test_job(
             if remaining <= 0:
                 if response is None:
                     return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
-                return GetTestJobResponse(**response)
+                return GetTestJobResponse.model_validate(response)
             try:
                 response, observation_order = await asyncio.wait_for(_fetch_status(), timeout=remaining)
             except asyncio.TimeoutError:
                 if response is None:
                     return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
-                return GetTestJobResponse(**response)
+                return GetTestJobResponse.model_validate(response)
 
             if isinstance(response, MCPResponse):
                 return response

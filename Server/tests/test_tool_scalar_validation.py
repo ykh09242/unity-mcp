@@ -31,7 +31,8 @@ def register_fixture(server):
         validations.append(("after", value))
         return value
 
-    async def scalar_fixture(
+    # Deliberately exercise a mutable collection default in the registered schema.
+    async def scalar_fixture(  # pylint: disable=dangerous-default-value
         ctx: Context,
         flag: Annotated[bool, "Boolean flag description"] = True,
         count: Optional[Annotated[

@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 from bisect import bisect_right
+from functools import partial
 from pathlib import PurePosixPath, PureWindowsPath
 from threading import BoundedSemaphore
 from typing import Annotated, Any, Callable, TypeVar, Union
@@ -476,7 +477,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
                 re.IGNORECASE if edit.get("ignore_case") else 0)
 
             # Find the best match using improved heuristics
-            match = await _run_regex_work(budget, lambda: _find_best_anchor_match(
+            match = await _run_regex_work(budget, partial(_find_best_anchor_match,
                 anchor, text, flags, edit.get("prefer_last", True), budget=budget))
             if not match:
                 if edit.get("allow_noop", True):
@@ -498,12 +499,12 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
                     or start_col < 1 or end_col < 1):
                 raise RuntimeError("replace_range out of bounds")
 
-            def index_of(line: int, col: int) -> int:
-                if line <= len(lines):
-                    return sum(len(l) for l in lines[: line - 1]) + (col - 1)
-                return sum(len(l) for l in lines)
-            a = index_of(start_line, start_col)
-            b = index_of(end_line, end_col)
+            def index_of(line: int, col: int, source_lines: list[str]) -> int:
+                if line <= len(source_lines):
+                    return sum(len(l) for l in source_lines[: line - 1]) + (col - 1)
+                return sum(len(l) for l in source_lines)
+            a = index_of(start_line, start_col, lines)
+            b = index_of(end_line, end_col, lines)
             text = text[:a] + replacement + text[b:]
         elif op == "regex_replace":
             pattern = edit.get("pattern", "")
@@ -515,7 +516,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             flags = re.MULTILINE
             if edit.get("ignore_case"):
                 flags |= re.IGNORECASE
-            text = await _run_regex_work(budget, lambda: bounded_regex.substitute(
+            text = await _run_regex_work(budget, partial(bounded_regex.substitute,
                 pattern, repl_py, text, count, flags, budget=budget))
         else:
             allowed = "anchor_insert, prepend, append, replace_range, regex_replace"
@@ -564,15 +565,15 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
             flags = re.MULTILINE | (re.IGNORECASE if edit.get("ignore_case") else 0)
             # Preserve each existing write route's selection: mixed first match;
             # pure text uses the established best/last anchor selection.
-            def select_and_expand():
+            def select_and_expand(pattern: str, flags: int, replacement: str):
                 if mixed:
                     match = bounded_regex.search(pattern, contents, flags, budget=budget)
                 else:
                     match = _find_best_anchor_match(pattern, contents, flags, True, budget=budget)
                 if match is None:
-                    return match, payload
-                budget.consume(len(payload))
-                output_length = len(payload)
+                    return match, replacement
+                budget.consume(len(replacement))
+                output_length = len(replacement)
                 if output_length > bounded_regex.MAX_TEXT_CHARS:
                     raise ValueError("Regex replacement exceeds the output size limit")
 
@@ -585,12 +586,13 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
                         raise ValueError("Regex replacement exceeds the output size limit")
                     return value
 
-                expanded = re.sub(r"\$(\d+)", expand, payload)
+                expanded = re.sub(r"\$(\d+)", expand, replacement)
                 budget.check()
                 return match, expanded
 
             try:
-                match, payload = await _run_regex_work(budget, select_and_expand)
+                match, payload = await _run_regex_work(
+                    budget, partial(select_and_expand, pattern, flags, payload))
             except Exception as exc:
                 raise _TextEditError("bad_regex", f"Invalid regex pattern: {exc}") from exc
             if not match:

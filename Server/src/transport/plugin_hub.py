@@ -110,6 +110,10 @@ class InstanceSelectionRequiredError(RuntimeError):
 class PluginHub(WebSocketEndpoint):
     """Manages persistent WebSocket connections to Unity plugins."""
 
+    # configure() creates the lock and entry points guard its lifecycle. Pylint
+    # only infers the class attribute's initial None value in async-with blocks.
+    # pylint: disable=not-async-context-manager
+
     encoding = None  # Application bounds must precede JSON decoding.
     KEEP_ALIVE_INTERVAL = 15
     SERVER_TIMEOUT = 30

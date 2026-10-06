@@ -455,6 +455,7 @@ async def test_remote_poll_does_not_resolve_or_nudge_local_desktop(policy, monke
 
     await poll(user="user")
 
-    mod._get_unity_project_path.assert_not_awaited()
+    # The policy fixture replaces this function with an AsyncMock.
+    mod._get_unity_project_path.assert_not_awaited()  # pylint: disable=no-member
     policy.assert_not_awaited()
     assert not mod._nudge_states

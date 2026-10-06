@@ -66,6 +66,8 @@ async def _scenario(case):
         index = 0
         clock = [0.0]
 
+        # Each protocol's callbacks finish before the next iteration replaces them.
+        # pylint: disable=cell-var-from-loop
         async def sleep(delay):
             clock[0] += delay
             await asyncio.sleep(0)
@@ -103,6 +105,7 @@ async def _scenario(case):
             return {"success": True, "data": {"job_id": "fixture-job", "status": "queued"}}
 
         PluginHub.send_command_for_instance = send
+        # pylint: enable=cell-var-from-loop
         if case == "requires_no_tests_false":
             async def get_state(key):
                 assert key == "unity_instance"
