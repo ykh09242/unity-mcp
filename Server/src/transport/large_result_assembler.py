@@ -9,8 +9,11 @@ from dataclasses import dataclass
 import time
 from typing import Final
 from uuid import UUID
+from transport.result_gzip import GZIP_WORKING_BYTES, GzipResultDecoder, GzipResultError
 
 CAPABILITY: Final = "large_result_v1"
+COMPRESSION_CAPABILITY: Final = "large_result_gzip_v1"
+COMPRESSION_THRESHOLD_BYTES: Final = 1024 * 1024
 THRESHOLD_BYTES: Final = 256 * 1024
 MAX_RESULT_BYTES: Final = 32 * 1024 * 1024
 MAX_FRAME_BYTES: Final = 64 * 1024
@@ -41,6 +44,8 @@ class _Transfer:
     payload: bytearray
     chunk_count: int
     deadline: float
+    wire_bytes: int
+    decoder: GzipResultDecoder | None = None
     offset: int = 0
     received_chunks: int = 0
     completed: bool = False
@@ -66,11 +71,13 @@ class LargeResultAssembler:
                  release: Callable[[str, str], None], *,
                  timeout_seconds: float = 30.0,
                  max_total_bytes: int = 64 * 1024 * 1024,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 reserve_compressed: Callable[[str, str, int, int], bool] | None = None) -> None:
         if not 0 < timeout_seconds <= 300 or not 0 < max_total_bytes <= 256 * 1024 * 1024:
             raise LargeResultProtocolError("invalid_assembler_limits")
         self._pending = pending
         self._reserve = reserve
+        self._reserve_compressed = reserve_compressed
         self._release = release
         self._timeout = timeout_seconds
         self._max_total = max_total_bytes
@@ -82,14 +89,26 @@ class LargeResultAssembler:
     def retained_bytes(self) -> int:
         return self._retained_bytes
 
-    def begin(self, owner: str, command_id: str, total_bytes: int, chunk_count: int) -> bool:
+    def begin(self, owner: str, command_id: str, total_bytes: int, chunk_count: int, *,
+              encoding: str = "identity", decoded_bytes: int | None = None) -> bool:
         """Reserve a pending transfer; ignore valid late/unowned results without allocation."""
         if not _canonical_id(command_id):
             raise LargeResultProtocolError("invalid_result_id")
+        if encoding not in {"identity", "gzip"}:
+            raise LargeResultProtocolError("unsupported_result_encoding", command_id)
+        compressed = encoding == "gzip"
         if (type(total_bytes) is not int or type(chunk_count) is not int
-                or not THRESHOLD_BYTES <= total_bytes <= MAX_RESULT_BYTES
+                or not (1 if compressed else THRESHOLD_BYTES) <= total_bytes <= MAX_RESULT_BYTES
                 or chunk_count != (total_bytes + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES):
             raise LargeResultProtocolError("invalid_result_size", command_id)
+        if compressed:
+            if type(decoded_bytes) is not int or not COMPRESSION_THRESHOLD_BYTES <= decoded_bytes <= MAX_RESULT_BYTES:
+                raise LargeResultProtocolError("invalid_decoded_result_size", command_id)
+            allocation_bytes = decoded_bytes
+        else:
+            if decoded_bytes is not None:
+                raise LargeResultProtocolError("unexpected_decoded_result_size", command_id)
+            allocation_bytes = total_bytes
         key = (owner, command_id)
         if not self._pending(owner, command_id):
             self.discard(owner, command_id)
@@ -97,16 +116,24 @@ class LargeResultAssembler:
         if key in self._transfers:
             self.discard(owner, command_id)
             raise LargeResultProtocolError("duplicate_result_start", command_id)
-        if (self._retained_bytes + total_bytes > self._max_total
-                or not self._reserve(owner, command_id, total_bytes)):
+        if self._retained_bytes + allocation_bytes > self._max_total:
+            raise LargeResultProtocolError("result_capacity", command_id)
+        if compressed:
+            if self._reserve_compressed is None or not self._reserve_compressed(
+                    owner, command_id, allocation_bytes, GZIP_WORKING_BYTES):
+                raise LargeResultProtocolError("result_capacity", command_id)
+        elif not self._reserve(owner, command_id, allocation_bytes):
             raise LargeResultProtocolError("result_capacity", command_id)
         try:
-            transfer = _Transfer(bytearray(total_bytes), chunk_count, self._clock() + self._timeout)
+            transfer = _Transfer(bytearray(allocation_bytes), chunk_count,
+                                 self._clock() + self._timeout, total_bytes)
+            if compressed:
+                transfer.decoder = GzipResultDecoder(transfer.payload)
         except MemoryError:
             self._release(owner, command_id)
             raise
         self._transfers[key] = transfer
-        self._retained_bytes += total_bytes
+        self._retained_bytes += allocation_bytes
         return True
 
     def feed(self, owner: str, frame: bytes) -> CompletedLargeResult | None:
@@ -132,16 +159,24 @@ class LargeResultAssembler:
             reason = "result_replay"
         elif int.from_bytes(frame[40:44], "big") != transfer.offset:
             reason = "invalid_result_offset"
-        elif len(frame) - HEADER_BYTES != min(CHUNK_PAYLOAD_BYTES, len(transfer.payload) - transfer.offset):
+        elif len(frame) - HEADER_BYTES != min(CHUNK_PAYLOAD_BYTES, transfer.wire_bytes - transfer.offset):
             reason = "invalid_result_chunk_size"
         if reason is not None:
             self.discard(owner, command_id)
             raise LargeResultProtocolError(reason, command_id)
         length = len(frame) - HEADER_BYTES
-        transfer.payload[transfer.offset:transfer.offset + length] = memoryview(frame)[HEADER_BYTES:]
+        if transfer.decoder is None:
+            memoryview(transfer.payload)[transfer.offset:transfer.offset + length] = memoryview(frame)[HEADER_BYTES:]
+        else:
+            try:
+                transfer.decoder.feed(memoryview(frame)[HEADER_BYTES:],
+                                      final=transfer.offset + length == transfer.wire_bytes)
+            except GzipResultError as exc:
+                self.discard(owner, command_id)
+                raise LargeResultProtocolError("invalid_result_compression", command_id) from exc
         transfer.offset += length
         transfer.received_chunks += 1
-        if transfer.offset == len(transfer.payload):
+        if transfer.offset == transfer.wire_bytes:
             if transfer.received_chunks != transfer.chunk_count:
                 self.discard(owner, command_id)
                 raise LargeResultProtocolError("invalid_result_chunk_count", command_id)

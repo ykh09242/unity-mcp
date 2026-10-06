@@ -25,6 +25,7 @@ namespace UnityEditor
         public static string GetString(string key, string fallback = "") => Values.TryGetValue(key, out var value) ? value : fallback;
         public static void SetString(string key, string value) => Values[key] = value;
         public static void DeleteKey(string key) => Values.Remove(key);
+        public static int GetInt(string key, int fallback = 0) => Values.TryGetValue(key, out var value) ? int.Parse(value) : fallback;
     }
     public static class AssetDatabase { public static bool IsAssetImportWorkerProcess() => false; }
     public static class TypeCache { public static IEnumerable<Type> GetTypesWithAttribute<T>() => Array.Empty<Type>(); }
@@ -44,7 +45,7 @@ namespace UnityEngine
 namespace MCPForUnity.Editor.Constants
 {
     public static class AuthConstants { public const string ApiKeyHeader = "fixture-api"; public const string LocalTokenHeader = "fixture-local"; }
-    public static class EditorPrefKeys { public const string ApiKey = "fixture-key"; public const string SessionId = "fixture-session"; }
+    public static class EditorPrefKeys { public const string ApiKey = "fixture-key"; public const string SessionId = "fixture-session"; public const string BatchExecuteMaxCommands = "fixture-batch"; }
 }
 namespace MCPForUnity.Runtime.Helpers { public sealed class BoundaryMarker { } }
 namespace MCPForUnity.Editor.Resources
@@ -53,7 +54,13 @@ namespace MCPForUnity.Editor.Resources
 }
 namespace MCPForUnity.Editor.Tools
 {
-    public sealed class McpForUnityToolAttribute : Attribute { public string CommandName { get; set; } }
+    public sealed class McpForUnityToolAttribute : Attribute
+    {
+        public string CommandName { get; set; }
+        public bool AutoRegister { get; set; }
+        public bool RequiresExplicitConsent { get; set; }
+        public McpForUnityToolAttribute(string name = null) { CommandName = name; }
+    }
 }
 namespace MCPForUnity.Editor.Helpers
 {

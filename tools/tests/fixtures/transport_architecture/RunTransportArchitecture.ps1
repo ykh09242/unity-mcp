@@ -28,9 +28,15 @@ try {
         'MCPForUnity/Editor/Services/IToolDiscoveryService.cs',
         'MCPForUnity/Editor/Models/Command.cs',
         'MCPForUnity/Editor/Tools/CommandRegistry.cs',
+        'MCPForUnity/Editor/Tools/BatchExecute.cs',
+        'MCPForUnity/Editor/Helpers/ParamCoercion.cs',
+        'MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs',
         'MCPForUnity/Editor/Helpers/StringCaseUtility.cs',
         'MCPForUnity/Editor/Helpers/Response.cs',
         'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/TransportArchitectureTests.cs',
+        'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/CooperativeCancellationTests.cs',
+        'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/CooperativeHandlerCancellationTests.cs',
+        'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/BatchExecuteCancellationTests.cs',
         'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/TransportCommandDispatcherTests.cs',
         'TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/WebSocketTransportClientTests.cs'
     ) | ForEach-Object { Join-Path $root $_ }

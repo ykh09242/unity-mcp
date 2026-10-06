@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, StrictInt, field_validator
 from models.models import ToolDefinitionModel
 
@@ -31,6 +31,11 @@ class ExecuteCommandMessage(BaseModel):
 class PingMessage(BaseModel):
     """Server-initiated ping to detect dead connections."""
     type: str = "ping"
+
+
+class CancelCommandMessage(BaseModel):
+    type: str = "cancel"
+    id: str = Field(max_length=36)
 
 # Incoming (Plugin -> Server)
 
@@ -72,6 +77,8 @@ class ResultStartMessage(BaseModel):
     id: str = Field(max_length=36)
     total_bytes: StrictInt
     chunk_count: StrictInt
+    encoding: Literal["identity", "gzip"] = "identity"
+    decoded_bytes: StrictInt | None = None
 
 # Session Info (API response)
 

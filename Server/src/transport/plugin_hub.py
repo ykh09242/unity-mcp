@@ -13,6 +13,7 @@ import weakref
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import anyio
 from starlette.endpoints import WebSocketEndpoint
 from starlette.websockets import WebSocket, WebSocketState
 
@@ -28,6 +29,7 @@ from transport.plugin_registry import PluginRegistry
 from transport.editor_state_store import EditorStateStore
 from transport.large_result_assembler import (
     CAPABILITY as LARGE_RESULT_CAPABILITY, MAGIC, MAX_FRAME_BYTES,
+    COMPRESSION_CAPABILITY,
     LargeResultAssembler, LargeResultProtocolError,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
@@ -39,6 +41,7 @@ from transport.models import (
     WelcomeMessage,
     RegisteredMessage,
     ExecuteCommandMessage,
+    CancelCommandMessage,
     PingMessage,
     RegisterMessage,
     RegisterToolsMessage,
@@ -153,6 +156,7 @@ class PluginHub(WebSocketEndpoint):
     # session_id -> ping task
     _ping_tasks: ClassVar[dict[str, asyncio.Task]] = {}
     CLOSE_TIMEOUT = 5.0
+    CANCEL_TIMEOUT = 1.0
     # Bound both retained tasks and their request/model/JSON working set. These
     # ceilings are independent of execution deadlines for legitimate long jobs.
     MAX_PENDING_COMMANDS = 256
@@ -177,7 +181,9 @@ class PluginHub(WebSocketEndpoint):
     # Independent of routing/pending maps: disconnect must not release a result
     # still owned by the command coroutine during cancellation-sensitive cleanup.
     _retained_results: ClassVar[dict[str, dict[str, Any]]] = {}
-    CAPABILITIES = frozenset({"editor_state_v1", LARGE_RESULT_CAPABILITY})
+    CANCELLATION_CAPABILITY = "command_cancel_v1"
+    CAPABILITIES = frozenset({"editor_state_v1", LARGE_RESULT_CAPABILITY,
+                              COMPRESSION_CAPABILITY, CANCELLATION_CAPABILITY})
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
     _large_results: ClassVar[LargeResultAssembler | None] = None
     _raw_results: ClassVar[dict[tuple[str, str], dict[str, Any]]] = {}
@@ -211,9 +217,15 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     def _reserve_transfer(cls, generation: str, command_id: str, size: int) -> bool:
+        return cls._reserve_compressed_transfer(generation, command_id, size, 0)
+
+    @classmethod
+    def _reserve_compressed_transfer(cls, generation: str, command_id: str,
+                                     size: int, working_bytes: int) -> bool:
         entry = cls._pending.get(command_id)
         # The bytearray and its decoded Unicode text coexist during validation.
-        charge = 5 * size + 4096
+        # Inflation reserves its bounded native/output working set before allocation.
+        charge = 5 * size + 4096 + working_bytes
         if entry is None or not cls._has_result_capacity(entry, charge):
             return False
         cls._raw_results[generation, command_id] = {
@@ -279,7 +291,6 @@ class PluginHub(WebSocketEndpoint):
             # Level cancellation may interrupt every await: release admission
             # synchronously, then shield the bounded routing cleanup.
             type(self)._admitted.pop(id(websocket), None)
-            import anyio
             with anyio.CancelScope(shield=True):
                 await self.on_disconnect(websocket, close_code)
 
@@ -362,7 +373,8 @@ class PluginHub(WebSocketEndpoint):
         cls._editor_states = EditorStateStore()
         cls._raw_results = {}
         cls._large_results = LargeResultAssembler(
-            cls._transfer_pending, cls._reserve_transfer, cls._release_transfer)
+            cls._transfer_pending, cls._reserve_transfer, cls._release_transfer,
+            reserve_compressed=cls._reserve_compressed_transfer)
         # Start tracking MCP client sessions for tool-change notifications
         if mcp is not None:
             _install_session_tracking(mcp)
@@ -373,7 +385,6 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def _close_websocket(cls, websocket: WebSocket) -> None:
-        import anyio
 
         try:
             # Closure is owned cleanup, including inside a cancelled ASGI scope.
@@ -718,8 +729,10 @@ class PluginHub(WebSocketEndpoint):
                 "future": future, "session_id": session_id,
                 "user_id": user_id, "payload_bytes": payload_bytes,
                 "response_owner": response_owner.get()}
+            generation = getattr(websocket.state, "plugin_generation", None)
 
         send_task: asyncio.Task | None = None
+        canceled = False
         try:
             msg = ExecuteCommandMessage(
                 id=command_id,
@@ -746,6 +759,7 @@ class PluginHub(WebSocketEndpoint):
             except PluginDisconnectedError as exc:
                 return MCPResponse(success=False, error=str(exc), hint="retry").model_dump()
             except asyncio.TimeoutError:
+                canceled = True
                 if command_type in cls._FAST_FAIL_COMMANDS:
                     return MCPResponse(
                         success=False,
@@ -753,12 +767,14 @@ class PluginHub(WebSocketEndpoint):
                         hint="retry",
                     ).model_dump()
                 raise
+        except asyncio.CancelledError:
+            canceled = True
+            raise
         finally:
             # Release synchronously on the owner loop before cancellation-sensitive
             # I/O cleanup. AnyIO level cancellation can interrupt every await here.
             cls._pending.pop(command_id, None)
             if cls._large_results is not None:
-                generation = getattr(websocket.state, "plugin_generation", None)
                 if isinstance(generation, str):
                     cls._large_results.discard(generation, command_id)
             if not future.done():
@@ -767,15 +783,35 @@ class PluginHub(WebSocketEndpoint):
                 # A disconnect may finish the future while the socket write fails.
                 future.exception()
             try:
-                if send_task is not None:
-                    if not send_task.done():
-                        send_task.cancel()
-                    await asyncio.gather(send_task, return_exceptions=True)
+                with anyio.move_on_after(cls.CANCEL_TIMEOUT, shield=True):
+                    if send_task is not None:
+                        if not send_task.done():
+                            send_task.cancel()
+                        await asyncio.gather(send_task, return_exceptions=True)
+                        if canceled:
+                            await cls._cancel_command_on_owner(websocket, session_id, generation, command_id)
             finally:
                 # A disconnected or completed future still retains its result
                 # during send-task cleanup. Only its owner returns this capacity.
                 if response_owner.get() is None:
                     cls._retained_results.pop(command_id, None)
+
+    @classmethod
+    async def _cancel_command_on_owner(cls, websocket: WebSocket, session_id: str,
+                                       generation: str | None, command_id: str) -> None:
+        # Always address the captured socket: a reconnect must never receive an
+        # old command's cancellation, even if it reused the routing session ID.
+        if (not isinstance(generation, str)
+                or cls._connections.get(session_id) is not websocket
+                or getattr(websocket.state, "plugin_generation", None) != generation
+                or not cls._supports(websocket, cls.CANCELLATION_CAPABILITY)):
+            return
+        try:
+            await websocket.send_json(CancelCommandMessage(id=command_id).model_dump())
+        except Exception:
+            # Cancellation is best-effort and never replaces the caller's original
+            # timeout/cancellation. The surrounding shield has a bounded deadline.
+            logger.debug("Unable to deliver command cancellation to its owning plugin")
 
     @classmethod
     async def get_sessions(cls, user_id: str | None = None) -> SessionList:
@@ -922,6 +958,8 @@ class PluginHub(WebSocketEndpoint):
             websocket.state.plugin_session_id = session_id
             websocket.state.plugin_generation = str(uuid.uuid4())
             accepted = cls.CAPABILITIES.intersection(payload.capabilities)
+            if LARGE_RESULT_CAPABILITY not in accepted:
+                accepted = accepted - {COMPRESSION_CAPABILITY}
             if "editor_state_v1" in accepted:
                 if not cls._editor_states.register_session(session_id, user_id):
                     accepted = accepted - {"editor_state_v1"}
@@ -1150,7 +1188,10 @@ class PluginHub(WebSocketEndpoint):
                 cls._expire_large_results()
                 if isinstance(data, dict):
                     start = ResultStartMessage(**data)
-                    assembler.begin(generation, start.id, start.total_bytes, start.chunk_count)
+                    if start.encoding == "gzip" and not cls._supports(websocket, COMPRESSION_CAPABILITY):
+                        raise LargeResultProtocolError("compression_not_negotiated", start.id)
+                    assembler.begin(generation, start.id, start.total_bytes, start.chunk_count,
+                                    encoding=start.encoding, decoded_bytes=start.decoded_bytes)
                     return
                 completed = assembler.feed(generation, data)
                 if completed is None:

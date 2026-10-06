@@ -19,6 +19,7 @@ internal sealed class LocalWebSocketPeer : IDisposable
     public readonly ConcurrentQueue<string> Order = new ConcurrentQueue<string>();
     public Action<JObject> OnStart;
     public Task Ready { get; }
+    public Task Reader { get; private set; }
     public Uri Uri { get; }
 
     public LocalWebSocketPeer()
@@ -41,7 +42,7 @@ internal sealed class LocalWebSocketPeer : IDisposable
         string accept = Convert.ToBase64String(sha.ComputeHash(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
         byte[] reply = Encoding.ASCII.GetBytes("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
         _stream.Write(reply, 0, reply.Length);
-        _ = Task.Run(ReadFrames);
+        Reader = Task.Run(ReadFrames);
     }
 
     public void Send(JObject message)
@@ -79,7 +80,7 @@ internal sealed class LocalWebSocketPeer : IDisposable
                 int opcode = first[0] & 15;
                 int length = first[1] & 127;
                 if (length == 126) { var expanded = ReadExact(2); length = expanded[0] * 256 + expanded[1]; }
-                if (length == 127)
+                else if (length == 127)
                 {
                     var expanded = ReadExact(8);
                     length = checked(expanded[4] * 16777216 + expanded[5] * 65536 + expanded[6] * 256 + expanded[7]);

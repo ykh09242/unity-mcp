@@ -138,7 +138,7 @@ def test_old_peer_gets_empty_features_and_unchanged_text_result(client):
 def test_capabilities_are_negotiated_as_supported_intersection(client):
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
         sid, welcome, registered = register(wire, capabilities=[*FEATURES, "unsupported"])
-        assert set(welcome["capabilities"]) == set(FEATURES)
+        assert set(welcome["capabilities"]) == {*FEATURES, "command_cancel_v1", "large_result_gzip_v1"}
         assert set(registered["capabilities"]) == set(FEATURES)
         state = PluginHub._connections[sid].state
         assert state.plugin_session_id == sid

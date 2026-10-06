@@ -29,11 +29,15 @@ internal static class TransportArchitectureHarness
         {
             TransportCommandDispatcher.ExecuteCommandJsonAsync("ping", CancellationToken.None).GetAwaiter().GetResult();
             RunNUnit(typeof(MCPForUnityTests.Editor.Services.TransportArchitectureTests));
+            RunNUnit(typeof(MCPForUnityTests.Editor.Services.CooperativeCancellationTests));
+            RunNUnit(typeof(MCPForUnityTests.Editor.Services.CooperativeHandlerCancellationTests));
+            RunNUnit(typeof(MCPForUnityTests.Editor.Tools.BatchExecuteCancellationTests));
             RunNUnit(typeof(MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests));
             RunNUnit(typeof(MCPForUnityTests.Editor.Services.WebSocketTransportClientTests));
             SynchronizationContext.SetSynchronizationContext(Context);
             typeof(TransportCommandDispatcher).GetField("_mainThreadContext", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, Context);
             ExerciseRealSocket();
+            CancellationSocketHarness.Run(PumpUntil, Pass);
             BenchmarkProjection();
             Console.WriteLine("PASS_TOTAL: " + _passes);
             return 0;

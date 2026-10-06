@@ -67,10 +67,53 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private string _apiKey;
         private bool _useLocalAuth;
         private bool _disposed;
+        private readonly OwnedConnectionOptions _ownedConnection;
+        private bool _commandCancellationNegotiated;
+        private bool _compressionNegotiated;
+
+        // An explicitly owned connection keeps batch integration tests and embedded
+        // callers independent of the user's saved endpoint, identity and session.
+        internal sealed class OwnedConnectionOptions
+        {
+            internal readonly Uri Endpoint;
+            internal readonly string LaunchToken;
+            internal readonly string ProjectName;
+            internal readonly string ProjectHash;
+            internal readonly string ProjectPath;
+            internal readonly string UnityVersion;
+            internal readonly bool AllowCompression;
+
+            internal OwnedConnectionOptions(Uri endpoint, string launchToken, string projectName,
+                string projectHash, string projectPath, string unityVersion, bool allowCompression = false)
+            {
+                if (endpoint == null || !endpoint.IsAbsoluteUri || !endpoint.IsLoopback
+                    || (endpoint.Scheme != "ws" && endpoint.Scheme != "wss")
+                    || !string.IsNullOrEmpty(endpoint.UserInfo))
+                    throw new ArgumentException("Owned connections require a loopback WebSocket endpoint", nameof(endpoint));
+                if (string.IsNullOrWhiteSpace(launchToken))
+                    throw new ArgumentException("An owned launch token is required", nameof(launchToken));
+                if (string.IsNullOrWhiteSpace(projectName) || string.IsNullOrWhiteSpace(projectHash)
+                    || string.IsNullOrWhiteSpace(projectPath) || string.IsNullOrWhiteSpace(unityVersion))
+                    throw new ArgumentException("Owned project identity must be provided explicitly");
+                Endpoint = endpoint;
+                LaunchToken = launchToken;
+                ProjectName = projectName;
+                ProjectHash = projectHash;
+                ProjectPath = projectPath;
+                UnityVersion = unityVersion;
+                AllowCompression = allowCompression;
+            }
+        }
 
         public WebSocketTransportClient(IToolDiscoveryService toolDiscoveryService = null)
+            : this(toolDiscoveryService, null)
+        {
+        }
+
+        internal WebSocketTransportClient(IToolDiscoveryService toolDiscoveryService, OwnedConnectionOptions options)
         {
             _toolDiscoveryService = toolDiscoveryService;
+            _ownedConnection = options;
         }
 
         public bool IsConnected => _isConnected;
@@ -87,15 +130,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public async Task<bool> StartAsync()
         {
             // Capture identity values on the main thread before any async context switching
-            _projectName = ProjectIdentityUtility.GetProjectName();
-            _projectHash = ProjectIdentityUtility.GetProjectHash();
-            _unityVersion = Application.unityVersion;
-            _useLocalAuth = !HttpEndpointUtility.IsRemoteScope();
-            _apiKey = HttpEndpointUtility.IsRemoteScope()
+            _projectName = _ownedConnection?.ProjectName ?? ProjectIdentityUtility.GetProjectName();
+            _projectHash = _ownedConnection?.ProjectHash ?? ProjectIdentityUtility.GetProjectHash();
+            _unityVersion = _ownedConnection?.UnityVersion ?? Application.unityVersion;
+            bool remote = _ownedConnection == null && HttpEndpointUtility.IsRemoteScope();
+            _useLocalAuth = !remote;
+            _apiKey = remote
                 ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
                 : string.Empty;
 
-            if (HttpEndpointUtility.IsRemoteScope()
+            if (remote
                 && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remoteUrlError))
             {
                 string message = remoteUrlError ?? "HTTP Remote URL is not allowed by current security settings.";
@@ -105,7 +149,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
 
             // Get project root path (strip /Assets from dataPath) for focus nudging
-            string dataPath = Application.dataPath;
+            _projectPath = _ownedConnection?.ProjectPath;
+            string dataPath = _ownedConnection == null ? Application.dataPath : null;
             if (!string.IsNullOrEmpty(dataPath))
             {
                 string normalized = dataPath.TrimEnd('/', '\\');
@@ -123,7 +168,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             var lifecycleCts = new CancellationTokenSource();
             CancellationToken lifecycleToken = lifecycleCts.Token;
-            Uri endpointUri = BuildWebSocketUri(HttpEndpointUtility.GetBaseUrl());
+            Uri endpointUri = _ownedConnection?.Endpoint ?? BuildWebSocketUri(HttpEndpointUtility.GetBaseUrl());
             lock (_ownershipLock)
             {
                 _lifecycleCts = lifecycleCts;
@@ -320,6 +365,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _connectionCts = connectionCts;
                     _commandWork = new ConnectionCommandWork(connectionToken);
                     _largeResultNegotiated = false;
+                    _commandCancellationNegotiated = false;
+                    _compressionNegotiated = false;
                 }
             }
             if (!ownsLifecycle)
@@ -363,7 +410,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     if (_useLocalAuth)
                     {
-                        string launchToken = HttpEndpointUtility.ReadLocalAuthToken(candidate);
+                        string launchToken = _ownedConnection?.LaunchToken ?? HttpEndpointUtility.ReadLocalAuthToken(candidate);
                         if (string.IsNullOrEmpty(launchToken))
                         {
                             throw new InvalidOperationException("Local authentication token not found. Start the local HTTP server first.");
@@ -636,6 +683,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 case "execute":
                     await HandleExecuteAsync(payload, token).ConfigureAwait(false);
                     break;
+                case "cancel":
+                    ConnectionCommandWork work;
+                    lock (_ownershipLock)
+                    {
+                        if (!IsCurrentConnectionToken(token) || !_commandCancellationNegotiated) break;
+                        work = _commandWork;
+                    }
+                    work?.TryCancel(payload.Value<string>("id"));
+                    break;
                 case "ping":
                     await SendPongAsync(token).ConfigureAwait(false);
                     break;
@@ -677,12 +733,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     if (!IsCurrentConnectionToken(token)) return Task.CompletedTask;
                     _sessionId = newSessionId;
                     _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
+                    _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
+                    _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
                     _statePublisher?.Dispose();
                     _statePublisher = null;
                     _state = TransportState.Connected(TransportDisplayName, sessionId: newSessionId, details: _endpointUri.ToString());
                 }
                 // Validate again when the deferred main-thread write actually executes.
-                EditorApplication.delayCall += () => PersistSessionIdIfCurrent(newSessionId, token);
+                if (_ownedConnection == null)
+                    EditorApplication.delayCall += () => PersistSessionIdIfCurrent(newSessionId, token);
                 McpLog.Info($"[WebSocket] Registered with session ID: {newSessionId}", false);
 
                 lock (_ownershipLock)
@@ -721,6 +780,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private void PersistSessionIdIfCurrent(string sessionId, CancellationToken token)
         {
+            if (_ownedConnection != null) return;
             try
             {
                 lock (_ownershipLock)
@@ -840,7 +900,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Math.Min(int.MaxValue / 1000, timeoutSeconds))));
             var command = new Command { type = commandName, @params = parameters };
             var request = new QueuedCommand { Id = commandId, Command = command, TimeoutSeconds = timeoutSeconds, Deadline = deadline };
-            string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token));
+            string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel);
             if (rejection != null)
             {
                 deadline.Dispose();
@@ -854,6 +914,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public Command Command;
             public int TimeoutSeconds;
             public CancellationTokenSource Deadline;
+            private int _cancelRequested;
+            public bool CancelRequested => Volatile.Read(ref _cancelRequested) != 0;
+            public void Cancel()
+            {
+                Interlocked.Exchange(ref _cancelRequested, 1);
+                Deadline.Cancel();
+            }
         }
 
         private async Task ExecuteQueuedCommandAsync(Task previous, QueuedCommand request, CancellationToken token)
@@ -872,7 +939,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (OperationCanceledException)
                 {
                     token.ThrowIfCancellationRequested();
-                    response = new { status = "error", error = $"Command '{request.Command.type}' timed out after {request.TimeoutSeconds} seconds" };
+                    response = new { status = "error", error = request.CancelRequested
+                        ? $"Command '{request.Command.type}' canceled"
+                        : $"Command '{request.Command.type}' timed out after {request.TimeoutSeconds} seconds" };
                 }
                 catch (Exception ex) { response = new { status = "error", error = ex.Message }; }
                 await SendCommandResultAsync(request.Id, response, token).ConfigureAwait(false);
@@ -897,20 +966,25 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Task SendCommandResultAsync(string id, object result, CancellationToken token)
         {
-            byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { type = "command_result", id, result }));
+            string responseJson = JsonConvert.SerializeObject(new { type = "command_result", id, result });
             bool negotiated;
+            bool compressionNegotiated;
             lock (_ownershipLock)
             {
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentConnectionToken(token)) throw new OperationCanceledException(token);
                 negotiated = _largeResultNegotiated;
+                compressionNegotiated = _compressionNegotiated;
             }
-            if (bytes.Length > LargeResultWriter.MaxResultBytes)
-                bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { type = "command_result", id,
-                    result = new { status = "error", error = "Command result exceeds the transport size limit" } }));
+            if (Encoding.UTF8.GetByteCount(responseJson) > LargeResultWriter.MaxResultBytes)
+                responseJson = JsonConvert.SerializeObject(new { type = "command_result", id,
+                    result = new { status = "error", error = "Command result exceeds the transport size limit" } });
             // Legacy integrations can use opaque IDs; they retain text responses.
             if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id) negotiated = false;
-            return LargeResultWriter.SendAsync(id, bytes, negotiated, SendFrameAsync, token);
+            bool allowCompression = _ownedConnection?.AllowCompression ?? string.Equals(
+                Environment.GetEnvironmentVariable("UNITY_MCP_RESULT_COMPRESSION"), "gzip", StringComparison.OrdinalIgnoreCase);
+            return LargeResultWriter.SendJsonAsync(id, responseJson, negotiated, SendFrameAsync, token,
+                compressionNegotiated, allowCompression);
         }
 
         private async Task KeepAliveLoopAsync(CancellationToken token)
@@ -949,7 +1023,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["project_hash"] = _projectHash,
                 ["unity_version"] = _unityVersion,
                 ["project_path"] = _projectPath,
-                ["capabilities"] = new JArray(EditorStatePublisher.Capability, LargeResultWriter.Capability)
+                ["capabilities"] = new JArray(EditorStatePublisher.Capability, LargeResultWriter.Capability,
+                    ConnectionCommandWork.CancellationCapability, LargeResultWriter.CompressionCapability)
             };
 
             await SendJsonAsync(registerPayload, token).ConfigureAwait(false);
