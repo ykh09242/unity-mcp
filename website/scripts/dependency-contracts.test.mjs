@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,58 @@ const require = createRequire(import.meta.url);
 const coreRequire = createRequire(require.resolve('@docusaurus/core/package.json'));
 const notifierUrl = pathToFileURL(coreRequire.resolve('update-notifier')).href;
 const removed = ['got', 'cacheable-request', 'http-cache-semantics'];
+
+for (const [name, minimum] of [['tinypool', '2.1.2'], ['postcss-selector-parser', '7.1.6']]) {
+  test(`every locked ${name} includes the published security fixes`, () => {
+    const lock = JSON.parse(readFileSync(path.join(siteDir, 'package-lock.json'), 'utf8'));
+    const entries = Object.entries(lock.packages)
+      .filter(([location]) => location.endsWith(`node_modules/${name}`));
+    assert.ok(entries.length > 0, `${name} must be checked, not silently absent`);
+    for (const [location, entry] of entries) {
+      assert.ok(require('semver').gte(entry.version, minimum), `${location}: ${entry.version} < ${minimum}`);
+    }
+  });
+}
+
+test('Docusaurus worker pool preserves SSG data and ignores inherited task options', async () => {
+  const { default: Tinypool } = await import(pathToFileURL(coreRequire.resolve('tinypool')).href);
+  const directory = mkdtempSync(path.join(tmpdir(), 'docs-worker-test-'));
+  let pool;
+  try {
+    const worker = path.join(directory, 'worker.mjs');
+    writeFileSync(worker, `
+      import { workerData } from 'node:worker_threads';
+      export default (task) => ({
+        task,
+        params: workerData[1].params,
+        hasWorkerId: Boolean(process.__tinypool_state__?.workerId),
+      });
+    `);
+    pool = new Tinypool({
+      filename: pathToFileURL(worker).href,
+      minThreads: 1,
+      maxThreads: 1,
+      concurrentTasksPerWorker: 1,
+      runtime: 'worker_threads',
+      isolateWorkers: false,
+      workerData: { params: { baseUrl: '/unity-mcp/' } },
+    });
+    // A polluted prototype must not redirect work to another module or export.
+    const options = Object.create({ filename: path.join(directory, 'missing.mjs'), name: 'missing' });
+    const result = await pool.run({ pathnames: ['/unity-mcp/search/'] }, options);
+    assert.deepEqual(result, {
+      task: { pathnames: ['/unity-mcp/search/'] },
+      params: { baseUrl: '/unity-mcp/' },
+      hasWorkerId: true,
+    });
+  } finally {
+    try {
+      await pool?.destroy();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
 
 test('locked dependency graph excludes the obsolete HTTP cache chain', () => {
   const lock = JSON.parse(readFileSync(path.join(siteDir, 'package-lock.json'), 'utf8'));

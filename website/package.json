@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "npm@12.2.0",
+  "allowScripts": {
+    "core-js": false
+  },
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
@@ -34,14 +37,14 @@
   "devDependencies": {
     "@docusaurus/module-type-aliases": "^3.10.2",
     "@docusaurus/types": "^3.10.2",
-    "braces": "https://codeload.github.com/FSDevelop/braces/tar.gz/28d440b5dd449dbf1fe6f3506cf94ecca4d02660",
     "docusaurus-plugin-goatcounter": "^4.0.0",
     "sharp": "^0.35.5"
   },
   "overrides": {
-    "braces": "$braces",
     "copy-webpack-plugin": "^14.0.0",
     "css-minimizer-webpack-plugin": "^8.0.0",
+    "postcss-selector-parser": "^7.1.6",
+    "tinypool": "^2.2.0",
     "update-notifier": "^7.3.1",
     "webpack-dev-server": "^6.0.0"
   },
