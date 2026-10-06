@@ -1199,7 +1199,7 @@ class PluginHub(WebSocketEndpoint):
                 command_id = completed.command_id
                 # Decode directly from bytearray: avoid a second full bytes copy.
                 text = bounded_json_text(
-                    completed.payload.decode("utf-8"), max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
+                    completed.payload, max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
                     max_depth=cls.MAX_RESULT_DEPTH, max_nodes=cls.MAX_RESULT_NODES)
                 if text is None:
                     raise LargeResultProtocolError("result_payload_limit", command_id)
