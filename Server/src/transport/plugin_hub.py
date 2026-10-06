@@ -27,6 +27,7 @@ from models.response_limits import (
     ResponseOwner, response_owner,
 )
 from transport.plugin_registry import PluginRegistry
+from transport.json_decoder import decode_json
 from transport.editor_state_store import EditorStateStore
 from transport.large_result_assembler import (
     CAPABILITY as LARGE_RESULT_CAPABILITY, MAGIC, MAX_FRAME_BYTES,
@@ -334,7 +335,8 @@ class PluginHub(WebSocketEndpoint):
             await websocket.close(code=1009, reason="Plugin message exceeds supported limits")
             return None
         try:
-            return json.loads(text)
+            # Subclass decode hooks are part of the existing bounded-text path.
+            return decode_json(raw, fallback_text=text) if type(raw) in (str, bytes) else json.loads(text)
         except (ValueError, RecursionError):
             await websocket.close(code=1003, reason="Malformed plugin message")
             return None
@@ -1380,7 +1382,7 @@ class PluginHub(WebSocketEndpoint):
                     max_depth=cls.MAX_RESULT_DEPTH, max_nodes=cls.MAX_RESULT_NODES)
                 if text is None:
                     raise LargeResultProtocolError("result_payload_limit", command_id)
-                message = json.loads(text)
+                message = decode_json(completed.payload, fallback_text=text)
                 if (not isinstance(message, dict) or message.get("type") != "command_result"
                         or message.get("id") != command_id):
                     raise LargeResultProtocolError("invalid_result_envelope", command_id)

@@ -18,6 +18,7 @@ from typing import Any, Callable, TYPE_CHECKING
 import weakref
 
 from pydantic_core import from_json
+from transport.json_decoder import decode_json
 
 if TYPE_CHECKING:
     import asyncio
@@ -44,14 +45,8 @@ class _UnityProtocolError(ValueError):
 
 def _decode_unity_response(data: bytes | bytearray) -> Any:
     """Decode JSON before callers enforce the existing object response shape."""
-    # The native parser does not follow a customized Python integer digit limit.
-    if sys.get_int_max_str_digits() != sys.int_info.default_max_str_digits:
-        return json.loads(data.decode('utf-8'))
-    try:
-        return from_json(data, allow_inf_nan=True, allow_partial=False, cache_strings='keys')
-    except ValueError:
-        # Preserve accepted lone surrogates and exact UTF-8/stdlib exceptions.
-        return json.loads(data.decode('utf-8'))
+    # Retain this helper and its imported native decoder for existing adapters.
+    return decode_json(data, native_decoder=from_json)
 
 
 def read_status_file(target_hash: str | None = None) -> dict | None:
