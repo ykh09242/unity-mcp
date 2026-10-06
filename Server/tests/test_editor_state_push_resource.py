@@ -44,7 +44,7 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
             state.external_changes_scanner.update_and_get_async = AsyncMock(return_value={})
             authoritative = copy.deepcopy(payload["state"])
             authoritative["sequence"] = 99
-            rpc = AsyncMock(side_effect=lambda *args: {"success": True, "data": copy.deepcopy(authoritative)})
+            rpc = AsyncMock(side_effect=lambda *args, **kwargs: {"success": True, "data": copy.deepcopy(authoritative)})
             state.unity_transport.send_with_unity_instance = rpc
             metadata = [r for r in get_registered_resources() if r["name"] == "editor_state"]
             resources.discover_modules = lambda *args: []
@@ -63,6 +63,7 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     # Then the existing RPC supplies the state.
                     assert fallback["data"]["sequence"] == 99
                     assert rpc.await_count == before + 1
+                    assert rpc.await_args.kwargs == {"editor_state_read_mode": "ordinary"}
 
                     # When twenty actual SDK reads follow one fresh push.
                     assert cache.accept("fixture-socket", payload)
@@ -78,6 +79,7 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     # Then it still obtains the authoritative editor reply.
                     assert strict.data["sequence"] == 99
                     assert rpc.await_count == before + 1
+                    assert rpc.await_args.kwargs == {"editor_state_read_mode": "authoritative"}
 
                     # When observation/receive freshness expires.
                     clock.update(wall=now + 3, mono=13.0)
@@ -85,6 +87,7 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     # Then the resource automatically uses the authoritative fallback.
                     assert expired["data"]["sequence"] == 99
                     assert rpc.await_count == before + 2
+                    assert rpc.await_args.kwargs == {"editor_state_read_mode": "ordinary"}
 
                     # When the authenticated connection closes.
                     clock.update(wall=now, mono=10.0)
@@ -93,6 +96,7 @@ def test_sdk_resource_reuses_push_and_strict_reads_keep_rpc_authority():
                     # Then the closed peer's cached state cannot be served.
                     assert disconnected["data"]["sequence"] == 99
                     assert rpc.await_count == before + 3
+                    assert rpc.await_args.kwargs == {"editor_state_read_mode": "ordinary"}
         asyncio.run(scenario())
     '''
     result = subprocess.run(
