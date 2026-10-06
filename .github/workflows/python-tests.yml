@@ -38,6 +38,52 @@ permissions:
   contents: read
 
 jobs:
+  server_bootstrap:
+    name: Server Bootstrap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout source metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref }}
+          sparse-checkout: MCPForUnity/package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          python-version: "3.10"
+          enable-cache: false
+
+      - name: Verify cold and offline server bootstrap
+        shell: pwsh
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/unity-mcp-bootstrap-cache
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: core.longpaths
+          GIT_CONFIG_VALUE_0: "false"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = (Get-Content -LiteralPath MCPForUnity/package.json -Raw | ConvertFrom-Json).mcpServerSource
+          if ($source -cnotmatch '^https://github\.com/ykh09242/unity-mcp/archive/[0-9a-f]{40}\.zip#subdirectory=Server$') {
+            throw 'The default server source must be a full-commit fork archive'
+          }
+          $cold = & uvx --no-config --no-progress --no-env-file --python 3.10 --from $source mcp-for-unity --help
+          if ($LASTEXITCODE -ne 0) { throw 'Cold server bootstrap failed' }
+          if (($cold -join "`n") -notmatch 'Unity MCP \(ykh09242\)') { throw 'Server help was not rendered' }
+          $offline = & uvx --no-config --no-progress --no-env-file --offline --python 3.10 --from $source mcp-for-unity --help
+          if ($LASTEXITCODE -ne 0) { throw 'Offline server bootstrap failed' }
+          if (($offline -join "`n") -notmatch 'Unity MCP \(ykh09242\)') { throw 'Offline help was not rendered' }
+          if (Test-Path -LiteralPath (Join-Path $env:UV_CACHE_DIR 'git-v0')) { throw 'Server bootstrap unexpectedly used Git checkout' }
+          Write-Output 'Cold and offline bootstrap passed without Git checkout or a server listener.'
+
   test:
     name: Run Python Tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest

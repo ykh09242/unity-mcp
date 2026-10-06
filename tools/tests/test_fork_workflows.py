@@ -148,6 +148,25 @@ def test_reusable_python_validation_includes_hermetic_tool_tests() -> None:
     assert 'python -m pytest "$GITHUB_WORKSPACE/tools/tests/"' in runs
 
 
+def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> None:
+    job = workflow("python-tests.yml")["jobs"]["server_bootstrap"]
+    assert set(job["strategy"]["matrix"]["os"]) == {
+        "windows-latest", "ubuntu-latest", "macos-latest",
+    }
+    assert job["timeout-minutes"] <= 10
+    steps = {step["name"]: step for step in job["steps"]}
+    assert steps["Checkout source metadata"]["with"]["persist-credentials"] is False
+    probe = steps["Verify cold and offline server bootstrap"]
+    assert probe["shell"] == "pwsh"
+    assert probe["env"]["GIT_CONFIG_KEY_0"] == "core.longpaths"
+    assert probe["env"]["GIT_CONFIG_VALUE_0"] == "false"
+    assert "mcpServerSource" in probe["run"]
+    assert "--offline" in probe["run"]
+    assert probe["run"].count("mcp-for-unity --help") == 2
+    assert probe["run"].count("$LASTEXITCODE -ne 0") == 2
+    assert not probe.get("continue-on-error", False)
+
+
 def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
     # Given: reusable Python validation gates both ordinary PRs and release callers.
     steps = workflow("python-tests.yml")["jobs"]["test"]["steps"]
