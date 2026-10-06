@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import runpy
 import sys
 from pathlib import Path
 
+import anyio
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.bench_transport_compare import Capture, compare
+from tools import bench_transport_compare as comparator
+from tools import bench_transport
 from tools.bench_transport_resource import normalize_resource
 from tools.bench_transport_report import fingerprint
 
@@ -65,6 +69,116 @@ def test_same_protocol_rows_when_product_source_fingerprint_changes(report: Capt
     # Then: eight workload rows remain valid; product fingerprints need not match.
     assert result["semantic_parity"] is True
     assert len(result["same_protocol_rows"]) == 8
+
+
+def concurrent_report(report: Capture, pings: int, *, strategy: str = "inflight_shared",
+                      gated: bool = False, private_state: bool = True) -> Capture:
+    """Coherent fixed 30-sample/3-warmup transcript; no subprocess or clock."""
+    raw = report.model_dump(mode="json")
+    raw["options"].update(samples=30, warmup=3, concurrency=2, cohort_gate=gated)
+    for row in raw["results"]:
+        row["observations"] = [
+            {**row["observations"][0], "correlation": f"{workload}:{phase}", "workload": workload,
+             "phase": phase.split(":")[0], "output_sha256": workload}
+            for workload in row["warmed"]
+            for phase in ["cold", *(f"warmup:{i}" for i in range(3)), *(f"warm:{i}" for i in range(30))]
+        ] + [{**row["observations"][0], "correlation": f"small:{phase}", "phase": "recovery"}
+             for phase in ("after_cancel", "after_reconnect")]
+        for workload in row["warmed"].values():
+            workload["samples"] = 30
+        commands = {"read_console": 71, "get_editor_state": 34, "get_test_job": 34}
+        row["client_rpc_counts"].update({"tools/call": 145, "public_tools/call": 139})
+        if row["mode"] == "http":
+            commands["ping"] = pings
+            row["fixture_metadata"].update(readiness_strategy=strategy,
+                readiness_private_workloads=["state"] if private_state else [])
+            row["client_rpc_counts"].update({"tools/call": 152, "public_tools/call": 140})
+            row["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"] = {
+                **commands, "read_console": 72, "ping": pings + 1}
+        row["lifecycle"]["after_reconnect"]["commands"] = commands
+    return Capture.model_validate(raw)
+
+
+def test_missing_baseline_label_is_rejected_before_capture(monkeypatch, tmp_path: Path) -> None:
+    # Given: a different root without any asserted baseline label or manifest.
+    def forbidden_capture(*_args, **_kwargs):
+        pytest.fail("Missing provenance must not start a child")
+    monkeypatch.setattr(bench_transport, "run", forbidden_capture)
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    script = ROOT / "tools/bench_transport_compare.py"
+    monkeypatch.setattr(sys, "argv", [str(script), "--baseline-root", str(tmp_path),
+        "--candidate-revision", "owned-candidate", "--output", str(tmp_path / "result.json")])
+    # When/Then: CLI parsing rejects the omitted label, rather than supplying phase8.
+    with pytest.raises(SystemExit) as error:
+        runpy.run_path(str(script), run_name="__main__")
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("mismatch", ["root", "label"])
+def test_manifest_mismatch_is_rejected_before_capture(monkeypatch, tmp_path: Path, mismatch: str) -> None:
+    # Given: owned manifest claims that conflict with explicit caller arguments.
+    manifest = tmp_path / "source.json"
+    manifest.write_text(json.dumps({"source_root": str(tmp_path), "revision": "owned-baseline"}), encoding="utf-8")
+    arguments = comparator.parse_args(["--baseline-manifest", str(manifest),
+        "--baseline-root", str(tmp_path / "different" if mismatch == "root" else tmp_path),
+        "--baseline-revision", "different" if mismatch == "label" else "owned-baseline",
+        "--candidate-revision", "owned-candidate", "--output", str(tmp_path / "result.json")])
+    def forbidden_capture(*_args, **_kwargs):
+        pytest.fail("Mismatched manifest must not start a child")
+    monkeypatch.setattr(comparator, "run", forbidden_capture)
+    # When/Then: the existing root/label preflight fails before capture code runs.
+    with pytest.raises(ValueError, match="manifest root/revision"):
+        anyio.run(comparator.execute, arguments)
+
+
+def test_natural_shared_readiness_variation_preserves_both_counts(report: Capture) -> None:
+    # Given: both natural runs lie in the same shared strategy's 75..105 budget.
+    baseline, candidate = concurrent_report(report, 75), concurrent_report(report, 76)
+    # When: compare natural scheduling without a deterministic producer gate.
+    result = compare(baseline, candidate)
+    # Then: valid variation passes, with both measured counts retained visibly.
+    http = next(row for row in result["initialization_counts_cleanup"] if row["mode"] == "http")
+    assert (http["baseline_peer_rpc_counts"]["ping"], http["candidate_peer_rpc_counts"]["ping"]) == (75, 76)
+
+
+@pytest.mark.parametrize("pings,gated,reason", [(106, False, "budget"), (76, True, "Cohort-gated")])
+def test_shared_readiness_still_rejects_invalid_budget_or_gate(report: Capture, pings: int, gated: bool, reason: str) -> None:
+    # Given: an extra RPC outside the natural ceiling or deterministic lower bound.
+    baseline = concurrent_report(report, 75, gated=gated)
+    candidate = concurrent_report(report, pings, gated=gated)
+    # When/Then: relaxing natural cross-run equality cannot hide either regression.
+    with pytest.raises(ValueError, match=reason):
+        compare(baseline, candidate)
+
+
+@pytest.mark.parametrize("mode", ["stdio", "http"])
+@pytest.mark.parametrize("field", ["readiness_strategy", "ordinary_resource_strategy"])
+def test_declared_sharing_downgrade_is_rejected_without_gate(report: Capture, mode: str, field: str) -> None:
+    # Given: individually valid counts but a declared sharing feature downgrade.
+    baseline = concurrent_report(report, 75).model_dump(mode="json")
+    candidate = concurrent_report(report, 105).model_dump(mode="json")
+    next(row for row in baseline["results"] if row["mode"] == mode)["fixture_metadata"][field] = "inflight_shared"
+    next(row for row in candidate["results"] if row["mode"] == mode)["fixture_metadata"][field] = "per_call"
+    # When/Then: natural budgets or disabled resource probes cannot hide the downgrade.
+    with pytest.raises(ValueError, match="downgraded " + field):
+        compare(Capture.model_validate(baseline), Capture.model_validate(candidate))
+
+
+def test_gated_cross_revision_nonincrease_remains_enforced(report: Capture) -> None:
+    # Given: each gated count is exact for its declared private-workload policy.
+    baseline = concurrent_report(report, 60, gated=True, private_state=False)
+    candidate = concurrent_report(report, 75, gated=True)
+    # When/Then: gated comparison still rejects a larger cross-revision RPC count.
+    with pytest.raises(ValueError, match="increased readiness"):
+        compare(baseline, candidate)
+
+
+def test_per_call_to_shared_upgrade_remains_comparable(report: Capture) -> None:
+    # Given: the original historical per-call to shared improvement, gated equally.
+    baseline = concurrent_report(report, 105, strategy="per_call", gated=True)
+    candidate = concurrent_report(report, 75, gated=True)
+    # When/Then: valid strategy improvements remain accepted with equivalent output.
+    assert compare(baseline, candidate)["semantic_parity"] is True
 
 
 @pytest.mark.parametrize("mutation,reason", [

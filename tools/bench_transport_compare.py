@@ -23,9 +23,6 @@ from tools.bench_transport import Options, run
 from tools.bench_transport_report import Observation, equivalent_outputs, fingerprint
 from tools.bench_transport_resource import normalize_resource
 
-BASELINE = "789a815bf3a7548b27fa63e364351827e243841d"
-
-
 class FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, allow_inf_nan=False)
 
@@ -256,6 +253,9 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
     for mode in ("stdio", "http"):
         left = next(row for row in baseline.results if row.mode == mode)
         right = next(row for row in candidate.results if row.mode == mode)
+        for field in ("readiness_strategy", "ordinary_resource_strategy"):
+            if getattr(left.fixture_metadata, field) == "inflight_shared" and getattr(right.fixture_metadata, field) == "per_call":
+                raise ValueError(f"Candidate downgraded {field} sharing strategy")
         if (left.native_child_interpreter != right.native_child_interpreter
                 or left.client_rpc_counts != right.client_rpc_counts
                 or fingerprint(sorted(left.tool_schemas, key=lambda item: str(item["name"])))
@@ -266,7 +266,8 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
         if left.resource_contract is not None and right.resource_contract is not None:
             if [cohort.normalized_sha256 for cohort in left.resource_contract] != [cohort.normalized_sha256 for cohort in right.resource_contract]:
                 raise ValueError("Baseline/candidate resource semantics differ")
-        if right.lifecycle.after_reconnect.commands.get("ping", 0) > left.lifecycle.after_reconnect.commands.get("ping", 0):
+        if (baseline.options.cohort_gate
+                and right.lifecycle.after_reconnect.commands.get("ping", 0) > left.lifecycle.after_reconnect.commands.get("ping", 0)):
             raise ValueError("Candidate increased readiness RPC count")
         controls.append({"mode": mode,
             "baseline_initialize_ms": left.cold_launch_to_initialized_ms, "candidate_initialize_ms": right.cold_launch_to_initialized_ms,
@@ -283,6 +284,8 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
                 "candidate_client_ms": after.stages_ms["client_total_ms"].model_dump(mode="json"),
                 "candidate_over_baseline_p50": after.stages_ms["client_total_ms"].p50 / before.stages_ms["client_total_ms"].p50})
     return {"semantic_parity": True, "same_protocol_rows": rows, "initialization_counts_cleanup": controls,
+            "readiness_comparison_policy": "Per-revision budgets; cross-revision nonincrease only for cohort-gated captures; declared sharing downgrades rejected.",
+            "sharing_proof_scope": "Natural counts do not prove sharing; use separately paired cohort-gated and resource-contract captures to verify effective sharing.",
             "timing_scope": "Owned peer-emulated UnityMCP subset; main import and actual adapters, not full catalog/Editor/product speed",
             "timing_policy": "Descriptive ratios only; no wall-time/RSS CI threshold"}
 
@@ -326,12 +329,13 @@ async def execute(arguments: argparse.Namespace) -> None:
     arguments.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
 
-if __name__ == "__main__":
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Validate explicit caller labels and workload options before any capture."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-root", type=Path, required=True)
     parser.add_argument("--candidate-root", type=Path, default=ROOT)
     parser.add_argument("--baseline-manifest", type=Path)
-    parser.add_argument("--baseline-revision", default=BASELINE)
+    parser.add_argument("--baseline-revision", required=True)
     parser.add_argument("--candidate-revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rounds", type=int, default=3)
@@ -342,7 +346,11 @@ if __name__ == "__main__":
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--cohort-gate", action="store_true")
     parser.add_argument("--resource-contract", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.rounds < 1 or args.samples < 1 or args.warmup < 0 or args.concurrency < 1 or not 262144 <= args.large_bytes <= 8 * 1024 * 1024 or args.work_ms < 0:
         parser.error("Use positive rounds/samples/concurrency, nonnegative warmup/work-ms, and payload 256KiB..8MiB")
-    anyio.run(execute, args)
+    return args
+
+
+if __name__ == "__main__":
+    anyio.run(execute, parse_args())
