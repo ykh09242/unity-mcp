@@ -51,6 +51,49 @@ def test_all_theme_tokens_resolve_in_both_editor_skins() -> None:
         assert referenced <= defined, (path, referenced - defined)
 
 
+def _common_style(selector: str) -> dict[str, str]:
+    source = (WINDOWS / "Components/Common.uss").read_text(encoding="utf-8")
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    properties = {}
+    for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
+        if selector in {part.strip() for part in selectors.split(",")}:
+            properties.update(
+                (name.strip(), value.strip())
+                for name, value in re.findall(r"([\w-]+)\s*:\s*([^;]+);", body)
+            )
+    return properties
+
+
+def test_column_dropdown_does_not_use_horizontal_flex_basis_as_height() -> None:
+    markup = ET.parse(WINDOWS / "Components/Validation/McpValidationSection.uxml")
+    column = next(element for element in markup.iter() if element.get("class") == "setting-column")
+    field = next(element for element in column if element.get("name") == "validation-level")
+    assert field.get("class") == "setting-dropdown"
+    style = _common_style(".setting-dropdown")
+    assert style.get("flex-basis", "auto") == "auto"
+    assert style.get("flex-grow", "0") == "0"
+    assert style.get("height", "auto") == "auto"
+
+
+def test_inline_dropdown_retains_horizontal_growth_and_wrapping() -> None:
+    style = _common_style(".setting-dropdown-inline")
+    assert style["flex-grow"] == "1"
+    assert style["flex-shrink"] == "1"
+    assert style["flex-basis"] == "200px"
+    assert _common_style(".setting-row")["flex-wrap"] == "wrap"
+
+
+@pytest.mark.parametrize("selector", [".mcp-editor", ".mcp-editor.unity-theme-light"])
+@pytest.mark.parametrize(("token", "native"), [
+    ("--mcp-bg", "--unity-colors-window-background"),
+    ("--mcp-surface", "--unity-colors-toolbar-background"),
+    ("--mcp-field", "--unity-colors-input_field-background"),
+    ("--mcp-text", "--unity-colors-default-text"),
+])
+def test_editor_surfaces_follow_native_unity_theme(selector: str, token: str, native: str) -> None:
+    assert _common_style(selector)[token].startswith(f"var({native},")
+
+
 @pytest.mark.parametrize("relative", [
     "MCPForUnityEditorWindow", "MCPSetupWindow", "EditorPrefs/EditorPrefsWindow",
     "Components/Connection/McpConnectionSection", "Components/ClientConfig/McpClientConfigSection",
