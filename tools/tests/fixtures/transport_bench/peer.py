@@ -11,6 +11,7 @@ import struct
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 
 import anyio
@@ -36,11 +37,58 @@ class PeerState:
     websocket: ClientConnection | None = None
     registered: anyio.Event = field(default_factory=anyio.Event)
     write_lock: threading.Lock = field(default_factory=threading.Lock)
+    active: dict[str, threading.Event] = field(default_factory=dict)
+    complete: dict[str, threading.Event] = field(default_factory=dict)
+    cohort_gate: bool = False
+    concurrency: int = 1
+    samples: int = 1
+    cohorts: dict[str, tuple[int, anyio.Event]] = field(default_factory=dict)
+    partial_admitted: anyio.Event = field(default_factory=anyio.Event)
+    partial_release: anyio.Event = field(default_factory=anyio.Event)
+    partial_received: anyio.Event = field(default_factory=anyio.Event)
+    partial_command_id: str = ""
+    partial_total_bytes: int = 0
+    resource_entered: anyio.Event = field(default_factory=anyio.Event)
+    resource_enabled: bool = False
+    subscription_gate: bool = False
 
     def mark_active(self, request: PeerRequest) -> None:
         with self.write_lock:
+            self.active.setdefault(request.correlation, threading.Event()).set()
             with self.timing_path.with_name("active.jsonl").open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"correlation": request.correlation, "command": request.name}) + "\n")
+
+    def completed(self, correlation: str) -> None:
+        with self.write_lock:
+            self.complete.setdefault(correlation, threading.Event()).set()
+
+    async def wait_event(self, kind: str, correlation: str) -> None:
+        with self.write_lock:
+            events = self.active if kind == "active" else self.complete
+            event = events.setdefault(correlation, threading.Event())
+        if not await anyio.to_thread.run_sync(partial(event.wait, 8)):
+            raise TimeoutError(f"Owned peer did not signal {kind}: {correlation}")
+
+    def enter_call(self, correlation: str, *, subscriber: bool = False) -> None:
+        parts = correlation.split(":")
+        if not self.cohort_gate or len(parts) != 3 or parts[1] != "warm":
+            return
+        if self.subscription_gate and parts[0] != "state" and not subscriber:
+            return
+        index = int(parts[2])
+        key = f"{parts[0]}:{index // self.concurrency}"
+        count, event = self.cohorts.get(key, (0, anyio.Event()))
+        count += 1
+        self.cohorts[key] = count, event
+        expected = min(self.concurrency, self.samples - index // self.concurrency * self.concurrency)
+        if count == expected:
+            event.set()
+
+    async def wait_cohort(self, correlation: str) -> None:
+        parts = correlation.removesuffix(":readiness").split(":")
+        if self.cohort_gate and len(parts) == 3 and parts[1] == "warm":
+            key = f"{parts[0]}:{int(parts[2]) // self.concurrency}"
+            await self.cohorts[key][1].wait()
 
     def serialize(self, request: PeerRequest, queue_ms: float, work_ms: float) -> bytes:
         started = time.perf_counter()
@@ -114,6 +162,7 @@ class TcpHandler(socketserver.BaseRequestHandler):
                 time.sleep(delay)
                 payload = self.server.state.serialize(request, 0.0, (time.perf_counter() - started) * 1000)
                 self.request.sendall(struct.pack(">Q", len(payload)) + payload)
+                state.completed(request.correlation)
         except (EOFError, ConnectionError, OSError):
             return
 
@@ -129,6 +178,10 @@ async def serve_websocket(state: PeerState, endpoint: str, token: str) -> None:
             started = time.perf_counter()
             queue_ms = (started - queued) * 1000
             state.mark_active(request)
+            if request.name == "ping":
+                await state.wait_cohort(request.correlation)
+            if state.resource_enabled:
+                await state.resource_entered.wait()
             delay = 0.5 if request.name != "ping" and ":cancel" in request.correlation else state.work_ms / 1000
             await anyio.sleep(delay)
             payload = state.serialize(request, queue_ms, (time.perf_counter() - started) * 1000)
@@ -136,12 +189,17 @@ async def serve_websocket(state: PeerState, endpoint: str, token: str) -> None:
                 await websocket.send(payload.decode())
             else:
                 chunks = (len(payload) + CHUNK_PAYLOAD_BYTES - 1) // CHUNK_PAYLOAD_BYTES
+                if request.correlation == "large:partial_cancel":
+                    state.partial_command_id, state.partial_total_bytes = request.id, len(payload)
                 await websocket.send(json.dumps({"type": "result_start", "id": request.id,
                                                  "total_bytes": len(payload), "chunk_count": chunks}))
                 for index in range(chunks):
                     start = index * CHUNK_PAYLOAD_BYTES
                     await websocket.send(MAGIC + request.id.encode("ascii") + struct.pack(">I", start)
                                          + payload[start:start + CHUNK_PAYLOAD_BYTES])
+                    if index == 0 and request.correlation == "large:partial_cancel":
+                        await state.partial_release.wait()
+            state.completed(request.correlation)
 
     while True:
         try:

@@ -4,14 +4,17 @@
 # ///
 # ─── How to run ───
 # Launched only by tools/bench_transport.py using the existing Server interpreter.
-"""Owned FastMCP subset exercising actual public tools and product transports."""
+"""Owned UnityMCP subset exercising actual public tools and product transports."""
 from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.metadata
 import json
 import os
 import socket
+import struct
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
@@ -29,13 +32,16 @@ from starlette.websockets import WebSocket
 
 from tools.tests.fixtures.transport_bench.peer import PeerState, TcpPeer, serve_websocket
 from tools.tests.fixtures.transport_bench.workload import INSTANCE
+from tools.tests.fixtures.transport_bench.accounting import Accounting
+from tools.tests.fixtures.transport_bench.resource import ResourceContract, ResourceHold
+from main import UnityMCP
 from core.config import config
 from transport.legacy.unity_connection import UnityConnection
-from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection as legacy
+from transport.response_limit_middleware import ResponseLimitMiddleware
 
 CORRELATION: ContextVar[str] = ContextVar("bench_correlation", default="")
 
@@ -58,12 +64,49 @@ async def main(args: argparse.Namespace) -> None:
     console = importlib.import_module("services.tools.read_console")
     jobs = importlib.import_module("services.tools.run_tests")
     state = PeerState(Path(args.directory) / "peer.jsonl", args.large_bytes, args.work_ms, os.environ["BENCH_AUTH"])
+    state.cohort_gate, state.concurrency, state.samples = args.cohort_gate, args.concurrency, args.samples
+    accounting = Accounting(args.transport)
+    expected_src = (Path(args.product_root) / "Server/src").resolve()
+    def product_imports() -> dict[str, str]:
+        loaded = {}
+        for name, module in tuple(sys.modules.items()):
+            if name.split(".")[0] in {"main", "core", "models", "services", "transport", "utils"}:
+                source = getattr(module, "__file__", None)
+                if source:
+                    path = Path(source).resolve()
+                    if not path.is_relative_to(expected_src):
+                        raise RuntimeError(f"Product import escaped selected source root: {name}")
+                    loaded[name] = path.relative_to(expected_src).as_posix()
+        return loaded
+
+    product_imports()
     # Production send_command performs status-file preflight even on an explicit
     # socket. Substitute owned state before any calls so it cannot read user files.
     def owned_status(_target_hash: str | None = None) -> dict[str, JsonValue]:
         return {"reloading": False, "reason": "owned_benchmark"}
 
     legacy.read_status_file = owned_status
+    original_large = PluginHub._handle_large_result
+    original_result = PluginHub._handle_command_result
+
+    async def observe_large(hub, websocket, data) -> None:
+        await original_large(hub, websocket, data)
+        snapshot = accounting.snapshot()
+        if isinstance(data, bytes) and snapshot.get("assembler_buffer_bytes", 0) > 0:
+            state.partial_admitted.set()
+        # A send-side completion is not proof that the hub consumed late frames.
+        # Correlate the final identity chunk after the actual product handler.
+        if (isinstance(data, bytes) and len(data) >= 44 and data[:4] == b"ULR1"
+                and data[4:40].decode("ascii") == state.partial_command_id
+                and struct.unpack(">I", data[40:44])[0] + len(data) - 44 == state.partial_total_bytes):
+            state.partial_received.set()
+
+    async def observe_result(hub, websocket, payload) -> None:
+        await original_result(hub, websocket, payload)
+        accounting.snapshot()
+
+    PluginHub._handle_large_result = observe_large
+    PluginHub._handle_command_result = observe_result
     original_connect = PluginHub._connect_authenticated
 
     async def instrument_connect(hub: PluginHub, websocket: WebSocket) -> None:
@@ -83,8 +126,8 @@ async def main(args: argparse.Namespace) -> None:
     config.transport_mode = args.transport
     config.http_remote_hosted = False
     config.connection_timeout = 3
-    config.command_total_timeout = 5
     config.local_auth_token = os.environ["BENCH_AUTH"]
+    config.command_total_timeout = 5
     connection: MeasuredConnection | None = None
     listener: socket.socket | None = None
     endpoint = ""
@@ -102,7 +145,7 @@ async def main(args: argparse.Namespace) -> None:
 
     async def ready() -> None:
         await state.registered.wait()
-        (Path(args.directory) / "ready.json").write_text(json.dumps({"endpoint": endpoint}), encoding="utf-8")
+        (Path(args.directory) / "ready.json").write_text(json.dumps({"endpoint": endpoint, "pid": os.getpid()}), encoding="utf-8")
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncIterator[None]:
@@ -123,6 +166,17 @@ async def main(args: argparse.Namespace) -> None:
                     state.registered.set()
                 case "http":
                     PluginHub.configure(PluginRegistry())
+                    if args.cohort_gate and hasattr(PluginHub, "_readiness_reads"):
+                        state.subscription_gate = True
+                        original_session = PluginHub._readiness_reads.session
+
+                        @asynccontextmanager
+                        async def observed_session(key):
+                            async with original_session(key) as read:
+                                state.enter_call(CORRELATION.get(), subscriber=True)
+                                yield read
+
+                        PluginHub._readiness_reads.session = observed_session
                     group.start_soon(serve_websocket, state, endpoint.replace("http://", "ws://") + "/hub",
                                      os.environ["BENCH_AUTH"])
                 case other:
@@ -142,12 +196,17 @@ async def main(args: argparse.Namespace) -> None:
                     with anyio.CancelScope(shield=True):
                         await PluginHub.shutdown()
 
-    mcp = FastMCP("OwnedTransportBench", lifespan=lifespan)
+    mcp = UnityMCP("OwnedTransportBench", lifespan=lifespan)
+    mcp.add_middleware(ResponseLimitMiddleware())
+    resources = ResourceContract(state, accounting, Path(args.directory)) if args.resource_contract and args.transport == "http" else None
+    if resources is not None:
+        resources.install(mcp)
 
     @mcp.tool(name="read_console")
     async def read_console(ctx: Context, filter_text: str) -> dict[str, JsonValue]:
         await ctx.set_state("unity_instance", INSTANCE)
         token = CORRELATION.set(filter_text)
+        state.enter_call(filter_text)
         try:
             return await console.read_console(ctx, filter_text=filter_text, count=1, format="json")
         finally:
@@ -157,6 +216,7 @@ async def main(args: argparse.Namespace) -> None:
     async def get_test_job(ctx: Context, job_id: str) -> dict[str, JsonValue]:
         await ctx.set_state("unity_instance", INSTANCE)
         token = CORRELATION.set(job_id)
+        state.enter_call(job_id)
         try:
             result = await jobs.get_test_job(ctx, job_id)
             return result.model_dump()
@@ -166,6 +226,7 @@ async def main(args: argparse.Namespace) -> None:
     @mcp.tool(name="get_editor_state")
     async def get_editor_state(correlation: str) -> object:
         token = CORRELATION.set(correlation)
+        state.enter_call(correlation)
         try:
             return await send_with_unity_instance(send, INSTANCE, "get_editor_state", {"benchCorrelation": correlation})
         finally:
@@ -174,7 +235,56 @@ async def main(args: argparse.Namespace) -> None:
     @mcp.tool(name="bench_status")
     async def status() -> dict[str, JsonValue]:
         return {"commands": dict(state.commands), "registrations": state.registrations,
-                "pending": len(PluginHub._pending), "retained": len(PluginHub._retained_results)}
+                "pending": len(PluginHub._pending) if args.transport == "http" else None,
+                "retained": len(PluginHub._retained_results) if args.transport == "http" else None,
+                "accounting": accounting.snapshot()}
+
+    @mcp.tool(name="bench_wait_active")
+    async def wait_active(correlation: str) -> dict[str, bool]:
+        await state.wait_event("active", correlation)
+        return {"signalled": True}
+
+    @mcp.tool(name="bench_wait_complete")
+    async def wait_complete(correlation: str) -> dict[str, bool]:
+        await state.wait_event("complete", correlation)
+        if correlation == "large:partial_cancel":
+            with anyio.fail_after(8):
+                await state.partial_received.wait()
+            return {"signalled": True, "receiver_final_chunk_processed": True}
+        return {"signalled": True}
+
+    @mcp.tool(name="bench_wait_drained")
+    async def wait_drained() -> dict[str, JsonValue]:
+        await accounting.wait_drained()
+        return await status()
+
+    @mcp.tool(name="bench_partial_status")
+    async def partial_status() -> dict[str, JsonValue]:
+        with anyio.fail_after(8):
+            await state.partial_admitted.wait()
+        return accounting.snapshot()
+
+    @mcp.tool(name="bench_arm_partial")
+    async def arm_partial() -> dict[str, bool]:
+        state.partial_admitted, state.partial_release = anyio.Event(), anyio.Event()
+        state.partial_received = anyio.Event()
+        state.partial_command_id, state.partial_total_bytes = "", 0
+        return {"armed": True}
+
+    @mcp.tool(name="bench_release_partial")
+    async def release_partial() -> dict[str, bool]:
+        state.partial_release.set()
+        return {"released": True}
+
+    @mcp.tool(name="bench_metadata")
+    async def metadata() -> dict[str, JsonValue]:
+        return {"product_imports": product_imports(), "accounting_sampled_high_water": accounting.peaks,
+                "readiness_strategy": "inflight_shared" if hasattr(PluginHub, "_readiness_reads") else "per_call",
+                "ordinary_resource_strategy": "inflight_shared" if hasattr(PluginHub, "_ordinary_state_reads") else "per_call",
+                "readiness_private_workloads": ["state"] if hasattr(PluginHub, "_ordinary_state_reads") else [],
+                "runner": "UnityMCP", "retention_middleware": True, "pid": os.getpid(),
+                "child_packages": {name: importlib.metadata.version(name) for name in
+                                   ("fastmcp", "mcp", "anyio", "uvicorn", "httpx2", "websockets", "pydantic", "pydantic-core")}}
 
     @mcp.tool(name="bench_reconnect")
     async def reconnect() -> dict[str, JsonValue]:
@@ -199,7 +309,8 @@ async def main(args: argparse.Namespace) -> None:
         case "http":
             app = mcp.http_app(path="/mcp", json_response=True)
             app.routes.append(WebSocketRoute("/hub", PluginHub))
-            app.add_middleware(LocalControlAuthMiddleware, token=os.environ["BENCH_AUTH"])
+            if resources is not None:
+                app.add_middleware(ResourceHold, contract=resources)
             server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
             try:
                 await server.serve(sockets=[listener])
@@ -214,5 +325,10 @@ if __name__ == "__main__":
     parser.add_argument("--directory", required=True)
     parser.add_argument("--large-bytes", type=int, required=True)
     parser.add_argument("--work-ms", type=float, required=True)
+    parser.add_argument("--product-root", type=Path, required=True)
+    parser.add_argument("--concurrency", type=int, required=True)
+    parser.add_argument("--samples", type=int, required=True)
+    parser.add_argument("--cohort-gate", action="store_true")
+    parser.add_argument("--resource-contract", action="store_true")
     args = parser.parse_args()
     anyio.run(main, args)

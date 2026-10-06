@@ -1,56 +1,62 @@
-# Owned transport performance measurement
+# Owned product transport measurement
 
-From the repository root, use the existing Server environment without installing or updating dependencies:
+Use the existing pinned Server environment; no dependency installation is needed. From the repository root:
 
 ```powershell
-Server/.venv/Scripts/python.exe tools/bench_transport.py --output reports/transport/sequential.json --samples 30 --warmup 3 --large-bytes 4194304 --work-ms 2
-Server/.venv/Scripts/python.exe tools/bench_transport.py --output reports/transport/concurrent2.json --samples 30 --warmup 3 --large-bytes 4194304 --work-ms 2 --concurrency 2 --order http-first
-Server/.venv/Scripts/python.exe -m pytest tools/tests/test_bench_transport.py -q
+Server/.venv/Scripts/python.exe tools/bench_transport.py --output reports/transport/current.json --samples 30 --warmup 3 --large-bytes 4194304 --work-ms 0
+Server/.venv/Scripts/python.exe tools/bench_transport_compare.py --baseline-root reports/CS-20261006-mcp-usability/phase8/baseline/source --baseline-manifest reports/CS-20261006-mcp-usability/phase8/baseline/source.json --candidate-root . --candidate-revision current-checkout --output reports/transport/comparison.json --rounds 3 --samples 30 --warmup 3 --large-bytes 4194304 --work-ms 0
+Server/.venv/Scripts/python.exe -m pytest tools/tests/test_bench_transport.py tools/tests/test_bench_transport_compare.py -q
 ```
 
-Run multiple times and alternate `--order` when assessing small differences. Thirty samples describe this run; their p95/p99 do not establish statistical significance. `--work-ms 0` removes the synthetic delay while preserving payload construction and all actual transport processing. Windows timer granularity can make an asynchronous 2ms synthetic delay take much longer; the report records actual elapsed synthetic work rather than the requested delay.
+`--product-root` selects a root containing `Server/src/main.py`. The comparator keeps the harness, interpreter, dependencies, protocol and options fixed, selecting only different product source roots. It compares baseline stdio with candidate stdio, and baseline HTTP with candidate HTTP. Three rounds run serially in baseline/candidate, candidate/baseline, baseline/candidate order, with transport order alternating between rounds. Stop other heavy workloads and freeze product/harness sources before collecting timing evidence. There are no CI wall-time or RSS thresholds.
 
-## Measured pipeline
+The phase8 capture schema is `unity-mcp-transport-bench-v2`; the paired report is `unity-mcp-product-comparison-v1`. Phase7 captures compared current stdio with HTTP through a FastMCP subset. Phase8 imports the full selected `main` module and uses its actual `UnityMCP` class, stdio adapter and response middleware. Its newly measured historical baseline is the valid before/after reference; phase7 latency numbers are not interchangeable with it.
 
-The installed MCP SDK initializes a real, separate FastMCP server process and calls its tools through stdio pipes or authenticated local Streamable HTTP. The fixture invokes this repository's actual public `read_console` and `get_test_job` functions, `send_with_unity_instance` routing, legacy `UnityConnection`, HTTP `PluginHub`, response normalization, validation, negotiated large-result assembly, and MCP client response parsing. The TCP fixture implements reciprocal v2 HMAC authentication with per-listener and per-connection generations. The WebSocket fixture authenticates with the actual local token middleware and registers its owned project before receiving commands. Fresh synthetic launch tokens remain in process memory/environment and are never written to token/discovery files.
+## Actual paths and isolation
 
-This is a product transport comparison over a limited FastMCP tool subset. It excludes `main.py` startup, status-file discovery, global connection-pool selection, telemetry/log wrappers, the complete tool catalog, Editor execution, and Unity main-thread scheduling. It is not an SDK-only echo comparison or a claim about real Editor wall time. The prototypes under `tools/experiments/transport` provide a separate protocol-overhead control.
+The installed MCP SDK initializes a separate actual `UnityMCP` server process and calls public `read_console` and `get_test_job`, plus a representative raw state command, through stdio or authenticated local Streamable HTTP. The subset includes product routing, legacy `UnityConnection`, HTTP `PluginHub`, normalization, validation, response limits, negotiated assembly, response retention, SDK serialization and client reply decoding. Full catalog registration, status/discovery selection, global connection-pool selection, actual Editor execution, main-thread scheduling, job creation/test execution and pushed-state caching are excluded.
 
-The HTTP peer negotiates plain `large_result_v1` chunks only, excluding `large_result_gzip_v1`. These captures do not measure the new gzip path; `peer_profile.http_gzip_negotiated=false` and the explicit report limits record that boundary.
+Both synthetic peers use owned endpoints on `127.0.0.1` port `0`. The TCP peer performs reciprocal v2 HMAC authentication with new listener/connection generations. The registered WebSocket peer uses the actual local token middleware and negotiates only plain `large_result_v1`; `large_result_gzip_v1` is excluded. Tokens exist only in memory/child environment. The fixture supplies owned in-memory status preflight and an explicit credential provider. It never queries real status/credential files or ports 6400/6401, and no Unity Editor is involved.
 
-All listeners bind to `127.0.0.1` with port `0`, and the HTTP listener keeps the bound socket through server startup. The script contacts only these owned endpoints, never ports 6400/6401 or a real Editor. It does not inspect user credential files or inherit credential environment variables. The product connection receives an explicit in-memory credential provider. Legacy status-file preflight is replaced with owned in-memory non-reloading state before any product call; user status/discovery files are not queried. Temporary roots and subprocesses are isolated per run; bounded diagnostic traces are copied beside the JSON report before teardown, including on failure. HTTP child termination/reaping/handle closure runs under bounded cancellation shielding, including already-exited children.
+Children run the runtime's native base interpreter with isolated startup and the pinned environment's explicitly selected site-packages; this avoids Windows venv redirector ownership ambiguity. The fixture's actual PID must equal the held HTTP process PID. Environment variables are allowlisted; telemetry is disabled, and log/status/home directories belong to temporary roots. Bounded shielded termination, kill/reap and handle closure cover cancellation and already-exited children. Bounded traces survive beside the raw report even on failure. A real long-lived native-child cleanup regression is included.
 
-## Workloads and comparison
+Selected product imports are checked before calls and at final metadata, including lazy `main/core/models/services/transport/utils` imports. An import escaping selected `Server/src` fails. Reports retain SHA256 of every selected product Python source and every common harness/fixture Python source before/after. Additions, removals or changed bytes fail the run; cross-round drift also fails. Caller-provided revision labels are assertions, not Git verification. `harness_repository_head` identifies the harness checkout, not an archived product tree. Optional parent archive manifests retain their file hash and provenance claims separately from independently measured product source hashes.
 
-The common schema is `unity-mcp-transport-bench-v1`; `workload.py` provides deterministic payloads also used by transport prototypes.
+## Four natural latency workloads
 
-| Workload | Actual route | Payload |
+| Workload | Actual representative path | Deterministic payload |
 | --- | --- | --- |
-| small | public `read_console`, one JSON log entry | Small success/data result |
-| state | `get_editor_state` command via actual product routing | 100 object names, settings and deterministic scene state |
-| large | public `read_console`, one JSON log entry | Configurable ASCII message, default 4MiB; HTTP negotiates `large_result_v1` |
-| job | public `get_test_job` | Terminal succeeded job with valid test result summary |
+| small | public `read_console` | one small JSON log entry |
+| state | authoritative raw `get_editor_state` command | 100 objects, settings and scene state |
+| large | public `read_console` | one ASCII log message, default 4MiB |
+| job | public `get_test_job` | terminal succeeded job and test summary |
 
-State measures raw command routing and JSON, excluding the `editor_state` resource formatter and pushed-state cache. Job measures terminal status polling, excluding job creation, test execution, focus nudges and multi-second server-side waiting. These exclusions are recorded in every report.
+Payload size must be 256KiB..8MiB so every HTTP run exercises actual chunked partial-transfer cleanup. Each workload has a first cold call, excluded warmup calls and warmed calls in bounded batches. Raw state intentionally does not measure ordinary resource fallback; terminal job polling does not measure job start, focus or long waiting. Every completed output, including cold/warmup/recovery, must be successful and have equal text/structured content. Canonical fingerprints and decoded-result byte counts are checked outside the measured call span. All samples must agree, so a transient mismatch cannot be hidden by the last result.
 
-Each workload has a cold first call, configurable excluded warmup calls, and warmed observations. Calls may run in bounded concurrent batches. Every observed output—including cold, warmup and recovery calls—is canonicalized, hashed and compared; a transient mismatch cannot be hidden by a matching last sample. Output byte counts are canonical decoded-result bytes, while peer byte counts include its transport envelope and readiness-ping results. RPC counters distinguish user commands from product HTTP readiness pings.
+`client_rpc_counts` separates initialization, tool listing, all tool calls and public tool calls. Peer counters separately record user commands and HTTP readiness pings. For `N=1+warmup+samples`, the pre-partial lifecycle totals are `read_console=2N+3`, `get_editor_state=N`, `get_test_job=N`. Baseline HTTP performs `3N+3` readiness pings. Candidate in-flight readiness may reduce concurrent small/large pings; authoritative raw state remains private. Sequential readiness counts are equal. Natural concurrent captures permit only the valid shared-to-private count range.
 
-## Stage meanings
+`--cohort-gate` is a separate deterministic CI contract. It holds the owned readiness producer until all actual sharing subscribers join, so candidate counts equal the strategy's lower bound. This rendezvous affects peer work and latency: compare identical gate settings only, and do not present gated timings as natural latency. It is off by default.
 
-| Field | Actual observation | Limits |
-| --- | --- | --- |
-| `client_total_ms` | Client call initiation through SDK reply decoding | Includes all stages below |
-| `queue_ms` | Existing legacy connection lock admission plus owned peer execution admission | Framework scheduling and uninstrumented hub locks remain in residual |
-| `synthetic_unity_work_ms` | Actual elapsed declared synthetic work at owned peer, including readiness pings | Includes timer/scheduling effects; never real Unity time |
-| `peer_serialization_ms` | Payload construction and peer JSON encoding, including readiness results | MCP serialization and response validation are in residual |
-| `wire_response_framework_ms` | Client total minus the measured stages above | Combines wire, writes, framework dispatch, MCP serialization and response/client handling; cannot be called pure network time |
+## Stages and lifecycle
 
-The fixture captures correlations out of band while sending the original product WebSocket envelopes unchanged. Owned tracing/instrumentation overhead is included in the observed pipeline, including the peer's work interval; these timings are not an uninstrumented CPU profile. Stage durations are measured on the process that owns them; clocks from separate processes are never subtracted. Stage percentiles are computed independently and should not be added together. Missing peer observations or materially negative residuals fail the run.
+| Field | Observation and limit |
+| --- | --- |
+| `client_total_ms` | client call initiation through installed SDK reply decoding; excludes harness text parsing/canonical parity hashing |
+| `queue_ms` | product legacy admission lock plus owned peer execution admission; other scheduling stays in residual |
+| `synthetic_unity_work_ms` | actual elapsed synthetic peer work, including readiness; never actual Unity time |
+| `peer_serialization_ms` | synthetic payload construction/JSON encoding, including readiness |
+| `wire_response_framework_ms` | residual including wire/writes/framework scheduling/product validation/MCP serialization and SDK handling; not pure network time |
 
-## Lifecycle and provenance
+Correlations are out of band; product wire envelopes are unchanged. Fixture tracing overhead remains included. Stage clocks are local to their owning processes and never subtracted across processes. Independent percentiles must not be added. Missing observations and materially negative residuals fail. Thirty samples give descriptive nearest-rank p50/p95/p99, without statistical significance claims. With `--work-ms 2`, Windows timer granularity may extend the synthetic delay; actual elapsed work is retained. Zero delay still includes synthetic payload processing.
 
-Cancellation waits until the owned peer confirms the actual user command started, then cancels the client call. Synthetic peer work deliberately continues for 500ms. The tool records cancellation return latency, drains the late result, checks pending/retained results, and verifies a following call. This demonstrates request cleanup, not cancellation of Unity execution.
+Cancellation waits for actual peer command admission, then cancels the MCP call while synthetic work deliberately continues for 500ms. A late-result drain and public recovery call follow. Reconnect replaces the owned TCP/WS peer within the same MCP session, verifies a new registration and a successful call. These are cleanup/recovery tests, not Editor execution cancellation or process restart/session resumption.
 
-Reconnect deliberately closes the owned TCP connection or replaces the registered WebSocket peer, keeping the MCP client session. A succeeding public call and registration count confirm recovery; process restart and MCP session resumption are excluded.
+HTTP additionally pauses a large transfer after actual first-chunk admission. The recorded held assembler/hub reservations must be positive and within capacity. It cancels and drains the request, releases the remaining chunks, then waits for the exact request UUID's final binary frame to pass the actual product receiver handler before asserting zero reservations again. Sender-side send completion alone is insufficient.
 
-The JSON report records interpreter/platform/dependency versions (including native Pydantic codecs), options, Git HEAD, SHA256 of all `Server/src/**/*.py` source files and owned harness files before/after, cold startup to MCP initialized, distributions using nearest-rank p50/p95/p99, raw observations, output equivalence and explicit limits. A source change/addition/removal during measurement saves the report and fails the run so it can be repeated against a stable checkout. These are current-checkout stdio/HTTP measurements, not before/after measurements against a historical commit.
+Accounting is sampled reservation ownership, not continuous peak allocation, RSS, or all transient memory. Overlapping assembler and hub reservations are recorded separately, not added as independent allocations. A positive held partial/resource seam proves the relevant reservation path was exercised. Stdio observes its actual response-delivery ContextVar and shared-read budget; a zero `_retained_results` count is not a stdio memory proof, and legacy/SDK transient allocation peaks remain outside this harness's scope.
+
+## Separate real resource contract
+
+`--resource-contract` adds four actual MCP `resources/read` calls after the four latency workloads and lifecycle probes, outside their observations. Two ordinary and two authoritative reads exercise the product editor-state resource with an owned empty project directory (`Assets` only), no pushed-state capability, and actual routing/authentication. This limits the scanner to an owned empty tree. The fixture holds two actual ASGI response bodies before their sends finish, preserving positive source/delivery ownership until release, then requires bounded reservations and eventual zero.
+
+Baseline ordinary reads issue two state RPCs and two readiness pings; candidate ordinary fallback shares one state RPC and one ping. Authoritative reads remain two private RPCs and two pings on both versions. Raw resource outputs are preserved. Semantic parity validates and removes exactly `data.observed_at_unix_ms` and `data.staleness.age_ms`; all other fields, including sequence, staleness flags and advice, remain significant. The comparator rejects extra normalization, invalid timestamps, schema/runtime/harness mismatches, output drift, unexpected call counts, missing positive ownership or leaks.

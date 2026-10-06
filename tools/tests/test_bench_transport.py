@@ -13,7 +13,8 @@ import anyio
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS.parent))
 from tools.bench_transport_report import Observation, attach_stages, distribution, equivalent_outputs
-from tools.bench_transport_process import cleanup_process
+from tools.bench_transport_process import cleanup_process, native_python
+from tools.bench_transport_compare import Capture, check_contract
 
 
 @dataclass
@@ -60,6 +61,27 @@ async def test_cleanup_closes_when_owned_real_child_already_exited() -> None:
     await cleanup_process(process)
     # Then: owned stdout/stderr handles are closed as well as the child reaped.
     assert process.returncode == 0
+    with pytest.raises(anyio.ClosedResourceError):
+        await process.stdout.receive()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reaps_when_owned_native_child_is_running_and_caller_cancelled() -> None:
+    # Given: the native interpreter itself, without the Windows venv redirector.
+    process = await anyio.open_process([sys._base_executable, "-I", "-c",
+        "import os,time;print(os.getpid(),flush=True);time.sleep(60)"])
+    try:
+        with anyio.fail_after(5):
+            reported_pid = int((await process.stdout.receive()).strip())
+        assert reported_pid == process.pid
+        # When: cleanup receives cancellation with that actual server child still alive.
+        with anyio.CancelScope() as scope:
+            scope.cancel()
+            await cleanup_process(process)
+    finally:
+        await cleanup_process(process)
+    # Then: the held PID is reaped and its owned pipe handle is closed.
+    assert process.returncode is not None
     with pytest.raises(anyio.ClosedResourceError):
         await process.stdout.receive()
 
@@ -114,8 +136,9 @@ def test_missing_stage_rejected_when_peer_has_no_correlated_observation(tmp_path
 def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_path: Path) -> None:
     # Given: the installed SDK/server runtime and isolated owned fixture endpoints.
     output = tmp_path / "measurement.json"
-    command = [sys.executable, str(TOOLS / "bench_transport.py"), "--output", str(output),
-               "--samples", "2", "--warmup", "0", "--large-bytes", "262144", "--concurrency", "2"]
+    command = native_python([str(TOOLS / "bench_transport.py"), "--output", str(output),
+               "--samples", "2", "--warmup", "0", "--large-bytes", "4194304", "--concurrency", "2",
+               "--cohort-gate", "--work-ms", "0", "--resource-contract"], (TOOLS.parent,))
     # When: execute the actual CLI over both product routing paths.
     completed = subprocess.run(command, cwd=TOOLS.parent, capture_output=True, text=True, timeout=40, check=False)
     # Then: matched output, observed peer work, and drained state survive replacement.
@@ -123,12 +146,22 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["output_equivalent"] is True
     assert report["source"]["unchanged_during_measurement"] is True
+    check_contract(Capture.model_validate(report))
     for result in report["results"]:
         assert set(result["warmed"]) == {"small", "state", "large", "job"}
         assert len(result["observations"]) == 14
         assert result["lifecycle"]["cancel_requested"] is True
         state = result["lifecycle"]["after_reconnect"]
-        assert (state["pending"], state["retained"], state["registrations"]) == (0, 0, 2)
+        assert state["registrations"] == 2
+        if result["mode"] == "http":
+            assert (state["pending"], state["retained"]) == (0, 0)
+            partial = result["lifecycle"]["partial_cancel"]
+            assert partial["receiver_final_chunk_processed"] is True
+            assert partial["held"]["assembler_buffer_bytes"] > 4194304
+            assert partial["held"]["hub_reserved_bytes"] <= partial["held"]["capacity_bytes"]
+        else:
+            assert (state["pending"], state["retained"]) == (None, None)
+            assert state["accounting"]["stdio_delivery_observer_available"] is True
         assert state["commands"]["read_console"] == 9
         assert state["commands"]["get_editor_state"] == state["commands"]["get_test_job"] == 3
-        assert result["warmed"]["large"]["output_bytes"] > 262144
+        assert result["warmed"]["large"]["output_bytes"] > 4194304
