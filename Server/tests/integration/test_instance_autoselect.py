@@ -1,4 +1,8 @@
 import pytest
+
+# Load the real transport before fixtures replace PluginHub, so its cached
+# imports cannot retain a fake hub after fixture teardown.
+import transport.unity_transport
 import sys
 import types
 from types import SimpleNamespace

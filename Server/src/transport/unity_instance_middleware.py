@@ -6,6 +6,7 @@ into the request-scoped state, allowing tools to access it via ctx.get_state("un
 """
 from threading import RLock
 from types import SimpleNamespace
+import asyncio
 import logging
 import time
 
@@ -64,6 +65,7 @@ class UnityInstanceMiddleware(Middleware):
     def __init__(self):
         super().__init__()
         self._metadata_lock = RLock()
+        self._selection_lock = asyncio.Lock()
         self._unity_managed_tool_names: set[str] = set()
         self._tool_alias_to_unity_target: dict[str, str] = {}
         self._server_only_tool_names: set[str] = set()
@@ -81,7 +83,8 @@ class UnityInstanceMiddleware(Middleware):
         bug this replaces, which keyed on the peer-supplied ``client_id`` and
         collapsed multiple clients onto the same record.
         """
-        await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, instance_id)
+        async with self._selection_lock:
+            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, instance_id)
 
     async def get_active_instance(self, ctx) -> str | None:
         """Retrieve the active instance for this MCP session."""
@@ -95,7 +98,17 @@ class UnityInstanceMiddleware(Middleware):
         method usable from minimal context shims that don't implement
         ``delete_state``.
         """
-        await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, None)
+        async with self._selection_lock:
+            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, None)
+
+    async def _select_if_unset(self, ctx, candidate: str) -> str:
+        """Preserve an explicit choice made while automatic discovery awaited."""
+        async with self._selection_lock:
+            current = await self.get_active_instance(ctx)
+            if current:
+                return current
+            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, candidate)
+            return candidate
 
     async def _discover_instances(self, ctx) -> list:
         """
@@ -133,7 +146,8 @@ class UnityInstanceMiddleware(Middleware):
             try:
                 from transport.legacy.unity_connection import get_unity_connection_pool
                 pool = get_unity_connection_pool()
-                results = pool.discover_all_instances(force_refresh=True)
+                # Status files, probes and the discovery lock may all block.
+                results = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
             except Exception as exc:
                 if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                     raise
@@ -166,13 +180,13 @@ class UnityInstanceMiddleware(Middleware):
             if UnityConnectionPool.is_exact_instance_id(value):
                 pool = get_unity_connection_pool()
                 try:
-                    target = pool.resolve_instance(value, force_refresh=True)
+                    target = await asyncio.to_thread(pool.resolve_instance, value, force_refresh=True)
                     if target.id == value:
                         return value
                 except ConnectionError:
                     pass  # Preserve the middleware's full inventory error below.
                 # A missing exact ID already triggered full fallback discovery.
-                instances = pool.discover_all_instances()
+                instances = await asyncio.to_thread(pool.discover_all_instances)
 
         # Port number (stdio only) — resolve to Name@hash via status file lookup
         if value.isdigit():
@@ -257,8 +271,7 @@ class UnityInstanceMiddleware(Middleware):
                         if hash_value:
                             ids.append(f"{project}@{hash_value}")
                     if len(ids) == 1:
-                        chosen = ids[0]
-                        await self.set_active_instance(ctx, chosen)
+                        chosen = await self._select_if_unset(ctx, ids[0])
                         logger.info(
                             "Auto-selected sole Unity instance via PluginHub: %s",
                             chosen,
@@ -291,12 +304,11 @@ class UnityInstanceMiddleware(Middleware):
                     from transport.legacy.unity_connection import get_unity_connection_pool
 
                     pool = get_unity_connection_pool()
-                    instances = pool.discover_all_instances(force_refresh=True)
+                    instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
                     ids = [getattr(inst, "id", None) for inst in instances]
                     ids = [inst_id for inst_id in ids if inst_id]
                     if len(ids) == 1:
-                        chosen = ids[0]
-                        await self.set_active_instance(ctx, chosen)
+                        chosen = await self._select_if_unset(ctx, ids[0])
                         logger.info(
                             "Auto-selected sole Unity instance via stdio discovery: %s",
                             chosen,

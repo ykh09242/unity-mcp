@@ -12,6 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
+# Load the real transport before fixtures replace PluginHub, so its cached
+# imports cannot retain a fake hub after fixture teardown.
+import transport.unity_transport
+
 from .test_helpers import DummyContext
 from core.config import config
 
@@ -54,9 +58,6 @@ def _make_middleware(monkeypatch, *, transport="stdio", plugin_hub_configured=Fa
             return None
 
     plugin_hub_mod.PluginHub = FakePluginHub
-    # The real routing helper imports this error alongside PluginHub. Keep the
-    # fixture self-contained when this file is run without prior transport imports.
-    plugin_hub_mod.InstanceSelectionRequiredError = RuntimeError
     monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub_mod)
     monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
 
