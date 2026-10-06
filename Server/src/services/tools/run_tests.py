@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from collections import OrderedDict
 from dataclasses import dataclass
 from itertools import count
@@ -23,6 +24,7 @@ from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 import transport.unity_transport as unity_transport
+from transport.legacy.unity_connection import get_authenticated_stdio_generation
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.plugin_hub import PluginHub
 from utils import focus_nudge
@@ -466,11 +468,14 @@ async def get_test_job(
             "get_test_job",
             params,
         )
+        if wait_timeout and isinstance(response, MCPResponse):
+            response = response.model_dump()
         return response, observation_order
 
     # If wait_timeout is specified, poll server-side until complete or timeout
     if wait_timeout and wait_timeout > 0:
-        http_session = await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http" else None
+        http_session = (await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http"
+                        else await get_authenticated_stdio_generation(unity_instance))
         deadline = asyncio.get_event_loop().time() + wait_timeout
         poll_interval = 2.0  # Poll Unity every 2 seconds
         response = None
@@ -482,9 +487,10 @@ async def get_test_job(
         ) if unity_instance and (
             not config.http_remote_hosted or isinstance(user_id, str) and bool(user_id)
         ) and (
-            config.transport_mode.lower() == "http" and isinstance(http_session, str) and bool(http_session)
+            isinstance(http_session, str) and bool(http_session)
         ) else None
-        async with _job_status_reads.session(poll_key) as shared_read:
+        async with AsyncExitStack() as leases:
+            shared_read = await leases.enter_async_context(_job_status_reads.session(poll_key))
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
@@ -492,6 +498,14 @@ async def get_test_job(
                         return MCPResponse(success=False, error="wait_timeout expired before a test job status was received")
                     return GetTestJobResponse.model_validate(response)
                 try:
+                    if config.transport_mode.lower() != "http":
+                        current_generation = await get_authenticated_stdio_generation(unity_instance)
+                        if current_generation != http_session:
+                            await leases.aclose()
+                            http_session = current_generation
+                            poll_key = (config.transport_mode, user_id, unity_instance, http_session, job_id,
+                                        bool(include_failed_tests), bool(include_details)) if unity_instance and http_session else None
+                            shared_read = await leases.enter_async_context(_job_status_reads.session(poll_key))
                     response, observation_order = await asyncio.wait_for(shared_read.fetch(_fetch_status), timeout=remaining)
                 except SharedReadCapacityError:
                     return MCPResponse(**response_limit_error("result_capacity"))

@@ -436,6 +436,32 @@ class UnityMCP(FastMCP):
             backend_options={"loop_factory": asyncio.SelectorEventLoop},
         )
 
+    async def run_stdio_async(self, show_banner=True, log_level=None, stateless=False) -> None:
+        # FastMCP 4.0.11's runner has no public stream injection. This narrow
+        # compatibility adapter preserves its lifecycle and initialization.
+        from fastmcp.server.context import reset_transport, set_transport
+        from fastmcp.utilities.logging import temporary_log_level
+        from mcp.server.lowlevel.server import NotificationOptions
+        from transport.stdio_response_delivery import retained_stdio_server
+        sdk_server = getattr(self, "_mcp_server", None)
+        if (not callable(getattr(self, "_lifespan_manager", None))
+                or not callable(getattr(sdk_server, "run", None))
+                or not callable(getattr(sdk_server, "create_initialization_options", None))):
+            raise RuntimeError("Installed FastMCP stdio runner API is unsupported")
+        if show_banner:
+            from fastmcp.utilities.cli import log_server_banner
+            log_server_banner(server=self)
+        token = set_transport("stdio")
+        try:
+            with temporary_log_level(log_level):
+                async with self._lifespan_manager():
+                    async with retained_stdio_server() as (read_stream, write_stream):
+                        await sdk_server.run(read_stream, write_stream,
+                            sdk_server.create_initialization_options(
+                                notification_options=NotificationOptions(tools_changed=True)))
+        finally:
+            reset_transport(token)
+
     def http_app(
         self,
         path: str | None = None,

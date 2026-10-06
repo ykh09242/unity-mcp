@@ -15,7 +15,7 @@ from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
-from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.legacy.unity_connection import async_send_command_with_retry, get_authenticated_stdio_generation
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +40,11 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     Falls back to DEFAULT_MAX_COMMANDS_PER_BATCH if unavailable.
     """
     cache_key = None
-    if unity_instance and config.transport_mode.lower() == "http":
+    if unity_instance:
         try:
             user_id = await ctx.get_state("user_id")
-            http_session = await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http" else None
+            http_session = (await ctx.get_state("unity_session_id") if config.transport_mode.lower() == "http"
+                            else await get_authenticated_stdio_generation(unity_instance))
             if (user_id is None or isinstance(user_id, str)) and (
                 not config.http_remote_hosted or bool(user_id)
             ):
@@ -61,9 +62,10 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     async def fetch_editor_settings() -> Any:
         # The enriched resource also scans external assets and reads project_info;
         # batch validation only needs the editor's settings snapshot.
-        return await send_with_unity_instance(
+        value = await send_with_unity_instance(
             async_send_command_with_retry, unity_instance, "get_editor_state", {},
         )
+        return value.model_dump() if hasattr(value, "model_dump") else value
 
     try:
         async with _limit_reads.session(read_key) as shared_read:
@@ -76,7 +78,9 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
             if isinstance(settings, dict):
                 limit = settings.get("batch_execute_max_commands")
                 if type(limit) is int and 1 <= limit <= ABSOLUTE_MAX_COMMANDS_PER_BATCH:
-                    if cache_key is not None and generation == _limit_cache_generation:
+                    identity_current = (config.transport_mode.lower() == "http"
+                                        or cache_key is not None and cache_key[3] == await get_authenticated_stdio_generation(unity_instance))
+                    if cache_key is not None and generation == _limit_cache_generation and identity_current:
                         if cache_key not in _cached_max_commands and len(_cached_max_commands) >= _LIMIT_CACHE_MAX_ENTRIES:
                             _cached_max_commands.pop(next(iter(_cached_max_commands)))
                         _cached_max_commands[cache_key] = (limit, time.monotonic() + _LIMIT_CACHE_TTL_SECONDS)

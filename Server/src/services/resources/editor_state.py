@@ -9,14 +9,20 @@ from pydantic import BaseModel
 
 from core.config import config
 from models import MCPResponse
+from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_resource
 from services.tools import get_unity_instance_from_context
+from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.state.external_changes_scanner import external_changes_scanner
 import transport.unity_transport as unity_transport
-from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.legacy.unity_connection import async_send_command_with_retry, get_authenticated_stdio_generation
 from transport.plugin_hub import PluginHub
 
 logger = logging.getLogger("mcp-for-unity-server")
+
+# Ordinary stdio resources may share an authenticated raw snapshot for 1s.
+# Authoritative preflight always bypasses and invalidates this bounded cache.
+_stdio_state_reads: SharedToolReads[Any] = SharedToolReads(freshness_s=1.0, retention_s=1.0, max_entries=128)
 
 
 class EditorStateUnity(BaseModel):
@@ -259,6 +265,13 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
     unity_instance = await get_unity_instance_from_context(ctx)
 
     response = None
+    stdio_key = None
+    if (config.transport_mode or "stdio").lower() != "http" and not config.http_remote_hosted and unity_instance:
+        generation = await get_authenticated_stdio_generation(unity_instance)
+        if generation:
+            stdio_key = (unity_instance, generation)
+        if require_fresh:
+            await _stdio_state_reads.invalidate(stdio_key)
     if (not require_fresh and (config.transport_mode or "stdio").lower() == "http"
             and PluginHub.is_configured()):
         user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
@@ -266,21 +279,32 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
         if cached is not None:
             response = {"success": True, "data": cached}
     if response is None:
-        response = await unity_transport.send_with_unity_instance(
-            async_send_command_with_retry,
-            unity_instance,
-            "get_editor_state",
-            {},
-        )
+        async def fetch_state() -> Any:
+            value = await unity_transport.send_with_unity_instance(
+                async_send_command_with_retry, unity_instance, "get_editor_state", {},
+            )
+            return value.model_dump() if isinstance(value, MCPResponse) else value
+        if stdio_key is not None and not require_fresh:
+            try:
+                async with _stdio_state_reads.session(stdio_key) as shared_read:
+                    response = await shared_read.fetch(fetch_state)
+                if stdio_key[1] != await get_authenticated_stdio_generation(unity_instance):
+                    await _stdio_state_reads.invalidate(stdio_key)
+            except SharedReadCapacityError:
+                return MCPResponse(**response_limit_error("result_capacity"))
+        else:
+            response = await fetch_state()
 
     if isinstance(response, MCPResponse):
         response = response.model_dump()
 
     # If Unity returns a structured retry hint or error, surface it directly.
     if isinstance(response, dict) and not response.get("success", True):
+        await _stdio_state_reads.invalidate(stdio_key)
         return MCPResponse(**response)
 
     if not isinstance(response, dict) or not isinstance(response.get("data"), dict):
+        await _stdio_state_reads.invalidate(stdio_key)
         return MCPResponse(
             success=False,
             error="invalid_editor_state",

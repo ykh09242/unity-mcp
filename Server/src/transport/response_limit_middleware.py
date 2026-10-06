@@ -16,6 +16,7 @@ from models.response_limits import (
     MAX_RESPONSE_BYTES, ResponseOwner, response_owner, response_size, response_limit_error,
 )
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
+from transport.stdio_response_delivery import stdio_delivery
 
 # Only owners of admitted plugin results enter this map; PluginHub's global
 # retained-byte and pending-command budgets also bound this bookkeeping.
@@ -81,6 +82,19 @@ class ResponseLimitMiddleware(Middleware):
         ctx = context.fastmcp_context
         rc = ctx.request_context if ctx is not None else None
         request = rc.request if rc is not None else None
+        delivery = stdio_delivery.get() if request is None else None
+        delivery_entry = None
+        if delivery is not None and rc is not None and rc.request_id is not None:
+            # FastMCP 4's documented SDK escape hatch preserves int/string IDs.
+            try:
+                sdk_context = getattr(rc, "_srctx", None)
+                if sdk_context is None or not hasattr(sdk_context, "request_id"):
+                    raise RuntimeError("Installed FastMCP stdio response context is unsupported")
+                delivery_entry = delivery.register(sdk_context.request_id, owner)
+            except BaseException:
+                owner.release()
+                response_owner.reset(token)
+                raise
         if request is not None and rc.request_id is not None:
             session = _scope_session(request.scope) or ctx.session_id
             # FastMCP's compatibility wrapper stringifies IDs; the SDK context
@@ -99,13 +113,20 @@ class ResponseLimitMiddleware(Middleware):
         def task_done(completed) -> None:
             # A successful HTTP producer can finish while SDK queues or the
             # socket writer still retain its result. Delivery owns release.
-            if key is None or completed.cancelled() or completed.exception() is not None:
+            failed = completed.cancelled() or completed.exception() is not None
+            if delivery_entry is not None:
+                delivery.producer_done(delivery_entry, failed)
+            elif key is None or failed:
                 owner.release()
 
         if task is not None:
             task.add_done_callback(task_done)
         try:
             result = await call_next(context)
+            if delivery is not None and delivery_entry is None and owner.entries:
+                raise RuntimeError("Installed FastMCP stdio response context is unsupported")
+            if delivery_entry is not None and not owner.entries:
+                owner.release()
             if key is not None and owner.entries:
                 _http_response_owners.setdefault(key, []).append(owner)
 
