@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from transport.legacy.port_discovery import PortDiscovery
 import random
+import re
 import socket
 import struct
 import threading
@@ -31,6 +32,45 @@ FRAMED_MAX = 64 * 1024 * 1024
 class _UnityProtocolError(ValueError):
     """A Unity response cannot be safely decoded or reused."""
 
+
+def read_status_file(target_hash: str | None = None) -> dict | None:
+    try:
+        base_path = Path.home().joinpath('.unity-mcp')
+        # Canonical hashes contain no glob/path syntax. Narrow enumeration to
+        # their suffix, preserving newer legacy files that share that suffix.
+        pattern = 'unity-mcp-status-*.json'
+        if target_hash and re.fullmatch(r'[0-9a-fA-F]{8}(?:[0-9a-fA-F]{8})?', target_hash):
+            pattern = f'unity-mcp-status-*{target_hash}.json'
+        status_files = [path for path in base_path.glob(pattern)
+                        if not target_hash or path.stem.endswith(target_hash)]
+        # A single target needs no metadata stat; ambiguous suffixes and an
+        # untargeted read retain the existing most-recent-file precedence.
+        if len(status_files) > 1:
+            status_files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        if not status_files:
+            return None
+        if target_hash:
+            for status_path in status_files:
+                if status_path.stem.endswith(target_hash):
+                    with status_path.open('r') as f:
+                        return json.load(f)
+            return None
+        # Untargeted legacy connections use the most recent status.
+        with status_files[0].open('r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.debug(
+            "Unity status file disappeared before it could be read")
+        return None
+    except json.JSONDecodeError as exc:
+        logger.warning(f"Malformed Unity status file: {exc}")
+        return None
+    except OSError as exc:
+        logger.warning(f"Failed to read Unity status file: {exc}")
+        return None
+    except Exception as exc:
+        logger.debug(f"Preflight status check failed: {exc}")
+        return None
 
 @dataclass
 class UnityConnection:
@@ -352,39 +392,6 @@ class UnityConnection:
             total_timeout = blender_timeout + SERVER_RESPONSE_GRACE
         if deadline is None and total_timeout > 0:
             deadline = time.monotonic() + total_timeout
-
-        def read_status_file(target_hash: str | None = None) -> dict | None:
-            try:
-                base_path = Path.home().joinpath('.unity-mcp')
-                status_files = sorted(
-                    base_path.glob('unity-mcp-status-*.json'),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )
-                if not status_files:
-                    return None
-                if target_hash:
-                    for status_path in status_files:
-                        if status_path.stem.endswith(target_hash):
-                            with status_path.open('r') as f:
-                                return json.load(f)
-                    return None
-                # Untargeted legacy connections use the most recent status.
-                with status_files[0].open('r') as f:
-                    return json.load(f)
-            except FileNotFoundError:
-                logger.debug(
-                    "Unity status file disappeared before it could be read")
-                return None
-            except json.JSONDecodeError as exc:
-                logger.warning(f"Malformed Unity status file: {exc}")
-                return None
-            except OSError as exc:
-                logger.warning(f"Failed to read Unity status file: {exc}")
-                return None
-            except Exception as exc:
-                logger.debug(f"Preflight status check failed: {exc}")
-                return None
 
         # Canonical IDs end in the hash; older IDs may be just the hash.
         target_hash: str | None = None

@@ -1,8 +1,11 @@
 """Discovery remains complete while status timestamps and registry files vary."""
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import socket
+import struct
 from pathlib import Path
 
 import pytest
@@ -66,3 +69,68 @@ def test_disappearing_port_registry_does_not_hide_surviving_candidate(
 
     assert PortDiscovery.list_candidate_files() == [surviving]
     assert PortDiscovery.get_port_config() == {"unity_port": 6401}
+
+
+@pytest.mark.parametrize("responding", [True, False])
+def test_duplicate_port_is_probed_once_per_scan_without_losing_newest_metadata(
+    isolated_registry, monkeypatch, responding,
+):
+    now = datetime.now(timezone.utc).timestamp()
+    for index in range(2):
+        path = isolated_registry / f"unity-mcp-status-{index}.json"
+        path.write_text(json.dumps({
+            "project_path": f"/Owned/Project{index}/Assets", "unity_port": 6401,
+            "reloading": not responding,
+        }), encoding="utf-8")
+        os.utime(path, (now - 2 + index, now - 2 + index))
+    calls = []
+    monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", lambda port: calls.append(port) or responding)
+
+    first = PortDiscovery.discover_all_unity_instances()
+    assert calls == [6401]
+    assert [instance.hash for instance in first] == ["1"]
+    assert first[0].status == ("running" if responding else "reloading")
+    second = PortDiscovery.discover_all_unity_instances()
+    assert calls == [6401, 6401], "Probe result persisted beyond its discovery scan"
+    assert [instance.id for instance in first] == [instance.id for instance in second]
+
+
+def test_duplicate_port_memo_uses_real_framed_probe_and_refreshes_next_scan(monkeypatch, tmp_path):
+    monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
+    probes = []
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(2)
+        listener.settimeout(2)
+        port = listener.getsockname()[1]
+        for index in range(2):
+            path = tmp_path / f"unity-mcp-status-{index}.json"
+            path.write_text(json.dumps({"project_path": f"/Owned/Project{index}/Assets",
+                                        "unity_port": port}), encoding="utf-8")
+            os.utime(path, (index + 1, index + 1))
+
+        def serve():
+            for _ in range(2):
+                peer, _ = listener.accept()
+                with peer:
+                    peer.settimeout(2)
+                    peer.sendall(b"MCP/0.1 FRAMING=1\n")
+                    frame = bytearray()
+                    while len(frame) < 12:
+                        chunk = peer.recv(12 - len(frame))
+                        assert chunk, "Discovery disconnected before its framed ping"
+                        frame.extend(chunk)
+                    assert bytes(frame) == struct.pack(">Q", 4) + b"ping"
+                    probes.append(port)
+                    payload = b'{"status":"success","result":{"message":"pong"}}'
+                    peer.sendall(struct.pack(">Q", len(payload)) + payload)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            server = executor.submit(serve)
+            first = PortDiscovery.discover_all_unity_instances()
+            assert probes == [port]
+            second = PortDiscovery.discover_all_unity_instances()
+            server.result(timeout=2)
+    assert probes == [port, port]
+    assert [instance.hash for instance in first] == ["1"]
+    assert [instance.id for instance in first] == [instance.id for instance in second]

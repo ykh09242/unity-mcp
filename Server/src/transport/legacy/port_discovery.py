@@ -236,6 +236,9 @@ class PortDiscovery:
             List of UnityInstanceInfo objects for all discovered instances
         """
         instances_by_port: dict[int, tuple[UnityInstanceInfo, datetime]] = {}
+        # A scan is one liveness snapshot: legacy/duplicate status files for a
+        # port do not need additional handshakes. Metadata still competes below.
+        probes_by_port: dict[int, bool] = {}
         base = PortDiscovery.get_registry_dir()
 
         # Scan all status files
@@ -274,8 +277,9 @@ class PortDiscovery:
                         pass
 
                 # Verify port is actually responding
-                is_alive = PortDiscovery._try_probe_unity_mcp(
-                    port) if isinstance(port, int) else False
+                if isinstance(port, int) and port not in probes_by_port:
+                    probes_by_port[port] = PortDiscovery._try_probe_unity_mcp(port)
+                is_alive = probes_by_port.get(port, False) if isinstance(port, int) else False
 
                 if not is_alive:
                     # If Unity says it's reloading and the status is fresh, don't drop the instance.
