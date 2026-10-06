@@ -164,7 +164,9 @@ def response_size(value: Any, *, max_bytes: int = MAX_RESPONSE_BYTES,
         # and item tuples. A conservative bound selects a path, never a rejection.
         if (encoded_bound is not None
                 and 8 * encoded_bound + 128 * nodes + 4096 <= max_retained - retained):
-            encoded_bytes = len(encoder.encode(value).encode("utf-8"))
+            encoded = encoder.encode(value)
+            encoded_bytes = (len(encoded) if type(encoded) is str and encoded.isascii()
+                             else len(encoded.encode("utf-8")))
         else:
             for chunk in encoder.iterencode(value):
                 # JSON encoder chunks are strings; ASCII bytes equal their length.
@@ -198,10 +200,11 @@ def bounded_json_text(raw: str | bytes | bytearray, *, max_bytes: int, max_depth
         raw_type = type(raw)
         exact_bytes = raw_type is bytes or raw_type is bytearray
         text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
-        # Strict built-in decoding already proves the checked byte length.
-        # Subclasses retain recounting because decode() may change the content.
-        if not exact_bytes and sum(len(text[offset:offset + 65_536].encode("utf-8"))
-                                   for offset in range(0, len(text), 65_536)) > max_bytes:
+        # Strict built-in decoding or exact ASCII proves the checked byte length.
+        # Subclasses retain recounting because their hooks may change the content.
+        known_byte_length = exact_bytes or (raw_type is str and text.isascii())
+        if not known_byte_length and sum(len(text[offset:offset + 65_536].encode("utf-8"))
+                                         for offset in range(0, len(text), 65_536)) > max_bytes:
             return None
     except UnicodeError:
         return None
