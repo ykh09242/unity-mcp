@@ -49,6 +49,28 @@ class PluginRegistry:
         self._hash_to_session: dict[str, str] = {}
         self._user_hash_to_session: dict[tuple[str, str], str] = {}
         self._lock = asyncio.Lock()
+        self._change_event = asyncio.Event()
+
+    @property
+    def change_event(self) -> asyncio.Event:
+        """Snapshot before lookup so a change before waiting cannot be lost."""
+        return self._change_event
+
+    def notify_changed(self) -> None:
+        """Publish synchronously with mapping changes, or wake a replaced registry."""
+        event, self._change_event = self._change_event, asyncio.Event()
+        event.set()
+
+    async def wait_for_change(self, observed: asyncio.Event, timeout: float) -> bool:
+        """Each caller owns its wait task; cancellation never cancels the shared event."""
+        async with self._lock:
+            if observed is not self._change_event:
+                return True
+        try:
+            await asyncio.wait_for(observed.wait(), timeout)
+            return True
+        except TimeoutError:
+            return False
 
     async def register(
         self,
@@ -116,6 +138,7 @@ class PluginRegistry:
                 self._hash_to_session[project_hash] = session_id
 
             self._sessions[session_id] = session
+            self.notify_changed()
             return session, evicted_session_id
 
     async def clear(self) -> None:
@@ -124,6 +147,7 @@ class PluginRegistry:
             self._sessions.clear()
             self._hash_to_session.clear()
             self._user_hash_to_session.clear()
+            self.notify_changed()
 
     async def touch(self, session_id: str) -> None:
         """Update the ``connected_at`` timestamp when a heartbeat is received."""
@@ -152,6 +176,7 @@ class PluginRegistry:
                         mapped = self._user_hash_to_session.get(composite_key)
                         if mapped == session_id:
                             del self._user_hash_to_session[composite_key]
+                self.notify_changed()
 
     async def register_tools_for_session(self, session_id: str, tools: list[ToolDefinitionModel]) -> None:
         """Register tools for a specific session."""

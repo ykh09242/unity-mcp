@@ -383,7 +383,10 @@ class PluginHub(WebSocketEndpoint):
         loop: asyncio.AbstractEventLoop | None = None,
         mcp: FastMCP | None = None,
     ) -> None:
+        previous_registry = cls._registry
         cls._registry = registry
+        if previous_registry is not None and previous_registry is not registry:
+            previous_registry.notify_changed()
         cls._mcp = mcp
         cls._loop = loop or asyncio.get_running_loop()
         # Ensure coordination primitives are bound to the configured loop
@@ -437,6 +440,8 @@ class PluginHub(WebSocketEndpoint):
             cls._pending.clear()
             cls._admitted.clear()
             cls._registry = None
+            if registry is not None:
+                registry.notify_changed()
             cls._mcp = None
             cls._loop = None
             cls._lock = None
@@ -1656,6 +1661,8 @@ class PluginHub(WebSocketEndpoint):
         if cls._registry is None:
             raise RuntimeError("Plugin registry not configured")
 
+        registry = cls._registry
+
         # Bound waiting for Unity sessions. Default to 20s to handle domain reloads
         # (which can take 10-20s after test runs or script changes).
         #
@@ -1674,8 +1681,6 @@ class PluginHub(WebSocketEndpoint):
             "UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", default_s=20.0, max_s=120.0)
         if not retry_on_reload:
             max_wait_s = 0.0
-        retry_ms = float(getattr(config, "reload_retry_ms", 250))
-        sleep_seconds = max(0.05, min(0.25, retry_ms / 1000.0))
 
         # Allow callers to provide either just the hash or Name@hash
         target_hash: str | None = None
@@ -1689,24 +1694,32 @@ class PluginHub(WebSocketEndpoint):
                 target_hash = unity_instance
 
         async def _try_once() -> tuple[str | None, int, bool]:
+            if cls._registry is not registry:
+                raise NoUnitySessionError("Unity plugin server stopped or replaced")
             explicit_required = config.http_remote_hosted
             # Prefer a specific Unity instance if one was requested
             if target_hash:
                 # In remote-hosted mode with user_id, use user-scoped lookup
                 if config.http_remote_hosted and user_id:
-                    session_id = await cls._registry.get_session_id_by_hash(target_hash, user_id)
+                    session_id = await registry.get_session_id_by_hash(target_hash, user_id)
                 else:
-                    session_id = await cls._registry.get_session_id_by_hash(target_hash)
+                    session_id = await registry.get_session_id_by_hash(target_hash)
+                if cls._registry is not registry:
+                    raise NoUnitySessionError("Unity plugin server stopped or replaced")
                 # Explicit selection never uses the count. Keep the remote
                 # principal guard and miss paths in list_sessions below.
                 if session_id is not None and (not config.http_remote_hosted or user_id):
                     return session_id, 0, explicit_required
-                sessions = await cls._registry.list_sessions(user_id=user_id)
+                sessions = await registry.list_sessions(user_id=user_id)
+                if cls._registry is not registry:
+                    raise NoUnitySessionError("Unity plugin server stopped or replaced")
                 return session_id, len(sessions), explicit_required
 
             # No target provided: determine if we can auto-select
             # In remote-hosted mode, filter sessions by user_id
-            sessions = await cls._registry.list_sessions(user_id=user_id)
+            sessions = await registry.list_sessions(user_id=user_id)
+            if cls._registry is not registry:
+                raise NoUnitySessionError("Unity plugin server stopped or replaced")
             count = len(sessions)
             if count == 0:
                 return None, count, explicit_required
@@ -1720,17 +1733,18 @@ class PluginHub(WebSocketEndpoint):
         async def _available_instance_ids() -> list[str]:
             # Error path only; one extra registry read keeps the refusal actionable.
             try:
-                sessions = await cls._registry.list_sessions(user_id=user_id)
+                sessions = await registry.list_sessions(user_id=user_id)
                 return sorted(
                     f"{s.project_name}@{s.project_hash}" for s in sessions.values())
             except Exception:
                 return []
 
+        deadline = time.monotonic() + max_wait_s
+        changed = registry.change_event
         session_id, session_count, explicit_required = await _try_once()
         if session_id is None and explicit_required and not target_hash and session_count > 0:
             raise InstanceSelectionRequiredError(
                 available_instances=await _available_instance_ids())
-        deadline = time.monotonic() + max_wait_s
         wait_started = None
 
         # If there is no active plugin yet (e.g., Unity starting up or reloading),
@@ -1750,7 +1764,11 @@ class PluginHub(WebSocketEndpoint):
                     unity_instance or "default",
                     max_wait_s,
                 )
-            await asyncio.sleep(sleep_seconds)
+            if not await registry.wait_for_change(changed, max(0.0, deadline - time.monotonic())):
+                break
+            if time.monotonic() >= deadline:
+                break
+            changed = registry.change_event
             session_id, session_count, explicit_required = await _try_once()
 
         if session_id is not None and wait_started is not None:
