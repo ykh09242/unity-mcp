@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "Unity MCP (ykh09242)",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "AI-powered Unity Editor automation via MCP - manage GameObjects, scripts, materials, scenes, prefabs, VFX, and run tests",
   "author": {
     "name": "ykh09242",
@@ -23,7 +23,7 @@
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/bcb5c418e125208a3208e4c000421347e83eceef.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/c6ecf993e12bdc0c4c3d4b3db378c85004b97b9e.zip#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
