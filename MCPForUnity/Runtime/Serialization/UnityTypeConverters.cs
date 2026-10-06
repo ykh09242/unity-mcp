@@ -29,13 +29,13 @@ namespace MCPForUnity.Runtime.Serialization
         {
             JToken token = JToken.Load(reader);
             if (token is JArray arr && arr.Count >= 3)
-                return new Vector3((float)arr[0], (float)arr[1], (float)arr[2]);
+                return new Vector3(JsonScalarConversion.ReadFloat(arr[0]), JsonScalarConversion.ReadFloat(arr[1]), JsonScalarConversion.ReadFloat(arr[2]));
             if (token is not JObject jo)
                 throw new JsonSerializationException($"Cannot deserialize Vector3 from {token.Type}: '{token}'");
             return new Vector3(
-                (float)jo["x"],
-                (float)jo["y"],
-                (float)jo["z"]
+                JsonScalarConversion.ReadFloat(jo["x"]),
+                JsonScalarConversion.ReadFloat(jo["y"]),
+                JsonScalarConversion.ReadFloat(jo["z"])
             );
         }
     }
@@ -56,12 +56,12 @@ namespace MCPForUnity.Runtime.Serialization
         {
             JToken token = JToken.Load(reader);
             if (token is JArray arr && arr.Count >= 2)
-                return new Vector2((float)arr[0], (float)arr[1]);
+                return new Vector2(JsonScalarConversion.ReadFloat(arr[0]), JsonScalarConversion.ReadFloat(arr[1]));
             if (token is not JObject jo)
                 throw new JsonSerializationException($"Cannot deserialize Vector2 from {token.Type}: '{token}'");
             return new Vector2(
-                (float)jo["x"],
-                (float)jo["y"]
+                JsonScalarConversion.ReadFloat(jo["x"]),
+                JsonScalarConversion.ReadFloat(jo["y"])
             );
         }
     }
@@ -86,14 +86,14 @@ namespace MCPForUnity.Runtime.Serialization
         {
             JToken token = JToken.Load(reader);
             if (token is JArray arr && arr.Count >= 4)
-                return new Quaternion((float)arr[0], (float)arr[1], (float)arr[2], (float)arr[3]);
+                return new Quaternion(JsonScalarConversion.ReadFloat(arr[0]), JsonScalarConversion.ReadFloat(arr[1]), JsonScalarConversion.ReadFloat(arr[2]), JsonScalarConversion.ReadFloat(arr[3]));
             if (token is not JObject jo)
                 throw new JsonSerializationException($"Cannot deserialize Quaternion from {token.Type}: '{token}'");
             return new Quaternion(
-                (float)jo["x"],
-                (float)jo["y"],
-                (float)jo["z"],
-                (float)jo["w"]
+                JsonScalarConversion.ReadFloat(jo["x"]),
+                JsonScalarConversion.ReadFloat(jo["y"]),
+                JsonScalarConversion.ReadFloat(jo["z"]),
+                JsonScalarConversion.ReadFloat(jo["w"])
             );
         }
     }
@@ -118,10 +118,10 @@ namespace MCPForUnity.Runtime.Serialization
         {
             JObject jo = JObject.Load(reader);
             return new Color(
-                (float)jo["r"],
-                (float)jo["g"],
-                (float)jo["b"],
-                (float)jo["a"]
+                JsonScalarConversion.ReadFloat(jo["r"]),
+                JsonScalarConversion.ReadFloat(jo["g"]),
+                JsonScalarConversion.ReadFloat(jo["b"]),
+                JsonScalarConversion.ReadFloat(jo["a"])
             );
         }
     }
@@ -146,10 +146,10 @@ namespace MCPForUnity.Runtime.Serialization
         {
             JObject jo = JObject.Load(reader);
             return new Rect(
-                (float)jo["x"],
-                (float)jo["y"],
-                (float)jo["width"],
-                (float)jo["height"]
+                JsonScalarConversion.ReadFloat(jo["x"]),
+                JsonScalarConversion.ReadFloat(jo["y"]),
+                JsonScalarConversion.ReadFloat(jo["width"]),
+                JsonScalarConversion.ReadFloat(jo["height"])
             );
         }
     }
@@ -195,14 +195,14 @@ namespace MCPForUnity.Runtime.Serialization
         {
             JToken token = JToken.Load(reader);
             if (token is JArray arr && arr.Count >= 4)
-                return new Vector4((float)arr[0], (float)arr[1], (float)arr[2], (float)arr[3]);
+                return new Vector4(JsonScalarConversion.ReadFloat(arr[0]), JsonScalarConversion.ReadFloat(arr[1]), JsonScalarConversion.ReadFloat(arr[2]), JsonScalarConversion.ReadFloat(arr[3]));
             if (token is not JObject jo)
                 throw new JsonSerializationException($"Cannot deserialize Vector4 from {token.Type}: '{token}'");
             return new Vector4(
-                (float)jo["x"],
-                (float)jo["y"],
-                (float)jo["z"],
-                (float)jo["w"]
+                JsonScalarConversion.ReadFloat(jo["x"]),
+                JsonScalarConversion.ReadFloat(jo["y"]),
+                JsonScalarConversion.ReadFloat(jo["z"]),
+                JsonScalarConversion.ReadFloat(jo["w"])
             );
         }
     }
@@ -248,22 +248,22 @@ namespace MCPForUnity.Runtime.Serialization
 
             JObject jo = JObject.Load(reader);
             var matrix = new Matrix4x4();
-            matrix.m00 = jo["m00"]?.Value<float>() ?? 0f;
-            matrix.m01 = jo["m01"]?.Value<float>() ?? 0f;
-            matrix.m02 = jo["m02"]?.Value<float>() ?? 0f;
-            matrix.m03 = jo["m03"]?.Value<float>() ?? 0f;
-            matrix.m10 = jo["m10"]?.Value<float>() ?? 0f;
-            matrix.m11 = jo["m11"]?.Value<float>() ?? 0f;
-            matrix.m12 = jo["m12"]?.Value<float>() ?? 0f;
-            matrix.m13 = jo["m13"]?.Value<float>() ?? 0f;
-            matrix.m20 = jo["m20"]?.Value<float>() ?? 0f;
-            matrix.m21 = jo["m21"]?.Value<float>() ?? 0f;
-            matrix.m22 = jo["m22"]?.Value<float>() ?? 0f;
-            matrix.m23 = jo["m23"]?.Value<float>() ?? 0f;
-            matrix.m30 = jo["m30"]?.Value<float>() ?? 0f;
-            matrix.m31 = jo["m31"]?.Value<float>() ?? 0f;
-            matrix.m32 = jo["m32"]?.Value<float>() ?? 0f;
-            matrix.m33 = jo["m33"]?.Value<float>() ?? 0f;
+            matrix.m00 = (float)JsonScalarConversion.Read(jo["m00"], typeof(float));
+            matrix.m01 = (float)JsonScalarConversion.Read(jo["m01"], typeof(float));
+            matrix.m02 = (float)JsonScalarConversion.Read(jo["m02"], typeof(float));
+            matrix.m03 = (float)JsonScalarConversion.Read(jo["m03"], typeof(float));
+            matrix.m10 = (float)JsonScalarConversion.Read(jo["m10"], typeof(float));
+            matrix.m11 = (float)JsonScalarConversion.Read(jo["m11"], typeof(float));
+            matrix.m12 = (float)JsonScalarConversion.Read(jo["m12"], typeof(float));
+            matrix.m13 = (float)JsonScalarConversion.Read(jo["m13"], typeof(float));
+            matrix.m20 = (float)JsonScalarConversion.Read(jo["m20"], typeof(float));
+            matrix.m21 = (float)JsonScalarConversion.Read(jo["m21"], typeof(float));
+            matrix.m22 = (float)JsonScalarConversion.Read(jo["m22"], typeof(float));
+            matrix.m23 = (float)JsonScalarConversion.Read(jo["m23"], typeof(float));
+            matrix.m30 = (float)JsonScalarConversion.Read(jo["m30"], typeof(float));
+            matrix.m31 = (float)JsonScalarConversion.Read(jo["m31"], typeof(float));
+            matrix.m32 = (float)JsonScalarConversion.Read(jo["m32"], typeof(float));
+            matrix.m33 = (float)JsonScalarConversion.Read(jo["m33"], typeof(float));
             return matrix;
         }
     }
@@ -418,6 +418,12 @@ namespace MCPForUnity.Runtime.Serialization
             if (reader.TokenType == JsonToken.StartObject)
             {
                 JObject jo = JObject.Load(reader);
+                // Reject malformed IDs before trying a different reference form.
+                // A guid/path must not hide an invalid Boolean or fractional ID.
+                if (jo.TryGetValue("instanceID", out JToken scalarId) && scalarId.Type != JTokenType.Null)
+                    JsonScalarConversion.Read(scalarId, typeof(int));
+                if (jo.TryGetValue("entityID", out JToken scalarEntityId) && scalarEntityId.Type != JTokenType.Null)
+                    JsonScalarConversion.Read(scalarEntityId, typeof(ulong));
 
                 // Try to resolve by GUID first (for assets like ScriptableObjects, Materials, etc.)
                 if (jo.TryGetValue("guid", out JToken guidToken) && guidToken.Type == JTokenType.String)
@@ -473,9 +479,9 @@ namespace MCPForUnity.Runtime.Serialization
 #endif
 
                 // Try to resolve by instanceID
-                if (jo.TryGetValue("instanceID", out JToken idToken) && idToken.Type == JTokenType.Integer)
+                if (jo.TryGetValue("instanceID", out JToken idToken) && idToken.Type != JTokenType.Null)
                 {
-                    int instanceId = idToken.ToObject<int>();
+                    int instanceId = (int)JsonScalarConversion.Read(idToken, typeof(int));
                     UnityEngine.Object obj = UnityObjectIdCompat.InstanceIDToObjectCompat(instanceId);
                     if (obj != null)
                     {

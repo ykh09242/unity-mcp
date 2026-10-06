@@ -53,14 +53,14 @@ namespace MCPForUnityTests.Editor.Helpers
         public void GetInt_StringWithThousandsSeparator_IsRejectedNotGuessed()
         {
             var p = new ToolParams(new JObject { ["count"] = "1.000" });
-            Assert.IsNull(p.GetInt("count"));
+            Assert.Throws<System.ArgumentException>(() => p.GetInt("count"));
         }
 
         [Test]
-        public void GetInt_JsonIntegerOutOfRange_ReturnsDefault()
+        public void GetInt_JsonIntegerOutOfRange_ThrowsArgumentError()
         {
             var p = new ToolParams(new JObject { ["count"] = 2147483648L });
-            Assert.AreEqual(7, p.GetInt("count", 7));
+            Assert.Throws<System.ArgumentException>(() => p.GetInt("count", 7));
         }
 
         [Test]
@@ -73,7 +73,6 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("-42", -42)]
         [TestCase("-2147483648", int.MinValue)]
         [TestCase("2147483647", int.MaxValue)]
-        [TestCase("-42.0", -42)]
         [TestCase("0", 0)]
         public void GetInt_JsonNumber_WithCustomNegativeSign_PreservesValue(string json, int expected)
         {
@@ -89,17 +88,15 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("2147483648")]
         [TestCase("18446744073709551616")]
         [TestCase("-42.5")]
-        public void GetInt_UnrepresentableJsonNumber_PreservesDefault(string json)
+        [TestCase("-42.0")]
+        public void GetInt_UnrepresentableJsonNumber_ThrowsArgumentError(string json)
         {
             var p = new ToolParams(new JObject { ["count"] = JToken.Parse(json) });
-            Assert.AreEqual(7, p.GetInt("count", 7));
-            Assert.IsNull(p.GetInt("count"));
+            Assert.Throws<System.ArgumentException>(() => p.GetInt("count", 7));
+            Assert.Throws<System.ArgumentException>(() => p.GetInt("count"));
         }
 
         [TestCase("-42", -42)]
-        [TestCase("~42", 7)]
-        [TestCase("1.000", 7)]
-        [TestCase("4.2e1", 7)]
         public void GetInt_Strings_UseProtocolNotationNotCustomCulture(string value, int expected)
         {
             var culture = (CultureInfo)CultureInfo.InvariantCulture.Clone();
@@ -110,16 +107,29 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreEqual(expected, p.GetInt("count", 7));
         }
 
-        [Test]
-        public void GetInt_InvalidExactValue_DoesNotFallBackToAlias()
+        [TestCase("~42")]
+        [TestCase("1.000")]
+        [TestCase("4.2e1")]
+        public void GetInt_InvalidStrings_ThrowRegardlessOfEditorCulture(string value)
         {
-            foreach (var token in new JToken[] { JValue.CreateNull(), new JValue(""),
-                new JValue("invalid"), new JValue(true), new JObject(), new JArray(42) })
+            var culture = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+            culture.NumberFormat.NegativeSign = "~";
+            Thread.CurrentThread.CurrentCulture = culture;
+            var p = new ToolParams(new JObject { ["count"] = value });
+            Assert.Throws<System.ArgumentException>(() => p.GetInt("count", 7));
+        }
+
+        [Test]
+        public void GetInt_InvalidExactValue_DoesNotFallBackToAliasOrDefault()
+        {
+            foreach (var token in new JToken[] { new JValue(""), new JValue("invalid"), new JValue(true), new JObject(), new JArray(42) })
             {
                 var p = new ToolParams(new JObject { ["page_size"] = token, ["pageSize"] = 42 });
-                Assert.AreEqual(7, p.GetInt("page_size", 7), token.Type.ToString());
+                Assert.Throws<System.ArgumentException>(() => p.GetInt("page_size", 7), token.Type.ToString());
                 Assert.AreEqual(42, p.GetInt("pageSize"));
             }
+            var nullable = new ToolParams(new JObject { ["page_size"] = JValue.CreateNull(), ["pageSize"] = 42 });
+            Assert.AreEqual(7, nullable.GetInt("page_size", 7));
         }
     }
 }

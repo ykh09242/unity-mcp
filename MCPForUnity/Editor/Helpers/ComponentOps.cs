@@ -176,8 +176,9 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             // Try reflection first (property, field, then non-public serialized field)
-            if (TrySetViaReflection(component, type, propertyName, normalizedName, flags, value, out error))
+            if (TrySetViaReflection(component, type, propertyName, normalizedName, flags, value, out error, out bool rejectedValue))
                 return true;
+            if (rejectedValue) return false;
 
             // Reflection failed — fall back to SerializedProperty which handles arrays,
             // custom serialization (e.g. UdonSharp), and types reflection can't convert.
@@ -194,9 +195,10 @@ namespace MCPForUnity.Editor.Helpers
             return false;
         }
 
-        private static bool TrySetViaReflection(object component, Type type, string propertyName, string normalizedName, BindingFlags flags, JToken value, out string error)
+        private static bool TrySetViaReflection(object component, Type type, string propertyName, string normalizedName, BindingFlags flags, JToken value, out string error, out bool rejectedValue)
         {
             error = null;
+            rejectedValue = false;
 
             // Skip reflection for UnityEngine.Object types with JObject values
             // so SerializedProperty can resolve guid/spriteName/fileID forms.
@@ -218,6 +220,7 @@ namespace MCPForUnity.Editor.Helpers
                     object convertedValue = PropertyConversion.ConvertToType(value, propInfo.PropertyType);
                     if (convertedValue == null && value.Type != JTokenType.Null)
                     {
+                        rejectedValue = true;
                         error = $"Failed to convert value for property '{propertyName}' to type '{propInfo.PropertyType.Name}'.";
                         return false;
                     }
@@ -226,6 +229,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 catch (Exception ex)
                 {
+                    rejectedValue = true;
                     error = $"Failed to set property '{propertyName}': {ex.Message}";
                     return false;
                 }
@@ -247,6 +251,7 @@ namespace MCPForUnity.Editor.Helpers
                     object convertedValue = PropertyConversion.ConvertToType(value, fieldInfo.FieldType);
                     if (convertedValue == null && value.Type != JTokenType.Null)
                     {
+                        rejectedValue = true;
                         error = $"Failed to convert value for field '{propertyName}' to type '{fieldInfo.FieldType.Name}'.";
                         return false;
                     }
@@ -255,6 +260,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 catch (Exception ex)
                 {
+                    rejectedValue = true;
                     error = $"Failed to set field '{propertyName}': {ex.Message}";
                     return false;
                 }
@@ -276,6 +282,7 @@ namespace MCPForUnity.Editor.Helpers
                     object convertedValue = PropertyConversion.ConvertToType(value, fieldInfo.FieldType);
                     if (convertedValue == null && value.Type != JTokenType.Null)
                     {
+                        rejectedValue = true;
                         error = $"Failed to convert value for serialized field '{propertyName}' to type '{fieldInfo.FieldType.Name}'.";
                         return false;
                     }
@@ -284,6 +291,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 catch (Exception ex)
                 {
+                    rejectedValue = true;
                     error = $"Failed to set serialized field '{propertyName}': {ex.Message}";
                     return false;
                 }
@@ -540,8 +548,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     case SerializedPropertyType.Integer:
                         if (value == null || value.Type == JTokenType.Null
-                            || (value.Type != JTokenType.Integer && value.Type != JTokenType.Float
-                                && !long.TryParse(value.ToString(), out _)))
+                            || (value.Type != JTokenType.Integer && value.Type != JTokenType.String))
                         {
                             error = "Expected integer value.";
                             return false;
@@ -563,6 +570,13 @@ namespace MCPForUnity.Editor.Helpers
                         return true;
 
                     case SerializedPropertyType.Float:
+                        if (prop.type == "double")
+                        {
+                            double? doubleVal = value.ReadScalar<double?>();
+                            if (!doubleVal.HasValue) { error = "Expected double value."; return false; }
+                            prop.doubleValue = doubleVal.Value;
+                            return true;
+                        }
                         float floatVal = ParamCoercion.CoerceFloat(value, float.NaN);
                         if (float.IsNaN(floatVal))
                         {
@@ -668,7 +682,7 @@ namespace MCPForUnity.Editor.Helpers
                     var fileIdToken = jObj["fileID"];
                     if (fileIdToken != null)
                     {
-                        long targetFileId = fileIdToken.Value<long>();
+                        long targetFileId = fileIdToken.ReadScalar<long>();
                         if (targetFileId != 0)
                         {
                             var allAssets = AssetDatabase.LoadAllAssetsAtPath(path);

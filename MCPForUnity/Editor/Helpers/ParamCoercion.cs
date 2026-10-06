@@ -1,251 +1,53 @@
 using System;
-using System.Globalization;
+using Newtonsoft.Json;
+using MCPForUnity.Runtime.Serialization;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Helpers
 {
     /// <summary>
     /// Utility class for coercing JSON parameter values to strongly-typed values.
-    /// Handles various input formats (strings, numbers, booleans) gracefully.
+    /// Keeps Boolean and numeric domains separate and rejects explicit invalid scalar values.
     /// </summary>
     public static class ParamCoercion
     {
         /// <summary>
-        /// Coerces a JToken to an integer value, handling strings and floats.
+        /// Reads a scalar without boolean/numeric coercion, fractional integer conversion,
+        /// nonfinite numbers or silent defaults for explicitly invalid values.
+        /// Missing/null optional values return default(T); canonical scalar strings are accepted.
         /// </summary>
-        /// <param name="token">The JSON token to coerce</param>
-        /// <param name="defaultValue">Default value if coercion fails</param>
-        /// <returns>The coerced integer value or default</returns>
-        public static int CoerceInt(JToken token, int defaultValue)
+        public static T ReadScalar<T>(this JToken token)
         {
-            if (token == null || token.Type == JTokenType.Null)
-                return defaultValue;
-
-            try
+            if (IsMissing(token)) return default;
+            try { return (T)JsonScalarConversion.Read(token, typeof(T)); }
+            catch (JsonSerializationException error)
             {
-                if (token.Type == JTokenType.Integer)
-                    return token.Value<int>();
-
-                var s = token.ToString().Trim();
-                if (s.Length == 0)
-                    return defaultValue;
-
-                if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i))
-                    return i;
-
-                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    return checked((int)d);
+                var target = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+                string name = string.IsNullOrEmpty(token.Path) ? "value" : token.Path;
+                throw new ArgumentException($"Invalid parameter '{name}': expected {target.Name}, got {token.Type}.", name, error);
             }
-            catch
-            {
-                // Swallow and return default
-            }
-
-            return defaultValue;
+        }
+        /// <summary>Reads a keyed optional scalar with the same strict rules.</summary>
+        public static T ReadScalar<T>(this JToken token, object key)
+        {
+            return token == null ? default : token[key].ReadScalar<T>();
         }
 
-        /// <summary>
-        /// Coerces a JToken to a long value, handling strings and floats.
-        /// </summary>
-        public static long CoerceLong(JToken token, long defaultValue)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-                return defaultValue;
-
-            try
-            {
-                if (token.Type == JTokenType.Integer)
-                    return token.Value<long>();
-
-                var s = token.ToString().Trim();
-                if (s.Length == 0)
-                    return defaultValue;
-
-                if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l))
-                    return l;
-
-                // A double can round an out-of-range integer back into the long range.
-                if (decimal.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    return checked((long)d);
-            }
-            catch
-            {
-                // Swallow and return default
-            }
-
-            return defaultValue;
-        }
-
-        /// <summary>
-        /// Coerces a JToken to a nullable integer value.
-        /// Returns null if token is null, empty, or cannot be parsed.
-        /// </summary>
-        /// <param name="token">The JSON token to coerce</param>
-        /// <returns>The coerced integer value or null</returns>
-        public static int? CoerceIntNullable(JToken token)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-                return null;
-
-            try
-            {
-                if (token.Type == JTokenType.Integer)
-                    return token.Value<int>();
-
-                var s = token.ToString().Trim();
-                if (s.Length == 0)
-                    return null;
-
-                if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i))
-                    return i;
-
-                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    return checked((int)d);
-            }
-            catch
-            {
-                // Swallow and return null
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Coerces a JToken to a boolean value, handling strings like "true", "1", etc.
-        /// </summary>
-        /// <param name="token">The JSON token to coerce</param>
-        /// <param name="defaultValue">Default value if coercion fails</param>
-        /// <returns>The coerced boolean value or default</returns>
-        public static bool CoerceBool(JToken token, bool defaultValue)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-                return defaultValue;
-
-            try
-            {
-                if (token.Type == JTokenType.Boolean)
-                    return token.Value<bool>();
-
-                var s = token.ToString().Trim().ToLowerInvariant();
-                if (s.Length == 0)
-                    return defaultValue;
-
-                if (bool.TryParse(s, out var b))
-                    return b;
-
-                if (s == "1" || s == "yes" || s == "on")
-                    return true;
-
-                if (s == "0" || s == "no" || s == "off")
-                    return false;
-            }
-            catch
-            {
-                // Swallow and return default
-            }
-
-            return defaultValue;
-        }
-
-        /// <summary>
-        /// Coerces a JToken to a nullable boolean value.
-        /// Returns null if token is null, empty, or cannot be parsed.
-        /// </summary>
-        /// <param name="token">The JSON token to coerce</param>
-        /// <returns>The coerced boolean value or null</returns>
-        public static bool? CoerceBoolNullable(JToken token)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-                return null;
-
-            try
-            {
-                if (token.Type == JTokenType.Boolean)
-                    return token.Value<bool>();
-
-                var s = token.ToString().Trim().ToLowerInvariant();
-                if (s.Length == 0)
-                    return null;
-
-                if (bool.TryParse(s, out var b))
-                    return b;
-
-                if (s == "1" || s == "yes" || s == "on")
-                    return true;
-
-                if (s == "0" || s == "no" || s == "off")
-                    return false;
-            }
-            catch
-            {
-                // Swallow and return null
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Coerces a JToken to a float value, handling strings and integers.
-        /// </summary>
-        /// <param name="token">The JSON token to coerce</param>
-        /// <param name="defaultValue">Default value if coercion fails</param>
-        /// <returns>The coerced float value or default</returns>
-        public static float CoerceFloat(JToken token, float defaultValue)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-                return defaultValue;
-
-            try
-            {
-                if (token.Type == JTokenType.Float || token.Type == JTokenType.Integer)
-                    return token.Value<float>();
-
-                var s = token.ToString().Trim();
-                if (s.Length == 0)
-                    return defaultValue;
-
-                if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f))
-                    return f;
-            }
-            catch
-            {
-                // Swallow and return default
-            }
-
-            return defaultValue;
-        }
-
-        /// <summary>
-        /// Coerces a JToken to a nullable float value.
-        /// Returns null if token is null, empty, or cannot be parsed.
-        /// </summary>
-        /// <param name="token">The JSON token to coerce</param>
-        /// <returns>The coerced float value or null</returns>
-        public static float? CoerceFloatNullable(JToken token)
-        {
-            if (token == null || token.Type == JTokenType.Null)
-                return null;
-
-            try
-            {
-                if (token.Type == JTokenType.Float || token.Type == JTokenType.Integer)
-                    return token.Value<float>();
-
-                var s = token.ToString().Trim();
-                if (s.Length == 0)
-                    return null;
-
-                if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f))
-                    return f;
-            }
-            catch
-            {
-                // Swallow and return null
-            }
-
-            return null;
-        }
-
+        private static bool IsMissing(JToken token) => token == null || token.Type == JTokenType.Null;
+        /// <summary>Reads an optional integer; only missing/null uses the default.</summary>
+        public static int CoerceInt(JToken token, int defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<int>();
+        /// <summary>Reads an optional long integer; only missing/null uses the default.</summary>
+        public static long CoerceLong(JToken token, long defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<long>();
+        /// <summary>Reads a nullable integer; explicit invalid values are rejected.</summary>
+        public static int? CoerceIntNullable(JToken token) => token.ReadScalar<int?>();
+        /// <summary>Reads an optional Boolean/canonical Boolean string; numeric flags are rejected.</summary>
+        public static bool CoerceBool(JToken token, bool defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<bool>();
+        /// <summary>Reads a nullable Boolean; explicit invalid values are rejected.</summary>
+        public static bool? CoerceBoolNullable(JToken token) => token.ReadScalar<bool?>();
+        /// <summary>Reads an optional finite float; only missing/null uses the default.</summary>
+        public static float CoerceFloat(JToken token, float defaultValue) => IsMissing(token) ? defaultValue : token.ReadScalar<float>();
+        /// <summary>Reads a nullable finite float; explicit invalid values are rejected.</summary>
+        public static float? CoerceFloatNullable(JToken token) => token.ReadScalar<float?>();
         /// <summary>
         /// Coerces a JToken to a string value, with null handling.
         /// </summary>
@@ -262,43 +64,29 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Coerces a JToken to an enum value, handling strings.
+        /// Reads an optional enum through the strict scalar parser, preserving named flags.
         /// </summary>
         /// <typeparam name="T">The enum type</typeparam>
         /// <param name="token">The JSON token to coerce</param>
-        /// <param name="defaultValue">Default value if coercion fails</param>
-        /// <returns>The coerced enum value or default</returns>
+        /// <param name="defaultValue">Default value only for missing/null input</param>
+        /// <returns>The enum value; explicit invalid values throw an argument error</returns>
         public static T CoerceEnum<T>(JToken token, T defaultValue) where T : struct, Enum
         {
-            if (token == null || token.Type == JTokenType.Null)
-                return defaultValue;
-
-            try
-            {
-                var s = token.ToString().Trim();
-                if (s.Length == 0)
-                    return defaultValue;
-
-                if (Enum.TryParse<T>(s, ignoreCase: true, out var result))
-                    return result;
-            }
-            catch
-            {
-                // Swallow and return default
-            }
-
-            return defaultValue;
+            return IsMissing(token) ? defaultValue : token.ReadScalar<T>();
         }
 
         /// <summary>
-        /// Checks if a JToken represents a numeric value (integer or float).
+        /// Checks if a JToken represents a finite float-compatible numeric value.
         /// Useful for validating JSON values before parsing.
         /// </summary>
         /// <param name="token">The JSON token to check</param>
-        /// <returns>True if the token is an integer or float, false otherwise</returns>
+        /// <returns>True for finite, representable numeric tokens; false otherwise</returns>
         public static bool IsNumericToken(JToken token)
         {
-            return token != null && (token.Type == JTokenType.Integer || token.Type == JTokenType.Float);
+            if (token == null || (token.Type != JTokenType.Integer && token.Type != JTokenType.Float))
+                return false;
+            try { token.ReadScalar<float>(); return true; }
+            catch (ArgumentException) { return false; }
         }
         
         /// <summary>
@@ -317,9 +105,16 @@ namespace MCPForUnity.Editor.Helpers
             {
                 return true; // Field not present, valid (will use default)
             }
-            if (!IsNumericToken(token))
+            // Unity uses explicit infinite tangents to encode stepped curve segments.
+            // Restrict this exception to slope/tangent fields; all other numeric fields are finite.
+            bool curveTangent = fieldName == "inTangent" || fieldName == "outTangent"
+                || fieldName == "inSlope" || fieldName == "outSlope";
+            bool explicitInfiniteTangent = curveTangent && token.Type == JTokenType.Float
+                && token is JValue tangent && (tangent.Value is double d && double.IsInfinity(d)
+                    || tangent.Value is float f && float.IsInfinity(f));
+            if (!explicitInfiniteTangent && !IsNumericToken(token))
             {
-                error = $"must be a number, got {token.Type}";
+                error = $"must be a finite representable number, got {token.Type}";
                 return false;
             }
             return true;

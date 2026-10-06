@@ -123,28 +123,28 @@ namespace MCPForUnity.Editor.Helpers
         {
             Action apply = () => { };
             // Shadows
-            if (@params["shadowCastingMode"] != null && Enum.TryParse<UnityEngine.Rendering.ShadowCastingMode>(@params["shadowCastingMode"].ToString(), true, out var shadowMode)) 
-            { apply += () => renderer.shadowCastingMode = shadowMode; changes.Add("shadowCastingMode"); }
-            if (@params["receiveShadows"] != null) { bool value = @params["receiveShadows"].ToObject<bool>(); apply += () => renderer.receiveShadows = value; changes.Add("receiveShadows"); }
+            if (@params["shadowCastingMode"] != null)
+            { var shadowMode = @params["shadowCastingMode"].ReadScalar<UnityEngine.Rendering.ShadowCastingMode>(); apply += () => renderer.shadowCastingMode = shadowMode; changes.Add("shadowCastingMode"); }
+            if (@params["receiveShadows"] != null) { bool value = @params["receiveShadows"].ReadScalar<bool>(); apply += () => renderer.receiveShadows = value; changes.Add("receiveShadows"); }
             // Note: shadowBias is only available on specific renderer types (e.g., ParticleSystemRenderer), not base Renderer
             
             // Lighting and probes
-            if (@params["lightProbeUsage"] != null && Enum.TryParse<UnityEngine.Rendering.LightProbeUsage>(@params["lightProbeUsage"].ToString(), true, out var probeUsage)) 
-            { apply += () => renderer.lightProbeUsage = probeUsage; changes.Add("lightProbeUsage"); }
-            if (@params["reflectionProbeUsage"] != null && Enum.TryParse<UnityEngine.Rendering.ReflectionProbeUsage>(@params["reflectionProbeUsage"].ToString(), true, out var reflectionUsage)) 
-            { apply += () => renderer.reflectionProbeUsage = reflectionUsage; changes.Add("reflectionProbeUsage"); }
+            if (@params["lightProbeUsage"] != null)
+            { var probeUsage = @params["lightProbeUsage"].ReadScalar<UnityEngine.Rendering.LightProbeUsage>(); apply += () => renderer.lightProbeUsage = probeUsage; changes.Add("lightProbeUsage"); }
+            if (@params["reflectionProbeUsage"] != null)
+            { var reflectionUsage = @params["reflectionProbeUsage"].ReadScalar<UnityEngine.Rendering.ReflectionProbeUsage>(); apply += () => renderer.reflectionProbeUsage = reflectionUsage; changes.Add("reflectionProbeUsage"); }
             
             // Motion vectors
-            if (@params["motionVectorGenerationMode"] != null && Enum.TryParse<MotionVectorGenerationMode>(@params["motionVectorGenerationMode"].ToString(), true, out var motionMode)) 
-            { apply += () => renderer.motionVectorGenerationMode = motionMode; changes.Add("motionVectorGenerationMode"); }
+            if (@params["motionVectorGenerationMode"] != null)
+            { var motionMode = @params["motionVectorGenerationMode"].ReadScalar<MotionVectorGenerationMode>(); apply += () => renderer.motionVectorGenerationMode = motionMode; changes.Add("motionVectorGenerationMode"); }
             
             // Sorting
-            if (@params["sortingOrder"] != null) { int value = @params["sortingOrder"].ToObject<int>(); apply += () => renderer.sortingOrder = value; changes.Add("sortingOrder"); }
+            if (@params["sortingOrder"] != null) { int value = @params["sortingOrder"].ReadScalar<int>(); apply += () => renderer.sortingOrder = value; changes.Add("sortingOrder"); }
             if (@params["sortingLayerName"] != null) { string value = @params["sortingLayerName"].ToString(); apply += () => renderer.sortingLayerName = value; changes.Add("sortingLayerName"); }
-            if (@params["sortingLayerID"] != null) { int value = @params["sortingLayerID"].ToObject<int>(); apply += () => renderer.sortingLayerID = value; changes.Add("sortingLayerID"); }
+            if (@params["sortingLayerID"] != null) { int value = @params["sortingLayerID"].ReadScalar<int>(); apply += () => renderer.sortingLayerID = value; changes.Add("sortingLayerID"); }
             
             // Rendering layer mask (for SRP)
-            if (@params["renderingLayerMask"] != null) { uint value = @params["renderingLayerMask"].ToObject<uint>(); apply += () => renderer.renderingLayerMask = value; changes.Add("renderingLayerMask"); }
+            if (@params["renderingLayerMask"] != null) { uint value = @params["renderingLayerMask"].ReadScalar<uint>(); apply += () => renderer.renderingLayerMask = value; changes.Add("renderingLayerMask"); }
             return apply;
         }
 
@@ -183,15 +183,15 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (@params["width"] != null) 
             { 
-                float w = @params["width"].ToObject<float>(); 
+                float w = @params["width"].ReadScalar<float>();
                 setStartWidth(w); 
                 setEndWidth(w); 
                 changes.Add("width"); 
             }
-            if (@params["startWidth"] != null) { setStartWidth(@params["startWidth"].ToObject<float>()); changes.Add("startWidth"); }
-            if (@params["endWidth"] != null) { setEndWidth(@params["endWidth"].ToObject<float>()); changes.Add("endWidth"); }
+            if (@params["startWidth"] != null) { setStartWidth(@params["startWidth"].ReadScalar<float>()); changes.Add("startWidth"); }
+            if (@params["endWidth"] != null) { setEndWidth(@params["endWidth"].ReadScalar<float>()); changes.Add("endWidth"); }
             if (@params["widthCurve"] != null) { setWidthCurve(parseAnimationCurve(@params["widthCurve"], 1f)); changes.Add("widthCurve"); }
-            if (@params["widthMultiplier"] != null) { setWidthMultiplier(@params["widthMultiplier"].ToObject<float>()); changes.Add("widthMultiplier"); }
+            if (@params["widthMultiplier"] != null) { setWidthMultiplier(@params["widthMultiplier"].ReadScalar<float>()); changes.Add("widthMultiplier"); }
         }
 
         /// <summary>
@@ -294,13 +294,13 @@ namespace MCPForUnity.Editor.Helpers
             Action<LineAlignment> setAlignment, Action<LineTextureMode> setTextureMode,
             Action<bool> setGenerateLightingData)
         {
-            if (@params["loop"] != null && setLoop != null) { setLoop(@params["loop"].ToObject<bool>()); changes.Add("loop"); }
-            if (@params["useWorldSpace"] != null && setUseWorldSpace != null) { setUseWorldSpace(@params["useWorldSpace"].ToObject<bool>()); changes.Add("useWorldSpace"); }
-            if (@params["numCornerVertices"] != null && setNumCornerVertices != null) { setNumCornerVertices(@params["numCornerVertices"].ToObject<int>()); changes.Add("numCornerVertices"); }
-            if (@params["numCapVertices"] != null && setNumCapVertices != null) { setNumCapVertices(@params["numCapVertices"].ToObject<int>()); changes.Add("numCapVertices"); }
-            if (@params["alignment"] != null && setAlignment != null && Enum.TryParse<LineAlignment>(@params["alignment"].ToString(), true, out var align)) { setAlignment(align); changes.Add("alignment"); }
-            if (@params["textureMode"] != null && setTextureMode != null && Enum.TryParse<LineTextureMode>(@params["textureMode"].ToString(), true, out var texMode)) { setTextureMode(texMode); changes.Add("textureMode"); }
-            if (@params["generateLightingData"] != null && setGenerateLightingData != null) { setGenerateLightingData(@params["generateLightingData"].ToObject<bool>()); changes.Add("generateLightingData"); }
+            if (@params["loop"] != null && setLoop != null) { setLoop(@params["loop"].ReadScalar<bool>()); changes.Add("loop"); }
+            if (@params["useWorldSpace"] != null && setUseWorldSpace != null) { setUseWorldSpace(@params["useWorldSpace"].ReadScalar<bool>()); changes.Add("useWorldSpace"); }
+            if (@params["numCornerVertices"] != null && setNumCornerVertices != null) { setNumCornerVertices(@params["numCornerVertices"].ReadScalar<int>()); changes.Add("numCornerVertices"); }
+            if (@params["numCapVertices"] != null && setNumCapVertices != null) { setNumCapVertices(@params["numCapVertices"].ReadScalar<int>()); changes.Add("numCapVertices"); }
+            if (@params["alignment"] != null && setAlignment != null) { setAlignment(@params["alignment"].ReadScalar<LineAlignment>()); changes.Add("alignment"); }
+            if (@params["textureMode"] != null && setTextureMode != null) { setTextureMode(@params["textureMode"].ReadScalar<LineTextureMode>()); changes.Add("textureMode"); }
+            if (@params["generateLightingData"] != null && setGenerateLightingData != null) { setGenerateLightingData(@params["generateLightingData"].ReadScalar<bool>()); changes.Add("generateLightingData"); }
         }
 
         /// <summary>

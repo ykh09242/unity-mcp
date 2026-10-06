@@ -105,13 +105,13 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     try
                     {
-                        float newVal = floatProps["value"].ToObject<float>();
+                        float newVal = floatProps["value"].ReadScalar<float>();
                         int propertyIndex = mat.shader.FindPropertyIndex(propName);
                         if (mat.HasProperty(propName) && propertyIndex >= 0)
                         {
                             var type = mat.shader.GetPropertyType(propertyIndex);
                             bool changed = type == UnityEngine.Rendering.ShaderPropertyType.Int
-                                ? mat.GetInteger(propName) != floatProps["value"].ToObject<decimal>()
+                                ? mat.GetInteger(propName) != floatProps["value"].ReadScalar<decimal>()
                                 : (type == UnityEngine.Rendering.ShaderPropertyType.Float || type == UnityEngine.Rendering.ShaderPropertyType.Range) && mat.GetFloat(propName) != newVal;
                             if (changed)
                                 modified |= TrySetShaderProperty(mat, propName, floatProps["value"], serializer);
@@ -314,13 +314,13 @@ namespace MCPForUnity.Editor.Helpers
                     case UnityEngine.Rendering.ShaderPropertyType.Range:
                         if (value.Type != JTokenType.Float && value.Type != JTokenType.Integer && value.Type != JTokenType.Boolean)
                             return false;
-                        float number = value.Type == JTokenType.Boolean ? (value.ToObject<bool>(serializer) ? 1f : 0f) : value.ToObject<float>(serializer);
+                        float number = value.Type == JTokenType.Boolean ? (value.ReadScalar<bool>() ? 1f : 0f) : value.ReadScalar<float>();
                         apply = () => material.SetFloat(propertyName, number);
                         return true;
                     case UnityEngine.Rendering.ShaderPropertyType.Int:
                         if (value.Type != JTokenType.Float && value.Type != JTokenType.Integer && value.Type != JTokenType.Boolean)
                             return false;
-                        decimal integer = value.Type == JTokenType.Boolean ? (value.ToObject<bool>(serializer) ? 1m : 0m) : value.ToObject<decimal>(serializer);
+                        decimal integer = value.Type == JTokenType.Boolean ? (value.ReadScalar<bool>() ? 1m : 0m) : value.ReadScalar<decimal>();
                         if (integer != decimal.Truncate(integer) || integer < int.MinValue || integer > int.MaxValue)
                             return false;
                         int count = (int)integer;
@@ -373,18 +373,18 @@ namespace MCPForUnity.Editor.Helpers
                 if (jArray.Count == 4)
                 {
                     return new Color(
-                        (float)jArray[0],
-                        (float)jArray[1],
-                        (float)jArray[2],
-                        (float)jArray[3]
+                        jArray[0].ReadScalar<float>(),
+                        jArray[1].ReadScalar<float>(),
+                        jArray[2].ReadScalar<float>(),
+                        jArray[3].ReadScalar<float>()
                     );
                 }
                 else if (jArray.Count == 3)
                 {
                     return new Color(
-                        (float)jArray[0],
-                        (float)jArray[1],
-                        (float)jArray[2],
+                        jArray[0].ReadScalar<float>(),
+                        jArray[1].ReadScalar<float>(),
+                        jArray[2].ReadScalar<float>(),
                         1f
                     );
                 }

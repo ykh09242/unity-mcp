@@ -58,6 +58,7 @@ try {
         (Join-Path $root 'MCPForUnity/Editor/Helpers/UnityJsonSerializer.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Helpers/UnityAssembliesCompat.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs'),
+        (Join-Path $root 'MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Serialization/UnityTypeConverters.cs'))
     Write-Output ('SOURCE: ' + $source)
     Write-Output ('SOURCE_SHA256: ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)

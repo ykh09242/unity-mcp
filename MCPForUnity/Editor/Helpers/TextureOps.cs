@@ -51,10 +51,10 @@ namespace MCPForUnity.Editor.Helpers
             if (colorArray == null || colorArray.Count < 3)
                 return new Color32(255, 255, 255, 255);
 
-            byte r = (byte)Mathf.Clamp(colorArray[0].ToObject<int>(), 0, 255);
-            byte g = (byte)Mathf.Clamp(colorArray[1].ToObject<int>(), 0, 255);
-            byte b = (byte)Mathf.Clamp(colorArray[2].ToObject<int>(), 0, 255);
-            byte a = colorArray.Count > 3 ? (byte)Mathf.Clamp(colorArray[3].ToObject<int>(), 0, 255) : (byte)255;
+            byte r = (byte)Mathf.Clamp(colorArray[0].ReadScalar<int>(), 0, 255);
+            byte g = (byte)Mathf.Clamp(colorArray[1].ReadScalar<int>(), 0, 255);
+            byte b = (byte)Mathf.Clamp(colorArray[2].ReadScalar<int>(), 0, 255);
+            byte a = colorArray.Count > 3 ? (byte)Mathf.Clamp(colorArray[3].ReadScalar<int>(), 0, 255) : (byte)255;
 
             return new Color32(r, g, b, a);
         }

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -44,19 +43,16 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Get optional int parameter.
+        /// Get optional int parameter. Explicit invalid values throw an argument error.
         /// </summary>
         public int? GetInt(string key, int? defaultValue = null)
         {
             var token = GetToken(key);
-            // JValue.ToString() uses the editor culture, including custom negative signs.
-            var str = token is JValue scalar ? scalar.ToString(CultureInfo.InvariantCulture) : token?.ToString();
-            if (string.IsNullOrEmpty(str)) return defaultValue;
-            return int.TryParse(str, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) ? result : defaultValue;
+            return ParamCoercion.CoerceIntNullable(token) ?? defaultValue;
         }
 
         /// <summary>
-        /// Get optional bool parameter.
+        /// Get optional bool parameter. Explicit invalid values throw an argument error.
         /// Supports both snake_case and camelCase automatically.
         /// </summary>
         public bool GetBool(string key, bool defaultValue = false)
@@ -65,7 +61,7 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Get optional float parameter.
+        /// Get optional finite float parameter. Explicit invalid values throw an argument error.
         /// </summary>
         public float? GetFloat(string key, float? defaultValue = null)
         {

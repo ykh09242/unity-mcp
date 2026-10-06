@@ -195,14 +195,12 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
-        public void GetInt_InvalidInteger_ReturnsDefault()
+        public void GetInt_InvalidInteger_ThrowsArgumentError()
         {
             var json = new JObject { ["count"] = "not_a_number" };
             var p = new ToolParams(json);
 
-            var value = p.GetInt("count", 5);
-
-            Assert.AreEqual(5, value);
+            Assert.Throws<System.ArgumentException>(() => p.GetInt("count", 5));
         }
 
         #endregion
@@ -234,16 +232,18 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
-        public void GetFloat_InvalidValues_PreserveDefaultAndExactAliasPrecedence()
+        public void GetFloat_InvalidValues_ThrowAndPreserveExactAliasPrecedence()
         {
-            foreach (var token in new JToken[] { JValue.CreateNull(), new JValue(""),
-                new JValue("invalid"), new JValue(true), new JObject(), new JArray(2.5) })
+            foreach (var token in new JToken[] { new JValue(""), new JValue("invalid"),
+                new JValue(true), new JObject(), new JArray(2.5) })
             {
                 var p = new ToolParams(new JObject { ["step_size"] = token, ["stepSize"] = 2.5 });
-                Assert.AreEqual(7f, p.GetFloat("step_size", 7f), token.Type.ToString());
-                Assert.IsNull(p.GetFloat("step_size"), token.Type.ToString());
+                Assert.Throws<System.ArgumentException>(() => p.GetFloat("step_size", 7f), token.Type.ToString());
+                Assert.Throws<System.ArgumentException>(() => p.GetFloat("step_size"), token.Type.ToString());
                 Assert.AreEqual(2.5f, p.GetFloat("stepSize"));
             }
+            var nullable = new ToolParams(new JObject { ["step_size"] = JValue.CreateNull(), ["stepSize"] = 2.5 });
+            Assert.AreEqual(7f, nullable.GetFloat("step_size", 7f));
         }
 
         [Test]
@@ -290,9 +290,9 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("NaN")]
         [TestCase("Infinity")]
         [TestCase("-Infinity")]
-        public void CoerceInt_OutOfRangeOrNonfiniteString_PreservesDefault(string value)
+        public void CoerceInt_OutOfRangeOrNonfiniteString_ThrowsArgumentError(string value)
         {
-            Assert.AreEqual(17, ParamCoercion.CoerceInt(new JValue(value), 17));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceInt(new JValue(value), 17));
         }
 
         [TestCase("2147483648")]
@@ -302,9 +302,9 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("NaN")]
         [TestCase("Infinity")]
         [TestCase("-Infinity")]
-        public void CoerceIntNullable_OutOfRangeOrNonfiniteString_ReturnsNull(string value)
+        public void CoerceIntNullable_OutOfRangeOrNonfiniteString_ThrowsArgumentError(string value)
         {
-            Assert.IsNull(ParamCoercion.CoerceIntNullable(new JValue(value)));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceIntNullable(new JValue(value)));
         }
 
         [TestCase("9223372036854775808")]
@@ -316,9 +316,9 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("NaN")]
         [TestCase("Infinity")]
         [TestCase("-Infinity")]
-        public void CoerceLong_OutOfRangeOrNonfiniteString_PreservesDefault(string value)
+        public void CoerceLong_OutOfRangeOrNonfiniteString_ThrowsArgumentError(string value)
         {
-            Assert.AreEqual(17L, ParamCoercion.CoerceLong(new JValue(value), 17L));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceLong(new JValue(value), 17L));
         }
 
         [TestCase(1e100)]
@@ -326,113 +326,101 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase(double.NaN)]
         [TestCase(double.PositiveInfinity)]
         [TestCase(double.NegativeInfinity)]
-        public void IntegerCoercion_OutOfRangeOrNonfiniteFloatToken_PreservesDefault(double value)
+        public void IntegerCoercion_OutOfRangeOrNonfiniteFloatToken_ThrowsArgumentError(double value)
         {
             var token = new JValue(value);
-            Assert.AreEqual(17, ParamCoercion.CoerceInt(token, 17));
-            Assert.IsNull(ParamCoercion.CoerceIntNullable(token));
-            Assert.AreEqual(17L, ParamCoercion.CoerceLong(token, 17L));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceInt(token, 17));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceIntNullable(token));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceLong(token, 17L));
         }
 
-        [TestCase("1.9", 1)]
-        [TestCase("-1.9", -1)]
-        [TestCase("1e2", 100)]
-        [TestCase("2147483647", int.MaxValue)]
-        [TestCase("-2147483648", int.MinValue)]
-        [TestCase("2147483647.9", int.MaxValue)]
-        [TestCase("-2147483648.9", int.MinValue)]
-        public void IntegerCoercion_RepresentableStrings_PreserveTruncationAndBounds(string value, int expected)
+        [TestCase("1.9")]
+        [TestCase("-1.9")]
+        [TestCase("1e2")]
+        [TestCase("2147483647.9")]
+        [TestCase("-2147483648.9")]
+        public void IntegerCoercion_FractionalAndScientificStrings_Throw(string value)
         {
             var token = new JValue(value);
-            Assert.AreEqual(expected, ParamCoercion.CoerceInt(token, 17));
-            Assert.AreEqual(expected, ParamCoercion.CoerceIntNullable(token));
-            Assert.AreEqual((long)expected, ParamCoercion.CoerceLong(token, 17L));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceInt(token, 17));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceIntNullable(token));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceLong(token, 17L));
         }
 
         [Test]
-        public void IntegerCoercion_IntegerTokensAndLongBounds_PreserveDefaultsAndPrecision()
+        public void IntegerCoercion_IntegerTokensAndLongBounds_PreservePrecisionAndRejectOverflow()
         {
             var oversizedInt = JToken.Parse("2147483648");
-            Assert.AreEqual(17, ParamCoercion.CoerceInt(oversizedInt, 17));
-            Assert.IsNull(ParamCoercion.CoerceIntNullable(oversizedInt));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceInt(oversizedInt, 17));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceIntNullable(oversizedInt));
             Assert.AreEqual(2147483648L, ParamCoercion.CoerceLong(oversizedInt, 17L));
             var oversizedLong = JToken.Parse("9223372036854775808");
-            Assert.AreEqual(17L, ParamCoercion.CoerceLong(oversizedLong, 17L));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceLong(oversizedLong, 17L));
             Assert.AreEqual(long.MaxValue, ParamCoercion.CoerceLong(new JValue("9223372036854775807"), 17L));
             Assert.AreEqual(long.MinValue, ParamCoercion.CoerceLong(new JValue("-9223372036854775808"), 17L));
         }
 
-        [TestCase("1.9", 1L)]
-        [TestCase("-1.9", -1L)]
-        [TestCase("1e-100", 0L)]
-        [TestCase("9.223372036854775807e18", long.MaxValue)]
-        [TestCase("-9.223372036854775808e18", long.MinValue)]
-        [TestCase("9223372036854775807.9", long.MaxValue)]
-        [TestCase("-9223372036854775808.9", long.MinValue)]
-        public void CoerceLong_RepresentableFractionsAndScientificBounds_PreserveTruncation(string value, long expected)
+        [TestCase("1.9")]
+        [TestCase("-1.9")]
+        [TestCase("1e-100")]
+        [TestCase("9.223372036854775807e18")]
+        [TestCase("-9.223372036854775808e18")]
+        [TestCase("9223372036854775807.9")]
+        [TestCase("-9223372036854775808.9")]
+        public void CoerceLong_FractionalAndScientificStrings_Throw(string value)
         {
-            Assert.AreEqual(expected, ParamCoercion.CoerceLong(new JValue(value), 17L));
+            Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceLong(new JValue(value), 17L));
         }
 
         [Test]
-        public void BoolCoercion_ExistingScalarAndDefaultPolicy_IsPreserved()
+        public void BoolCoercion_OnlyBooleanAndCanonicalStringsAreAccepted()
         {
-            foreach (var token in new JToken[] { new JValue(true), new JValue("true"), new JValue("yes"),
-                new JValue("on"), new JValue(1) })
+            foreach (var token in new JToken[] { new JValue(true), new JValue("true") })
             {
                 Assert.IsTrue(ParamCoercion.CoerceBool(token, false));
                 Assert.AreEqual(true, ParamCoercion.CoerceBoolNullable(token));
             }
-            foreach (var token in new JToken[] { new JValue(false), new JValue("false"), new JValue("no"),
-                new JValue("off"), new JValue(0) })
+            foreach (var token in new JToken[] { new JValue(false), new JValue("false") })
             {
                 Assert.IsFalse(ParamCoercion.CoerceBool(token, true));
                 Assert.AreEqual(false, ParamCoercion.CoerceBoolNullable(token));
             }
-            foreach (var token in new JToken[] { null, JValue.CreateNull(), new JValue("invalid"),
-                new JValue(2), new JObject(), new JArray(true) })
+            foreach (var token in new JToken[] { new JValue("yes"), new JValue("on"), new JValue("no"), new JValue("off"),
+                new JValue(0), new JValue(1), new JValue("0"), new JValue("1"), new JValue("invalid"), new JObject(), new JArray(true) })
             {
-                Assert.IsFalse(ParamCoercion.CoerceBool(token, false));
-                Assert.IsTrue(ParamCoercion.CoerceBool(token, true));
-                Assert.IsNull(ParamCoercion.CoerceBoolNullable(token));
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceBool(token, false));
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceBoolNullable(token));
             }
         }
 
         [Test]
-        public void FloatCoercion_ExistingNonfinitePolicy_IsPreserved()
+        public void FloatCoercion_NonfiniteValues_ThrowArgumentError()
         {
-            var originalCulture = System.Globalization.CultureInfo.CurrentCulture;
-            try
+            foreach (var token in new JToken[] { new JValue(double.NaN), new JValue("NaN"),
+                new JValue(double.PositiveInfinity), new JValue("Infinity"), new JValue(double.NegativeInfinity) })
             {
-                System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
-                foreach (var token in new JToken[] { new JValue(double.NaN), new JValue("NaN") })
-                {
-                    Assert.IsTrue(float.IsNaN(ParamCoercion.CoerceFloat(token, 7f)));
-                    Assert.IsTrue(float.IsNaN(ParamCoercion.CoerceFloatNullable(token).Value));
-                    Assert.IsTrue(float.IsNaN(new ToolParams(new JObject { ["value"] = token }).GetFloat("value", 7f).Value));
-                }
-                foreach (var token in new JToken[] { new JValue(double.PositiveInfinity), new JValue("Infinity") })
-                {
-                    Assert.AreEqual(float.PositiveInfinity, ParamCoercion.CoerceFloat(token, 7f));
-                    Assert.AreEqual(float.PositiveInfinity, ParamCoercion.CoerceFloatNullable(token));
-                    Assert.AreEqual(float.PositiveInfinity, new ToolParams(new JObject { ["value"] = token }).GetFloat("value", 7f));
-                }
-            }
-            finally
-            {
-                System.Globalization.CultureInfo.CurrentCulture = originalCulture;
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceFloat(token, 7f));
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceFloatNullable(token));
+                Assert.Throws<System.ArgumentException>(() => new ToolParams(new JObject { ["value"] = token }).GetFloat("value", 7f));
             }
         }
 
         [Test]
-        public void IntegerCoercion_InvalidContainersAndNull_PreserveDefaults()
+        public void IntegerCoercion_InvalidContainersThrowAndMissingValuesDefault()
         {
-            foreach (var token in new JToken[] { null, JValue.CreateNull(), new JValue(""),
-                new JValue("invalid"), new JValue(true), new JObject(), new JArray(1) })
+            foreach (var token in new JToken[] { new JValue(""), new JValue("invalid"), new JValue(true), new JObject(), new JArray(1) })
+            {
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceInt(token, 17));
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceIntNullable(token));
+                Assert.Throws<System.ArgumentException>(() => ParamCoercion.CoerceLong(token, 17L));
+            }
+            foreach (var token in new JToken[] { null, JValue.CreateNull() })
             {
                 Assert.AreEqual(17, ParamCoercion.CoerceInt(token, 17));
                 Assert.IsNull(ParamCoercion.CoerceIntNullable(token));
                 Assert.AreEqual(17L, ParamCoercion.CoerceLong(token, 17L));
+                Assert.IsTrue(ParamCoercion.CoerceBool(token, true));
+                Assert.IsNull(ParamCoercion.CoerceBoolNullable(token));
             }
         }
 

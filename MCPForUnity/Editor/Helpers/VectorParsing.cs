@@ -27,9 +27,9 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JArray array && array.Count >= 3)
                 {
                     return new Vector3(
-                        array[0].ToObject<float>(),
-                        array[1].ToObject<float>(),
-                        array[2].ToObject<float>()
+                        array[0].ReadScalar<float>(),
+                        array[1].ReadScalar<float>(),
+                        array[2].ReadScalar<float>()
                     );
                 }
 
@@ -37,12 +37,13 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z"))
                 {
                     return new Vector3(
-                        obj["x"].ToObject<float>(),
-                        obj["y"].ToObject<float>(),
-                        obj["z"].ToObject<float>()
+                        obj["x"].ReadScalar<float>(),
+                        obj["y"].ReadScalar<float>(),
+                        obj["z"].ReadScalar<float>()
                     );
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Vector3 from '{token}': {ex.Message}");
@@ -56,7 +57,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static Vector3 ParseVector3OrDefault(JToken token, Vector3 defaultValue = default)
         {
-            return ParseVector3(token) ?? defaultValue;
+            return ParsedOrDefault(token, ParseVector3(token), defaultValue);
         }
 
         /// <summary>
@@ -75,8 +76,8 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JArray array && array.Count >= 2)
                 {
                     return new Vector2(
-                        array[0].ToObject<float>(),
-                        array[1].ToObject<float>()
+                        array[0].ReadScalar<float>(),
+                        array[1].ReadScalar<float>()
                     );
                 }
 
@@ -84,11 +85,12 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y"))
                 {
                     return new Vector2(
-                        obj["x"].ToObject<float>(),
-                        obj["y"].ToObject<float>()
+                        obj["x"].ReadScalar<float>(),
+                        obj["y"].ReadScalar<float>()
                     );
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Vector2 from '{token}': {ex.Message}");
@@ -113,10 +115,10 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JArray array && array.Count >= 4)
                 {
                     return new Vector4(
-                        array[0].ToObject<float>(),
-                        array[1].ToObject<float>(),
-                        array[2].ToObject<float>(),
-                        array[3].ToObject<float>()
+                        array[0].ReadScalar<float>(),
+                        array[1].ReadScalar<float>(),
+                        array[2].ReadScalar<float>(),
+                        array[3].ReadScalar<float>()
                     );
                 }
 
@@ -125,13 +127,14 @@ namespace MCPForUnity.Editor.Helpers
                     obj.ContainsKey("z") && obj.ContainsKey("w"))
                 {
                     return new Vector4(
-                        obj["x"].ToObject<float>(),
-                        obj["y"].ToObject<float>(),
-                        obj["z"].ToObject<float>(),
-                        obj["w"].ToObject<float>()
+                        obj["x"].ReadScalar<float>(),
+                        obj["y"].ReadScalar<float>(),
+                        obj["z"].ReadScalar<float>(),
+                        obj["w"].ReadScalar<float>()
                     );
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[VectorParsing] Failed to parse Vector4 from '{token}': {ex.Message}");
@@ -162,10 +165,10 @@ namespace MCPForUnity.Editor.Helpers
                     if (array.Count >= 4)
                     {
                         return new Quaternion(
-                            array[0].ToObject<float>(),
-                            array[1].ToObject<float>(),
-                            array[2].ToObject<float>(),
-                            array[3].ToObject<float>()
+                            array[0].ReadScalar<float>(),
+                            array[1].ReadScalar<float>(),
+                            array[2].ReadScalar<float>(),
+                            array[3].ReadScalar<float>()
                         );
                     }
 
@@ -173,9 +176,9 @@ namespace MCPForUnity.Editor.Helpers
                     if (array.Count >= 3 && asEulerAngles)
                     {
                         return Quaternion.Euler(
-                            array[0].ToObject<float>(),
-                            array[1].ToObject<float>(),
-                            array[2].ToObject<float>()
+                            array[0].ReadScalar<float>(),
+                            array[1].ReadScalar<float>(),
+                            array[2].ReadScalar<float>()
                         );
                     }
                 }
@@ -186,10 +189,10 @@ namespace MCPForUnity.Editor.Helpers
                     if (obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z") && obj.ContainsKey("w"))
                     {
                         return new Quaternion(
-                            obj["x"].ToObject<float>(),
-                            obj["y"].ToObject<float>(),
-                            obj["z"].ToObject<float>(),
-                            obj["w"].ToObject<float>()
+                            obj["x"].ReadScalar<float>(),
+                            obj["y"].ReadScalar<float>(),
+                            obj["z"].ReadScalar<float>(),
+                            obj["w"].ReadScalar<float>()
                         );
                     }
 
@@ -197,13 +200,14 @@ namespace MCPForUnity.Editor.Helpers
                     if (obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z") && asEulerAngles)
                     {
                         return Quaternion.Euler(
-                            obj["x"].ToObject<float>(),
-                            obj["y"].ToObject<float>(),
-                            obj["z"].ToObject<float>()
+                            obj["x"].ReadScalar<float>(),
+                            obj["y"].ReadScalar<float>(),
+                            obj["z"].ReadScalar<float>()
                         );
                     }
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Quaternion from '{token}': {ex.Message}");
@@ -231,18 +235,18 @@ namespace MCPForUnity.Editor.Helpers
                     if (array.Count >= 4)
                     {
                         return new Color(
-                            array[0].ToObject<float>(),
-                            array[1].ToObject<float>(),
-                            array[2].ToObject<float>(),
-                            array[3].ToObject<float>()
+                            array[0].ReadScalar<float>(),
+                            array[1].ReadScalar<float>(),
+                            array[2].ReadScalar<float>(),
+                            array[3].ReadScalar<float>()
                         );
                     }
                     if (array.Count >= 3)
                     {
                         return new Color(
-                            array[0].ToObject<float>(),
-                            array[1].ToObject<float>(),
-                            array[2].ToObject<float>(),
+                            array[0].ReadScalar<float>(),
+                            array[1].ReadScalar<float>(),
+                            array[2].ReadScalar<float>(),
                             1f // Default alpha
                         );
                     }
@@ -251,15 +255,16 @@ namespace MCPForUnity.Editor.Helpers
                 // Object format: {r: 1, g: 1, b: 1, a: 1}
                 if (token is JObject obj && obj.ContainsKey("r") && obj.ContainsKey("g") && obj.ContainsKey("b"))
                 {
-                    float a = obj.ContainsKey("a") ? obj["a"].ToObject<float>() : 1f;
+                    float a = obj.ContainsKey("a") ? obj["a"].ReadScalar<float>() : 1f;
                     return new Color(
-                        obj["r"].ToObject<float>(),
-                        obj["g"].ToObject<float>(),
-                        obj["b"].ToObject<float>(),
+                        obj["r"].ReadScalar<float>(),
+                        obj["g"].ReadScalar<float>(),
+                        obj["b"].ReadScalar<float>(),
                         a
                     );
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Color from '{token}': {ex.Message}");
@@ -271,12 +276,12 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>
         /// Parses a JToken into a Color, returning Color.white if parsing fails and no default is specified.
         /// </summary>
-        public static Color ParseColorOrDefault(JToken token) => ParseColor(token) ?? Color.white;
+        public static Color ParseColorOrDefault(JToken token) => ParsedOrDefault(token, ParseColor(token), Color.white);
         
         /// <summary>
         /// Parses a JToken into a Color, returning the specified default if parsing fails.
         /// </summary>
-        public static Color ParseColorOrDefault(JToken token, Color defaultValue) => ParseColor(token) ?? defaultValue;
+        public static Color ParseColorOrDefault(JToken token, Color defaultValue) => ParsedOrDefault(token, ParseColor(token), defaultValue);
 
         /// <summary>
         /// Parses a JToken into a Vector4, returning a default value if parsing fails.
@@ -284,7 +289,7 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static Vector4 ParseVector4OrDefault(JToken token, Vector4 defaultValue = default)
         {
-            return ParseVector4(token) ?? defaultValue;
+            return ParsedOrDefault(token, ParseVector4(token), defaultValue);
         }
 
         /// <summary>
@@ -312,8 +317,8 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         Color startColor = ParseColorOrDefault(obj["startColor"]);
                         Color endColor = ParseColorOrDefault(obj["endColor"] ?? obj["startColor"]);
-                        float startAlpha = obj["startAlpha"]?.ToObject<float>() ?? startColor.a;
-                        float endAlpha = obj["endAlpha"]?.ToObject<float>() ?? endColor.a;
+                        float startAlpha = obj["startAlpha"]?.ReadScalar<float>() ?? startColor.a;
+                        float endAlpha = obj["endAlpha"]?.ReadScalar<float>() ?? endColor.a;
                         
                         gradient.SetKeys(
                             new GradientColorKey[] { new GradientColorKey(startColor, 0f), new GradientColorKey(endColor, 1f) },
@@ -331,7 +336,7 @@ namespace MCPForUnity.Editor.Helpers
                         foreach (var key in colorKeysArr)
                         {
                             Color color = ParseColorOrDefault(key["color"]);
-                            float time = key["time"]?.ToObject<float>() ?? 0f;
+                            float time = key["time"]?.ReadScalar<float>() ?? 0f;
                             colorKeys.Add(new GradientColorKey(color, time));
                         }
                     }
@@ -340,8 +345,8 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         foreach (var key in alphaKeysArr)
                         {
-                            float alpha = key["alpha"]?.ToObject<float>() ?? 1f;
-                            float time = key["time"]?.ToObject<float>() ?? 0f;
+                            float alpha = key["alpha"]?.ReadScalar<float>() ?? 1f;
+                            float time = key["time"]?.ReadScalar<float>() ?? 0f;
                             alphaKeys.Add(new GradientAlphaKey(alpha, time));
                         }
                     }
@@ -363,6 +368,7 @@ namespace MCPForUnity.Editor.Helpers
                     return gradient;
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Gradient from '{token}': {ex.Message}");
@@ -379,6 +385,8 @@ namespace MCPForUnity.Editor.Helpers
         {
             var result = ParseGradient(token);
             if (result != null) return result;
+            if (token != null && token.Type != JTokenType.Null)
+                throw new ArgumentException("Invalid Gradient value.");
 
             // Return default white gradient
             var gradient = new Gradient();
@@ -422,7 +430,7 @@ namespace MCPForUnity.Editor.Helpers
                 // Constant value: just a number
                 if (token.Type == JTokenType.Float || token.Type == JTokenType.Integer)
                 {
-                    return AnimationCurve.Constant(0f, 1f, token.ToObject<float>());
+                    return AnimationCurve.Constant(0f, 1f, token.ReadScalar<float>());
                 }
 
                 if (token is JObject obj)
@@ -433,10 +441,10 @@ namespace MCPForUnity.Editor.Helpers
                         AnimationCurve curve = new AnimationCurve();
                         foreach (var key in keys)
                         {
-                            float time = key["time"]?.ToObject<float>() ?? 0f;
-                            float value = key["value"]?.ToObject<float>() ?? 1f;
-                            float inTangent = key["inTangent"]?.ToObject<float>() ?? 0f;
-                            float outTangent = key["outTangent"]?.ToObject<float>() ?? 0f;
+                            float time = key["time"]?.ReadScalar<float>() ?? 0f;
+                            float value = key["value"]?.ReadScalar<float>() ?? 1f;
+                            float inTangent = ReadCurveTangent(key["inTangent"]);
+                            float outTangent = ReadCurveTangent(key["outTangent"]);
                             curve.AddKey(new Keyframe(time, value, inTangent, outTangent));
                         }
                         return curve;
@@ -445,8 +453,8 @@ namespace MCPForUnity.Editor.Helpers
                     // Simple format: {start: 0.0, end: 1.0} or {startValue: 0.0, endValue: 1.0}
                     if (obj.ContainsKey("start") || obj.ContainsKey("startValue") || obj.ContainsKey("end") || obj.ContainsKey("endValue"))
                     {
-                        float startValue = obj["start"]?.ToObject<float>() ?? obj["startValue"]?.ToObject<float>() ?? 1f;
-                        float endValue = obj["end"]?.ToObject<float>() ?? obj["endValue"]?.ToObject<float>() ?? 1f;
+                        float startValue = obj["start"]?.ReadScalar<float>() ?? obj["startValue"]?.ReadScalar<float>() ?? 1f;
+                        float endValue = obj["end"]?.ReadScalar<float>() ?? obj["endValue"]?.ReadScalar<float>() ?? 1f;
                         AnimationCurve curve = new AnimationCurve();
                         curve.AddKey(0f, startValue);
                         curve.AddKey(1f, endValue);
@@ -454,6 +462,7 @@ namespace MCPForUnity.Editor.Helpers
                     }
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse AnimationCurve from '{token}': {ex.Message}");
@@ -470,7 +479,9 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="defaultValue">The constant value for the default curve</param>
         public static AnimationCurve ParseAnimationCurveOrDefault(JToken token, float defaultValue = 1f)
         {
-            return ParseAnimationCurve(token) ?? AnimationCurve.Constant(0f, 1f, defaultValue);
+            if (token == null || token.Type == JTokenType.Null)
+                return AnimationCurve.Constant(0f, 1f, defaultValue);
+            return ParseAnimationCurve(token) ?? throw new ArgumentException("Invalid AnimationCurve value.");
         }
         
         /// <summary>
@@ -675,10 +686,10 @@ namespace MCPForUnity.Editor.Helpers
                     obj.ContainsKey("width") && obj.ContainsKey("height"))
                 {
                     return new Rect(
-                        obj["x"].ToObject<float>(),
-                        obj["y"].ToObject<float>(),
-                        obj["width"].ToObject<float>(),
-                        obj["height"].ToObject<float>()
+                        obj["x"].ReadScalar<float>(),
+                        obj["y"].ReadScalar<float>(),
+                        obj["width"].ReadScalar<float>(),
+                        obj["height"].ReadScalar<float>()
                     );
                 }
 
@@ -686,13 +697,14 @@ namespace MCPForUnity.Editor.Helpers
                 if (token is JArray array && array.Count >= 4)
                 {
                     return new Rect(
-                        array[0].ToObject<float>(),
-                        array[1].ToObject<float>(),
-                        array[2].ToObject<float>(),
-                        array[3].ToObject<float>()
+                        array[0].ReadScalar<float>(),
+                        array[1].ReadScalar<float>(),
+                        array[2].ReadScalar<float>(),
+                        array[3].ReadScalar<float>()
                     );
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Rect from '{token}': {ex.Message}");
@@ -714,17 +726,43 @@ namespace MCPForUnity.Editor.Helpers
             {
                 if (token is JObject obj && obj.ContainsKey("center") && obj.ContainsKey("size"))
                 {
-                    var center = ParseVector3(obj["center"]) ?? Vector3.zero;
-                    var size = ParseVector3(obj["size"]) ?? Vector3.zero;
-                    return new Bounds(center, size);
+                    var center = ParseVector3(obj["center"]);
+                    var size = ParseVector3(obj["size"]);
+                    if (center.HasValue && size.HasValue)
+                        return new Bounds(center.Value, size.Value);
                 }
             }
+            catch (ArgumentException) { throw; }
             catch (Exception ex)
             {
                 McpLog.Warn($"[VectorParsing] Failed to parse Bounds from '{token}': {ex.Message}");
             }
 
             return null;
+        }
+
+        private static T ParsedOrDefault<T>(JToken token, T? parsed, T defaultValue) where T : struct
+        {
+            if (token == null || token.Type == JTokenType.Null) return defaultValue;
+            return parsed ?? throw new ArgumentException($"Invalid {typeof(T).Name} value.");
+        }
+
+        // Infinite tangents are Unity's deliberate stepped/constant-key notation.
+        // Other curve numbers remain finite; Boolean, NaN and overflow strings fail.
+        internal static float ReadCurveTangent(JToken token)
+        {
+            if (token?.Type == JTokenType.Float)
+            {
+                double number = token.Value<double>();
+                if (double.IsInfinity(number)) return (float)number;
+            }
+            else if (token?.Type == JTokenType.String)
+            {
+                string text = token.Value<string>().Trim();
+                if (text == "Infinity" || text == "+Infinity") return float.PositiveInfinity;
+                if (text == "-Infinity") return float.NegativeInfinity;
+            }
+            return token.ReadScalar<float>();
         }
     }
 }
