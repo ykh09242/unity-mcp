@@ -5,9 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnity.Runtime.Serialization;
 using Microsoft.CSharp;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -31,6 +34,9 @@ namespace MCPForUnity.Editor.Tools
         private static readonly List<HistoryEntry> _history = new List<HistoryEntry>();
         private static string[] _cachedAssemblyPaths;
         private static string[] _cachedCodeDomAssemblyPaths;
+        private static int _assemblyGeneration;
+        private static int _cachedAssemblyGeneration = -1;
+        private static readonly JsonSerializer _resultSerializer = CreateResultSerializer();
 
         // Every compile emits a fresh in-memory "MCPDynamic" assembly, and Mono cannot unload
         // one, so recompiling an identical snippet leaks an assembly per call until the next
@@ -39,17 +45,41 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxCompiledCacheEntries = 64;
         private static readonly Dictionary<string, CompiledSnippet> _compiledCache =
             new Dictionary<string, CompiledSnippet>(StringComparer.Ordinal);
+        private static readonly LinkedList<string> _compiledCacheOrder = new LinkedList<string>();
 
         private readonly struct CompiledSnippet
         {
-            public CompiledSnippet(Assembly assembly, string compiler)
+            public CompiledSnippet(Assembly assembly, string compiler, LinkedListNode<string> cacheNode)
             {
                 Assembly = assembly;
                 Compiler = compiler;
+                CacheNode = cacheNode;
             }
 
             public Assembly Assembly { get; }
             public string Compiler { get; }
+            public LinkedListNode<string> CacheNode { get; }
+        }
+
+        static ExecuteCode()
+        {
+            AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoaded;
+        }
+
+        private static void OnAssemblyLoaded(object sender, AssemblyLoadEventArgs args)
+        {
+            // AssemblyLoad may run on another thread. Only publish a generation here;
+            // mutate compilation caches on the command thread. In-memory snippets have
+            // no reference path and must not invalidate their own compiled cache entry.
+            try
+            {
+                if (!args.LoadedAssembly.IsDynamic && !string.IsNullOrEmpty(args.LoadedAssembly.Location))
+                    Interlocked.Increment(ref _assemblyGeneration);
+            }
+            catch (NotSupportedException)
+            {
+                // Dynamic assemblies may not expose a Location.
+            }
         }
 
         [UnityEditor.InitializeOnLoadMethod]
@@ -57,7 +87,9 @@ namespace MCPForUnity.Editor.Tools
         {
             _cachedAssemblyPaths = null;
             _cachedCodeDomAssemblyPaths = null;
+            _cachedAssemblyGeneration = -1;
             _compiledCache.Clear();
+            _compiledCacheOrder.Clear();
             RoslynCompiler.ResetCache();
         }
 
@@ -107,6 +139,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static object HandleExecute(JObject @params)
         {
+            if (@params["code"] != null && @params["code"].Type != JTokenType.String && @params["code"].Type != JTokenType.Null)
+                return new ErrorResponse("Invalid parameter 'code': expected String.");
             string code = @params["code"]?.ToString();
             if (string.IsNullOrWhiteSpace(code))
                 return new ErrorResponse("Required parameter 'code' is missing or empty.");
@@ -117,7 +151,13 @@ namespace MCPForUnity.Editor.Tools
             if (!TryReadOptionalValue<bool>(@params, "safety_checks", out bool? requestedSafetyChecks, out ErrorResponse inputError))
                 return inputError;
             bool safetyChecks = requestedSafetyChecks ?? true;
-            string compiler = @params["compiler"]?.ToString()?.ToLowerInvariant() ?? "auto";
+            var compilerToken = @params["compiler"];
+            if (compilerToken != null && compilerToken.Type != JTokenType.Null && compilerToken.Type != JTokenType.String)
+                return new ErrorResponse("Invalid parameter 'compiler': expected String.");
+            string compiler = compilerToken == null || compilerToken.Type == JTokenType.Null
+                ? "auto" : compilerToken.Value<string>().ToLowerInvariant();
+            if (compiler != "auto" && compiler != "roslyn" && compiler != "codedom")
+                return new ErrorResponse("Invalid compiler. Valid options: auto, roslyn, codedom.");
 
             if (safetyChecks)
             {
@@ -126,20 +166,19 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Blocked pattern detected: {violation}");
             }
 
+            var timer = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var startTime = DateTime.UtcNow;
                 var result = CompileAndExecute(code, compiler);
-                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
 
-                AddToHistory(code, result, elapsed, safetyChecks, compiler);
+                AddToHistory(code, result, timer.Elapsed.TotalMilliseconds, safetyChecks, compiler);
                 return result;
             }
             catch (Exception e)
             {
                 McpLog.Error($"[ExecuteCode] Execution failed: {e}");
                 var errorResult = new ErrorResponse($"Execution failed: {e.Message}");
-                AddToHistory(code, errorResult, 0, safetyChecks, compiler);
+                AddToHistory(code, errorResult, timer.Elapsed.TotalMilliseconds, safetyChecks, compiler);
                 return errorResult;
             }
         }
@@ -207,9 +246,21 @@ namespace MCPForUnity.Editor.Tools
         {
             value = null;
             error = null;
+            var token = @params[field];
+            if (token == null || token.Type == JTokenType.Null)
+                return true;
+
+            // JSON.NET rounds floating-point numbers to integers and converts numeric
+            // zero to false. Neither is safe for replay indices or safety_checks.
+            var expectedType = typeof(T) == typeof(int) ? JTokenType.Integer : JTokenType.Boolean;
+            if (token.Type != expectedType && token.Type != JTokenType.String)
+            {
+                error = new ErrorResponse($"Invalid parameter '{field}': expected {typeof(T).Name}.");
+                return false;
+            }
             try
             {
-                value = @params[field]?.Value<T?>();
+                value = token.Value<T?>();
                 return true;
             }
             catch (Exception e) when (e is FormatException || e is InvalidCastException || e is OverflowException || e is ArgumentException)
@@ -225,56 +276,49 @@ namespace MCPForUnity.Editor.Tools
         {
             string wrappedSource = WrapUserCode(code);
 
-            string cacheKey = compiler + "\n" + wrappedSource;
-            if (_compiledCache.TryGetValue(cacheKey, out CompiledSnippet cached))
-                return InvokeCompiled(cached.Assembly, cached.Compiler);
+            // Refresh before selecting a backend so a newly loaded Roslyn package can
+            // recover a previous unavailable result. Initialization itself can load more
+            // dependencies, so refresh the reference snapshot once more afterward.
+            GetAssemblyPaths();
+            string usedCompiler = compiler;
+            if (compiler == "auto")
+                usedCompiler = RoslynCompiler.IsAvailable ? "roslyn" : "codedom";
+            else if (compiler == "roslyn" && !RoslynCompiler.IsAvailable)
+                return new ErrorResponse("Roslyn (Microsoft.CodeAnalysis) is not available. Install it via NuGet or use compiler='codedom'.");
 
             string[] assemblyPaths = GetAssemblyPaths();
-
-            Assembly compiled;
-            string usedCompiler;
-
-            switch (compiler)
+            string cacheKey = usedCompiler + "\n" + wrappedSource;
+            if (_compiledCache.TryGetValue(cacheKey, out CompiledSnippet cached))
             {
-                case "roslyn":
-                    if (!RoslynCompiler.IsAvailable)
-                        return new ErrorResponse("Roslyn (Microsoft.CodeAnalysis) is not available. Install it via NuGet or use compiler='codedom'.");
-                    compiled = RoslynCompiler.Compile(wrappedSource, assemblyPaths, out var roslynErrors);
-                    if (compiled == null)
-                        return new ErrorResponse("Compilation failed", new { errors = OffsetErrors(roslynErrors), compiler = "roslyn" });
-                    usedCompiler = "roslyn";
-                    break;
-
-                case "codedom":
-                    compiled = CodeDomCompile(wrappedSource, assemblyPaths, out var codedomErrors);
-                    if (compiled == null)
-                        return new ErrorResponse("Compilation failed", new { errors = OffsetErrors(codedomErrors), compiler = "codedom" });
-                    usedCompiler = "codedom";
-                    break;
-
-                default: // "auto"
-                    if (RoslynCompiler.IsAvailable)
-                    {
-                        compiled = RoslynCompiler.Compile(wrappedSource, assemblyPaths, out var autoErrors);
-                        if (compiled == null)
-                            return new ErrorResponse("Compilation failed", new { errors = OffsetErrors(autoErrors), compiler = "roslyn" });
-                        usedCompiler = "roslyn";
-                    }
-                    else
-                    {
-                        compiled = CodeDomCompile(wrappedSource, assemblyPaths, out var autoFallbackErrors);
-                        if (compiled == null)
-                            return new ErrorResponse("Compilation failed", new { errors = OffsetErrors(autoFallbackErrors), compiler = "codedom" });
-                        usedCompiler = "codedom";
-                    }
-                    break;
+                _compiledCacheOrder.Remove(cached.CacheNode);
+                _compiledCacheOrder.AddLast(cached.CacheNode);
+                return InvokeCompiled(cached.Assembly, cached.Compiler);
             }
 
-            // Bound the cache so a stream of genuinely distinct snippets cannot itself become
-            // the leak. Clearing wholesale is enough: the entries are only a compile shortcut.
+            Assembly compiled;
+            List<string> errors;
+            if (usedCompiler == "roslyn")
+            {
+                compiled = RoslynCompiler.Compile(wrappedSource, assemblyPaths, out errors);
+            }
+            else
+            {
+                compiled = CodeDomCompile(wrappedSource, assemblyPaths, out errors);
+            }
+
+            if (compiled == null)
+                return new ErrorResponse("Compilation failed", new { errors, compiler = usedCompiler });
+
+            // Keep recently used snippets when the cache fills. Loaded assemblies cannot
+            // be unloaded individually on Mono; this bounds cache bookkeeping only.
             if (_compiledCache.Count >= MaxCompiledCacheEntries)
-                _compiledCache.Clear();
-            _compiledCache[cacheKey] = new CompiledSnippet(compiled, usedCompiler);
+            {
+                var oldest = _compiledCacheOrder.First;
+                _compiledCache.Remove(oldest.Value);
+                _compiledCacheOrder.RemoveFirst();
+            }
+            var cacheNode = _compiledCacheOrder.AddLast(cacheKey);
+            _compiledCache[cacheKey] = new CompiledSnippet(compiled, usedCompiler, cacheNode);
 
             return InvokeCompiled(compiled, usedCompiler);
         }
@@ -314,12 +358,6 @@ namespace MCPForUnity.Editor.Tools
                     new { result = SerializeResult(result), compiler = compilerUsed });
 
             return new SuccessResponse("Code executed successfully.", new { compiler = compilerUsed });
-        }
-
-        private static List<string> OffsetErrors(List<string> errors)
-        {
-            // Errors already have line numbers adjusted by the compiler-specific code
-            return errors;
         }
 
         // ──────────────────── CodeDom compiler ────────────────────
@@ -544,6 +582,8 @@ namespace MCPForUnity.Editor.Tools
             sb.AppendLine($"    public static object {WrapperMethodName}()");
             sb.AppendLine("    {");
             sb.AppendLine(code);
+            sb.AppendLine("#pragma warning disable CS0162");
+            sb.AppendLine("        return null;");
             sb.AppendLine("    }");
             sb.AppendLine("}");
             return sb.ToString();
@@ -551,8 +591,17 @@ namespace MCPForUnity.Editor.Tools
 
         private static string[] GetAssemblyPaths()
         {
-            if (_cachedAssemblyPaths == null)
+            int generation = Volatile.Read(ref _assemblyGeneration);
+            if (_cachedAssemblyPaths == null || _cachedAssemblyGeneration != generation)
+            {
+                _cachedCodeDomAssemblyPaths = null;
+                _compiledCache.Clear();
+                _compiledCacheOrder.Clear();
+                RoslynCompiler.ResetCache();
                 _cachedAssemblyPaths = ResolveAssemblyPaths();
+                // A load during enumeration must remain visible to the next refresh.
+                _cachedAssemblyGeneration = generation;
+            }
             return _cachedAssemblyPaths;
         }
 
@@ -629,12 +678,25 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                return JToken.FromObject(result);
+                return JToken.FromObject(result, _resultSerializer);
             }
             catch
             {
                 return result.ToString();
             }
+        }
+
+        private static JsonSerializer CreateResultSerializer()
+        {
+            // Reuse the existing converters without modifying the shared serializer or
+            // the project's JsonConvert.DefaultSettings. Computed Unity properties can
+            // recurse, lose precision through ToString(), or invoke native Editor APIs.
+            var serializer = JsonSerializer.Create();
+            foreach (var converter in UnityJsonSerializer.Instance.Converters)
+                serializer.Converters.Add(converter);
+            serializer.Converters.Add(new Matrix4x4Converter());
+            serializer.Converters.Add(new UnityMathematicsConverter());
+            return serializer;
         }
 
         private class HistoryEntry
@@ -669,6 +731,8 @@ namespace MCPForUnity.Editor.Tools
         private static MethodInfo _emit;
         private static object _parseOptions;
         private static object _compilationOptions;
+        private static string[] _cachedReferencePaths;
+        private static Array _cachedReferences;
 
         public static bool IsAvailable
         {
@@ -683,6 +747,8 @@ namespace MCPForUnity.Editor.Tools
         public static void ResetCache()
         {
             _isAvailable = null;
+            _cachedReferencePaths = null;
+            _cachedReferences = null;
         }
 
         private static bool Initialize()
@@ -783,28 +849,7 @@ namespace MCPForUnity.Editor.Tools
                 // Parse source
                 var syntaxTree = _parseText.Invoke(null, new object[] { source, _parseOptions, null, null, default(System.Threading.CancellationToken) });
 
-                // Build metadata references
-                var metadataRefBase = _metadataReferenceType;
-                var listType = typeof(List<>).MakeGenericType(metadataRefBase);
-                var refs = (System.Collections.IList)Activator.CreateInstance(listType);
-
-                foreach (var path in assemblyPaths)
-                {
-                    try
-                    {
-                        var cfParams = _createFromFile.GetParameters();
-                        var cfArgs = new object[cfParams.Length];
-                        cfArgs[0] = path; // string path
-                        for (int i = 1; i < cfParams.Length; i++)
-                            cfArgs[i] = cfParams[i].HasDefaultValue ? cfParams[i].DefaultValue : null;
-                        var metaRef = _createFromFile.Invoke(null, cfArgs);
-                        refs.Add(metaRef);
-                    }
-                    catch
-                    {
-                        // Skip assemblies that can't be loaded as metadata
-                    }
-                }
+                var refs = GetMetadataReferences(assemblyPaths);
 
                 // Build syntax tree array
                 var syntaxTreeBase = Type.GetType("Microsoft.CodeAnalysis.SyntaxTree, Microsoft.CodeAnalysis");
@@ -880,6 +925,47 @@ namespace MCPForUnity.Editor.Tools
                 errors.Add($"Roslyn compilation error: {root.GetType().Name}: {root.Message}");
                 return null;
             }
+        }
+
+        private static Array GetMetadataReferences(string[] assemblyPaths)
+        {
+            // ExecuteCode keeps this path array stable until the loaded reference set
+            // changes. Roslyn references are reusable across distinct compilations.
+            if (ReferenceEquals(assemblyPaths, _cachedReferencePaths))
+                return _cachedReferences;
+
+            var references = new List<object>(assemblyPaths.Length);
+            var parameters = _createFromFile.GetParameters();
+            var args = new object[parameters.Length];
+            for (int i = 1; i < parameters.Length; i++)
+                args[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : null;
+
+            bool allReferencesLoaded = true;
+            foreach (var path in assemblyPaths)
+            {
+                try
+                {
+                    args[0] = path;
+                    references.Add(_createFromFile.Invoke(null, args));
+                }
+                catch
+                {
+                    // Preserve the existing skip behavior, but retry failed metadata
+                    // on the next compilation instead of caching an incomplete set.
+                    allReferencesLoaded = false;
+                }
+            }
+
+            var result = Array.CreateInstance(_metadataReferenceType, references.Count);
+            for (int i = 0; i < references.Count; i++)
+                result.SetValue(references[i], i);
+
+            if (allReferencesLoaded)
+            {
+                _cachedReferencePaths = assemblyPaths;
+                _cachedReferences = result;
+            }
+            return result;
         }
     }
 }

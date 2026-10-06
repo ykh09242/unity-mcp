@@ -54,9 +54,52 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Execute_VoidReturn_Succeeds()
         {
-            var result = Execute("UnityEngine.Debug.Log(\"test\"); return null;");
+            var result = Execute("UnityEngine.Debug.Log(\"test\");");
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNull(result["data"]["result"]);
+        }
+
+        [TestCase("auto")]
+        [TestCase("codedom")]
+        public void Execute_ConditionalReturn_AllowsFallthrough(string compiler)
+        {
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            {
+                ["action"] = "execute",
+                ["code"] = "int x = 1; if (x == 2) return x; // final comment",
+                ["compiler"] = compiler,
+            }));
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNull(result["data"]["result"]);
+        }
+
+        [Test]
+        public void Execute_NestedUnityValue_PreservesStructureAndPrecision()
+        {
+            var result = Execute(
+                "return new { position = new Vector3(1.234567f, 2.345678f, 3.456789f), count = 42 };");
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var value = result["data"]["result"];
+            Assert.AreEqual(42, value["count"].Value<int>());
+            Assert.AreEqual(1.234567f, value["position"]["x"].Value<float>());
+            Assert.AreEqual(2.345678f, value["position"]["y"].Value<float>());
+            Assert.AreEqual(3.456789f, value["position"]["z"].Value<float>());
+        }
+
+        [Test]
+        public void Execute_MatrixResult_UsesRawElements()
+        {
+            var result = Execute("return new Matrix4x4();");
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var value = result["data"]["result"] as JObject;
+            Assert.IsNotNull(value, result.ToString());
+            Assert.AreEqual(16, value.Count);
+            Assert.AreEqual(0f, value["m00"].Value<float>());
+            Assert.AreEqual(0f, value["m33"].Value<float>());
         }
 
         [Test]
@@ -155,6 +198,22 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
 
+        [TestCase("unknown")]
+        [TestCase("")]
+        public void Execute_InvalidCompiler_RejectsBeforeExecuting(string compiler)
+        {
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            {
+                ["action"] = "execute",
+                ["code"] = "return 1;",
+                ["compiler"] = compiler,
+            }));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("compiler", result.Value<string>("error"));
+            Assert.AreEqual(0, GetHistoryTotal());
+        }
+
         // ──────────────────── Safety checks ────────────────────
 
         [Test]
@@ -194,12 +253,24 @@ namespace MCPForUnityTests.Editor.Tools
                 ["safety_checks"] = false
             }));
 
-            if (!result.Value<bool>("success"))
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(0.5)]
+        public void Execute_NumericSafetyFlag_RejectsBeforeExecuting(object safetyChecks)
+        {
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
             {
-                var error = result.Value<string>("error") ?? "";
-                Assert.IsFalse(error.Contains("Blocked pattern"),
-                    "Safety checks should be disabled but still blocked");
-            }
+                ["action"] = "execute",
+                ["code"] = "while (true) { break; } return 1;",
+                ["safety_checks"] = JToken.FromObject(safetyChecks),
+            }));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("safety_checks", result.Value<string>("error"));
+            Assert.AreEqual(0, GetHistoryTotal());
         }
 
         // ──────────────────── History ────────────────────
@@ -253,6 +324,20 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(2, entries.Count);
         }
 
+        [TestCase(0.5)]
+        [TestCase(true)]
+        public void GetHistory_NonIntegerLimit_ReturnsError(object limit)
+        {
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            {
+                ["action"] = "get_history",
+                ["limit"] = JToken.FromObject(limit),
+            }));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("limit", result.Value<string>("error"));
+        }
+
         [Test]
         public void ClearHistory_RemovesAll()
         {
@@ -302,6 +387,28 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Invalid history index", result.Value<string>("error"));
+        }
+
+        [TestCase(-0.5)]
+        [TestCase(0.5)]
+        [TestCase(1.5)]
+        [TestCase(true)]
+        [TestCase(false)]
+        public void Replay_NonIntegerIndex_DoesNotExecute(object index)
+        {
+            Execute("return 1;");
+            Execute("return 2;");
+            Execute("return 3;");
+
+            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            {
+                ["action"] = "replay",
+                ["index"] = JToken.FromObject(index),
+            }));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("index", result.Value<string>("error"));
+            Assert.AreEqual(3, GetHistoryTotal(), "Invalid replay must not execute or append history.");
         }
 
         [Test]
@@ -474,6 +581,12 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         // ──────────────────── Helpers ────────────────────
+
+        private static int GetHistoryTotal()
+        {
+            return ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "get_history" }))
+                ["data"]["total"].Value<int>();
+        }
 
         private static string CreateTempDirectory()
         {
