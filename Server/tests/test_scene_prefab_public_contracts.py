@@ -249,7 +249,7 @@ scene_cases = [
       'max_nodes': 0, 'max_children_per_node': 0, 'include_transform': False},
      {'action': 'get_hierarchy', 'parent': 0, 'pageSize': 0, 'cursor': 0, 'maxDepth': 0,
       'maxNodes': 0, 'maxChildrenPerNode': 0, 'includeTransform': False}),
-    ({'action': 'get_hierarchy', 'cursor': 'bad', 'parent': '', 'include_transform': 'false'},
+    ({'action': 'get_hierarchy', 'cursor': None, 'parent': '', 'include_transform': 'false'},
      {'action': 'get_hierarchy', 'parent': '', 'includeTransform': False}),
     ({'action': 'scene_view_frame', 'scene_view_target': 0},
      {'action': 'scene_view_frame', 'sceneViewTarget': 0}),
@@ -269,7 +269,7 @@ scene_cases = [
 ]
 for action in ('get_active', 'get_build_settings', 'get_loaded_scenes'):
     scene_cases.append(({'action': action}, {'action': action}))
-for index in (0, 1, -1, '0', '1', 1.0, None):
+for index in (0, 1, -1, '0', '1', None):
     for additive in (False, True):
         payload = {'action': 'load', 'build_index': index, 'additive': additive}
         wire = {'action': 'load', 'additive': additive}
@@ -353,17 +353,18 @@ async def main():
                                     'surface': 'sdk', 'mode': mode, 'tool': name,
                                     'input': payload, 'wire': domain[-1][2],
                                 }))
-            for value in (True, False):
+            for value in (True, False, 1.0, 1.9):
                 payload = {'action': 'load', 'build_index': value}
                 before = len(requests)
                 result = await client.call_tool('manage_scene', payload, raise_on_error=False)
-                check(result.is_error and len(requests) == before, 'bool index no transport ' + mode + str(value))
+                check(result.is_error and len(requests) == before, 'invalid index no transport ' + mode + str(value))
                 print('SELECTOR_WIRE', json.dumps({
                     'mode': mode, 'input': payload, 'rejected': result.is_error,
                     'requests': requests[before:],
                 }))
             for name, payload in (
                 ('manage_scene', {'action': 'load', 'build_index': 'bad'}),
+                ('manage_scene', {'action': 'get_hierarchy', 'cursor': 'bad'}),
                 ('manage_scene', {'action': 'load', 'additive': 'bad'}),
                 ('manage_scene', {'action': 'close_scene', 'remove_scene': 'bad'}),
                 ('manage_scene', {'action': 'validate', 'auto_repair': 'bad'}),
@@ -387,10 +388,10 @@ async def main():
                 before = len(requests)
                 result = await client.call_tool(name, payload, raise_on_error=False)
                 check(result.is_error and len(requests) == before, 'SDK rejection ' + mode + repr(payload))
-    for value in (True, False):
+    for value in (True, False, 1.0, 1.9):
         before = len(requests)
         result = await manage_scene(DirectContext(), action='load', build_index=value)
-        check(result.get('success') is False and len(requests) == before, 'direct bool control ' + str(value))
+        check(result.get('success') is False and len(requests) == before, 'direct invalid index control ' + str(value))
     print(f'fresh scene/prefab SDK checks={checks} failures={len(failures)} requests={len(requests)}')
     assert not failures, failures
 

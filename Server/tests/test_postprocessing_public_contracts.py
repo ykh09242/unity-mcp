@@ -227,7 +227,7 @@ async def main():
                     check(result.structured_content == response, 'native document/falsey data ' + mode)
             raw = {'success': True, 'data': {'count': 0}}
             for action in ('feature_remove', 'feature_toggle', 'feature_configure'):
-                for value in (True, False, 0, 1, -1, '0', '1', 1.0, None):
+                for value in (True, False, 0, 1, -1, '0', '1', '1e0', 1.0, 0.5, None):
                     payload = {'action': action, 'index': value, 'name': 'First'}
                     if action == 'feature_toggle':
                         payload['active'] = False
@@ -241,11 +241,15 @@ async def main():
                         check('index must be an integer, not a boolean' in text,
                               'specific boolean diagnostic ' + mode + repr(payload))
                         continue
+                    if isinstance(value, (str, float)):
+                        check(result.is_error and not sent,
+                              'strict selector rejected before transport ' + mode + repr(payload))
+                        continue
                     expected = {key: value for key, value in payload.items() if value is not None}
                     if value is not None:
                         expected['index'] = int(value)
                     check(sent == [('Project@fixture', 'manage_graphics', expected)],
-                          'existing SDK selector conversion capture ' + mode + repr(payload))
+                          'typed SDK selector mapping ' + mode + repr(payload))
             for payload in (
                 {'action': 'invalid'},
                 {'action': 'volume_set_effect', 'parameters': 'bad'},

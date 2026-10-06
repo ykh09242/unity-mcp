@@ -28,7 +28,7 @@ def test_scene_rejects_malformed_explicit_option_before_editor_io(monkeypatch, f
 
 
 @pytest.mark.parametrize("field,wire", [("additive", "additive"), ("remove_scene", "removeScene"), ("auto_repair", "autoRepair"), ("include_transform", "includeTransform")])
-@pytest.mark.parametrize("value", [False, "false", "0"])
+@pytest.mark.parametrize("value", [False, "false"])
 def test_scene_retains_explicit_false_flags(monkeypatch, field, wire, value):
     # Given a valid false representation.
     module = importlib.import_module("services.tools.manage_scene")
@@ -43,6 +43,41 @@ def test_scene_retains_explicit_false_flags(monkeypatch, field, wire, value):
     payload = send.await_args.args[3]
     assert payload[wire] is False
     assert payload["buildIndex"] == 0
+
+
+@pytest.mark.parametrize("field", ["additive", "remove_scene", "auto_repair", "include_transform"])
+@pytest.mark.parametrize("value", [0, 1, "0", "1"])
+def test_scene_rejects_numeric_boolean_options_before_editor_io(monkeypatch, field, value):
+    # Given a numeric boolean representation that previously selected a default.
+    module = importlib.import_module("services.tools.manage_scene")
+    instance = AsyncMock(return_value="instance")
+    preflight = AsyncMock(return_value=None)
+    send = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(module, "get_unity_instance_from_context", instance)
+    monkeypatch.setattr(module, "preflight", preflight)
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+    # When preparing a scene command.
+    response = asyncio.run(module.manage_scene(SimpleNamespace(), action="load", **{field: value}))
+    # Then validation names the rejected field and prevents Editor I/O.
+    assert response["success"] is False
+    assert field in response["message"]
+    instance.assert_not_awaited()
+    preflight.assert_not_awaited()
+    send.assert_not_awaited()
+
+
+@pytest.mark.parametrize("field", ["page_size", "cursor", "max_nodes", "max_depth", "max_children_per_node"])
+def test_scene_rejects_invalid_paging_integer_with_field_name(monkeypatch, field):
+    # Given a fractional integer field and observable Editor I/O boundaries.
+    module = importlib.import_module("services.tools.manage_scene")
+    instance = AsyncMock(return_value="instance")
+    monkeypatch.setattr(module, "get_unity_instance_from_context", instance)
+    # When preparing a hierarchy query.
+    response = asyncio.run(module.manage_scene(SimpleNamespace(), action="get_hierarchy", **{field: 1.5}))
+    # Then the normal validation result identifies the field before Editor I/O.
+    assert response["success"] is False
+    assert field in response["message"]
+    instance.assert_not_awaited()
 
 
 @pytest.mark.parametrize("domain,kwargs", [

@@ -586,7 +586,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                 {
                     'action': 'set_renderer_color',
                     'target': 'Fixture',
-                    'slot': 1.0,
+                    'slot': 1,
                     'color': [0, 0, 0, 0],
                     'mode': 'property_block',
                 },
@@ -602,7 +602,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                 {
                     'action': 'set_renderer_color',
                     'target': 'Fixture',
-                    'slot': '1',
+                    'slot': 1,
                     'color': [0, 0, 0, 0],
                     'mode': 'shared',
                 },
@@ -675,7 +675,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                                     )
                     raw = {'success': True, 'message': 'Controlled response'}
                     for action in ('assign_material_to_renderer', 'set_renderer_color'):
-                        for slot in (True, False):
+                        for slot in (True, False, 1.0, 0.5, '0', '1', '1e0'):
                             payload = {
                                 'action': action,
                                 'target': 'Fixture',
@@ -692,7 +692,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                             wire = requests[-1][2] if len(requests) > before else None
                             check(
                                 rejected and len(requests) == before,
-                                'bool slot before transport ' + mode + action + str(slot),
+                                'strict slot before transport ' + mode + action + repr(slot),
                             )
                             print(
                                 'SLOT_WIRE',
@@ -731,13 +731,21 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
             for slot in (True, False, 0, 1):
                 payload = {'action': 'set_renderer_color', 'target': 'Fixture', 'color': [0, 0, 0, 0], 'slot': slot}
                 before = len(requests)
+                if isinstance(slot, bool):
+                    rejected = False
+                    try:
+                        await manage_material(FixtureContext(), **payload)
+                    except ValueError:
+                        rejected = True
+                    check(rejected and len(requests) == before, 'direct boolean slot rejected before transport ' + str(slot))
+                    continue
                 await manage_material(FixtureContext(), **payload)
                 wire = {'action': 'set_renderer_color', 'target': 'Fixture', 'color': [0, 0, 0, 0]}
                 if not isinstance(slot, bool):
                     wire['slot'] = slot
                 check(
                     len(requests) == before + 1 and requests[-1][2] == wire,
-                    'direct internal slot coercion unchanged ' + str(slot),
+                    'direct integer slot mapping ' + str(slot),
                 )
                 print(
                     'SLOT_WIRE',

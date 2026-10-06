@@ -11,6 +11,7 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
+from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 import transport.legacy.unity_connection
 
@@ -38,12 +39,60 @@ def _script_lines_and_starts(text: str) -> tuple[list[str], list[int]]:
     return lines, starts
 
 
+def _normalize_script_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    """Parse known legacy boolean options before any routing or Unity command."""
+    parsed = dict(options or {})
+    for field in ("preview", "debug_preview", "force_sentinel_reload"):
+        if field in parsed:
+            parsed[field] = coerce_bool(parsed[field], default=False)
+    return parsed
+
+
+class _EditCoordinateError(ValueError):
+    """A supplied edit coordinate could not be parsed at the JSON boundary."""
+
+    def __init__(self, field: str, message: str):
+        self.field = field
+        super().__init__(message)
+
+
+def _edit_integer(value: Any, field: str) -> int:
+    """Parse a required coordinate without truncating floats or accepting bools."""
+    parsed = coerce_int(value)
+    if parsed is None:
+        raise _EditCoordinateError(field, f"{field} must be an integer")
+    return parsed
+
+
+def _normalize_edit_coordinates(edit: dict[str, Any]) -> dict[str, Any]:
+    """Parse all supplied coordinate representations before document reads."""
+    parsed = dict(edit)
+    for field in ("startLine", "startCol", "endLine", "endCol"):
+        if field in parsed:
+            parsed[field] = _edit_integer(parsed[field], field)
+    rng = parsed.get("range")
+    if isinstance(rng, dict):
+        rng = dict(rng)
+        for end in ("start", "end"):
+            position = rng.get(end, {})
+            if not isinstance(position, dict):
+                raise _EditCoordinateError(end, "LSP position must contain line and character offsets")
+            position = dict(position)
+            for field in ("line", "character"):
+                position[field] = _edit_integer(position.get(field, 0), field)
+            rng[end] = position
+        parsed["range"] = rng
+    elif isinstance(rng, (list, tuple)) and len(rng) == 2:
+        parsed["range"] = [_edit_integer(value, "range index") for value in rng]
+    return parsed
+
+
 def _lsp_position_to_line_col(lines: list[str], position: dict[str, int]) -> tuple[int, int]:
     """Convert default LSP UTF-16 offsets to Unity's 1-based codepoint columns."""
     if not isinstance(position, dict):
         raise ValueError("LSP position must contain line and character offsets")
-    line = int(position.get("line", 0))
-    character = int(position.get("character", 0))
+    line = _edit_integer(position.get("line", 0), "line")
+    character = _edit_integer(position.get("character", 0), "character")
     if line < 0 or line >= len(lines) or character < 0:
         raise ValueError("LSP position is outside the document")
     text = lines[line].removesuffix("\r")
@@ -144,6 +193,14 @@ async def apply_text_edits(
     options: Annotated[dict[str, Any],
                        "Optional options, used to pass additional options to the script editor"] | None = None,
 ) -> dict[str, Any]:
+    try:
+        opts = _normalize_script_options(options)
+    except ValueError as exc:
+        return {"success": False, "code": "invalid_options", "message": str(exc)}
+    try:
+        edits = [_normalize_edit_coordinates(edit) for edit in edits]
+    except ValueError as exc:
+        return {"success": False, "code": "invalid_range", "message": str(exc)}
     unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing apply_text_edits")
     name, directory = _split_uri(uri)
@@ -208,21 +265,15 @@ async def apply_text_edits(
                 # Guard: explicit fields must be 1-based.
                 zero_based = False
                 for k in ("startLine", "startCol", "endLine", "endCol"):
-                    try:
-                        if int(e2.get(k, 1)) < 1:
-                            zero_based = True
-                    except Exception:
-                        pass
+                    if e2[k] < 1:
+                        zero_based = True
                 if zero_based:
                     if strict:
                         return {"success": False, "code": "zero_based_explicit_fields", "message": "Explicit line/col fields are 1-based; received zero-based.", "data": {"normalizedEdits": normalized_edits}}
                     # Normalize by clamping to 1 and warn
                     for k in ("startLine", "startCol", "endLine", "endCol"):
-                        try:
-                            if int(e2.get(k, 1)) < 1:
-                                e2[k] = 1
-                        except Exception:
-                            pass
+                        if e2[k] < 1:
+                            e2[k] = 1
                     warnings.append(
                         "zero_based_explicit_fields_normalized")
                 normalized_edits.append(e2)
@@ -243,8 +294,7 @@ async def apply_text_edits(
                 continue
             if isinstance(rng, (list, tuple)) and len(rng) == 2:
                 try:
-                    a = int(rng[0])
-                    b = int(rng[1])
+                    a, b = rng
                     if b < a:
                         a, b = b, a
                     sl, sc = line_col_from_index(a)
@@ -275,20 +325,14 @@ async def apply_text_edits(
             if has_all:
                 zero_based = False
                 for k in ("startLine", "startCol", "endLine", "endCol"):
-                    try:
-                        if int(e2.get(k, 1)) < 1:
-                            zero_based = True
-                    except Exception:
-                        pass
+                    if e2[k] < 1:
+                        zero_based = True
                 if zero_based:
                     if strict:
                         return {"success": False, "code": "zero_based_explicit_fields", "message": "Explicit line/col fields are 1-based; received zero-based.", "data": {"normalizedEdits": [e2]}}
                     for k in ("startLine", "startCol", "endLine", "endCol"):
-                        try:
-                            if int(e2.get(k, 1)) < 1:
-                                e2[k] = 1
-                        except Exception:
-                            pass
+                        if e2[k] < 1:
+                            e2[k] = 1
                     if "zero_based_explicit_fields_normalized" not in warnings:
                         warnings.append(
                             "zero_based_explicit_fields_normalized")
@@ -297,10 +341,8 @@ async def apply_text_edits(
     # Preflight: detect overlapping ranges among normalized line/col spans
     def _pos_tuple(e: dict[str, Any], key_start: bool) -> tuple[int, int]:
         return (
-            int(e.get("startLine", 1)) if key_start else int(
-                e.get("endLine", 1)),
-            int(e.get("startCol", 1)) if key_start else int(
-                e.get("endCol", 1)),
+            e["startLine"] if key_start else e["endLine"],
+            e["startCol"] if key_start else e["endCol"],
         )
 
     def _le(a: tuple[int, int], b: tuple[int, int]) -> bool:
@@ -338,7 +380,6 @@ async def apply_text_edits(
     # preserves existing call-count expectations in clients/tests.
 
     # Default options: for multi-span batches, prefer atomic to avoid mid-apply imbalance
-    opts: dict[str, Any] = dict(options or {})
     try:
         if len(normalized_edits) > 1 and "applyMode" not in opts:
             opts["applyMode"] = "atomic"
@@ -397,7 +438,7 @@ async def apply_text_edits(
         data.setdefault("normalizedEdits", normalized_edits)
         if warnings:
             data.setdefault("warnings", warnings)
-        if resp.get("success") and (options or {}).get("force_sentinel_reload"):
+        if resp.get("success") and opts.get("force_sentinel_reload"):
             # Optional: flip sentinel via menu if explicitly requested
             try:
                 import asyncio

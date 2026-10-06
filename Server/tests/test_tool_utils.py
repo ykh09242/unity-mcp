@@ -8,7 +8,52 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from services.tools.utils import coerce_float, normalize_color, normalize_vector3
+from services.tools.utils import coerce_bool, coerce_float, coerce_int, normalize_color, normalize_vector3
+
+
+@pytest.mark.parametrize("parser, value", [
+    (coerce_bool, value) for value in (0, 1, 0.5, [], {}, "0", "1", "yes", "flase")
+] + [
+    (coerce_int, value) for value in (True, False, 0.0, 1.9, "1.9", "1e2", "", "null", "1_000")
+] + [
+    (coerce_float, value) for value in (True, False, "NaN", "Infinity", float("nan"), float("inf"), "", "null")
+])
+def test_explicit_invalid_scalars_never_fall_back(parser, value):
+    with pytest.raises(ValueError):
+        parser(value)
+    with pytest.raises(ValueError):
+        parser(value, default=7)
+
+
+def test_scalar_zero_false_and_exact_integer_controls():
+    assert coerce_bool(False, True) is False
+    assert coerce_bool(" false ", True) is False
+    assert coerce_bool("TRUE") is True
+    assert coerce_int(0, 7) == 0
+    assert coerce_int("9007199254740993") == 9007199254740993
+    assert coerce_int(" -42 ") == -42
+    assert coerce_float(0, 7.0) == 0.0
+    for parser in (coerce_bool, coerce_int, coerce_float):
+        assert parser(None, default=7) == 7
+
+
+@pytest.mark.parametrize("value", [
+    [True, 0, 0], [0, False, 1], {"x": True, "y": 0, "z": 0},
+    '[true,0,0]', '{"x":0,"y":false,"z":1}',
+])
+def test_vector_boolean_components_are_rejected(value):
+    vector, error = normalize_vector3(value)
+    assert vector is None and error
+
+
+@pytest.mark.parametrize("value", [
+    [True, 0, 0], [0, 0, 0, False], {"r": True, "g": 0, "b": 0},
+    '[true,0,0]', '{"r":0,"g":false,"b":1}', [float("nan"), 0, 0],
+    '["Infinity",0,0]',
+])
+def test_color_boolean_and_nonfinite_components_are_rejected(value):
+    color, error = normalize_color(value)
+    assert color is None and error
 
 
 def _color_forms(components):
@@ -44,16 +89,17 @@ def test_explicit_alpha_keeps_existing_range_inference(components, expected):
 
 @pytest.mark.parametrize("value, expected", [
     (None, None), (0, 0.0), ("0", 0.0), (" 2.5 ", 2.5),
-    ("", None), ("null", None), (True, None),
 ])
 def test_float_coercion_controls(value, expected):
     assert coerce_float(value) == expected
 
 
 @pytest.mark.parametrize("value", [10**400, -(10**400)])
-def test_float_overflow_returns_requested_default(value):
-    assert coerce_float(value) is None
-    assert coerce_float(value, 7.5) == 7.5
+def test_float_overflow_is_invalid_even_with_default(value):
+    with pytest.raises(ValueError):
+        coerce_float(value)
+    with pytest.raises(ValueError):
+        coerce_float(value, 7.5)
 
 
 @pytest.mark.parametrize("value", [
@@ -105,6 +151,8 @@ def test_material_tool_sends_opaque_byte_rgb(value, fake_tool_transport):
     ("manage_material", {"action": "set_material_color", "color": json.dumps([10**400, 0, 0])}, "color"),
     ("manage_gameobject", {"action": "modify", "position": json.dumps([10**400, 0, 0])}, "position"),
     ("manage_camera", {"action": "screenshot", "orbit_distance": 10**400}, "orbit_distance"),
+    ("manage_camera", {"action": "screenshot", "orbit_elevations": [10**400]}, "orbit_elevations"),
+    ("manage_camera", {"action": "screenshot", "orbit_elevations": "[true, 0]"}, "orbit_elevations"),
     ("manage_texture", {"action": "create", "fill_color": json.dumps([10**400, 0, 0])}, "color"),
 ])
 def test_tool_overflow_returns_error_before_transport(tool_name, kwargs, field, fake_tool_transport):

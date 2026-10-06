@@ -180,7 +180,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                             await client.call_tool("manage_physics",payload)
                             check(requests[-1][2] == payload,"dimension/trigger unchanged "+mode+dimension+trigger)
                     for action, joint_type in (("configure_joint","fixed"),("configure_joint",None),("remove_joint","fixed"),("remove_joint",None)):
-                        for index, normalized in ((0,0),(1,1),(-1,-1),(1.0,1),("0",0),("1",1),(None,None)):
+                        for index, normalized in ((0,0),(1,1),(-1,-1),(None,None)):
                             payload = {"action":action,"target":"Body","component_index":index}
                             if joint_type is not None:
                                 payload["joint_type"] = joint_type
@@ -192,7 +192,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                                 expected_wire["componentIndex"] = normalized
                             check(requests[-1][2] == expected_wire,"index native-default/coercion "+mode+action+str(joint_type)+repr(index))
                             print("SELECTOR_WIRE",json.dumps({"mode":mode,"input":index,"input_type":type(index).__name__,"wire":requests[-1][2]},sort_keys=True))
-                        for index in (True, False):
+                        for index in (True, False, 1.0, 0.5, '0', '1', '1e0'):
                             payload = {"action":action,"target":"Body","component_index":index}
                             if joint_type is not None:
                                 payload["joint_type"] = joint_type
@@ -204,9 +204,10 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                                 await client.call_tool("manage_physics",payload)
                             except ToolError as exc:
                                 error = str(exc)
-                            check(bool(error),"boolean selector rejected "+mode+action+str(joint_type)+repr(index))
-                            check("component_index must be an integer, not a boolean" in error,"boolean selector diagnostic "+mode+action+str(joint_type)+repr(index))
-                            check(len(requests) == before,"boolean selector no transport "+mode+action+str(joint_type)+repr(index))
+                            check(bool(error),"strict selector rejected "+mode+action+str(joint_type)+repr(index))
+                            if isinstance(index, bool):
+                                check("component_index must be an integer, not a boolean" in error,"boolean selector diagnostic "+mode+action+str(joint_type)+repr(index))
+                            check(len(requests) == before,"strict selector no transport "+mode+action+str(joint_type)+repr(index))
                             print("SELECTOR_WIRE",json.dumps({"mode":mode,"input":index,"input_type":type(index).__name__,"rejected":bool(error),"error":error,"wire":None if len(requests) == before else requests[-1][2]},sort_keys=True))
                     for payload in ({"action":"unknown"},{"action":"PING"},{"action":"configure_joint","properties":[]},{"action":"add_joint","motor":"bad"},{"action":"raycast","origin":["bad"]},{"action":"ping","component_index":1.5}):
                         before = len(requests)

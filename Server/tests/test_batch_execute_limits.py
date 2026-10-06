@@ -23,6 +23,26 @@ class Context:
         self.get_state = AsyncMock(side_effect=lambda key: user if key == "user_id" else None)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [
+    {"parallel": 1}, {"fail_fast": 0}, {"parallel": "yes"},
+    {"max_parallelism": True}, {"max_parallelism": 1.5}, {"max_parallelism": "1.9"},
+])
+async def test_invalid_batch_scalars_fail_before_editor_lookup(batch_module, monkeypatch, options):
+    sends, _ = install_editor(monkeypatch, batch_module, {"A@hash-a": 3})
+    with pytest.raises(ValueError):
+        await batch_module.batch_execute(Context("A@hash-a"), [{"tool": "read_console"}], **options)
+    assert sends == []
+
+
+@pytest.mark.asyncio
+async def test_batch_preserves_false_zero_and_native_command_parameter_keys(batch_module, monkeypatch):
+    sends, _ = install_editor(monkeypatch, batch_module, {"A@hash-a": 3})
+    commands = [{"tool": "manage_gameobject", "params": {"setActive": False, "layer": 0}}]
+    await batch_module.batch_execute(Context("A@hash-a"), commands, parallel=False, fail_fast=False, max_parallelism=0)
+    assert sends[-1][2] == {"commands": commands, "parallel": False, "failFast": False, "maxParallelism": 0}
+
+
 def install_editor(monkeypatch, module, limits):
     sends = []
     resource_calls = []

@@ -311,6 +311,9 @@ for action in ('create_panel_settings', 'update_panel_settings'):
     ui_cases.append(({'action': action, 'path': 'Assets/UI/Fixture.asset', 'settings': None},
                      {'action': action, 'path': 'Assets/UI/Fixture.asset'}))
 texture_cases = [
+    ({'action': 'create', 'path': 'Assets/Fixture.png', 'as_sprite': False},
+     {'action': 'create', 'path': 'Assets/Fixture.png', 'width': 64, 'height': 64,
+      'fillColor': [255, 255, 255, 255]}),
     ({'action': 'create', 'path': 'Assets/Fixture.png', 'width': 1, 'height': 1,
       'fill_color': [0, 0, 0, 0]},
      {'action': 'create', 'path': 'Assets/Fixture.png', 'width': 1, 'height': 1,
@@ -406,7 +409,6 @@ async def main():
                 ('manage_ui', {'action': 'link_stylesheet', 'path': 'Assets/UI/Fixture.uxml',
                                'stylesheet': 'Assets/../Escape.uss'}),
                 ('manage_texture', {'action': 'create', 'width': 0}),
-                ('manage_texture', {'action': 'create', 'as_sprite': False}),
                 ('manage_texture', {'action': 'modify', 'set_pixels': {'width': 0, 'height': 1, 'pixels': []}}),
                 ('manage_texture', {'action': 'create', 'import_settings': {'texture_type': {}}}),
                 ('manage_texture', {'action': 'create', 'image_path': 'Assets/Source.png', 'fill_color': '#FFFFFF'}),

@@ -178,7 +178,7 @@ cases = [
     ({'action': 'build', 'profile': 'Assets/Profiles/Android.asset'},
      {'action': 'build', 'profile': 'Assets/Profiles/Android.asset'}),
     ({'action': 'build', 'profile': 'Assets/Profiles/Android.asset', 'output_path': 'FixtureOutput',
-      'options': '["clean_build","strict_mode"]', 'development': '0'},
+      'options': '["clean_build","strict_mode"]', 'development': 'false'},
      {'action': 'build', 'profile': 'Assets/Profiles/Android.asset', 'output_path': 'FixtureOutput',
       'options': ['clean_build', 'strict_mode'], 'development': False}),
     ({'action': 'build', 'scenes': '[]', 'options': '[]'}, {'action': 'build', 'scenes': [], 'options': []}),
@@ -256,7 +256,9 @@ async def main():
                 check(original == {'action': 'batch', 'targets': ['windows64', 'android'], 'development': False},
                       'caller parameters unchanged')
             for payload in ({'action': 'unknown'}, {'action': ' build '},
-                            {'action': 'build', 'scenes': []}, {'action': 'build', 'development': False}):
+                            {'action': 'build', 'scenes': []}, {'action': 'build', 'development': False},
+                            *({'action': 'build', 'development': value} for value in ('0', '1', 'yes', 0, 1)),
+                            *({'action': 'profiles', 'activate': value} for value in ('0', '1', 'yes', 0, 1))):
                 result, sent = await invoke(client, 'manage_build', payload, mode)
                 check(not sent and (result.is_error or result.structured_content.get('success') is False),
                       'local/schema rejection without transport')

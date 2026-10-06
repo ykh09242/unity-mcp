@@ -79,8 +79,6 @@ async def find_gameobjects(
     - mcpforunity://scene/gameobject/{id}/components - Get all components
     - mcpforunity://scene/gameobject/{id}/component/{name} - Get specific component
     """
-    unity_instance = await get_unity_instance_from_context(ctx)
-
     # Validate required parameters before preflight I/O
     if not search_term:
         return {
@@ -88,14 +86,23 @@ async def find_gameobjects(
             "message": "Missing required parameter 'search_term'. Specify what to search for."
         }
 
+    try:
+        include_inactive = coerce_bool(include_inactive, default=False)
+    except ValueError as exc:
+        return {"success": False, "message": f"Invalid 'include_inactive': {exc}"}
+    try:
+        page_size = coerce_int(page_size, default=50)
+    except ValueError as exc:
+        return {"success": False, "message": f"Invalid 'page_size': {exc}"}
+    try:
+        cursor = coerce_int(cursor, default=0)
+    except ValueError as exc:
+        return {"success": False, "message": f"Invalid 'cursor': {exc}"}
+
+    unity_instance = await get_unity_instance_from_context(ctx)
     gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
     if gate is not None:
         return gate.model_dump()
-
-    # Coerce parameters
-    include_inactive = coerce_bool(include_inactive, default=False)
-    page_size = coerce_int(page_size, default=50)
-    cursor = coerce_int(cursor, default=0)
 
     try:
         params = {

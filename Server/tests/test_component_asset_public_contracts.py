@@ -262,7 +262,7 @@ for method in (None, 'by_name', 'by_id'):
         wire['searchMethod'] = method
     component_cases.append((payload, wire))
 for action in ('remove', 'set_property'):
-    for index in (0, 1, '0', '1', 1.0, -1, None):
+    for index in (0, 1, -1, None):
         payload = {'action': action, 'target': 'Fixture', 'component_type': 'BoxCollider',
                    'component_index': index}
         wire = {'action': action, 'target': 'Fixture', 'componentType': 'BoxCollider'}
@@ -290,7 +290,7 @@ asset_cases = [
      {'action': 'search', 'path': 't:Material', 'assetType': 'Material',
       'searchPattern': '*.prefab', 'filterType': 'Prefab', 'filterDateAfter': '',
       'pageSize': 50, 'pageNumber': 1}),
-    ({'action': 'search', 'path': '', 'search_pattern': '', 'page_size': 1.0,
+    ({'action': 'search', 'path': '', 'search_pattern': '', 'page_size': 1,
       'page_number': '1', 'destination': ''},
      {'action': 'search', 'path': '', 'searchPattern': '', 'pageSize': 1,
       'pageNumber': 1, 'destination': ''}),
@@ -343,7 +343,7 @@ async def main():
                                     'input': payload, 'wire': domain[-1][2] if domain else None,
                                 }))
             for action in ('remove', 'set_property'):
-                for value in (True, False):
+                for value in (True, False, '0', '1', '1e0', 1.0, 0.5):
                     payload = {'action': action, 'target': 'Fixture', 'component_type': 'BoxCollider',
                                'component_index': value}
                     if action == 'set_property':
@@ -351,7 +351,7 @@ async def main():
                     before = len(requests)
                     result = await client.call_tool('manage_components', payload, raise_on_error=False)
                     check(result.is_error and len(requests) == before,
-                          'bool index no dispatch ' + mode + action + str(value))
+                          'strict index no dispatch ' + mode + action + repr(value))
                     print('SELECTOR_WIRE', json.dumps({
                         'mode': mode, 'input': payload, 'rejected': result.is_error,
                         'requests': requests[before:],
@@ -369,12 +369,13 @@ async def main():
                 ('manage_asset', {'action': 'modify', 'path': 'Assets/Fixture.mat', 'properties': '[]'}),
                 ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_size': 0}),
                 ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_number': 0}),
-                ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_size': 1.5}),
                 ('manage_asset', {'action': 'search', 'path': 'Assets', 'page_number': 'bad'}),
+                *[('manage_asset', {'action': 'search', 'path': 'Assets', key: value})
+                  for key in ('page_size', 'page_number') for value in (1.0, 1.5, '1.0', '1e0')],
             ):
                 before = len(requests)
-                result = await client.call_tool(name, payload)
-                check(result.structured_content.get('success') is False and len(requests) == before,
+                result = await client.call_tool(name, payload, raise_on_error=False)
+                check((result.is_error or result.structured_content.get('success') is False) and len(requests) == before,
                       'local rejection before preflight ' + mode + repr(payload))
             for name, payload in (
                 ('manage_components', {'action': 'bad', 'target': 'Fixture', 'component_type': 'BoxCollider'}),
@@ -386,6 +387,10 @@ async def main():
                                        'component_index': 1.9}),
                 ('manage_asset', {'action': 'bad', 'path': 'Assets'}),
                 ('manage_asset', {'action': 'get_info', 'path': None}),
+                *[('manage_asset', {'action': 'search', 'path': 'Assets', key: value})
+                  for key in ('page_size', 'page_number') for value in (True, False)],
+                *[('manage_asset', {'action': 'get_info', 'path': 'Assets/Fixture.mat', 'generate_preview': value})
+                  for value in (0, 1)],
             ):
                 before = len(requests)
                 result = await client.call_tool(name, payload, raise_on_error=False)

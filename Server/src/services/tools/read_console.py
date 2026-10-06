@@ -103,7 +103,7 @@ async def read_console(
     if isinstance(action, str):
         action = action.lower()
 
-    # Coerce count defensively (string/float -> int).
+    # Read an integer count without boolean conversion or fractional truncation.
     # Important: leaving count unset previously meant "return all console entries", which can be extremely slow
     # (and can exceed the plugin command timeout when Unity has a large console).
     # To keep the tool responsive by default, we cap the default to a reasonable number of most-recent entries.

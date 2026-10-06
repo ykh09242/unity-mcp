@@ -148,7 +148,7 @@ console_cases = [
     ({'action': None, 'count': None, 'format': None, 'types': None}, defaults),
     *[({'count': value}, {**defaults, 'count': expected})
       for value, expected in ((0, 0), ('5', 5), ('all', None), ('*', None), (' ALL ', None),
-                              ('bad', 10), ('2.9', 2), (1.0, 1), (False, 0), (True, 1))],
+                              (1, 1), (-1, -1))],
     ({'action': 'clear'}, {**defaults, 'action': 'clear', 'count': None}),
     ({'count': 'all', 'page_size': 2, 'cursor': 1, 'format': 'detailed'},
      {**defaults, 'count': None, 'pageSize': 2, 'cursor': 1, 'format': 'detailed'}),
@@ -226,6 +226,10 @@ async def main():
                 ('read_console', {'action': 'GET'}), ('read_console', {'format': 'unknown'}),
                 ('read_console', {'types': ['ERROR']}), ('read_console', {'types': '{}'}),
                 ('read_console', {'types': '[1]'}), ('read_console', {'types': '["unknown"]'}),
+                *[('read_console', {key: value})
+                  for key in ('count', 'page_size', 'cursor')
+                  for value in (True, False, 1.0, 0.5, 'bad', '2.9', '1e0')],
+                *[('read_console', {'include_stacktrace': value}) for value in (0, 1, '0', '1')],
                 ('execute_menu_item', {'menu_path': False}), ('execute_menu_item', {'menu_path': {}}),
             ):
                 result, sent = await invoke(client, tool, payload, mode)

@@ -123,15 +123,15 @@ def test_vfx_renderer_at_actual_sdk_registry_and_transport(tmp_path):
                     check("manage_vfx" in tools, "registry discovery " + mode)
                     index_schema = tools["manage_vfx"].inputSchema["properties"]["component_index"]
                     check(index_schema == {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None, "description": "Zero-based index to select which component when multiple of the same type exist (e.g., multiple ParticleSystems). If omitted, targets the first instance."}, "full optional integer schema/help unchanged " + mode)
-                    for value in (True, False):
+                    for value in (True, False, 1.0, 0.5, '0', '1', '1e0'):
                         before = len(requests)
                         rejected = False
                         try:
                             await client.call_tool("manage_vfx", {"action": "line_get_info", "component_index": value})
                         except ToolError:
                             rejected = True
-                        check(rejected and len(requests) == before, "boolean index rejected before transport " + mode + str(value))
-                    for value, expected in ((0, 0), (-1, -1), (1, 1), (1.0, 1), ("1", 1), (None, None)):
+                        check(rejected and len(requests) == before, "strict index rejected before transport " + mode + repr(value))
+                    for value, expected in ((0, 0), (-1, -1), (1, 1), (None, None)):
                         await client.call_tool("manage_vfx", {"action": "line_get_info", "component_index": value})
                         wire = requests[-1][2]
                         check(wire == ({"action": "line_get_info"} if expected is None else {"action": "line_get_info", "componentIndex": expected}), "index compatible conversion " + mode + repr(value))

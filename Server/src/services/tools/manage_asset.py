@@ -50,11 +50,20 @@ async def manage_asset(
     filter_type: Annotated[str, "Filter type for search"] | None = None,
     filter_date_after: Annotated[str,
                                  "Date after which to filter"] | None = None,
-    page_size: Annotated[int | float | str,
+    page_size: Annotated[int | str,
                          "Page size: 1-1000 (default 50), or 1-32 with previews (default 32)."] | None = None,
-    page_number: Annotated[int | float | str,
+    page_number: Annotated[int | str,
                            "Page number for pagination (1-based)."] | None = None,
 ) -> dict[str, Any]:
+    try:
+        page_size = coerce_int(page_size)
+    except ValueError as exc:
+        return {"success": False, "message": f"Invalid 'page_size': {exc}"}
+    try:
+        page_number = coerce_int(page_number)
+    except ValueError as exc:
+        return {"success": False, "message": f"Invalid 'page_number': {exc}"}
+
     if (action or "").lower() == "search":
         try:
             page_size, page_number = validate_page(page_size, page_number, preview=generate_preview)
@@ -73,9 +82,6 @@ async def manage_asset(
     gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
     if gate is not None:
         return gate.model_dump()
-
-    page_size = coerce_int(page_size)
-    page_number = coerce_int(page_number)
 
     # --- Payload-safe normalization for common LLM mistakes (search) ---
     # Unity's C# handler treats `path` as a folder scope. If a model mistakenly puts a query like

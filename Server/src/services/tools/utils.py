@@ -4,26 +4,25 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
-_TRUTHY = {"true", "1", "yes", "on"}
-_FALSY = {"false", "0", "no", "off"}
+_INTEGER = re.compile(r"[+-]?[0-9]+\Z")
 
 
 def coerce_bool(value: Any, default: bool | None = None) -> bool | None:
-    """Attempt to coerce a loosely-typed value to a boolean."""
+    """Read a boolean or canonical boolean string; default only when absent."""
     if value is None:
         return default
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
         lowered = value.strip().lower()
-        if lowered in _TRUTHY:
+        if lowered == "true":
             return True
-        if lowered in _FALSY:
+        if lowered == "false":
             return False
-        return default
-    return bool(value)
+    raise ValueError("Expected a boolean or 'true'/'false' string.")
 
 
 def parse_json_payload(value: Any) -> Any:
@@ -63,38 +62,29 @@ def parse_json_payload(value: Any) -> Any:
 
 
 def coerce_int(value: Any, default: int | None = None) -> int | None:
-    """Attempt to coerce a loosely-typed value to an integer."""
+    """Read an integer without boolean conversion, rounding or precision loss."""
     if value is None:
         return default
-    try:
-        if isinstance(value, bool):
-            return default
-        if isinstance(value, int):
-            return value
-        s = str(value).strip()
-        if s.lower() in ("", "none", "null"):
-            return default
-        return int(float(s))
-    except Exception:
-        return default
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and _INTEGER.fullmatch(value.strip()):
+        return int(value.strip())
+    raise ValueError("Expected an integer or base-10 integer string.")
 
 
 def coerce_float(value: Any, default: float | None = None) -> float | None:
-    """Attempt to coerce a loosely-typed value to a float-like number."""
+    """Read a finite number, preserving explicit zero and rejecting booleans."""
     if value is None:
         return default
     try:
-        # Treat booleans as invalid numeric input instead of coercing to 0/1.
-        if isinstance(value, bool):
-            return default
-        if isinstance(value, (int, float)):
-            return float(value)
-        s = str(value).strip()
-        if s.lower() in ("", "none", "null"):
-            return default
-        return float(s)
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError
+        return result
     except (TypeError, ValueError, OverflowError):
-        return default
+        raise ValueError("Expected a finite number or numeric string.") from None
 
 
 def normalize_properties(value: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -153,7 +143,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
     if isinstance(value, dict):
         if all(k in value for k in ("x", "y", "z")):
             try:
-                vec = [float(value["x"]), float(value["y"]), float(value["z"])]
+                vec = [coerce_float(value["x"]), coerce_float(value["y"]), coerce_float(value["z"])]
                 if all(math.isfinite(n) for n in vec):
                     return vec, None
                 return None, f"{param_name} values must be finite numbers, got {value}"
@@ -164,7 +154,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
     # If already a list/tuple with 3 elements, convert to floats
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
-            vec = [float(value[0]), float(value[1]), float(value[2])]
+            vec = [coerce_float(value[0]), coerce_float(value[1]), coerce_float(value[2])]
             if all(math.isfinite(n) for n in vec):
                 return vec, None
             return None, f"{param_name} values must be finite numbers, got {value}"
@@ -186,7 +176,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
         # Handle parsed list
         if isinstance(parsed, list) and len(parsed) == 3:
             try:
-                vec = [float(parsed[0]), float(parsed[1]), float(parsed[2])]
+                vec = [coerce_float(parsed[0]), coerce_float(parsed[1]), coerce_float(parsed[2])]
                 if all(math.isfinite(n) for n in vec):
                     return vec, None
                 return None, f"{param_name} values must be finite numbers, got {parsed}"
@@ -200,7 +190,7 @@ def normalize_vector3(value: Any, param_name: str = "vector") -> tuple[list[floa
         parts = [p.strip() for p in (s.split(",") if "," in s else s.split())]
         if len(parts) == 3:
             try:
-                vec = [float(parts[0]), float(parts[1]), float(parts[2])]
+                vec = [coerce_float(parts[0]), coerce_float(parts[1]), coerce_float(parts[2])]
                 if all(math.isfinite(n) for n in vec):
                     return vec, None
                 return None, f"{param_name} values must be finite numbers, got {value}"
@@ -303,15 +293,15 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
                 return [c / 255.0 for c in components]
             if any(c > 1 for c in components):
                 return [c / 255.0 for c in components]
-            return [float(c) for c in components]
+            return [coerce_float(c) for c in components]
 
     # Handle dict with r/g/b keys
     if isinstance(value, dict):
         if all(k in value for k in ("r", "g", "b")):
             try:
-                color = [float(value["r"]), float(value["g"]), float(value["b"])]
+                color = [coerce_float(value["r"]), coerce_float(value["g"]), coerce_float(value["b"])]
                 if "a" in value:
-                    color.append(float(value["a"]))
+                    color.append(coerce_float(value["a"]))
                 else:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
@@ -328,7 +318,7 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
     if isinstance(value, (list, tuple)):
         if len(value) in (3, 4):
             try:
-                color = [float(c) for c in value]
+                color = [coerce_float(c) for c in value]
                 if len(color) == 3:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
@@ -374,7 +364,7 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
         # Handle parsed list
         if isinstance(parsed, (list, tuple)) and len(parsed) in (3, 4):
             try:
-                color = [float(c) for c in parsed]
+                color = [coerce_float(c) for c in parsed]
                 if len(color) == 3:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
@@ -393,7 +383,7 @@ def normalize_color(value: Any, output_range: str = "float") -> tuple[list[float
         parts = [p.strip() for p in s.split(",")]
         if len(parts) in (3, 4):
             try:
-                color = [float(p) for p in parts]
+                color = [coerce_float(p) for p in parts]
                 if len(color) == 3:
                     if output_range == "int" and all(0 <= c <= 1 for c in color):
                         color.append(1.0)
@@ -489,21 +479,34 @@ def build_screenshot_params(
 
     Shared screenshot handling (used by manage_camera).
     """
+    scalars = {}
+    for name, value, parser in (
+        ("screenshot_super_size", screenshot_super_size, coerce_int),
+        ("include_image", include_image, coerce_bool),
+        ("max_resolution", max_resolution, coerce_int),
+        ("orbit_angles", orbit_angles, coerce_int),
+        ("orbit_distance", orbit_distance, coerce_float),
+        ("orbit_fov", orbit_fov, coerce_float),
+    ):
+        try:
+            scalars[name] = parser(value)
+        except ValueError as exc:
+            return {"success": False, "message": f"{name}: {exc}"}
     if screenshot_file_name:
         params["fileName"] = screenshot_file_name
     if output_folder:
         trimmed_folder = output_folder.strip()
         if trimmed_folder:
             params["outputFolder"] = trimmed_folder
-    coerced_super_size = coerce_int(screenshot_super_size, default=None)
+    coerced_super_size = scalars["screenshot_super_size"]
     if coerced_super_size is not None:
         params["superSize"] = coerced_super_size
     if camera:
         params["camera"] = camera
-    coerced_include_image = coerce_bool(include_image, default=None)
+    coerced_include_image = scalars["include_image"]
     if coerced_include_image is not None:
         params["includeImage"] = coerced_include_image
-    coerced_max_resolution = coerce_int(max_resolution, default=None)
+    coerced_max_resolution = scalars["max_resolution"]
     if coerced_max_resolution is not None:
         if coerced_max_resolution <= 0:
             return {"success": False, "message": "max_resolution must be a positive integer."}
@@ -522,7 +525,7 @@ def build_screenshot_params(
         params["viewTarget"] = view_target
 
     # Orbit params
-    coerced_orbit_angles = coerce_int(orbit_angles, default=None)
+    coerced_orbit_angles = scalars["orbit_angles"]
     if coerced_orbit_angles is not None:
         params["orbitAngles"] = coerced_orbit_angles
     if orbit_elevations is not None:
@@ -532,18 +535,18 @@ def build_screenshot_params(
             except (ValueError, TypeError):
                 return {"success": False, "message": "orbit_elevations must be a JSON array of floats."}
         if not isinstance(orbit_elevations, list) or not all(
-            isinstance(v, (int, float)) for v in orbit_elevations
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in orbit_elevations
         ):
             return {"success": False, "message": "orbit_elevations must be a list of numbers."}
+        try:
+            orbit_elevations = [coerce_float(v) for v in orbit_elevations]
+        except ValueError:
+            return {"success": False, "message": "orbit_elevations must be a list of finite numbers."}
         params["orbitElevations"] = orbit_elevations
-    coerced_orbit_distance = coerce_float(orbit_distance, default=None)
-    if orbit_distance is not None and coerced_orbit_distance is None:
-        return {"success": False, "message": "orbit_distance must be a number."}
+    coerced_orbit_distance = scalars["orbit_distance"]
     if coerced_orbit_distance is not None:
         params["orbitDistance"] = coerced_orbit_distance
-    coerced_orbit_fov = coerce_float(orbit_fov, default=None)
-    if orbit_fov is not None and coerced_orbit_fov is None:
-        return {"success": False, "message": "orbit_fov must be a number."}
+    coerced_orbit_fov = scalars["orbit_fov"]
     if coerced_orbit_fov is not None:
         params["orbitFov"] = coerced_orbit_fov
     if view_position is not None:

@@ -267,23 +267,16 @@ async def main():
                 check(result.structured_content.get('success') is False and not sent,
                       'local error before transport ' + mode + repr(payload))
             for field in ('screenshot_super_size', 'max_resolution', 'orbit_angles'):
-                for value in (True, False):
+                for value in (True, False, 1.0, 1.9):
                     result, sent = await invoke(client, {'action': 'screenshot', field: value})
-                    expected = int(value)
-                    if field in ('max_resolution', 'screenshot_super_size') and not value:
-                        check(not sent and result.structured_content['success'] is False,
-                              'nonpositive capture size rejected ' + mode + field)
-                    else:
-                        key = {'screenshot_super_size': 'superSize', 'max_resolution': 'maxResolution',
-                               'orbit_angles': 'orbitAngles'}[field]
-                        check(sent == [('Project@fixture', 'manage_camera', {'action': 'screenshot', key: expected})],
-                              'existing SDK bool coercion observation ' + mode + field + repr(value))
+                    check(result.is_error and not sent,
+                          'integer scalar rejected before transport ' + mode + field + repr(value))
     for field in ('screenshot_super_size', 'max_resolution', 'orbit_angles'):
         for value in (True, False):
             before = len(requests)
             result = await manage_camera(None, action='screenshot', **{field: value})
             check(result['success'] is False and len(requests) == before,
-                  'raw internal bool guard differs from SDK coercion ' + field + repr(value))
+                  'direct bool guard rejects before transport ' + field + repr(value))
     print('SDK_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
     assert not failures, failures
 

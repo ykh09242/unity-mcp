@@ -10,7 +10,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import parse_json_payload, coerce_bool, coerce_int, normalize_color
+from services.tools.utils import parse_json_payload, coerce_bool, coerce_int, coerce_float, normalize_color
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
@@ -40,7 +40,9 @@ def _validate_encoded_pixels(value: str, width: int, height: int) -> str | None:
 def _normalize_dimension(value: Any, name: str, default: int = 64) -> tuple[int | None, str | None]:
     if value is None:
         return default, None
-    coerced = coerce_int(value)
+    coerced, error = _normalize_integer_setting(value, name)
+    if error:
+        return None, error
     if coerced is None:
         return None, f"{name} must be an integer"
     if coerced <= 0:
@@ -51,10 +53,35 @@ def _normalize_dimension(value: Any, name: str, default: int = 64) -> tuple[int 
 def _normalize_positive_int(value: Any, name: str) -> tuple[int | None, str | None]:
     if value is None:
         return None, None
-    coerced = coerce_int(value)
+    coerced, error = _normalize_integer_setting(value, name)
+    if error:
+        return None, error
     if coerced is None or coerced <= 0:
         return None, f"{name} must be a positive integer"
     return coerced, None
+
+
+def _normalize_integer_setting(value: Any, name: str) -> tuple[int | None, str | None]:
+    """Return an ordinary validation error for invalid legacy integer input."""
+    try:
+        return coerce_int(value), None
+    except ValueError:
+        return None, f"{name} must be an integer"
+
+
+def _normalize_pivot(value: Any, name: str) -> tuple[list[float] | None, str | None]:
+    """Parse a supplied pivot as two finite numeric coordinates."""
+    if value is None:
+        return None, None
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None, f"{name} must be [x, y]"
+    try:
+        parsed = [coerce_float(component) for component in value]
+    except ValueError:
+        return None, f"{name} must contain finite numeric values"
+    if any(component is None for component in parsed):
+        return None, f"{name} must contain finite numeric values"
+    return parsed, None
 
 
 def _normalize_color_int(value: Any) -> tuple[list[int] | None, str | None]:
@@ -150,27 +177,26 @@ def _normalize_sprite_settings(value: Any) -> tuple[dict | None, str | None]:
     if isinstance(value, dict):
         result = {}
         if "pivot" in value:
-            pivot = value["pivot"]
-            if isinstance(pivot, (list, tuple)) and len(pivot) == 2:
-                try:
-                    result["pivot"] = [float(pivot[0]), float(pivot[1])]
-                except (TypeError, ValueError):
-                    return None, "sprite pivot must contain numeric values"
-            else:
-                return None, f"sprite pivot must be [x, y], got {pivot}"
+            pivot, error = _normalize_pivot(value["pivot"], "sprite pivot")
+            if error:
+                return None, error
+            if pivot is not None:
+                result["pivot"] = pivot
         if "pixels_per_unit" in value:
             try:
-                result["pixelsPerUnit"] = float(value["pixels_per_unit"])
+                result["pixelsPerUnit"] = coerce_float(value["pixels_per_unit"])
             except (TypeError, ValueError):
                 return None, "sprite pixels_per_unit must be a number"
         elif "pixelsPerUnit" in value:
             try:
-                result["pixelsPerUnit"] = float(value["pixelsPerUnit"])
+                result["pixelsPerUnit"] = coerce_float(value["pixelsPerUnit"])
             except (TypeError, ValueError):
                 return None, "sprite pixelsPerUnit must be a number"
-        return result, None
+        return {key: entry for key, entry in result.items() if entry is not None}, None
 
-    if isinstance(value, bool) and value:
+    if isinstance(value, bool):
+        if not value:
+            return None, None
         # Just enable sprite mode with defaults
         return {"pivot": [0.5, 0.5], "pixelsPerUnit": 100}, None
 
@@ -230,21 +256,10 @@ def _normalize_bool_setting(value: Any, name: str) -> tuple[bool | None, str | N
     if value is None:
         return None, None
 
-    if isinstance(value, bool):
-        return value, None
-
-    if isinstance(value, (int, float)):
-        if value in (0, 1, 0.0, 1.0):
-            return bool(value), None
+    try:
+        return coerce_bool(value, default=None), None
+    except ValueError:
         return None, f"{name} must be a boolean"
-
-    if isinstance(value, str):
-        coerced = coerce_bool(value, default=None)
-        if coerced is None:
-            return None, f"{name} must be a boolean"
-        return coerced, None
-
-    return None, f"{name} must be a boolean"
 
 
 def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
@@ -332,7 +347,9 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     # Integer settings
     if "aniso_level" in value:
         raw = value["aniso_level"]
-        level = coerce_int(raw)
+        level, error = _normalize_integer_setting(raw, "aniso_level")
+        if error:
+            return None, error
         if level is None:
             if raw is not None:
                 return None, f"aniso_level must be an integer, got {raw}"
@@ -343,7 +360,9 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     if "max_texture_size" in value:
         raw = value["max_texture_size"]
-        size = coerce_int(raw)
+        size, error = _normalize_integer_setting(raw, "max_texture_size")
+        if error:
+            return None, error
         if size is None:
             if raw is not None:
                 return None, f"max_texture_size must be an integer, got {raw}"
@@ -355,7 +374,9 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     if "compression_quality" in value:
         raw = value["compression_quality"]
-        quality = coerce_int(raw)
+        quality, error = _normalize_integer_setting(raw, "compression_quality")
+        if error:
+            return None, error
         if quality is None:
             if raw is not None:
                 return None, f"compression_quality must be an integer, got {raw}"
@@ -374,19 +395,18 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     if "sprite_pixels_per_unit" in value:
         raw = value["sprite_pixels_per_unit"]
         try:
-            result["spritePixelsPerUnit"] = float(raw)
+            parsed = coerce_float(raw)
+            if parsed is not None:
+                result["spritePixelsPerUnit"] = parsed
         except (TypeError, ValueError):
             return None, f"sprite_pixels_per_unit must be a number, got {raw}"
 
     if "sprite_pivot" in value:
-        pivot = value["sprite_pivot"]
-        if isinstance(pivot, (list, tuple)) and len(pivot) == 2:
-            try:
-                result["spritePivot"] = [float(pivot[0]), float(pivot[1])]
-            except (TypeError, ValueError):
-                return None, "sprite_pivot must contain numeric values"
-        else:
-            return None, f"sprite_pivot must be [x, y], got {pivot}"
+        pivot, error = _normalize_pivot(value["sprite_pivot"], "sprite_pivot")
+        if error:
+            return None, error
+        if pivot is not None:
+            result["spritePivot"] = pivot
 
     if "sprite_mesh_type" in value:
         mt = value["sprite_mesh_type"].lower() if isinstance(value["sprite_mesh_type"], str) else value["sprite_mesh_type"]
@@ -396,7 +416,9 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 
     if "sprite_extrude" in value:
         raw = value["sprite_extrude"]
-        extrude = coerce_int(raw)
+        extrude, error = _normalize_integer_setting(raw, "sprite_extrude")
+        if error:
+            return None, error
         if extrude is None:
             if raw is not None:
                 return None, f"sprite_extrude must be an integer, got {raw}"
@@ -498,6 +520,11 @@ async def manage_texture(
 
 ) -> dict[str, Any]:
     # --- Normalize parameters ---
+    try:
+        gradient_angle = coerce_float(gradient_angle)
+        noise_scale = coerce_float(noise_scale)
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
     fill_color, fill_error = _normalize_color_int(fill_color)
     if fill_error:
         return {"success": False, "message": fill_error}
@@ -571,6 +598,12 @@ async def manage_texture(
             return {"success": False, "message": "set_pixels must be a JSON object"}
 
         set_pixels_normalized = set_pixels.copy()
+        for field in ("x", "y"):
+            coordinate, error = _normalize_integer_setting(set_pixels_normalized.get(field), f"set_pixels.{field}")
+            if error:
+                return {"success": False, "message": error}
+            coordinate = 0 if coordinate is None else coordinate
+            set_pixels_normalized[field] = coordinate
         region_width, region_width_error = _normalize_dimension(set_pixels_normalized.get("width"), "set_pixels.width", 1)
         region_height, region_height_error = _normalize_dimension(set_pixels_normalized.get("height"), "set_pixels.height", 1)
         region_error = region_width_error or region_height_error
@@ -578,16 +611,14 @@ async def manage_texture(
             region_error = _validate_dimensions(region_width, region_height)
         if region_error:
             return {"success": False, "message": region_error}
+        set_pixels_normalized["width"] = region_width
+        set_pixels_normalized["height"] = region_height
         if "color" in set_pixels_normalized:
             color, error = _normalize_color_int(set_pixels_normalized["color"])
             if error:
                 return {"success": False, "message": f"set_pixels.color: {error}"}
             set_pixels_normalized["color"] = color
         if "pixels" in set_pixels_normalized:
-            region_width = coerce_int(set_pixels_normalized.get("width"))
-            region_height = coerce_int(set_pixels_normalized.get("height"))
-            if region_width is None or region_height is None or region_width <= 0 or region_height <= 0:
-                return {"success": False, "message": "set_pixels width and height must be positive integers"}
             pixels_normalized, pixels_error = _normalize_pixels(
                 set_pixels_normalized["pixels"], region_width, region_height
             )

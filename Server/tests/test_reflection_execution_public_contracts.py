@@ -182,10 +182,10 @@ cases = [
      {'action': 'execute', 'code': '', 'safety_checks': True, 'compiler': 'auto'}),
     *[('execute_code', {'action': 'get_history', 'limit': limit},
        {'action': 'get_history', 'limit': max(1, min(int(limit), 50))})
-      for limit in (0, -1, 100, '1', 1.0, False, True)],
+      for limit in (0, -1, 100, 1)],
     ('execute_code', {'action': 'get_history'}, {'action': 'get_history', 'limit': 10}),
     *[('execute_code', {'action': 'replay', 'index': index}, {'action': 'replay', 'index': int(index)})
-      for index in (0, 1, -1, '0', 1.0, True, False)],
+      for index in (0, 1, -1)],
     ('execute_code', {'action': 'clear_history', 'code': 'return 0;', 'safety_checks': False},
      {'action': 'clear_history'}),
 ]
@@ -222,8 +222,8 @@ async def main():
             raw = {'success': False, 'error': 'Native compiler diagnostic', 'code': 'native-code',
                    'data': {'errors': ['owned line 1'], 'compiler': 'roslyn'}}
             result, sent = await invoke(client, 'execute_code', {'action': 'execute', 'code': 'return 0;'}, mode)
-            check(result.structured_content == {'success': False, 'message': raw['error'], 'data': raw['data']},
-                  'existing execution error projection retained')
+            check(result.structured_content == {**raw, 'message': raw['error']},
+                  'execution diagnostic fields retained')
             for tool, payload in (
                 ('unity_reflect', {'action': 'get_type'}),
                 ('unity_reflect', {'action': 'get_member', 'class_name': 'System.String', 'member_name': ''}),
@@ -236,6 +236,11 @@ async def main():
                 ('execute_code', {'action': 'replay', 'index': None}),
                 ('execute_code', {'action': 'execute', 'code': 'return 0;', 'compiler': 'unknown'}),
                 ('execute_code', {'action': 'EXECUTE', 'code': 'return 0;'}),
+                *[('execute_code', {'action': action, key: value})
+                  for action, key in (('get_history', 'limit'), ('replay', 'index'))
+                  for value in (True, False, 1.0, 0.5, '0', '1', '1e0')],
+                *[('execute_code', {'action': 'execute', 'code': 'return 0;', 'safety_checks': value})
+                  for value in (0, 1, 'true', 'false')],
             ):
                 result, sent = await invoke(client, tool, payload, mode)
                 check(not sent and (result.is_error or result.structured_content.get('success') is False),

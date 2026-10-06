@@ -11,7 +11,6 @@ Actions:
 from __future__ import annotations
 
 import logging
-import math
 import re
 from typing import Annotated, Any, Literal
 
@@ -20,7 +19,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import coerce_bool, parse_json_payload
+from services.tools.utils import coerce_bool, coerce_int, parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -49,21 +48,8 @@ def _array_numeric_error(patches: list[Any]) -> str | None:
             continue
         value = patch.get("value")
         try:
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                raise ValueError
-            if isinstance(value, float) and not math.isfinite(value):
-                raise ValueError
-            if isinstance(value, str):
-                try:
-                    size = int(value)
-                except ValueError:
-                    number = float(value)
-                    if not math.isfinite(number):
-                        raise ValueError
-                    size = int(number)
-            else:
-                size = int(value)
-            if size < 0 or size > 2_147_483_647:
+            size = coerce_int(value)
+            if size is None or size < 0 or size > 2_147_483_647:
                 raise ValueError
         except (ValueError, OverflowError):
             return "Array size must be a non-negative Int32 value."
@@ -105,12 +91,12 @@ async def manage_scriptable_object(
     dry_run: Annotated[bool | str | None,
                        "If true, validate patches without applying (modify only)."] = None,
 ) -> dict[str, Any]:
-    parsed_overwrite = coerce_bool(overwrite, default=None)
-    parsed_dry_run = coerce_bool(dry_run, default=None)
-    if overwrite is not None and parsed_overwrite is None:
-        return {"success": False, "message": "manage_scriptable_object: 'overwrite' must be a boolean or a recognized boolean string."}
-    if dry_run is not None and parsed_dry_run is None:
-        return {"success": False, "message": "manage_scriptable_object: 'dry_run' must be a boolean or a recognized boolean string."}
+    flags = {}
+    for field, value in (("overwrite", overwrite), ("dry_run", dry_run)):
+        try:
+            flags[field] = coerce_bool(value)
+        except ValueError as exc:
+            return {"success": False, "message": f"manage_scriptable_object: '{field}': {exc}"}
     # Tolerate JSON-string payloads (LLMs sometimes stringify complex objects)
     parsed_target = parse_json_payload(target)
     parsed_patches = parse_json_payload(patches)
@@ -133,10 +119,10 @@ async def manage_scriptable_object(
         "typeName": type_name,
         "folderPath": folder_path,
         "assetName": asset_name,
-        "overwrite": parsed_overwrite,
+        "overwrite": flags["overwrite"],
         "target": parsed_target,
         "patches": parsed_patches,
-        "dryRun": parsed_dry_run,
+        "dryRun": flags["dry_run"],
     }
 
     # Remove None values to keep Unity handler simpler

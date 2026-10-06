@@ -127,9 +127,9 @@ cases = [({'search_term': 'Fixture'}, defaults),
          ({'search_term': 'Fixture', 'page_size': '2', 'cursor': '1', 'include_inactive': 'false'},
           {**defaults, 'pageSize': 2, 'cursor': 1}),
          ({'search_term': 'Fixture', 'page_size': None, 'cursor': None, 'include_inactive': None}, defaults),
-         ({'search_term': 'Fixture', 'page_size': True, 'cursor': False, 'include_inactive': 'true'},
+         ({'search_term': 'Fixture', 'page_size': 1, 'cursor': 0, 'include_inactive': 'true'},
           {**defaults, 'pageSize': 1, 'includeInactive': True}),
-         ({'search_term': 'Fixture', 'page_size': False, 'cursor': True},
+         ({'search_term': 'Fixture', 'page_size': 0, 'cursor': 1},
           {**defaults, 'pageSize': 0, 'cursor': 1}),
          ({'search_term': 'Fixture', 'page_size': 2147483647, 'cursor': 2147483647},
           {**defaults, 'pageSize': 2147483647, 'cursor': 2147483647}),
@@ -166,6 +166,14 @@ async def main():
                 before = len(requests)
                 result = await client.call_tool('find_gameobjects', payload, raise_on_error=False)
                 check(not requests[before:] and (result.is_error or result.structured_content['success'] is False), 'invalid required/schema values before preflight')
+            for key, values in (('page_size', (True, False, 1.0, 0.5, '1.0', '1e0')),
+                                ('cursor', (True, False, 1.0, 0.5, '1.0', '1e0')),
+                                ('include_inactive', (0, 1, '0', '1'))):
+                for value in values:
+                    before = len(requests)
+                    result = await client.call_tool('find_gameobjects', {'search_term': 'Fixture', key: value}, raise_on_error=False)
+                    check(not requests[before:] and (result.is_error or result.structured_content.get('success') is False),
+                          'invalid scalar before preflight ' + mode + key + repr(value))
     print('SDK_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
     assert not failures, failures
 anyio.run(main)

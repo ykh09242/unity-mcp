@@ -15,9 +15,12 @@ from core.config import config
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
-from services.tools.manage_script import _lsp_position_to_line_col, _script_lines_and_starts, _split_uri
+from services.tools.manage_script import (
+    _edit_integer, _lsp_position_to_line_col, _normalize_edit_coordinates,
+    _normalize_script_options, _script_lines_and_starts, _split_uri,
+)
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
-from services.tools.utils import parse_json_payload
+from services.tools.utils import coerce_bool, coerce_int, parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -421,12 +424,24 @@ def _is_in_string_context(text: str, position: int) -> bool:
     return False
 
 
+def _normalize_edit_scalars(edit: dict[str, Any]) -> dict[str, Any]:
+    """Parse nested edit flags and numbers before they influence edit selection."""
+    parsed = _normalize_edit_coordinates(edit)
+    for field, default in (("ignore_case", False), ("allow_noop", True), ("prefer_last", True)):
+        if field in parsed:
+            parsed[field] = coerce_bool(parsed[field], default=default)
+    if "count" in parsed:
+        parsed["count"] = coerce_int(parsed["count"], default=0)
+    return parsed
+
+
 async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) -> str:
     if len(edits or []) > 32:
         raise ValueError("At most 32 edits are permitted per request")
     text = original_text
     budget = bounded_regex.WorkBudget()
-    for edit in edits or []:
+    for raw_edit in edits or []:
+        edit = _normalize_edit_scalars(raw_edit)
         budget.consume(len(text))
         op = (
             (edit.get("op")
@@ -461,7 +476,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
 
             # Find the best match using improved heuristics
             match = await _run_regex_work(budget, lambda: _find_best_anchor_match(
-                anchor, text, flags, bool(edit.get("prefer_last", True)), budget=budget))
+                anchor, text, flags, edit.get("prefer_last", True), budget=budget))
             if not match:
                 if edit.get("allow_noop", True):
                     continue
@@ -470,10 +485,10 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             budget.consume(len(text) + len(insert_text))
             text = text[:idx] + insert_text + text[idx:]
         elif op == "replace_range":
-            start_line = int(edit.get("startLine", 1))
-            start_col = int(edit.get("startCol", 1))
-            end_line = int(edit.get("endLine", start_line))
-            end_col = int(edit.get("endCol", 1))
+            start_line = _edit_integer(edit.get("startLine", 1), "startLine")
+            start_col = _edit_integer(edit.get("startCol", 1), "startCol")
+            end_line = _edit_integer(edit.get("endLine", start_line), "endLine")
+            end_col = _edit_integer(edit.get("endCol", 1), "endCol")
             replacement = edit.get("text", "")
             budget.consume(len(replacement))
             lines = text.splitlines(keepends=True)
@@ -495,7 +510,7 @@ async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) 
             budget.consume(len(repl))
             # Translate $n backrefs (our input) to Python \g<n>
             repl_py = re.sub(r"\$(\d+)", r"\\g<\1>", repl)
-            count = int(edit.get("count", 0))  # 0 = replace all
+            count = coerce_int(edit.get("count"), default=0)  # 0 = replace all
             flags = re.MULTILINE
             if edit.get("ignore_case"):
                 flags |= re.IGNORECASE
@@ -529,7 +544,8 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
         return line + 1, col + 1
 
     spans = []
-    for edit in edits:
+    for raw_edit in edits:
+        edit = _normalize_edit_scalars(raw_edit)
         budget.check()
         op = edit.get("op", "")
         payload = next((edit[field] for field in ("text", "insert", "content", "replacement")
@@ -538,7 +554,7 @@ async def _text_edit_spans(contents: str, edits: list[dict[str, Any]], *, mixed:
             fields = ("startLine", "startCol", "endLine", "endCol")
             if not all(field in edit for field in fields):
                 raise _TextEditError("missing_field", "replace_range requires startLine/startCol/endLine/endCol")
-            span = {field: int(edit[field]) for field in fields}
+            span = {field: _edit_integer(edit[field], field) for field in fields}
         elif op in ("prepend", "append"):
             line, col = line_col(0 if op == "prepend" else len(contents))
             span = {"startLine": line, "startCol": col, "endLine": line, "endCol": col}
@@ -944,6 +960,10 @@ async def script_apply_edits(
     namespace: Annotated[str,
                          "Namespace of the script to edit"] | None = None,
 ) -> dict[str, Any]:
+    try:
+        options = _normalize_script_options(options)
+    except ValueError as exc:
+        return _err("invalid_options", str(exc))
     unity_instance = await get_unity_instance_from_context(ctx)
     logger.info("Processing script_apply_edits")
 
@@ -1044,6 +1064,10 @@ async def script_apply_edits(
     normalized_edits: list[dict[str, Any]] = []
     for raw in edits or []:
         e = _unwrap_and_alias(raw)
+        try:
+            e = _normalize_edit_scalars(e)
+        except ValueError as exc:
+            return _err("invalid_range", str(exc))
         op = (e.get("op") or e.get("operation") or e.get(
             "type") or e.get("mode") or "").strip().lower()
 
@@ -1153,7 +1177,7 @@ async def script_apply_edits(
     all_struct = ops_set.issubset(STRUCT)
     all_text = ops_set.issubset(TEXT)
     mixed = not (all_struct or all_text)
-    preview = bool((options or {}).get("preview"))
+    preview = options.get("preview", False)
     if preview and mixed:
         return _err("unsupported_preview", "Mixed text/structured preview is unsupported; no changes were made.")
 

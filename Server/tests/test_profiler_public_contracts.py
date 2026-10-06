@@ -215,14 +215,23 @@ async def main():
                           'SDK literal values/defaults ' + mode + repr(payload))
                     check(result.structured_content == response, 'opaque native result fidelity ' + mode)
             raw = {'success': True, 'data': {'events': []}}
-            for value in (True, False, '0', '1', 1.0, -1, None):
+            for value in (0, 1, -1, None):
                 payload = {'action': 'frame_debugger_get_events', 'page_size': value, 'cursor': value}
                 result, sent = await invoke(client, payload, mode)
                 expected = {'action': 'frame_debugger_get_events'}
                 if value is not None:
                     expected.update(page_size=int(value), cursor=int(value))
                 check(sent == [('Project@fixture', 'manage_profiler', expected)],
-                      'established paging coercion control ' + mode + repr(value))
+                      'typed paging control ' + mode + repr(value))
+            for key in ('page_size', 'cursor'):
+                for value in (True, False, '0', '1', '1e0', 1.0, 0.5):
+                    result, sent = await invoke(client, {'action': 'frame_debugger_get_events', key: value}, mode)
+                    check(result.is_error and not sent, 'strict paging before transport ' + mode + key + repr(value))
+            for key in ('areas', 'enable_callstacks'):
+                for value in (0, 1):
+                    payload = {'action': 'profiler_set_areas', 'areas': {'CPU': value}} if key == 'areas' else {'action': 'profiler_start', key: value}
+                    result, sent = await invoke(client, payload, mode)
+                    check(result.is_error and not sent, 'numeric flag before transport ' + mode + key + repr(value))
             for key, value in (('cursor', float('nan')), ('page_size', float('inf'))):
                 result, sent = await invoke(
                     client, {'action': 'frame_debugger_get_events', key: value}, mode,

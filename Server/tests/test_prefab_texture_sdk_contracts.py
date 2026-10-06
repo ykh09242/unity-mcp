@@ -62,11 +62,9 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
             {"image_path": "fixture.png", "fill_color": [255, 0, 0]},
             {"set_pixels": {"width": 0, "height": 1, "pixels": []}},
             {"set_pixels": {"width": 2, "height": 1, "pixels": [[255, 0, 0, 255]]}},
-            {"as_sprite": False},
             {"as_sprite": {"pivot": ["bad", 0]}},
             {"as_sprite": {"pivot": [None, 0]}},
             {"as_sprite": {"pixels_per_unit": "bad"}},
-            {"as_sprite": {"pixelsPerUnit": None}},
             {"import_settings": {"sprite_pivot": ["bad", 0]}},
             {"import_settings": {"sprite_pivot": [None, 0]}},
             {"import_settings": {"sprite_pixels_per_unit": "bad"}},
@@ -104,6 +102,8 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                         {"action": "modify", "path": "Assets/Fixture.png", "set_pixels": {"x": -1, "y": 0, "width": 2, "height": 1, "color": [1.0, 0.0, 0.0, 0.0]}},
                         {"action": "create", "path": "Assets/Fixture.png", "width": 1, "height": 1, "pixels": "AAAAAA==", "gradient_angle": 0, "noise_scale": 0, "as_sprite": None, "import_settings": None},
                         {"action": "create", "path": "Assets/Fixture.png", "as_sprite": {"pivot": [0, 0], "pixels_per_unit": 100}},
+                        {"action": "create", "path": "Assets/Fixture.png", "as_sprite": False},
+                        {"action": "create", "path": "Assets/Fixture.png", "as_sprite": {"pixelsPerUnit": None}},
                     ]
                     for i, payload in enumerate(texture_controls):
                         for key in counts: counts[key] = 0
@@ -115,6 +115,8 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                         if i == 1: check(wire["setPixels"] == {"x": -1,"y": 0,"width": 2,"height": 1,"color": [255,0,0,0]}, "region clipping inputs/color preserved")
                         if i == 2: check(wire["pixels"] == "base64:AAAAAA==" and wire["gradientAngle"] == wire["noiseScale"] == 0 and "spriteSettings" not in wire and "importSettings" not in wire, "base64/zero/null preserved")
                         if i == 3: check(wire["spriteSettings"] == {"pivot": [0.0,0.0],"pixelsPerUnit": 100.0}, "sprite numeric controls")
+                        if i == 4: check("spriteSettings" not in wire, "false leaves sprite mode disabled")
+                        if i == 5: check(wire["spriteSettings"] == {}, "null optional sprite number omitted")
                     for payload in (
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "target": "0", "allow_overwrite": False, "search_inactive": False, "unlink_if_instance": False},
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "name": "NameAlias"},

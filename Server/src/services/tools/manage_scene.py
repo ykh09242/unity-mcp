@@ -90,23 +90,32 @@ async def manage_scene(
                            "For validate: true to auto-fix missing scripts (undoable)."] | None = None,
 ) -> dict[str, Any]:
     try:
-        coerced_build_index = coerce_int(build_index, default=None)
-        if build_index is not None and coerced_build_index is None:
-            return {"success": False, "message": "build_index must be an integer."}
+        integer_options: dict[str, int | None] = {}
+        for field, raw_value in (
+            ("build_index", build_index), ("page_size", page_size),
+            ("cursor", cursor), ("max_nodes", max_nodes),
+            ("max_depth", max_depth), ("max_children_per_node", max_children_per_node),
+        ):
+            try:
+                integer_options[field] = coerce_int(raw_value, default=None)
+            except ValueError as exc:
+                return {"success": False, "message": f"{field}: {exc}"}
+        boolean_options: dict[str, bool | None] = {}
         for field, raw_value in (
             ("additive", additive), ("remove_scene", remove_scene),
             ("auto_repair", auto_repair), ("include_transform", include_transform),
         ):
-            if raw_value is not None and coerce_bool(raw_value, default=None) is None:
-                return {"success": False, "message": f"{field} must be a boolean or a recognized boolean string."}
-        coerced_page_size = coerce_int(page_size, default=None)
-        coerced_cursor = coerce_int(cursor, default=None)
-        coerced_max_nodes = coerce_int(max_nodes, default=None)
-        coerced_max_depth = coerce_int(max_depth, default=None)
-        coerced_max_children_per_node = coerce_int(
-            max_children_per_node, default=None)
-        coerced_include_transform = coerce_bool(
-            include_transform, default=None)
+            try:
+                boolean_options[field] = coerce_bool(raw_value, default=None)
+            except ValueError as exc:
+                return {"success": False, "message": f"{field}: {exc}"}
+        coerced_build_index = integer_options["build_index"]
+        coerced_page_size = integer_options["page_size"]
+        coerced_cursor = integer_options["cursor"]
+        coerced_max_nodes = integer_options["max_nodes"]
+        coerced_max_depth = integer_options["max_depth"]
+        coerced_max_children_per_node = integer_options["max_children_per_node"]
+        coerced_include_transform = boolean_options["include_transform"]
 
         params: dict[str, Any] = {"action": action}
         if name:
@@ -143,10 +152,10 @@ async def manage_scene(
             params["scenePath"] = scene_path
         if target is not None:
             params["target"] = target
-        coerced_remove_scene = coerce_bool(remove_scene, default=None)
+        coerced_remove_scene = boolean_options["remove_scene"]
         if coerced_remove_scene is not None:
             params["removeScene"] = coerced_remove_scene
-        coerced_additive = coerce_bool(additive, default=None)
+        coerced_additive = boolean_options["additive"]
         if coerced_additive is not None:
             params["additive"] = coerced_additive
         # Scene template
@@ -154,7 +163,7 @@ async def manage_scene(
             params["template"] = template
 
         # Scene validation
-        coerced_auto_repair = coerce_bool(auto_repair, default=None)
+        coerced_auto_repair = boolean_options["auto_repair"]
         if coerced_auto_repair is not None:
             params["autoRepair"] = coerced_auto_repair
 

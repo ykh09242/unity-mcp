@@ -9,7 +9,6 @@ from services.tools import get_unity_instance_from_context
 from services.tools.rendering_limits import orbit_limits_error, screenshot_limits_error
 from services.tools.utils import (
     build_screenshot_params, extract_screenshot_images, normalize_properties,
-    coerce_bool, coerce_int,
 )
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -171,15 +170,6 @@ async def manage_camera(
 
     # Screenshot params — only relevant for screenshot/screenshot_multiview actions
     if action_normalized in CAPTURE_ACTIONS:
-        for field, value in (
-            ("screenshot_super_size", screenshot_super_size),
-            ("max_resolution", max_resolution),
-            ("orbit_angles", orbit_angles),
-        ):
-            if value is not None and coerce_int(value, default=None) is None:
-                return {"success": False, "message": f"{field} must be an integer."}
-        if include_image is not None and coerce_bool(include_image, default=None) is None:
-            return {"success": False, "message": "include_image must be a boolean."}
         err = build_screenshot_params(
             params_dict,
             screenshot_file_name=screenshot_file_name,

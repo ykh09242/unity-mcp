@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -100,6 +101,9 @@ async def batch_execute(
                                "Hint for the maximum number of parallel workers"] = None,
 ) -> dict[str, Any]:
     """Proxy the batch_execute tool to the Unity Editor transporter."""
+    parallel = coerce_bool(parallel)
+    fail_fast = coerce_bool(fail_fast)
+    max_parallelism = coerce_int(max_parallelism)
     if not isinstance(commands, list) or not commands:
         raise ValueError(
             "'commands' must be a non-empty list of command specifications")
@@ -152,11 +156,11 @@ async def batch_execute(
     }
 
     if parallel is not None:
-        payload["parallel"] = bool(parallel)
+        payload["parallel"] = parallel
     if fail_fast is not None:
-        payload["failFast"] = bool(fail_fast)
+        payload["failFast"] = fail_fast
     if max_parallelism is not None:
-        payload["maxParallelism"] = int(max_parallelism)
+        payload["maxParallelism"] = max_parallelism
 
     return await send_with_unity_instance(
         async_send_command_with_retry,

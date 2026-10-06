@@ -29,8 +29,8 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `search_pattern` | `str \| None` | — | Search pattern (e.g., '*.prefab' or AssetDatabase filters like 't:MonoScript'). Recommended: put queries like 't:MonoScript' here and set path='Assets'. |
 | `filter_type` | `str \| None` | — | Filter type for search |
 | `filter_date_after` | `str \| None` | — | Date after which to filter |
-| `page_size` | `int \| float \| str \| None` | — | Page size: 1-1000 (default 50), or 1-32 with previews (default 32). |
-| `page_number` | `int \| float \| str \| None` | — | Page number for pagination (1-based). |
+| `page_size` | `int \| str \| None` | — | Page size: 1-1000 (default 50), or 1-32 with previews (default 32). |
+| `page_number` | `int \| str \| None` | — | Page number for pagination (1-based). |
 
 ## Returns
 
