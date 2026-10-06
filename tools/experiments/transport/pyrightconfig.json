@@ -1,0 +1,6 @@
+{
+  "include": ["*.py"],
+  "extraPaths": ["../../.."],
+  "typeCheckingMode": "all",
+  "reportUnnecessaryComparison": false
+}
