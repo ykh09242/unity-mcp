@@ -73,6 +73,12 @@ decode, while subclasses retain their validation fallback. Streaming JSON size
 checks count ASCII characters directly and encode non-ASCII chunks as needed.
 Encoded-size, retained-memory, depth and node limits still apply independently.
 
+The response-size visitor checks each value's exact builtin type once before
+the compatibility path. Subclasses, Pydantic models, URL objects and custom
+serialization hooks retain their existing behavior and per-visit accounting.
+This removes repeated type checks in dense object trees; a large single string
+still incurs its encoded-size work.
+
 ## `editor_state_v1`
 
 Unity publishes the existing complete v2 state snapshot, with an epoch, sequence
@@ -183,6 +189,12 @@ share a pending raw state RPC; each caller enriches its own detached copy.
 These two pools have no completed-result freshness window. A later call starts
 a new RPC unless the existing pushed-state cache can serve it.
 
+An event loop creates its weak shared-read registry only on its first use.
+A successful explicit Editor lookup validates the selected session directly,
+without copying the full session listing. Remote ownership checks, unknown
+targets, automatic selection and replacement detection retain their existing
+paths.
+
 Authoritative, private and parameterized state reads remain independent and
 prevent later ordinary reads from joining an older pending observation.
 Mutation admission also separates reads before and after the command, including
@@ -236,6 +248,16 @@ writes and retains response ownership through actual worker completion, even
 when cancellation is requested repeatedly. A blocked OS pipe can therefore
 delay cancellation until the reader drains or disconnects. Explicit text
 streams keep the SDK text adapter.
+
+The default stdin adapter bounds a JSON-RPC line to 64 MiB before UTF-8 decoding
+or JSON parsing. It reads at most 64 KiB at a time and stops at the first excess
+byte, including when the sender never supplies a newline. Line delimiters are
+excluded from the limit. Oversized input closes the connection without trying
+to parse a request ID or drain an unbounded line. UTF-8 replacement, universal
+newlines, EOF handling and protected input/output descriptors remain compatible
+with the pinned SDK. Explicit text streams are checked before parsing, but
+their producer owns the prior text allocation. A cancelled blocked stdin worker
+is awaited until it actually settles, so cancellation may wait for input or EOF.
 
 Duplicate active IDs are rejected before tool execution. A duplicate error or
 cancellation during an uncertain SDK handoff can make output ownership
@@ -323,6 +345,86 @@ one while keeping two authoritative pairs. Natural timing runs used neither
 the forced cohort gate nor the resource contract. Cancellation and late-frame
 checks observed positive held reservations followed by zero; these counters
 are not process RSS or continuous allocation peaks.
+
+### Follow-up runtime and validation improvements
+
+Product revision `1229a17f` reduces redundant JSON type checks, creates shared
+read registries lazily, avoids a full session listing for successful explicit
+Editor selection, and bounds stdio input before decoding. The baseline for this
+follow-up is `d28805b8`, which already includes the previous transport work.
+
+On the same Windows host, the actual response-size visitor produced these
+component medians. Each cell is baseline to product; each runtime was measured
+once with 11 samples per fixture. Small objects use 1,000 calls per sample;
+dense and scalar fixtures use one. All 166 differential cases per runtime
+preserved admission, accounting and serialization-hook behavior.
+
+| Fixture | Python 3.14.6 | Python 3.11.15 |
+| --- | ---: | ---: |
+| Small JSON | 9.541 → 8.279 µs | 8.578 → 7.273 µs |
+| 14,000 dense rows | 100.551 → 88.911 ms | 94.307 → 82.340 ms |
+| 8 MiB ASCII scalar | 20.234 → 20.128 ms | 20.423 → 20.294 ms |
+
+Small-object inspection took 13.2–15.2% less time and dense-object inspection
+took 11.6–12.7% less. The scalar result shows no material gain. These are
+component timings, not end-to-end Editor latency. Allocation peaks were measured
+separately from timing, excluding the pre-existing inputs and process RSS.
+
+Deterministic operation-count tests reduced weak-registry creation from 20 to
+one for 20 simultaneous leases. Twenty successful explicit Editor lookups
+eliminated all 20 session-list copies while retaining 20 fresh target lookups.
+Those counts do not establish a whole-request speedup. Remote identity checks,
+unknown targets, automatic selection and connection-generation checks remain.
+
+The paired benchmark now requires explicit baseline and candidate labels.
+Those labels are caller assertions; source hashes and separate Git verification
+establish provenance. Natural concurrent captures retain each version's own
+valid readiness-count range. Cross-version nonincrease is required for the
+separate cohort-gated contract, and declared sharing downgrades fail in either
+mode. A forced-overlap resource contract separately verifies actual sharing;
+natural request counts alone do not prove it.
+
+Fork beta pushes now invoke the full Python validation workflow once through
+`Fork Beta Tool Tests`. Its two Python runtimes and three OS bootstrap jobs are
+unchanged. This eliminates the duplicate five-job set previously invoked by
+Beta Release as well; it does not imply a halved parallel CI completion time.
+Upstream release and publication policies are unchanged.
+
+A separate end-to-end comparison used the common harness from `b2c04360`,
+Python 3.14.6 and the same pinned SDKs. Each profile ran three alternating
+baseline/candidate rounds, 30 warmed samples per workload after three warmups,
+4 MiB large responses and zero requested synthetic delay. Each cell is the
+median of three run p50 values, computed independently for each version.
+
+| Path / workload | Sequential, before → after (ms) | Two concurrent calls, before → after (ms) |
+| --- | ---: | ---: |
+| stdio / small | 2.467 → 2.432 | 3.645 → 3.713 |
+| stdio / state | 3.398 → 3.174 | 5.773 → 5.657 |
+| stdio / 4 MiB | 279.690 → 279.689 | 322.594 → 325.743 |
+| stdio / job | 2.524 → 2.550 | 3.922 → 3.779 |
+| HTTP / small | 3.846 → 3.898 | 6.640 → 6.654 |
+| HTTP / state | 5.783 → 5.606 | 9.123 → 10.032 |
+| HTTP / 4 MiB | 114.887 → 121.956 | 157.217 → 155.792 |
+| HTTP / job | 3.193 → 3.236 | 6.061 → 5.973 |
+
+These measurements do not establish an overall MCP speedup. Eight of the 16
+medians were higher: the largest increases were concurrent HTTP state (10.0%)
+and sequential large HTTP responses (6.2%). Sequential large stdio was
+essentially unchanged. Tail observations also matter: the median of run p99s
+increased 15.3% for sequential HTTP jobs, 14.3% for concurrent HTTP state and
+11.7% for concurrent large HTTP responses. These are descriptive results from
+three rounds, not pooled percentiles, statistical significance or a causal
+attribution to an individual function. Real Editor execution is excluded.
+
+Payloads, schemas, explicit MCP calls and source fingerprints matched.
+Sequential readiness pings were 105 in every round; both concurrent revisions
+recorded 76, 75 and 75. A separate gated resource probe confirmed that both
+versions already share ordinary reads (one state RPC and one readiness ping),
+while authoritative reads remain private (two of each). Each held 310,890 bytes
+of accounted ownership before releasing to zero; partial-transfer late-frame
+cleanup and reconnect checks also passed. These snapshots are not continuous
+allocation peaks or RSS. Immutable source checks covered 165 selected files per
+revision and all 161 product Python files captured by the benchmark.
 
 ### Earlier cross-protocol measurements
 
