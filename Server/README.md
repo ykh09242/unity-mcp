@@ -22,7 +22,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@00d7cb18a6649453fdc95bc0a6ed12dc1422518e#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@bcb5c418e125208a3208e4c000421347e83eceef#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving Git branch. First launch can require dependency downloads; a Git pin is not an offline-install guarantee.
@@ -60,8 +60,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@00d7cb18a6649453fdc95bc0a6ed12dc1422518e#subdirectory=Server" mcp-for-unity --help
-uvx --from "git+https://github.com/ykh09242/unity-mcp.git@00d7cb18a6649453fdc95bc0a6ed12dc1422518e#subdirectory=Server" unity-mcp --help
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@bcb5c418e125208a3208e4c000421347e83eceef#subdirectory=Server" mcp-for-unity --help
+uvx --from "git+https://github.com/ykh09242/unity-mcp.git@bcb5c418e125208a3208e4c000421347e83eceef#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).

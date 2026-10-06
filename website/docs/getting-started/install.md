@@ -8,11 +8,11 @@ description: Install the stable fork, authenticate a client, and verify the Unit
 
 # Install And Connect
 
-Install stable **Unity MCP (ykh09242) 1.1.0**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
+Install stable **Unity MCP (ykh09242) 1.1.1**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
 ## Before you start
 
-- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.0).
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.1).
 - Git available to Unity Package Manager.
 - Python **3.10+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
@@ -24,13 +24,13 @@ Install stable **Unity MCP (ykh09242) 1.1.0**, then connect an MCP client to you
 In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.0
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.1.1
 ```
 
-This tag identifies stable `1.1.0`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
+This tag identifies stable `1.1.1`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#cb802ac112cbd3b9b48286112f28453aa10a2065
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#e31937709d819e0e162b8a2ea318d3d2955c0f50
 ```
 
 `#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
@@ -50,11 +50,12 @@ you intend to stop them. The HTTP auto-start setting in **Advanced** is a separa
 optional background-start preference; it does not require an open MCP window.
 Unity can still restore tabs that were left open in its saved Editor layout.
 
-:::note Development branch
-The current `beta` branch uses manual setup and does not open it automatically.
-The pinned **1.1.0** release above can still open the setup window on Editor startup.
-The redesigned windows and **Start HTTP on Editor Startup** label are available
-on `beta`; they are not part of the published 1.1.0 package.
+:::note Upgrading from 1.1.0
+The **1.1.1** release includes redesigned windows and manual setup: the package
+does not open setup automatically on Editor startup. **Start HTTP on Editor Startup**
+remains optional and works without opening the MCP window. Editor Coroutines is
+resolved as a package dependency for UPM waits; server connections remain independent
+of window lifetime.
 :::
 
 ## 3. Configure your client

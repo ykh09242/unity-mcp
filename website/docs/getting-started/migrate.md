@@ -25,17 +25,19 @@ The Python distribution is `ykh09242-unity-mcp-server`; executables remain `mcp-
 
 | Source | What it selects |
 |---|---|
-| `#ykh09242-v1.1.0` | The current stable fork release tag. |
+| `#ykh09242-v1.1.1` | The current stable fork release tag. |
 | Full 40-character SHA | A commit-addressed Unity package revision. |
 | `#beta` | The moving development branch, not an immutable release. |
 | Installed `mcpServerSource` | Matching Python source at a full SHA and `Server` subdirectory. |
 
-Unity and Python versions can evolve independently. Stable `1.1.0` pins Python `1.1.0` to `7013c0ca7a1a3998190eec6803721e0051e8dcdc`; it need not match the Unity package's later release commit. Default launch validates the same-fork Git pin and does not silently fall back to PyPI or a floating branch.
+Unity and Python versions can evolve independently. Stable `1.1.1` pins Python `1.1.1` to `bcb5c418e125208a3208e4c000421347e83eceef`; it need not match the Unity package's later release commit. Default launch validates the same-fork Git pin and does not silently fall back to PyPI or a floating branch.
 
 Update checks are **notifications**, not changes to the installed pin. Tagged/SHA/default fork installs check `beta` metadata. Explicit `#main` checks inherited `main`; explicit `#beta` checks `beta`. Other revision spellings do not imply a preserved separate update channel. Local-copy/Asset Store update routing is unsupported; manage local copies manually.
 
 ## Adapt client behavior
 
+- Since `1.1.1`, setup opens only when requested. Closing an MCP window does not stop its server or bridge; HTTP auto-start remains an optional background preference. Previously saved Editor layouts can still restore an open tab.
+- Send JSON booleans for flags and whole integers for integer fields. Invalid scalar values are rejected rather than rounded, truncated, or silently defaulted; documented string alternatives remain supported.
 - Local HTTP/WebSocket needs a fresh token each launch. Reconfigure HTTP MCP clients after restarting.
 - Modern sessionless calls need explicit targets when local selection is ambiguous, and always in hosted mode. Tools use `unity_instance`; resources use `_meta.unity_instance`. Persistent selection/group changes require stateful legacy connections.
 - High-impact tools need explicit Editor consent; general enablement does not grant it. See [Security And Consent](../guides/security.md).
