@@ -506,7 +506,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             if (string.IsNullOrEmpty(installPath))
                 return;
 
-            string branch = AssetPathUtility.IsPreReleaseVersion() ? "beta" : "main";
+            string branch = MCPServiceLocator.Updates.GetGitUpdateBranch(AssetPathUtility.GetPackageVersion());
 
             isSkillSyncInProgress = true;
             installSkillsButton.SetEnabled(false);
