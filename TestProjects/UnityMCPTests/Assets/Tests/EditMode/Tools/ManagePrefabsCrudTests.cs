@@ -9,6 +9,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TestTools;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnity.Runtime.Helpers;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -56,8 +57,8 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject child = new GameObject("PreservedChild");
             child.transform.SetParent(source.transform);
             JToken target = source.name;
-            if (targetForm == "integer_id") target = source.GetInstanceID();
-            if (targetForm == "string_id") target = source.GetInstanceID().ToString();
+            if (targetForm == "integer_id") target = source.GetInstanceIDCompat();
+            if (targetForm == "string_id") target = source.GetInstanceIDCompat().ToString();
             if (targetForm == "path") target = "PrefabTargetParent/McpProbeCube";
             if (targetForm == "absolute_path") target = "/PrefabTargetParent/McpProbeCube";
             try
