@@ -390,9 +390,24 @@ async def test_external_and_wait_timeout_paths_share_policy_and_response_fields(
         {"success": True, "data": snapshot()},
         {"success": True, "data": {"job_id": "job", "status": "succeeded"}},
     ]
-    monkeypatch.setattr(mod.asyncio, "sleep", AsyncMock())
+    loop = asyncio.get_running_loop()
+    real_time, real_sleep = loop.time, asyncio.sleep
+    elapsed = 0.0
+
+    async def advance_poll_time(delay):
+        nonlocal elapsed
+        elapsed += delay
+        await real_sleep(0)
+
+    # Polling must advance the same clock used by shared snapshot freshness.
+    monkeypatch.setattr(loop, "time", lambda: real_time() + elapsed)
+    poll_sleep = AsyncMock(side_effect=advance_poll_time)
+    monkeypatch.setattr(mod.asyncio, "sleep", poll_sleep)
+    previous_observations = send.await_count
     completed = await mod.get_test_job(context, "job", wait_timeout=30)
     assert completed.data.status == "succeeded"
+    assert send.await_count - previous_observations == 2
+    poll_sleep.assert_awaited_once_with(2.0)
     assert policy.await_count == 3
     assert not mod._nudge_states
 
