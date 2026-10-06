@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -19,6 +21,9 @@ namespace MCPForUnity.Editor.Services
     internal static class EditorStateCache
     {
         private static readonly object LockObj = new();
+        private static readonly int MainThreadId = Thread.CurrentThread.ManagedThreadId;
+        internal static readonly string Epoch = Guid.NewGuid().ToString("N");
+        private static readonly List<Action<JObject>> Observers = new();
         private static long _sequence;
         private static long _observedUnixMs;
 
@@ -55,8 +60,13 @@ namespace MCPForUnity.Editor.Services
         private static bool _lastTrackedIsFocused;
         private static bool _lastTrackedIsPlaying;
         private static bool _lastTrackedIsPaused;
+        private static bool _lastTrackedIsChanging;
         private static bool _lastTrackedIsUpdating;
         private static bool _lastTrackedTestsRunning;
+        private static string _lastTrackedTestsMode;
+        private static string _lastTrackedTestJobId;
+        private static long? _lastTrackedTestStartedMs;
+        private static long? _lastTrackedTestFinishedMs;
         private static string _lastTrackedActivityPhase;
         private static int _lastTrackedBatchLimit;
 
@@ -344,8 +354,11 @@ namespace MCPForUnity.Editor.Services
             bool isFocused = InternalEditorUtility.isApplicationActive;
             bool isPlaying = EditorApplication.isPlaying;
             bool isPaused = EditorApplication.isPaused;
+            bool isChanging = EditorApplication.isPlayingOrWillChangePlaymode;
             bool isUpdating = EditorApplication.isUpdating;
             bool testsRunning = TestRunStatus.IsRunning;
+            string testsMode = TestRunStatus.Mode?.ToString();
+            string testJobId = TestJobManager.CurrentJobId;
             int batchLimit = Tools.BatchExecute.GetMaxCommandsPerBatch();
 
             var activityPhase = "idle";
@@ -376,8 +389,13 @@ namespace MCPForUnity.Editor.Services
                 || _lastTrackedIsFocused != isFocused
                 || _lastTrackedIsPlaying != isPlaying
                 || _lastTrackedIsPaused != isPaused
+                || _lastTrackedIsChanging != isChanging
                 || _lastTrackedIsUpdating != isUpdating
                 || _lastTrackedTestsRunning != testsRunning
+                || _lastTrackedTestsMode != testsMode
+                || _lastTrackedTestJobId != testJobId
+                || _lastTrackedTestStartedMs != TestRunStatus.StartedUnixMs
+                || _lastTrackedTestFinishedMs != TestRunStatus.FinishedUnixMs
                 || _lastTrackedActivityPhase != activityPhase
                 || _lastTrackedBatchLimit != batchLimit;
 
@@ -390,19 +408,9 @@ namespace MCPForUnity.Editor.Services
                     _observedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     SnapshotObservation.UpdateTimestamp(_cached, _observedUnixMs);
                 }
+                NotifyObservers();
                 return;
             }
-
-            // Update tracked state
-            _lastTrackedScenePath = scenePath;
-            _lastTrackedSceneName = sceneName;
-            _lastTrackedIsFocused = isFocused;
-            _lastTrackedIsPlaying = isPlaying;
-            _lastTrackedIsPaused = isPaused;
-            _lastTrackedIsUpdating = isUpdating;
-            _lastTrackedTestsRunning = testsRunning;
-            _lastTrackedActivityPhase = activityPhase;
-            _lastTrackedBatchLimit = batchLimit;
 
             ForceUpdate("tick");
         }
@@ -421,6 +429,59 @@ namespace MCPForUnity.Editor.Services
             lock (LockObj)
             {
                 _cached = BuildSnapshot(reason);
+            }
+            NotifyObservers();
+        }
+
+        /// <summary>
+        /// Subscribe on the editor main thread; the initial snapshot and subsequent
+        /// successful observations are delivered there. Disposal uses no Unity API.
+        /// </summary>
+        internal static IDisposable Subscribe(Action<JObject> observer)
+        {
+            if (observer == null) throw new ArgumentNullException(nameof(observer));
+            if (Thread.CurrentThread.ManagedThreadId != MainThreadId)
+                throw new InvalidOperationException("Editor-state subscription requires the Unity main thread.");
+            JObject initial;
+            lock (LockObj)
+            {
+                Observers.Add(observer);
+                initial = (JObject)_cached.DeepClone();
+            }
+            try { observer(initial); }
+            catch
+            {
+                lock (LockObj) Observers.Remove(observer);
+                throw;
+            }
+            return new ObservationSubscription(observer);
+        }
+
+        private static void NotifyObservers()
+        {
+            Action<JObject>[] observers;
+            lock (LockObj) observers = Observers.ToArray();
+            foreach (var observer in observers)
+            {
+                JObject snapshot;
+                lock (LockObj) snapshot = (JObject)_cached.DeepClone();
+                try { observer(snapshot); }
+                catch (Exception ex)
+                {
+                    McpLog.Warn($"[EditorStateCache] Observer failed: {ex.Message}");
+                }
+            }
+        }
+
+        private sealed class ObservationSubscription : IDisposable
+        {
+            private Action<JObject> _observer;
+            internal ObservationSubscription(Action<JObject> observer) => _observer = observer;
+            public void Dispose()
+            {
+                var observer = Interlocked.Exchange(ref _observer, null);
+                if (observer != null)
+                    lock (LockObj) Observers.Remove(observer);
             }
         }
 
@@ -548,6 +609,23 @@ namespace MCPForUnity.Editor.Services
                 }
             };
 
+            // Record from the same captured values that produced this snapshot.
+            // Callback-driven rebuilds then avoid a duplicate rebuild on the next
+            // unchanged tick, and short completed test runs are still observed.
+            _lastTrackedScenePath = scenePath;
+            _lastTrackedSceneName = snapshot.Editor.ActiveScene.Name;
+            _lastTrackedIsFocused = isFocused;
+            _lastTrackedIsPlaying = snapshot.Editor.PlayMode.IsPlaying == true;
+            _lastTrackedIsPaused = snapshot.Editor.PlayMode.IsPaused == true;
+            _lastTrackedIsChanging = snapshot.Editor.PlayMode.IsChanging == true;
+            _lastTrackedIsUpdating = snapshot.Assets.IsUpdating == true;
+            _lastTrackedTestsRunning = testsRunning;
+            _lastTrackedTestsMode = testsMode;
+            _lastTrackedTestJobId = currentJobId;
+            _lastTrackedTestStartedMs = TestRunStatus.StartedUnixMs;
+            _lastTrackedTestFinishedMs = TestRunStatus.FinishedUnixMs;
+            _lastTrackedActivityPhase = activityPhase;
+            _lastTrackedBatchLimit = snapshot.Settings.BatchExecuteMaxCommands;
             return JObject.FromObject(snapshot);
         }
 

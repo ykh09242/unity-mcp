@@ -24,6 +24,26 @@ namespace MCPForUnityTests.Editor.Services
         private static readonly MethodInfo BuildConnectionCandidateUrisMethod = ResolveCandidateBuilderMethod();
 
         [Test]
+        public void SendFrameAsync_ObsoleteConnection_DoesNotUseReplacementSocket()
+        {
+            using var client = new WebSocketTransportClient();
+            using var obsolete = new CancellationTokenSource();
+            using var current = new CancellationTokenSource();
+            using var replacement = new ClientWebSocket();
+            SetField(client, "_connectionCts", current);
+            SetField(client, "_socket", replacement);
+            try
+            {
+                var send = typeof(WebSocketTransportClient).GetMethod("SendFrameAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                var result = (Task)send.Invoke(client, new object[] { new ArraySegment<byte>(new byte[] { 1 }), WebSocketMessageType.Text, obsolete.Token });
+                Assert.IsTrue(result.IsCanceled, "A stale sender must be canceled before touching the replacement socket.");
+                Assert.AreEqual(WebSocketState.None, replacement.State);
+                Assert.IsFalse(current.IsCancellationRequested);
+            }
+            finally { client.ForceStop(); }
+        }
+
+        [Test]
         public void AttemptReconnectAsync_CanceledOldLifecycle_DoesNotStopNewConnection()
         {
             using var client = new WebSocketTransportClient();

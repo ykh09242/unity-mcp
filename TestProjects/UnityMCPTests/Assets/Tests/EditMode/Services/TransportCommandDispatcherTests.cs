@@ -141,7 +141,7 @@ namespace MCPForUnityTests.Editor.Services
             {
                 foreach (var pending in Pending.Values)
                 {
-                    var completion = (TaskCompletionSource<string>)pending.GetType().GetProperty("CompletionSource").GetValue(pending);
+                    var completion = (TaskCompletionSource<string>)pending.GetType().GetProperty("JsonResponseSource").GetValue(pending);
                     if (ReferenceEquals(completion.Task, command)) return true;
                 }
                 return false;

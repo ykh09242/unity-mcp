@@ -28,19 +28,24 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             public PendingCommand(
                 string commandJson,
-                TaskCompletionSource<string> completionSource,
+                Command command,
                 CancellationToken cancellationToken,
                 CancellationTokenRegistration registration)
             {
                 CommandJson = commandJson;
-                CompletionSource = completionSource;
+                if (commandJson != null) JsonResponseSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                Command = command;
                 CancellationToken = cancellationToken;
                 CancellationRegistration = registration;
                 QueuedAt = DateTime.UtcNow;
             }
 
             public string CommandJson { get; }
-            public TaskCompletionSource<string> CompletionSource { get; }
+            public Command Command { get; }
+            public TaskCompletionSource<string> CompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource<TransportCommandResponse> ResponseSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource<bool> ExecutionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource<string> JsonResponseSource { get; }
             public CancellationToken CancellationToken { get; }
             public CancellationTokenRegistration CancellationRegistration { get; }
             public bool IsExecuting { get; set; }
@@ -51,19 +56,29 @@ namespace MCPForUnity.Editor.Services.Transport
                 CancellationRegistration.Dispose();
             }
 
-            public void TrySetResult(string payload)
+            public void TrySetResult(object payload)
             {
-                CompletionSource.TrySetResult(payload);
+                var response = TransportCommandResponse.FromObject(payload);
+                ResponseSource.TrySetResult(response);
+                JsonResponseSource?.TrySetResult(response.ToJson());
+            }
+
+            public void TrySetJsonResult(string payload)
+            {
+                ResponseSource.TrySetResult(TransportCommandResponse.FromJson(payload));
+                JsonResponseSource?.TrySetResult(payload);
             }
 
             public void TrySetCanceled()
             {
-                CompletionSource.TrySetCanceled(CancellationToken);
+                ResponseSource.TrySetCanceled(CancellationToken);
+                JsonResponseSource?.TrySetCanceled(CancellationToken);
             }
         }
 
         private static readonly Dictionary<string, PendingCommand> Pending = new();
         private static readonly object PendingLock = new();
+        private static readonly Queue<Action> MainThreadCallbacks = new();
         private static bool updateHooked;
         private static bool initialised;
 
@@ -94,16 +109,28 @@ namespace MCPForUnity.Editor.Services.Transport
                 throw new ArgumentNullException(nameof(commandJson));
             }
 
+            var operation = Enqueue(commandJson, null, cancellationToken);
+            return operation.JsonResponse;
+        }
+
+        internal static TransportCommandOperation ExecuteCommandAsync(Command command, CancellationToken cancellationToken)
+        {
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            return Enqueue(null, command, cancellationToken);
+        }
+
+        private static TransportCommandOperation Enqueue(string commandJson, Command command, CancellationToken cancellationToken)
+        {
             EnsureInitialised();
 
             var id = Guid.NewGuid().ToString("N");
-            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var registration = cancellationToken.CanBeCanceled
                 ? cancellationToken.Register(() => CancelPending(id, cancellationToken))
                 : default;
 
-            var pending = new PendingCommand(commandJson, tcs, cancellationToken, registration);
+            var pending = new PendingCommand(commandJson, command, cancellationToken, registration);
+            var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
 
             lock (PendingLock)
             {
@@ -115,7 +142,7 @@ namespace MCPForUnity.Editor.Services.Transport
             if (cancellationToken.IsCancellationRequested)
             {
                 CancelPending(id, cancellationToken);
-                return tcs.Task;
+                return operation;
             }
 
             // Proactively wake up the main thread execution loop. This improves responsiveness
@@ -123,7 +150,7 @@ namespace MCPForUnity.Editor.Services.Transport
             // (e.g., Unity unfocused, compiling, or during domain reload transitions).
             RequestMainThreadPump();
 
-            return tcs.Task;
+            return operation;
         }
 
         internal static Task<T> RunOnMainThreadAsync<T>(Func<T> func, CancellationToken cancellationToken)
@@ -171,6 +198,11 @@ namespace MCPForUnity.Editor.Services.Transport
                 return tcs.Task;
             }
 
+            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
+            {
+                lock (PendingLock) MainThreadCallbacks.Enqueue(Invoke);
+                return tcs.Task;
+            }
             Invoke();
             return tcs.Task;
         }
@@ -198,7 +230,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 return;
             }
 
-            Pump();
+            if (Thread.CurrentThread.ManagedThreadId == _mainThreadId) Pump();
         }
 
         private static void EnsureInitialised()
@@ -229,6 +261,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private static void ProcessQueue()
         {
+            if (Thread.CurrentThread.ManagedThreadId != _mainThreadId) return;
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
             {
                 return;
@@ -236,35 +269,30 @@ namespace MCPForUnity.Editor.Services.Transport
 
             try
             {
+            while (true)
+            {
+                Action callback;
+                lock (PendingLock)
+                {
+                    if (MainThreadCallbacks.Count == 0) break;
+                    callback = MainThreadCallbacks.Dequeue();
+                }
+                callback();
+            }
             List<(string id, PendingCommand pending)> ready = null;
 
             lock (PendingLock)
             {
-                // Early exit inside lock to prevent per-frame List allocations (GitHub issue #577)
-                if (Pending.Count == 0)
-                {
-                    return;
-                }
-
+                if (Pending.Count == 0) return;
                 foreach (var kvp in Pending)
                 {
-                    if (kvp.Value.IsExecuting)
-                    {
-                        continue;
-                    }
-
+                    if (kvp.Value.IsExecuting) continue;
                     kvp.Value.IsExecuting = true;
                     ready ??= new List<(string, PendingCommand)>(Pending.Count);
                     ready.Add((kvp.Key, kvp.Value));
                 }
-
-                if (ready == null)
-                {
-                    UnhookUpdateIfIdle();
-                    return;
-                }
+                if (ready == null) return;
             }
-
             foreach (var (id, pending) in ready)
             {
                 ProcessCommand(id, pending);
@@ -286,7 +314,7 @@ namespace MCPForUnity.Editor.Services.Transport
             }
 
             string commandText = pending.CommandJson?.Trim();
-            if (string.IsNullOrEmpty(commandText))
+            if (pending.Command == null && string.IsNullOrEmpty(commandText))
             {
                 pending.TrySetResult(SerializeError("Empty command received"));
                 RemovePending(id, pending);
@@ -300,12 +328,12 @@ namespace MCPForUnity.Editor.Services.Transport
                     status = "success",
                     result = new { message = "pong" }
                 };
-                pending.TrySetResult(JsonConvert.SerializeObject(pingResponse));
+                pending.TrySetResult(pingResponse);
                 RemovePending(id, pending);
                 return;
             }
 
-            if (!IsValidJson(commandText))
+            if (pending.Command == null && !IsValidJson(commandText))
             {
                 var invalidJsonResponse = new
                 {
@@ -313,14 +341,14 @@ namespace MCPForUnity.Editor.Services.Transport
                     error = "Invalid JSON format",
                     receivedText = commandText.Length > 50 ? commandText[..50] + "..." : commandText
                 };
-                pending.TrySetResult(JsonConvert.SerializeObject(invalidJsonResponse));
+                pending.TrySetResult(invalidJsonResponse);
                 RemovePending(id, pending);
                 return;
             }
 
             try
             {
-                var command = JsonConvert.DeserializeObject<Command>(commandText);
+                var command = pending.Command ?? JsonConvert.DeserializeObject<Command>(commandText);
                 if (command == null)
                 {
                     pending.TrySetResult(SerializeError("Command deserialized to null", "Unknown", commandText));
@@ -342,7 +370,7 @@ namespace MCPForUnity.Editor.Services.Transport
                         status = "success",
                         result = new { message = "pong" }
                     };
-                    pending.TrySetResult(JsonConvert.SerializeObject(pingResponse));
+                    pending.TrySetResult(pingResponse);
                     RemovePending(id, pending);
                     return;
                 }
@@ -380,8 +408,15 @@ namespace MCPForUnity.Editor.Services.Transport
                     var capturedType = logName;
                     var capturedParams = parameters;
                     var capturedLogType = logType;
-                    pending.CompletionSource.Task.ContinueWith(t =>
+                    void Complete(Task<string> t)
                     {
+                        if (t.IsCanceled) pending.TrySetCanceled();
+                        else if (t.IsFaulted)
+                        {
+                            pending.ResponseSource.TrySetException(t.Exception.InnerExceptions);
+                            pending.JsonResponseSource?.TrySetException(t.Exception.InnerExceptions);
+                        }
+                        else pending.TrySetJsonResult(t.Result);
                         sw?.Stop();
                         if (McpLogRecord.IsEnabled)
                         {
@@ -409,7 +444,10 @@ namespace MCPForUnity.Editor.Services.Transport
                                 logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
                         }
                         RemovePending(id, pending);
-                    }, TaskScheduler.Default);
+                    }
+                    var task = pending.CompletionSource.Task;
+                    if (task.IsCompleted) Complete(task);
+                    else _ = task.ContinueWith(Complete, TaskScheduler.Default);
                     return;
                 }
 
@@ -425,7 +463,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 McpLogRecord.Log(logName, parameters, logType, syncLogStatus, sw?.ElapsedMilliseconds ?? 0, syncLogError);
 
                 var response = new { status = "success", result };
-                pending.TrySetResult(JsonConvert.SerializeObject(response));
+                pending.TrySetResult(response);
                 RemovePending(id, pending);
             }
             catch (Exception ex)
@@ -443,6 +481,7 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 if (Pending.Remove(id, out pending))
                 {
+                    if (!pending.IsExecuting) pending.ExecutionSource.TrySetResult(true);
                     UnhookUpdateIfIdle();
                 }
             }
@@ -460,9 +499,10 @@ namespace MCPForUnity.Editor.Services.Transport
             }
 
             pending.Dispose();
+            pending.ExecutionSource.TrySetResult(true);
         }
 
-        private static string SerializeError(string message, string commandType = null, string stackTrace = null)
+        private static object SerializeError(string message, string commandType = null, string stackTrace = null)
         {
             var errorResponse = new
             {
@@ -471,7 +511,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 command = commandType ?? "Unknown",
                 stackTrace
             };
-            return JsonConvert.SerializeObject(errorResponse);
+            return errorResponse;
         }
 
         private static bool IsValidJson(string text)

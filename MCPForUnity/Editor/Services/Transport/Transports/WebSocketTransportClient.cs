@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
@@ -46,6 +47,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private CancellationTokenSource _connectionCts;
         private Task _receiveTask;
         private Task _keepAliveTask;
+        private Task _registrationTask;
+        private ConnectionCommandWork _commandWork;
+        private IDisposable _statePublisher;
+        private bool _largeResultNegotiated;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
 
         private Uri _endpointUri;
@@ -217,12 +222,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _socket = null;
                 _receiveTask = null;
                 _keepAliveTask = null;
+                _registrationTask = null;
+                _commandWork = null;
+                _statePublisher = null;
+                _largeResultNegotiated = false;
                 Interlocked.Exchange(ref _isReconnectingFlag, 0);
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName);
             }
             try { lifecycleCts?.Cancel(); } catch { }
             try { loops.Cts?.Cancel(); } catch { }
+            loops.Publisher?.Dispose();
             try { socket?.Abort(); } catch { }
             try { socket?.Dispose(); } catch { }
             try { loops.Cts?.Dispose(); } catch { }
@@ -243,9 +253,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             try
             {
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
+                CancellationToken ownerToken;
+                lock (_ownershipLock)
+                {
+                    if (_connectionCts == null) return false;
+                    ownerToken = _connectionCts.Token;
+                }
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ownerToken);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-                await SendPongAsync(timeoutCts.Token).ConfigureAwait(false);
+                var payload = new JObject { ["type"] = "pong", ["session_id"] = _sessionId };
+                await SendStateAsync(payload, ownerToken, timeoutCts.Token).ConfigureAwait(false);
                 return true;
             }
             catch (Exception ex)
@@ -298,7 +315,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             lock (_ownershipLock)
             {
                 ownsLifecycle = ReferenceEquals(_lifecycleCts, lifecycleCts) && !token.IsCancellationRequested;
-                if (ownsLifecycle) _connectionCts = connectionCts;
+                if (ownsLifecycle)
+                {
+                    _connectionCts = connectionCts;
+                    _commandWork = new ConnectionCommandWork(connectionToken);
+                    _largeResultNegotiated = false;
+                }
             }
             if (!ownsLifecycle)
             {
@@ -403,12 +425,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public CancellationTokenSource Cts;
             public Task Receive;
             public Task KeepAlive;
+            public Task Registration;
+            public ConnectionCommandWork Commands;
+            public IDisposable Publisher;
         }
 
         // Caller holds _ownershipLock; cancellation callbacks run only after capture.
         private ConnectionLoops CaptureConnectionLoops() => new ConnectionLoops
         {
-            Cts = _connectionCts, Receive = _receiveTask, KeepAlive = _keepAliveTask
+            Cts = _connectionCts, Receive = _receiveTask, KeepAlive = _keepAliveTask,
+            Registration = _registrationTask,
+            Commands = _commandWork, Publisher = _statePublisher
         };
 
         // Callers hold _ownershipLock when checking and publishing connection state.
@@ -440,6 +467,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (connectionCts != null && !connectionCts.IsCancellationRequested)
             {
                 try { connectionCts.Cancel(); } catch { }
+            }
+            loops.Publisher?.Dispose();
+            if (loops.Publisher != null) Interlocked.CompareExchange(ref _statePublisher, null, loops.Publisher);
+            if (awaitTasks && loops.Commands != null)
+            {
+                await loops.Commands.DrainAsync().ConfigureAwait(false);
+                Interlocked.CompareExchange(ref _commandWork, null, loops.Commands);
+            }
+            if (awaitTasks && loops.Registration != null)
+            {
+                try { await loops.Registration.ConfigureAwait(false); } catch { }
+                _ = Interlocked.CompareExchange(ref _registrationTask, null, loops.Registration);
             }
 
             if (receiveTask != null)
@@ -628,23 +667,56 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private async Task HandleRegisteredAsync(JObject payload, CancellationToken token)
+        private Task HandleRegisteredAsync(JObject payload, CancellationToken token)
         {
             string newSessionId = payload.Value<string>("session_id");
             if (!string.IsNullOrEmpty(newSessionId))
             {
                 lock (_ownershipLock)
                 {
-                    if (!IsCurrentConnectionToken(token)) return;
+                    if (!IsCurrentConnectionToken(token)) return Task.CompletedTask;
                     _sessionId = newSessionId;
+                    _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
+                    _statePublisher?.Dispose();
+                    _statePublisher = null;
                     _state = TransportState.Connected(TransportDisplayName, sessionId: newSessionId, details: _endpointUri.ToString());
                 }
                 // Validate again when the deferred main-thread write actually executes.
                 EditorApplication.delayCall += () => PersistSessionIdIfCurrent(newSessionId, token);
                 McpLog.Info($"[WebSocket] Registered with session ID: {newSessionId}", false);
 
-                await SendRegisterToolsAsync(token).ConfigureAwait(false);
+                lock (_ownershipLock)
+                {
+                    if (!IsCurrentConnectionToken(token)) return Task.CompletedTask;
+                    if (_registrationTask == null || _registrationTask.IsCompleted)
+                        _registrationTask = CompleteRegistrationAsync(payload, token);
+                }
             }
+            return Task.CompletedTask;
+        }
+
+        private async Task CompleteRegistrationAsync(JObject payload, CancellationToken token)
+        {
+            try
+            {
+                await SendRegisterToolsAsync(token).ConfigureAwait(false);
+                if (HasCapability(payload, EditorStatePublisher.Capability))
+                {
+                    var publisher = await TransportCommandDispatcher.RunOnMainThreadAsync(
+                        () => EditorStatePublisher.Start((state, sendToken) => SendStateAsync(state, token, sendToken), token), token).ConfigureAwait(false);
+                    lock (_ownershipLock)
+                    {
+                        if (IsCurrentConnectionToken(token))
+                        {
+                            _statePublisher?.Dispose();
+                            _statePublisher = publisher;
+                        }
+                        else publisher.Dispose();
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false); }
         }
 
         private void PersistSessionIdIfCurrent(string sessionId, CancellationToken token)
@@ -725,7 +797,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             try
             {
-                await SendRegisterToolsAsync(_lifecycleCts.Token).ConfigureAwait(false);
+                CancellationToken token;
+                lock (_ownershipLock)
+                {
+                    if (_connectionCts == null) return;
+                    token = _connectionCts.Token;
+                }
+                await SendRegisterToolsAsync(token).ConfigureAwait(false);
                 McpLog.Info("[WebSocket] Tool reregistration completed", false);
             }
             catch (System.OperationCanceledException)
@@ -751,58 +829,88 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return;
             }
 
-            var commandEnvelope = new JObject
+            ConnectionCommandWork work;
+            lock (_ownershipLock)
             {
-                ["type"] = commandName,
-                ["params"] = parameters
-            };
+                if (!IsCurrentConnectionToken(token)) return;
+                work = _commandWork;
+            }
+            if (work == null) return;
+            var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Math.Min(int.MaxValue / 1000, timeoutSeconds))));
+            var command = new Command { type = commandName, @params = parameters };
+            var request = new QueuedCommand { Id = commandId, Command = command, TimeoutSeconds = timeoutSeconds, Deadline = deadline };
+            string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token));
+            if (rejection != null)
+            {
+                deadline.Dispose();
+                await SendCommandResultAsync(commandId, new { status = "error", error = rejection }, token).ConfigureAwait(false);
+            }
+        }
 
-            string responseJson;
+        private sealed class QueuedCommand
+        {
+            public string Id;
+            public Command Command;
+            public int TimeoutSeconds;
+            public CancellationTokenSource Deadline;
+        }
+
+        private async Task ExecuteQueuedCommandAsync(Task previous, QueuedCommand request, CancellationToken token)
+        {
+            TransportCommandOperation operation = null;
             try
             {
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)));
-                responseJson = await TransportCommandDispatcher.ExecuteCommandJsonAsync(commandEnvelope.ToString(Formatting.None), timeoutCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                responseJson = JsonConvert.SerializeObject(new
+                object response;
+                try
                 {
-                    status = "error",
-                    error = $"Command '{commandName}' timed out after {timeoutSeconds} seconds"
-                });
+                    await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
+                    request.Deadline.Token.ThrowIfCancellationRequested();
+                    operation = TransportCommandDispatcher.ExecuteCommandAsync(request.Command, request.Deadline.Token);
+                    response = (await operation.Response.ConfigureAwait(false)).Payload;
+                }
+                catch (OperationCanceledException)
+                {
+                    token.ThrowIfCancellationRequested();
+                    response = new { status = "error", error = $"Command '{request.Command.type}' timed out after {request.TimeoutSeconds} seconds" };
+                }
+                catch (Exception ex) { response = new { status = "error", error = ex.Message }; }
+                await SendCommandResultAsync(request.Id, response, token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                responseJson = JsonConvert.SerializeObject(new
+                await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
+            }
+            finally
+            {
+                try
                 {
-                    status = "error",
-                    error = ex.Message
-                });
+                    // A response timeout never lets the following mutation overtake an active handler.
+                    await ConnectionCommandWork.WaitAsync(previous, token).ConfigureAwait(false);
+                    if (operation != null) await ConnectionCommandWork.WaitAsync(operation.Completion, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { }
+                request.Deadline.Dispose();
             }
+        }
 
-            JToken resultToken;
-            try
+        private Task SendCommandResultAsync(string id, object result, CancellationToken token)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { type = "command_result", id, result }));
+            bool negotiated;
+            lock (_ownershipLock)
             {
-                resultToken = JToken.Parse(responseJson);
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrentConnectionToken(token)) throw new OperationCanceledException(token);
+                negotiated = _largeResultNegotiated;
             }
-            catch
-            {
-                resultToken = new JObject
-                {
-                    ["status"] = "error",
-                    ["error"] = "Invalid response payload"
-                };
-            }
-
-            var responsePayload = new JObject
-            {
-                ["type"] = "command_result",
-                ["id"] = commandId,
-                ["result"] = resultToken
-            };
-
-            await SendJsonAsync(responsePayload, token).ConfigureAwait(false);
+            if (bytes.Length > LargeResultWriter.MaxResultBytes)
+                bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new { type = "command_result", id,
+                    result = new { status = "error", error = "Command result exceeds the transport size limit" } }));
+            // Legacy integrations can use opaque IDs; they retain text responses.
+            if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id) negotiated = false;
+            return LargeResultWriter.SendAsync(id, bytes, negotiated, SendFrameAsync, token);
         }
 
         private async Task KeepAliveLoopAsync(CancellationToken token)
@@ -840,7 +948,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["project_name"] = _projectName,
                 ["project_hash"] = _projectHash,
                 ["unity_version"] = _unityVersion,
-                ["project_path"] = _projectPath
+                ["project_path"] = _projectPath,
+                ["capabilities"] = new JArray(EditorStatePublisher.Capability, LargeResultWriter.Capability)
             };
 
             await SendJsonAsync(registerPayload, token).ConfigureAwait(false);
@@ -858,24 +967,48 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private async Task SendJsonAsync(JObject payload, CancellationToken token)
         {
-            if (_socket == null)
-            {
-                throw new InvalidOperationException("WebSocket is not initialised");
-            }
-
             string json = payload.ToString(Formatting.None);
             byte[] bytes = Encoding.UTF8.GetBytes(json);
-            var buffer = new ArraySegment<byte>(bytes);
+            await SendFrameAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, token).ConfigureAwait(false);
+        }
+
+        private static bool HasCapability(JObject payload, string capability)
+        {
+            if (payload["capabilities"] is not JArray capabilities) return false;
+            foreach (var value in capabilities)
+                if (value.Type == JTokenType.String && value.Value<string>() == capability) return true;
+            return false;
+        }
+
+        private Task SendStateAsync(JObject payload, CancellationToken ownerToken, CancellationToken sendToken)
+            => SendOwnedFrameAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload.ToString(Formatting.None))),
+                WebSocketMessageType.Text, ownerToken, sendToken);
+
+        private Task SendFrameAsync(ArraySegment<byte> buffer, WebSocketMessageType type, CancellationToken token)
+            => SendOwnedFrameAsync(buffer, type, token, token);
+
+        private async Task SendOwnedFrameAsync(ArraySegment<byte> buffer, WebSocketMessageType type,
+            CancellationToken ownerToken, CancellationToken token)
+        {
+            ClientWebSocket socket;
+            lock (_ownershipLock)
+            {
+                if (!IsCurrentConnectionToken(ownerToken)) throw new OperationCanceledException(ownerToken);
+                socket = _socket ?? throw new InvalidOperationException("WebSocket is not initialised");
+            }
 
             await _sendLock.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                if (_socket.State != WebSocketState.Open)
+                lock (_ownershipLock)
+                    if (!IsCurrentConnectionToken(ownerToken) || !ReferenceEquals(_socket, socket))
+                        throw new OperationCanceledException(ownerToken);
+                if (socket.State != WebSocketState.Open)
                 {
                     throw new InvalidOperationException("WebSocket is not open");
                 }
 
-                await _socket.SendAsync(buffer, WebSocketMessageType.Text, true, token).ConfigureAwait(false);
+                await socket.SendAsync(buffer, type, true, token).ConfigureAwait(false);
             }
             finally
             {
