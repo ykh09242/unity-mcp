@@ -66,6 +66,10 @@ async def send_with_unity_instance(
         if not isinstance(retry_on_reload, bool):
             retry_on_reload = True
 
+        read_options = {}
+        if "editor_state_read_mode" in kwargs:
+            read_options["editor_state_read_mode"] = kwargs.pop("editor_state_read_mode")
+
         try:
             raw = await PluginHub.send_command_for_instance(
                 unity_instance,
@@ -73,6 +77,7 @@ async def send_with_unity_instance(
                 params,
                 user_id=user_id,
                 retry_on_reload=retry_on_reload,
+                **read_options,
             )
             return normalize_unity_response(raw)
         except InstanceSelectionRequiredError as exc:

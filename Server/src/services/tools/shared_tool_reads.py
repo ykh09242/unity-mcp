@@ -84,7 +84,8 @@ class SharedRead(Generic[T]):
         """Share a fresh read, returning private data for caller-side observations."""
         flight = self._flight
         if flight is not None and flight.task.done() and not flight.task.cancelled():
-            if asyncio.get_running_loop().time() - flight.task.result().received_at >= self._freshness_s:
+            if (flight.task.exception() is not None
+                    or asyncio.get_running_loop().time() - flight.task.result().received_at >= self._freshness_s):
                 flight.release()
                 flight = None
         if flight is None or flight.task.cancelled():

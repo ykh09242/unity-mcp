@@ -10,8 +10,9 @@ import sys
 import time
 import uuid
 import weakref
+from dataclasses import dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import anyio
 from starlette.endpoints import WebSocketEndpoint
@@ -23,7 +24,7 @@ from models.models import MCPResponse
 from models.response_limits import (
     MAX_RESPONSE_BYTES, MAX_RESPONSE_DEPTH, MAX_RESPONSE_NODES,
     MAX_RESPONSE_RETAINED_BYTES, bounded_json_text, response_limit_error, response_size,
-    response_owner,
+    ResponseOwner, response_owner,
 )
 from transport.plugin_registry import PluginRegistry
 from transport.editor_state_store import EditorStateStore
@@ -34,6 +35,7 @@ from transport.large_result_assembler import (
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from services.api_key_service import ApiKeyService
+from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -91,6 +93,18 @@ class PluginDisconnectedError(RuntimeError):
 
 class NoUnitySessionError(RuntimeError):
     """Raised when no Unity plugins are available."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ConnectionReadIdentity:
+    """Pin a read to one registered principal, socket and admission epoch."""
+
+    session_id: str
+    user_id: str | None
+    socket_id: int
+    generation: str
+    command_epoch: int
+    state_epoch: int
 
 
 class InstanceSelectionRequiredError(RuntimeError):
@@ -185,6 +199,10 @@ class PluginHub(WebSocketEndpoint):
     CAPABILITIES = frozenset({"editor_state_v1", LARGE_RESULT_CAPABILITY,
                               COMPRESSION_CAPABILITY, CANCELLATION_CAPABILITY})
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
+    # No completed-result TTL: only callers overlapping an actual RPC share it.
+    _readiness_reads: ClassVar[SharedToolReads[dict[str, Any]]] = SharedToolReads()
+    _ordinary_state_reads: ClassVar[SharedToolReads[dict[str, Any]]] = SharedToolReads()
+    _NON_MUTATING_COMMANDS = frozenset({"ping", "get_editor_state", "get_test_job"})
     _large_results: ClassVar[LargeResultAssembler | None] = None
     _raw_results: ClassVar[dict[tuple[str, str], dict[str, Any]]] = {}
 
@@ -371,6 +389,8 @@ class PluginHub(WebSocketEndpoint):
         # Ensure coordination primitives are bound to the configured loop
         cls._lock = asyncio.Lock()
         cls._editor_states = EditorStateStore()
+        cls._readiness_reads = SharedToolReads()
+        cls._ordinary_state_reads = SharedToolReads()
         cls._raw_results = {}
         cls._large_results = LargeResultAssembler(
             cls._transfer_pending, cls._reserve_transfer, cls._release_transfer,
@@ -644,8 +664,95 @@ class PluginHub(WebSocketEndpoint):
             return cls._editor_states.get(session_id, user_id)
 
     @classmethod
-    async def send_command(cls, session_id: str, command_type: str, params: dict[str, Any]) -> dict[str, Any]:
-        websocket = await cls._get_connection(session_id)
+    async def _read_identity(cls, session_id: str, *, authoritative: bool = False) -> _ConnectionReadIdentity | None:
+        """Capture only live registered identity; epochs stay bounded by sockets."""
+        lock, registry = cls._lock, cls._registry
+        if lock is None or registry is None:
+            return None
+        async with lock:
+            if cls._registry is not registry:
+                return None
+            session = await registry.get_session(session_id)
+            websocket = cls._connections.get(session_id)
+            if session is None or websocket is None:
+                return None
+            state = websocket.state
+            generation = getattr(state, "plugin_generation", None)
+            command_epoch = getattr(state, "plugin_command_epoch", 0)
+            state_epoch = getattr(state, "plugin_state_read_epoch", 0)
+            if (not isinstance(generation, str) or not generation
+                    or not getattr(state, "plugin_registered", False)
+                    or getattr(state, "plugin_session_id", None) != session_id
+                    or getattr(state, "user_id", None) != session.user_id
+                    or type(command_epoch) is not int or type(state_epoch) is not int
+                    or websocket.client_state != WebSocketState.CONNECTED
+                    or websocket.application_state != WebSocketState.CONNECTED):
+                return None
+            if authoritative:
+                state_epoch += 1
+                state.plugin_state_read_epoch = state_epoch
+            return _ConnectionReadIdentity(session_id, session.user_id, id(websocket), generation,
+                                           command_epoch, state_epoch)
+
+    @staticmethod
+    def _is_non_mutating(command_type: str, params: dict[str, Any]) -> bool:
+        """Keep console get read-only; clear and ambiguous actions invalidate."""
+        if command_type == "read_console":
+            action = params.get("action")
+            return action is None or isinstance(action, str) and action.lower() == "get"
+        return command_type in PluginHub._NON_MUTATING_COMMANDS
+
+    @staticmethod
+    def _matches_read_identity(websocket: WebSocket, user_id: str | None, identity: _ConnectionReadIdentity) -> bool:
+        """Check the captured generation atomically at actual command admission."""
+        state = websocket.state
+        return (id(websocket) == identity.socket_id and user_id == identity.user_id
+                and getattr(state, "user_id", None) == identity.user_id
+                and getattr(state, "plugin_session_id", None) == identity.session_id
+                and getattr(state, "plugin_generation", None) == identity.generation
+                and getattr(state, "plugin_command_epoch", 0) == identity.command_epoch
+                # State epochs separate joining, not admission: two independent
+                # fresh reads can both finish after invalidating older flights.
+                and websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED)
+
+    @classmethod
+    async def _readiness_probe(cls, session_id: str, identity: _ConnectionReadIdentity | None) -> Literal[
+        "ready", "retry", "command_capacity", "result_capacity", "read_invalidated"
+    ]:
+        """Share a pending ping, reducing its charged copy before returning."""
+        owner = ResponseOwner()
+        token = response_owner.set(owner)
+        try:
+            if identity is None:
+                probe = await cls.send_command(session_id, "ping", {})
+            else:
+                async with cls._readiness_reads.session(identity) as read:
+                    probe = await read.fetch(lambda: cls.send_command(session_id, "ping", {}, _expected_read=identity))
+            data = probe.get("data")
+            if isinstance(data, dict):
+                reason = data.get("reason")
+                if isinstance(reason, str) and reason in {"command_capacity", "result_capacity", "read_invalidated"}:
+                    return reason
+            result = probe.get("result")
+            if probe.get("status") == "success" and isinstance(result, dict) and result.get("message") == "pong":
+                return "ready"
+            return "retry"
+        except SharedReadCapacityError:
+            return "result_capacity"
+        finally:
+            response_owner.reset(token)
+            owner.release()
+
+    @classmethod
+    async def send_command(cls, session_id: str, command_type: str, params: dict[str, Any], *,
+                           _expected_read: _ConnectionReadIdentity | None = None) -> dict[str, Any]:
+        try:
+            websocket = await cls._get_connection(session_id)
+        except RuntimeError:
+            if _expected_read is not None:
+                return cls._unavailable_retry_response("read_invalidated")
+            raise
         registry = cls._registry
         session = await registry.get_session(session_id) if registry is not None else None
         # Admission follows the registered principal, never caller parameters.
@@ -693,7 +800,11 @@ class PluginHub(WebSocketEndpoint):
         async with lock:
             # Disconnect can run between the initial lookup and this lock.
             if cls._connections.get(session_id) is not websocket:
+                if _expected_read is not None:
+                    return cls._unavailable_retry_response("read_invalidated")
                 raise RuntimeError(f"Plugin session {session_id} not connected")
+            if _expected_read is not None and not cls._matches_read_identity(websocket, user_id, _expected_read):
+                return cls._unavailable_retry_response("read_invalidated")
             # _pending is the single source of accounting: every existing pop on
             # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
             user_count = session_count = total_bytes = user_bytes = session_bytes = 0
@@ -720,6 +831,14 @@ class PluginHub(WebSocketEndpoint):
                     or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
                     or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION):
                 return cls._command_capacity_response()
+            # Unknown/custom/batch commands may mutate. Advance before socket
+            # I/O so later readers cannot join an earlier observation.
+            if not cls._is_non_mutating(command_type, params):
+                epoch = getattr(websocket.state, "plugin_command_epoch", 0)
+                websocket.state.plugin_command_epoch = epoch + 1 if type(epoch) is int else 1
+            if command_type == "get_editor_state" and _expected_read is None:
+                epoch = getattr(websocket.state, "plugin_state_read_epoch", 0)
+                websocket.state.plugin_state_read_epoch = epoch + 1 if type(epoch) is int else 1
             command_id = str(uuid.uuid4())
             if command_id in cls._pending:
                 raise RuntimeError(
@@ -957,6 +1076,8 @@ class PluginHub(WebSocketEndpoint):
             websocket.state.plugin_registered = True
             websocket.state.plugin_session_id = session_id
             websocket.state.plugin_generation = str(uuid.uuid4())
+            websocket.state.plugin_command_epoch = 0
+            websocket.state.plugin_state_read_epoch = 0
             accepted = cls.CAPABILITIES.intersection(payload.capabilities)
             if LARGE_RESULT_CAPABILITY not in accepted:
                 accepted = accepted - {COMPRESSION_CAPABILITY}
@@ -1612,6 +1733,8 @@ class PluginHub(WebSocketEndpoint):
         params: dict[str, Any],
         user_id: str | None = None,
         retry_on_reload: bool = True,
+        *,
+        editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
     ) -> dict[str, Any]:
         """Send a command to a Unity instance.
 
@@ -1650,6 +1773,9 @@ class PluginHub(WebSocketEndpoint):
             if not await cls._ensure_live_connection(session_id):
                 return cls._unavailable_retry_response("stale_connection")
 
+        share_state = command_type == "get_editor_state" and not params and editor_state_read_mode == "ordinary"
+        identity = await cls._read_identity(session_id, authoritative=command_type == "get_editor_state" and not share_state)
+
         # During domain reload / immediate reconnect windows, the plugin may be connected but not yet
         # ready to process execute commands on the Unity main thread (which can be further delayed when
         # the Unity Editor is unfocused). For fast-path commands, we do a bounded readiness probe using
@@ -1662,22 +1788,20 @@ class PluginHub(WebSocketEndpoint):
                 deadline = time.monotonic() + max_wait_s
                 while time.monotonic() < deadline:
                     try:
-                        probe = await cls.send_command(session_id, "ping", {})
+                        outcome = await cls._readiness_probe(session_id, identity)
                     except Exception:
-                        probe = None
+                        outcome = "retry"
 
                     # Capacity refusal must stay cheap for readiness-gated tools
                     # too; repeated probes cannot make space for the caller.
-                    if isinstance(probe, dict) and isinstance(probe.get("data"), dict):
-                        if probe["data"].get("reason") == "command_capacity":
-                            return probe
-
-                    # The Unity-side dispatcher responds with {status:"success", result:{message:"pong"}}
-                    if isinstance(probe, dict) and probe.get("status") == "success":
-                        result = probe.get("result") if isinstance(
-                            probe.get("result"), dict) else {}
-                        if result.get("message") == "pong":
-                            break
+                    if outcome == "command_capacity":
+                        return cls._command_capacity_response()
+                    if outcome == "result_capacity":
+                        return response_limit_error("result_capacity")
+                    if outcome == "read_invalidated":
+                        return cls._unavailable_retry_response("read_invalidated")
+                    if outcome == "ready":
+                        break
                     await asyncio.sleep(0.1)
                 else:
                     # Not ready within the bounded window: return retry hint without sending.
@@ -1687,6 +1811,14 @@ class PluginHub(WebSocketEndpoint):
                         hint="retry",
                     ).model_dump()
 
+        if share_state and identity is not None:
+            try:
+                async with cls._ordinary_state_reads.session(identity) as read:
+                    return await read.fetch(lambda: cls.send_command(session_id, command_type, params, _expected_read=identity))
+            except SharedReadCapacityError:
+                return response_limit_error("result_capacity")
+        if identity is not None and command_type in cls._FAST_FAIL_COMMANDS:
+            return await cls.send_command(session_id, command_type, params, _expected_read=identity)
         return await cls.send_command(session_id, command_type, params)
 
     # ------------------------------------------------------------------

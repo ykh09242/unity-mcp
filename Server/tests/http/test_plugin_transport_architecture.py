@@ -365,7 +365,7 @@ def test_cached_resource_reads_reuse_push_but_strict_and_stale_reads_use_rpc(cli
 
     monkeypatch.setattr(resource, "get_unity_instance_from_context", AsyncMock(return_value="owner"))
     authoritative = state_message(sequence=99)["state"]
-    rpc = AsyncMock(side_effect=lambda *args: {"success": True, "data": deepcopy(authoritative)})
+    rpc = AsyncMock(side_effect=lambda *args, **kwargs: {"success": True, "data": deepcopy(authoritative)})
     monkeypatch.setattr(resource.unity_transport, "send_with_unity_instance", rpc)
     ctx = SimpleNamespace(get_state=AsyncMock(return_value="alice"))
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
@@ -378,7 +378,9 @@ def test_cached_resource_reads_reuse_push_but_strict_and_stale_reads_use_rpc(cli
         strict = client.portal.call(resource.get_editor_state_authoritative, ctx)
         assert strict.data["sequence"] == 99
         assert rpc.await_count == 1
+        assert rpc.call_args.kwargs["editor_state_read_mode"] == "authoritative"
         client.app.state.clock.update(wall=103, mono=13)
         expired = client.portal.call(resource.get_editor_state, ctx)
         assert expired.data["sequence"] == 99
         assert rpc.await_count == 2
+        assert rpc.call_args.kwargs["editor_state_read_mode"] == "ordinary"

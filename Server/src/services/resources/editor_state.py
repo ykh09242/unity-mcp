@@ -280,8 +280,12 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
             response = {"success": True, "data": cached}
     if response is None:
         async def fetch_state() -> Any:
+            read_options = {}
+            if (config.transport_mode or "stdio").lower() == "http":
+                read_options["editor_state_read_mode"] = "authoritative" if require_fresh else "ordinary"
             value = await unity_transport.send_with_unity_instance(
                 async_send_command_with_retry, unity_instance, "get_editor_state", {},
+                **read_options,
             )
             return value.model_dump() if isinstance(value, MCPResponse) else value
         if stdio_key is not None and not require_fresh:
