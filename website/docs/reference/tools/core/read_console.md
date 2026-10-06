@@ -26,6 +26,7 @@ Gets messages from or clears the Unity Editor console. Defaults to 10 most recen
 | `cursor` | `int \| str \| None` | — | Opaque cursor for paging (0-based offset). Defaults to 0. |
 | `format` | `Literal['plain', 'detailed', 'json'] \| None` | — | Output format |
 | `include_stacktrace` | `bool \| str \| None` | — | Include stack traces in output (accepts true/false or 'true'/'false') |
+| `fields` | `list[Literal['type', 'message', 'file', 'line', 'stackTrace']] \| str \| None` | — | Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema. |
 
 ## Returns
 

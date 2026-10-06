@@ -5,12 +5,16 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import TypeAdapter, ValidationError
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_int, coerce_bool, parse_json_payload
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+
+ConsoleField = Literal['type', 'message', 'file', 'line', 'stackTrace']
+_CONSOLE_FIELDS = TypeAdapter(list[ConsoleField])
 
 
 def _strip_stacktrace_from_list(items: list) -> None:
@@ -50,10 +54,11 @@ async def read_console(
                               'json'], "Output format"] | None = None,
     include_stacktrace: Annotated[bool | str,
                                   "Include stack traces in output (accepts true/false or 'true'/'false')"] | None = None,
+    fields: Annotated[list[ConsoleField] | str,
+                      "Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema."] | None = None,
 ) -> dict[str, Any]:
     # Get active instance from session state
     # Removed session_state import
-    unity_instance = await get_unity_instance_from_context(ctx)
     # Set defaults if values are None
     action = action if action is not None else 'get'
     
@@ -103,6 +108,20 @@ async def read_console(
     if isinstance(action, str):
         action = action.lower()
 
+    selected_fields = None
+    if fields is not None:
+        try:
+            selected_fields = _CONSOLE_FIELDS.validate_python(parse_json_payload(fields), strict=True)
+        except ValidationError:
+            return {"success": False, "message": "fields must be a list of type, message, file, line, or stackTrace."}
+        if (not selected_fields or len(set(selected_fields)) != len(selected_fields)
+                or not {"type", "message"}.issubset(selected_fields)):
+            return {"success": False, "message": "fields must be unique and include both type and message."}
+        if action != "get" or format not in ("json", "detailed"):
+            return {"success": False, "message": "fields is supported only for get with json or detailed format."}
+        if "stackTrace" in selected_fields and not include_stacktrace:
+            return {"success": False, "message": "The stackTrace field requires include_stacktrace=true."}
+
     # Read an integer count without boolean conversion or fractional truncation.
     # Important: leaving count unset previously meant "return all console entries", which can be extremely slow
     # (and can exceed the plugin command timeout when Unity has a large console).
@@ -137,7 +156,11 @@ async def read_console(
     if 'count' not in params_dict:
         params_dict['count'] = None
 
+    if selected_fields is not None:
+        params_dict['fields'] = selected_fields
+
     # Use centralized retry helper with instance routing
+    unity_instance = await get_unity_instance_from_context(ctx)
     resp = await send_with_unity_instance(async_send_command_with_retry, unity_instance, "read_console", params_dict)
     if isinstance(resp, dict) and resp.get("success") and not include_stacktrace:
         # Strip stacktrace fields from returned lines if present

@@ -183,6 +183,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (action == "clear")
                 {
+                    if (p.GetRaw("fields") != null && p.GetRaw("fields").Type != JTokenType.Null)
+                        return new ErrorResponse("'fields' is supported only for get with json or detailed format.");
                     return ClearConsole();
                 }
                 else if (action == "get")
@@ -197,6 +199,38 @@ namespace MCPForUnity.Editor.Tools
                     string filterText = p.Get("filterText");
                     string format = p.Get("format", "plain").ToLower();
                     bool includeStacktrace = p.GetBool("includeStacktrace", false);
+                    HashSet<string> fields = null;
+                    JToken fieldsToken = p.GetRaw("fields");
+                    if (fieldsToken != null && fieldsToken.Type != JTokenType.Null)
+                    {
+                        if (format != "json" && format != "detailed")
+                            return new ErrorResponse("'fields' is supported only for get with json or detailed format.");
+                        if (fieldsToken.Type == JTokenType.String)
+                        {
+                            try { fieldsToken = JArray.Parse(fieldsToken.Value<string>()); }
+                            catch (Newtonsoft.Json.JsonException)
+                            {
+                                return new ErrorResponse("'fields' must be a list of type, message, file, line, or stackTrace.");
+                            }
+                        }
+                        if (!(fieldsToken is JArray fieldArray) || fieldArray.Count < 2 || fieldArray.Count > 5)
+                            return new ErrorResponse("'fields' must be unique and include both type and message.");
+                        fields = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (JToken field in fieldArray)
+                        {
+                            if (field.Type != JTokenType.String)
+                                return new ErrorResponse("'fields' entries must be strings.");
+                            string name = field.Value<string>();
+                            if (name != "type" && name != "message" && name != "file" && name != "line" && name != "stackTrace")
+                                return new ErrorResponse("'fields' contains an unsupported field.");
+                            if (!fields.Add(name))
+                                return new ErrorResponse("'fields' entries must be unique.");
+                        }
+                        if (!fields.Contains("type") || !fields.Contains("message"))
+                            return new ErrorResponse("'fields' must include both type and message.");
+                        if (fields.Contains("stackTrace") && !includeStacktrace)
+                            return new ErrorResponse("The stackTrace field requires includeStacktrace=true.");
+                    }
 
                     if (types.Contains("all"))
                     {
@@ -210,7 +244,8 @@ namespace MCPForUnity.Editor.Tools
                         cursor,
                         filterText,
                         format,
-                        includeStacktrace
+                        includeStacktrace,
+                        fields
                     );
                 }
                 else
@@ -354,7 +389,8 @@ namespace MCPForUnity.Editor.Tools
             int? cursor,
             string filterText,
             string format,
-            bool includeStacktrace
+            bool includeStacktrace,
+            HashSet<string> fields = null
         )
         {
             List<object> formattedEntries = new List<object>();
@@ -411,10 +447,6 @@ namespace MCPForUnity.Editor.Tools
                     // Extract data using reflection
                     int mode = (int)_modeField.GetValue(logEntryInstance);
                     string message = (string)_messageField.GetValue(logEntryInstance);
-                    string file = (string)_fileField.GetValue(logEntryInstance);
-
-                    int line = (int)_lineField.GetValue(logEntryInstance);
-
                     if (string.IsNullOrEmpty(message))
                     {
                         continue; // Skip empty messages
@@ -452,12 +484,24 @@ namespace MCPForUnity.Editor.Tools
                         continue;
                     }
 
-                    int? callstackStart = _callstackTextStartField?.GetValue(logEntryInstance) as int?;
-                    var (messageOnly, stackTrace) = SplitMessageAndStackTrace(message, callstackStart);
-                    if (!includeStacktrace)
+                    totalMatches++;
+                    // Filtering/counting does not need a formatted entry. Only
+                    // materialize the requested page; the lookahead match still
+                    // determines truncated/nextCursor exactly as before.
+                    if (usePaging)
                     {
-                        stackTrace = null;
+                        if (totalMatches <= resolvedCursor) continue;
+                        if (totalMatches > pageEndExclusive) break;
                     }
+
+                    int? callstackStart = _callstackTextStartField?.GetValue(logEntryInstance) as int?;
+                    string messageOnly;
+                    string stackTrace = null;
+                    if (includeStacktrace && (fields == null || fields.Contains("stackTrace")) && format != "plain")
+                    {
+                        (messageOnly, stackTrace) = SplitMessageAndStackTrace(message, callstackStart);
+                    }
+                    else messageOnly = GetMessageBody(message, callstackStart);
 
                     object formattedEntry = null;
                     switch (format)
@@ -468,32 +512,36 @@ namespace MCPForUnity.Editor.Tools
                         case "json":
                         case "detailed": // Treat detailed as json for structured return
                         default:
-                            formattedEntry = new
+                            if (fields != null)
                             {
-                                type = unityType.ToString(),
-                                message = messageOnly,
-                                file = file,
-                                line = line,
-                                stackTrace = stackTrace, // Will be null if includeStacktrace is false or no stack found
-                            };
+                                var projected = new Dictionary<string, object>
+                                {
+                                    ["type"] = unityType.ToString(),
+                                    ["message"] = messageOnly,
+                                };
+                                if (fields.Contains("file")) projected["file"] = (string)_fileField.GetValue(logEntryInstance);
+                                if (fields.Contains("line")) projected["line"] = (int)_lineField.GetValue(logEntryInstance);
+                                if (fields.Contains("stackTrace")) projected["stackTrace"] = stackTrace;
+                                formattedEntry = projected;
+                            }
+                            else
+                            {
+                                formattedEntry = new
+                                {
+                                    type = unityType.ToString(),
+                                    message = messageOnly,
+                                    file = (string)_fileField.GetValue(logEntryInstance),
+                                    line = (int)_lineField.GetValue(logEntryInstance),
+                                    stackTrace = stackTrace, // null if not requested or unavailable
+                                };
+                            }
                             break;
                     }
 
-                    totalMatches++;
-
                     if (usePaging)
                     {
-                        if (totalMatches > resolvedCursor && totalMatches <= pageEndExclusive)
-                        {
-                            formattedEntries.Add(formattedEntry);
-                            retrievedCount++;
-                        }
-                        // Early exit: we've filled the page and only need to check if more exist
-                        else if (totalMatches > pageEndExclusive)
-                        {
-                            // We've passed the page; totalMatches now indicates truncation
-                            break;
-                        }
+                        formattedEntries.Add(formattedEntry);
+                        retrievedCount++;
                     }
                     else
                     {
@@ -653,6 +701,21 @@ namespace MCPForUnity.Editor.Tools
                 string.Join("\n", lines.Take(stackStartIndex)),
                 string.Join("\n", lines.Skip(stackStartIndex))
             );
+        }
+
+        // Native boundaries let summary/projection reads avoid allocating the
+        // omitted stack substring. Older layouts preserve the existing fallback.
+        private static string GetMessageBody(string fullMessage, int? callstackStart)
+        {
+            if (!callstackStart.HasValue || callstackStart.Value < 0 || callstackStart.Value > fullMessage.Length)
+                return SplitMessageAndStackTrace(fullMessage, callstackStart).body;
+            int start = callstackStart.Value;
+            if (start == 0 || start == fullMessage.Length)
+                return fullMessage.Replace("\r\n", "\n").Replace('\r', '\n');
+            string body = fullMessage.Substring(0, start);
+            if (body.EndsWith("\r\n", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
+            else if (body.EndsWith("\n", StringComparison.Ordinal) || body.EndsWith("\r", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 1);
+            return body.Replace("\r\n", "\n").Replace('\r', '\n');
         }
 
         private static int FindStackStartIndex(string[] lines)
