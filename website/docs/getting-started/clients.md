@@ -70,7 +70,7 @@ This beta checkout uses the following immutable server source. Published stable 
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/c6ecf993e12bdc0c4c3d4b3db378c85004b97b9e.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/410420675ac81c36a433f331ece02a4247c2f295.zip#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
@@ -81,6 +81,8 @@ This beta checkout uses the following immutable server source. Published stable 
 ```
 
 If `uvx` is not on the client's PATH, use its verified absolute path. For another package revision, use **that installed package's** `mcpServerSource`; do not retain this example's pin accidentally. Stdio does not use the local HTTP token header.
+
+After updating the Editor package, regenerate the stdio client configuration and restart the Editor and client connection. The internal loopback bridge authenticates with automatically supplied per-launch credentials, so an older pinned server cannot connect to the new bridge.
 
 ## Confirm the connection and target
 
