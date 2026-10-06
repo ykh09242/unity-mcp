@@ -10,6 +10,11 @@ import services.tools.manage_scriptable_object as mod
     {"path": "items.Array.size", "value": -1},
     {"path": "items", "op": "array_resize", "value": True},
     {"path": "items", "op": "array_resize", "value": 1e100},
+    {"path": "items", "op": "array_resize", "value": 4.0},
+    {"path": "items", "op": "array_resize", "value": 4.75},
+    {"path": "items", "op": "array_resize", "value": "4.0"},
+    {"path": "items", "op": "array_resize", "value": "4.75"},
+    {"path": "items", "op": "array_resize", "value": "4e0"},
     {"path": "items[2147483647]", "value": 0},
     {"path": "items[-1]", "value": 0},
     {"path": "outer[1].inner[9999999999999999999999]", "value": 0},
@@ -31,9 +36,9 @@ async def test_impossible_array_numbers_fail_before_instance_or_transport(monkey
     {"path": "items", "op": "array_resize", "value": 1_500_000},
     {"path": "items[1499999]", "value": 0},
     {"path": "items", "op": "array_resize", "value": "4"},
-    {"path": "items", "op": "array_resize", "value": 4.75},
-    {"path": "items", "op": "array_resize", "value": "4.75"},
-    {"path": "items", "op": "array_resize", "value": "4e0"},
+    {"path": "items", "op": "array_resize", "value": 0},
+    {"path": "items", "op": "array_resize", "value": 2_147_483_647},
+    {"path": "items[2147483646]", "value": 0},
     {"path": "nested", "value": {"numbers": [3, 4]}},
 ])
 @pytest.mark.asyncio
@@ -55,7 +60,7 @@ async def test_state_dependent_growth_is_forwarded_to_authoritative_unity_budget
 
 
 @pytest.mark.parametrize("flag", ["dry_run", "overwrite"])
-@pytest.mark.parametrize("value", ["garbage", "tru", ""])
+@pytest.mark.parametrize("value", ["garbage", "tru", "", "yes", "no", "1", "0", "on", "off"])
 @pytest.mark.asyncio
 async def test_invalid_boolean_flag_fails_before_routing(monkeypatch, flag, value):
     calls = []
@@ -78,7 +83,7 @@ async def test_invalid_boolean_flag_fails_before_routing(monkeypatch, flag, valu
 
 @pytest.mark.parametrize("flag,wire", [("dry_run", "dryRun"), ("overwrite", "overwrite")])
 @pytest.mark.parametrize("value,expected", [(None, None), (True, True), (False, False),
-                                           ("true", True), ("false", False), ("yes", True), ("0", False)])
+                                           ("true", True), ("false", False), (" TRUE ", True), ("False", False)])
 @pytest.mark.asyncio
 async def test_supported_boolean_flags_preserve_defaults(monkeypatch, flag, wire, value, expected):
     captured = {}
