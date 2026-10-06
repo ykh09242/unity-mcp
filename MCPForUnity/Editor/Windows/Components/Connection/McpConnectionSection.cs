@@ -54,8 +54,13 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private Button getApiKeyButton;
         private Button clearApiKeyButton;
         private string cachedLoginUrl;
+        private string cachedLoginBaseUrl;
+        private Func<string, Task<string>> loginUrlFetcher = FetchLoginUrlAsync;
 
         private bool connectionToggleInProgress;
+        private bool unityPortDirty;
+        // Explicit actions in a recreated window also supersede detached launch continuations.
+        private static int autoStartGeneration;
         private bool httpServerToggleInProgress;
         private Task verificationTask;
         private string lastHealthStatus;
@@ -174,7 +179,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 unityPort = MCPServiceLocator.Bridge.CurrentPort;
             }
-            unityPortField.value = unityPort.ToString();
+            unityPortField.SetValueWithoutNotify(unityPort.ToString());
 
             UpdateHttpFieldVisibility();
             RefreshHttpUi();
@@ -185,6 +190,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         {
             transportDropdown.RegisterValueChangedCallback(evt =>
             {
+                autoStartGeneration++;
                 var previous = (TransportProtocol)evt.previousValue;
                 var selected = (TransportProtocol)evt.newValue;
                 bool useHttp = selected != TransportProtocol.Stdio;
@@ -269,6 +275,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 };
             }
 
+            unityPortField.RegisterValueChangedCallback(_ => unityPortDirty = true);
             unityPortField.RegisterCallback<FocusOutEvent>(_ => PersistUnityPortFromField());
             unityPortField.RegisterCallback<KeyDownEvent>(evt =>
             {
@@ -313,11 +320,16 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 return;
             }
 
+            string previousUrl = HttpEndpointUtility.GetBaseUrl();
             HttpEndpointUtility.SaveBaseUrl(httpUrlField.text);
             // Update displayed value to normalized form without re-triggering callbacks/caret jumps.
             httpUrlField.SetValueWithoutNotify(HttpEndpointUtility.GetBaseUrl());
-            // Invalidate cached login URL so it is re-fetched for the new base URL.
-            cachedLoginUrl = null;
+            if (!string.Equals(previousUrl, HttpEndpointUtility.GetBaseUrl(), StringComparison.Ordinal))
+            {
+                autoStartGeneration++;
+                cachedLoginUrl = null;
+                cachedLoginBaseUrl = null;
+            }
             OnManualConfigUpdateRequested?.Invoke();
             RefreshHttpUi();
         }
@@ -411,10 +423,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 statusIndicator.RemoveFromClassList("disconnected");
                 statusIndicator.AddToClassList("connected");
                 connectionToggleButton.text = stdioSelected ? "End Session" : "Disconnect";
-                connectionToggleButton.SetEnabled(true); // Re-enable in case it was disabled during resumption
+                connectionToggleButton.SetEnabled(!connectionToggleInProgress);
 
                 // Force the UI to reflect the actual port being used
-                unityPortField.value = bridgeService.CurrentPort.ToString();
+                unityPortField.SetValueWithoutNotify(bridgeService.CurrentPort.ToString());
+                unityPortDirty = false;
                 unityPortField.SetEnabled(false);
             }
             else
@@ -456,7 +469,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     bool blockedByRemoteUrlPolicy = httpRemoteSelected && !remoteUrlAllowed;
                     bool blockedByLocalUrlPolicy = httpLocalSelected && !localUrlAllowed;
                     bool canStartSession = !httpRemoteNeedsKey && !blockedByRemoteUrlPolicy && !blockedByLocalUrlPolicy;
-                    connectionToggleButton.SetEnabled(canStartSession);
+                    connectionToggleButton.SetEnabled(canStartSession && !connectionToggleInProgress);
 
                     if (httpRemoteNeedsKey)
                     {
@@ -478,10 +491,13 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                 unityPortField.SetEnabled(!isStdioResuming);
 
-                int savedPort = EditorPrefs.GetInt(EditorPrefKeys.UnitySocketPort, 0);
-                unityPortField.value = (savedPort == 0
-                    ? bridgeService.CurrentPort
-                    : savedPort).ToString();
+                if (!unityPortDirty)
+                {
+                    int savedPort = EditorPrefs.GetInt(EditorPrefKeys.UnitySocketPort, 0);
+                    unityPortField.SetValueWithoutNotify((savedPort == 0
+                        ? bridgeService.CurrentPort
+                        : savedPort).ToString());
+                }
             }
 
             // For stdio session toggling, make End Session visually "danger" (red).
@@ -606,6 +622,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             if (httpUrlField == null) return;
             httpUrlField.SetValueWithoutNotify(HttpEndpointUtility.GetBaseUrl());
             cachedLoginUrl = null;
+            cachedLoginBaseUrl = null;
         }
 
         private void UpdateStartHttpButtonState()
@@ -687,6 +704,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             var bridgeService = MCPServiceLocator.Bridge;
+            autoStartGeneration++;
             httpServerToggleInProgress = true;
             startHttpServerButton?.SetEnabled(false);
 
@@ -761,6 +779,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             var server = MCPServiceLocator.Server;
             var bridgeService = MCPServiceLocator.Bridge;
             string url = HttpEndpointUtility.GetLocalBaseUrl();
+            int generation = autoStartGeneration;
 
             var pollDelay = TimeSpan.FromMilliseconds(500);
             var hardCap = TimeSpan.FromMinutes(5);
@@ -768,14 +787,18 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             while (true)
             {
+                if (!IsAutoStartContextCurrent(generation, url)) return;
                 if (server.IsLocalHttpServerReachable())
                 {
+                    if (!IsAutoStartContextCurrent(generation, url)) return;
                     McpLog.Info($"Server ready on {url}");
                     bool started = await bridgeService.StartAsync();
+                    if (!IsAutoStartContextCurrent(generation, url)) return;
                     if (started)
                     {
                         McpLog.Info("Session connected");
                         await VerifyBridgeConnectionAsync();
+                        if (!IsAutoStartContextCurrent(generation, url)) return;
                         UpdateConnectionStatus();
                         return;
                     }
@@ -786,11 +809,15 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                 if ((!processAlive && elapsed > 1.0) || elapsed > hardCap.TotalSeconds)
                 {
+                    if (!IsAutoStartContextCurrent(generation, url)) return;
                     // Last-resort connect attempt in case reachability detection missed a live server.
-                    if (await bridgeService.StartAsync())
+                    bool started = await bridgeService.StartAsync();
+                    if (!IsAutoStartContextCurrent(generation, url)) return;
+                    if (started)
                     {
                         McpLog.Info("Session connected");
                         await VerifyBridgeConnectionAsync();
+                        if (!IsAutoStartContextCurrent(generation, url)) return;
                         UpdateConnectionStatus();
                         return;
                     }
@@ -803,6 +830,14 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
         }
 
+        private bool IsAutoStartContextCurrent(int generation, string localBaseUrl)
+        {
+            return generation == autoStartGeneration
+                && EditorConfigurationCache.Instance.UseHttpTransport
+                && !HttpEndpointUtility.IsRemoteScope()
+                && string.Equals(localBaseUrl, HttpEndpointUtility.GetLocalBaseUrl(), StringComparison.Ordinal);
+        }
+
         private void PersistUnityPortFromField()
         {
             if (unityPortField == null)
@@ -811,9 +846,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             string input = unityPortField.text?.Trim();
+            unityPortDirty = false;
             if (!int.TryParse(input, out int requestedPort) || requestedPort <= 0)
             {
-                unityPortField.value = MCPServiceLocator.Bridge.CurrentPort.ToString();
+                unityPortField.SetValueWithoutNotify(MCPServiceLocator.Bridge.CurrentPort.ToString());
                 return;
             }
 
@@ -821,7 +857,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 int storedPort = PortManager.SetPreferredPort(requestedPort);
                 EditorPrefs.SetInt(EditorPrefKeys.UnitySocketPort, storedPort);
-                unityPortField.value = storedPort.ToString();
+                unityPortField.SetValueWithoutNotify(storedPort.ToString());
             }
             catch (Exception ex)
             {
@@ -830,7 +866,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     "Port Unavailable",
                     $"The requested port could not be used:\n\n{ex.Message}\n\nReverting to the active Unity port.",
                     "OK");
-                unityPortField.value = MCPServiceLocator.Bridge.CurrentPort.ToString();
+                unityPortField.SetValueWithoutNotify(MCPServiceLocator.Bridge.CurrentPort.ToString());
             }
         }
 
@@ -843,6 +879,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             var bridgeService = MCPServiceLocator.Bridge;
             connectionToggleInProgress = true;
+            autoStartGeneration++;
             connectionToggleButton?.SetEnabled(false);
 
             try
@@ -990,6 +1027,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private async void OnGetApiKeyClicked()
         {
+            string baseUrl = HttpEndpointUtility.GetBaseUrl();
+            if (!IsLoginContextCurrent(baseUrl)) return;
             if (getApiKeyButton != null)
             {
                 getApiKeyButton.SetEnabled(false);
@@ -998,6 +1037,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             try
             {
                 string loginUrl = await GetLoginUrlAsync();
+                if (!IsLoginContextCurrent(baseUrl)) return;
                 if (string.IsNullOrEmpty(loginUrl))
                 {
                     EditorUtility.DisplayDialog("API Key",
@@ -1009,6 +1049,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
             catch (Exception ex)
             {
+                if (!IsLoginContextCurrent(baseUrl)) return;
                 McpLog.Error($"Failed to get login URL: {ex.Message}");
                 EditorUtility.DisplayDialog("Error",
                     $"Failed to get API key login URL:\n\n{ex.Message}",
@@ -1025,21 +1066,46 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private async Task<string> GetLoginUrlAsync()
         {
-            if (!string.IsNullOrEmpty(cachedLoginUrl))
+            string baseUrl = HttpEndpointUtility.GetBaseUrl();
+            if (!IsLoginContextCurrent(baseUrl)) return null;
+            if (!string.IsNullOrEmpty(cachedLoginUrl)
+                && string.Equals(cachedLoginBaseUrl, baseUrl, StringComparison.Ordinal))
             {
                 return cachedLoginUrl;
             }
 
-            string baseUrl = HttpEndpointUtility.GetBaseUrl();
-            string loginUrlEndpoint = $"{baseUrl.TrimEnd('/')}/api/auth/login-url";
-
             try
             {
-                using (var client = new System.Net.Http.HttpClient())
-                {
-                    client.Timeout = TimeSpan.FromSeconds(10);
-                    var response = await client.GetAsync(loginUrlEndpoint);
+                string loginUrl = await loginUrlFetcher(baseUrl);
+                if (!IsLoginContextCurrent(baseUrl)) return null;
+                cachedLoginUrl = loginUrl;
+                cachedLoginBaseUrl = baseUrl;
+                return loginUrl;
+            }
+            catch (Exception ex)
+            {
+                if (IsLoginContextCurrent(baseUrl))
+                    McpLog.Debug($"Failed to fetch login URL from {baseUrl}: {ex.Message}");
+                return null;
+            }
+        }
 
+        private bool IsLoginContextCurrent(string baseUrl)
+        {
+            return EditorConfigurationCache.Instance.UseHttpTransport
+                && HttpEndpointUtility.IsRemoteScope()
+                && string.Equals(baseUrl, HttpEndpointUtility.GetBaseUrl(), StringComparison.Ordinal);
+        }
+
+        private static async Task<string> FetchLoginUrlAsync(string baseUrl)
+        {
+            string loginUrlEndpoint = $"{baseUrl.TrimEnd('/')}/api/auth/login-url";
+
+            using (var client = new System.Net.Http.HttpClient())
+            {
+                client.Timeout = TimeSpan.FromSeconds(10);
+                using (var response = await client.GetAsync(loginUrlEndpoint))
+                {
                     if (response.IsSuccessStatusCode)
                     {
                         string json = await response.Content.ReadAsStringAsync();
@@ -1047,15 +1113,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                         if (result.Value<bool>("success"))
                         {
-                            cachedLoginUrl = result.Value<string>("login_url");
-                            return cachedLoginUrl;
+                            return result.Value<string>("login_url");
                         }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                McpLog.Debug($"Failed to fetch login URL from {loginUrlEndpoint}: {ex.Message}");
             }
 
             return null;
@@ -1088,6 +1149,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private async Task VerifyBridgeConnectionInternalAsync()
         {
             var bridgeService = MCPServiceLocator.Bridge;
+            int generation = autoStartGeneration;
+            bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
+            bool remoteScope = HttpEndpointUtility.IsRemoteScope();
+            string baseUrl = HttpEndpointUtility.GetBaseUrl();
             if (!bridgeService.IsRunning)
             {
                 onHealthStatusUpdate?.Invoke(false, HealthStatus.Unknown);
@@ -1102,6 +1167,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
 
             var result = await bridgeService.VerifyAsync();
+            if (generation != autoStartGeneration
+                || useHttp != EditorConfigurationCache.Instance.UseHttpTransport
+                || remoteScope != HttpEndpointUtility.IsRemoteScope()
+                || !string.Equals(baseUrl, HttpEndpointUtility.GetBaseUrl(), StringComparison.Ordinal)) return;
 
             string newStatus;
             bool isHealthy;
