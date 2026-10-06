@@ -12,9 +12,13 @@ namespace MCPForUnity.Editor.Security
     {
         private const int CRED_TYPE_GENERIC = 1;
         private const int CRED_PERSIST_LOCAL_MACHINE = 2;
+        private readonly string targetNamespace;
 
-        private static string Target(string providerId)
-            => SecureKeyStoreConstants.ServiceName + ":" + providerId;
+        internal WindowsCredentialKeyStore(string targetNamespace = SecureKeyStoreConstants.ServiceName)
+            => this.targetNamespace = targetNamespace;
+
+        private string Target(string providerId)
+            => targetNamespace + ":" + providerId;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct CREDENTIAL

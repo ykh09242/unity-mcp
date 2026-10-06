@@ -103,7 +103,7 @@ def start_handshake_enforcing_server():
                         return
             # No pre-handshake data observed; send greeting
             conn.setblocking(True)
-            conn.sendall(b"MCP/0.1 FRAMING=1\n")
+            conn.sendall(b"WELCOME UNITY-MCP 1 FRAMING=1\n")
             time.sleep(0.1)
         finally:
             try:
@@ -118,14 +118,14 @@ def start_handshake_enforcing_server():
 
 def test_handshake_requires_framing():
     port = start_dummy_server(b"MCP/0.1\n")
-    conn = UnityConnection(host="127.0.0.1", port=port)
+    conn = UnityConnection(host="127.0.0.1", port=port, allow_legacy_auth=True)
     assert conn.connect() is False
     assert conn.sock is None
 
 
 def test_small_frame_ping_pong():
-    port = start_dummy_server(b"MCP/0.1 FRAMING=1\n", respond_ping=True)
-    conn = UnityConnection(host="127.0.0.1", port=port)
+    port = start_dummy_server(b"WELCOME UNITY-MCP 1 FRAMING=1\n", respond_ping=True)
+    conn = UnityConnection(host="127.0.0.1", port=port, allow_legacy_auth=True)
     try:
         assert conn.connect() is True
         assert conn.use_framing is True
@@ -172,7 +172,7 @@ def test_zero_length_payload_heartbeat():
         ready.set()
         conn, _ = sock.accept()
         try:
-            conn.sendall(b"MCP/0.1 FRAMING=1\n")
+            conn.sendall(b"WELCOME UNITY-MCP 1 FRAMING=1\n")
             time.sleep(0.02)
             # Heartbeat frame (length=0)
             conn.sendall(struct.pack(">Q", 0))
@@ -191,7 +191,7 @@ def test_zero_length_payload_heartbeat():
     threading.Thread(target=_run, daemon=True).start()
     ready.wait()
 
-    conn = UnityConnection(host="127.0.0.1", port=port)
+    conn = UnityConnection(host="127.0.0.1", port=port, allow_legacy_auth=True)
     try:
         assert conn.connect() is True
         # Receive should skip heartbeat and return the pong payload (or empty if only heartbeats seen)

@@ -1,6 +1,6 @@
 from core.config import config
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import errno
 import json
 import logging
@@ -14,7 +14,7 @@ import struct
 import sys
 import threading
 import time
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 import weakref
 
 from pydantic_core import from_json
@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 from models.models import MCPResponse, UnityInstanceInfo
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from transport.legacy.stdio_port_registry import stdio_port_registry
+from transport.legacy.stdio_auth import StdioAuthentication, StdioAuthenticationError, authenticate_stdio
+from transport.legacy.stdio_credentials import read_stdio_token
 
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -99,6 +101,9 @@ class UnityConnection:
     sock: socket.socket = None  # Socket for Unity communication
     use_framing: bool = False  # Negotiated per-connection
     instance_id: str | None = None  # Instance identifier for reconnection
+    auth_token_provider: Callable[[str], str | None] | None = field(default=None, repr=False)
+    allow_legacy_auth: bool | None = None
+    session_generation: str | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Set port from discovery if not explicitly provided"""
@@ -113,6 +118,9 @@ class UnityConnection:
         # asyncio.Lock. Active callers/completion callbacks retain their gate.
         self._async_admissions = weakref.WeakKeyDictionary()
         self._needs_tool_resync = False  # Set True after reconnection
+        self._authentication_failure: StdioAuthenticationError | None = None
+        if self.allow_legacy_auth is None:
+            self.allow_legacy_auth = os.environ.get('UNITY_MCP_STDIO_ALLOW_LEGACY') == '1'
 
     def _async_admission(self, loop: "asyncio.AbstractEventLoop") -> "asyncio.Lock":
         """Share one worker admission per connection and event loop."""
@@ -145,6 +153,8 @@ class UnityConnection:
         with self._conn_lock:
             if self.sock:
                 return True
+            self.session_generation = None
+            self._authentication_failure = None
             try:
                 # Bounded connect to avoid indefinite blocking
                 if connect_timeout is None:
@@ -185,14 +195,28 @@ class UnityConnection:
                                 break
                         except socket.timeout:
                             break
-                    text = bytes(buf).decode('ascii', errors='ignore').strip()
+                    if b"\n" not in buf:
+                        self._check_deadline(handshake_deadline)
+                    text = bytes(buf).decode('ascii').strip()
 
-                    if 'FRAMING=1' in text:
+                    if text.startswith('WELCOME UNITY-MCP 2') or 'AUTH=' in text:
+                        self.session_generation = authenticate_stdio(
+                            self.sock, text,
+                            StdioAuthentication(self.auth_token_provider or read_stdio_token, handshake_deadline),
+                        )
                         self.use_framing = True
-                        logger.debug(
-                            'MCP for Unity handshake received: FRAMING=1 (strict)')
+                        logger.debug('Authenticated stdio connection established')
                     else:
-                        if require_framing:
+                        if not self.allow_legacy_auth:
+                            raise StdioAuthenticationError(
+                                'Unauthenticated legacy stdio requires explicit UNITY_MCP_STDIO_ALLOW_LEGACY=1'
+                            )
+                        if not re.fullmatch(r'WELCOME UNITY-MCP 1(?: FRAMING=1)?', text):
+                            raise StdioAuthenticationError('Unsupported stdio greeting')
+                        if 'FRAMING=1' in text:
+                            self.use_framing = True
+                            logger.warning('Unauthenticated legacy stdio enabled by explicit configuration')
+                        elif require_framing:
                             # Best-effort plain-text advisory for legacy peers
                             with contextlib.suppress(Exception):
                                 self._set_socket_deadline(self.sock, deadline)
@@ -210,6 +234,8 @@ class UnityConnection:
                 self._check_deadline(deadline)
                 return True
             except Exception as e:
+                if isinstance(e, StdioAuthenticationError):
+                    self._authentication_failure = e
                 logger.error(f"Failed to connect to Unity: {str(e)}")
                 try:
                     if self.sock:
@@ -217,6 +243,7 @@ class UnityConnection:
                 except Exception:
                     pass
                 self.sock = None
+                self.session_generation = None
                 return False
 
     def disconnect(self):
@@ -229,6 +256,7 @@ class UnityConnection:
                     logger.error(f"Error disconnecting from Unity: {str(e)}")
                 finally:
                     self.sock = None
+                    self.session_generation = None
 
     def _ensure_live_connection(self) -> None:
         """Detect and discard cleanly-closed sockets before sending.
@@ -258,6 +286,7 @@ class UnityConnection:
                 except Exception:
                     pass
                 self.sock = None
+                self.session_generation = None
             finally:
                 if self.sock is original_socket:
                     original_socket.settimeout(original_timeout)
@@ -476,6 +505,8 @@ class UnityConnection:
                     # Ensure connected (handshake occurs within connect())
                     t_conn_start = time.time()
                     if not self.sock and not self.connect(self._cap_to_deadline(config.connection_timeout, deadline), deadline=deadline):
+                        if self._authentication_failure is not None:
+                            raise self._authentication_failure
                         raise ConnectionError("Could not connect to Unity")
                     logger.info("[TIMING-STDIO] connect took %.3fs command=%s", time.time() - t_conn_start, command_type)
 
@@ -950,6 +981,50 @@ def get_unity_connection(instance_identifier: str | None = None) -> UnityConnect
     """
     pool = get_unity_connection_pool()
     return pool.get_connection(instance_identifier)
+
+
+async def get_authenticated_stdio_generation(instance_id: str | None) -> str | None:
+    """Verify the selected socket before permitting an authenticated cache hit.
+
+    Inspect only an already-selected connection using registered metadata. No
+    discovery, connection, ping or command is sent. A clean FIN discards the old generation; the
+    next RPC establishes a new authenticated session. Half-open connections are
+    still bounded by command deadlines and resource freshness (at most 1s).
+    """
+    import asyncio
+    if not instance_id or config.http_remote_hosted:
+        return None
+    pool = _unity_connection_pool
+    if pool is None:
+        return None
+    loop = asyncio.get_running_loop()
+    def inspect() -> str | None:
+        if not pool._pool_lock.acquire(timeout=0.1):
+            return None
+        try:
+            try:
+                target = pool._resolve_instance_id(instance_id, list(pool._known_instances.values()))
+            except ConnectionError:
+                return None
+            conn = pool._connections.get(target.id)
+        finally:
+            pool._pool_lock.release()
+        if conn is None:
+            return None
+        if not conn._io_lock.acquire(timeout=0.1):
+            return None  # A running RPC owns this socket; no cache hit is safe.
+        try:
+            conn._ensure_live_connection()
+            return conn.session_generation if conn.sock else None
+        finally:
+            conn._io_lock.release()
+    future = loop.run_in_executor(None, inspect)
+    future.add_done_callback(_consume_async_exception)
+    try:
+        async with asyncio.timeout(1.0):
+            return await asyncio.shield(future)
+    except (OSError, RuntimeError, TimeoutError):
+        return None
 
 
 # -----------------------------

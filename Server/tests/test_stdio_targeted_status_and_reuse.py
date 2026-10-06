@@ -37,7 +37,7 @@ module.Path.home = lambda: home
 class FramedSocket:
     def __init__(self, endpoint, handshake=False):
         self.endpoint = endpoint
-        self.buffer = bytearray(b"FRAMING=1\\n" if handshake else b"")
+        self.buffer = bytearray(b"WELCOME UNITY-MCP 1 FRAMING=1\\n" if handshake else b"")
         self.closed = False
         self.timeout = 1.0
         self.blocking = True
@@ -152,7 +152,7 @@ def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
         target = UnityInstanceInfo(id="Selected@aaaa1111", name="Selected", hash="aaaa1111",
                                    path="owned-fixture/Assets", port={2222 if changed else 1111}, status="running")
         pool._known_instances, pool._last_full_scan = {{target.id: target}}, time.time()
-        conn = module.UnityConnection(port=1111, instance_id=target.id)
+        conn = module.UnityConnection(port=1111, instance_id=target.id, allow_legacy_auth=True)
         old = FramedSocket(1111)
         conn.sock, conn.use_framing = old, True
         def closed_under_lock():

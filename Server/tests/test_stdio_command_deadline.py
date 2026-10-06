@@ -69,7 +69,8 @@ clock = Clock()
 module.time.monotonic = lambda: clock.now
 payload = b'{"status":"success","result":{"ok":true}}'
 header = struct.pack(">Q", len(payload))
-conn = module.UnityConnection(port=1111, instance_id="Selected@owned")
+# This fixture intentionally exercises the old framed protocol, not authentication.
+conn = module.UnityConnection(port=1111, instance_id="Selected@owned", allow_legacy_auth=True)
 conn.use_framing = True
 '''
 
@@ -109,8 +110,8 @@ if case == "legacy":
 if case == "writes": writes = [0.6, 0.6]
 if case == "connect":
     connect_duration = 0.6
-    reads.insert(0, (0.6, b"FRAMING=1\\n"))
-if case == "handshake": reads = [(0.6, b"FRAM"), (0.6, b"ING=1\\n")] + reads
+    reads.insert(0, (0.6, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"))
+if case == "handshake": reads = [(0.6, b"WELCOME UNITY-MCP 1 FRAM"), (0.6, b"ING=1\\n")] + reads
 if case == "below_floor": reads = [(0.0, header), (0.04, payload)]
 if case == "final_at_deadline": reads = [(0.0, header), (1.0, payload)]
 sock = ClockedSocket(clock, reads, writes)
@@ -151,7 +152,7 @@ if mode == "legacy":
     conn.use_framing = False
     reads = [(0.1, payload[:10]), (0.1, payload[10:])]
 if mode == "heartbeat": reads.insert(0, (0.1, bytes(8)))
-if mode == "handshake": reads.insert(0, (0.1, b"FRAMING=1\\n"))
+if mode == "handshake": reads.insert(0, (0.1, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"))
 original_timeout = None if mode == "blocking_socket" else 1.0
 sock = ClockedSocket(clock, reads, [0.1, 0.1], timeout=original_timeout)
 module.socket.create_connection = lambda endpoint, timeout: sock
@@ -176,7 +177,7 @@ if case == "direct_receive":
     assert conn.receive_full_response(sock, 4) == payload
     assert clock.now == 1.2 and sock.timeout == 1.0
 if case == "direct_connect":
-    sock = ClockedSocket(clock, [(0.6, b"FRAM"), (0.6, b"ING=1\\n")])
+    sock = ClockedSocket(clock, [(0.6, b"WELCOME UNITY-MCP 1 FRAM"), (0.6, b"ING=1\\n")])
     module.socket.create_connection = lambda endpoint, timeout: sock
     assert conn.connect() is True
     assert clock.now == 1.2 and conn.use_framing and sock.timeout == 1.0
@@ -203,7 +204,7 @@ class PreDispatchSocket(ClockedSocket):
         raise ConnectionResetError("controlled reset before payload dispatch")
 first = PreDispatchSocket(clock, [], timeout=5.0)
 conn.sock = first
-retry = ClockedSocket(clock, [(0.0, b"FRAMING=1\\n"), (0.0, header), (0.0, payload)], [1.2, 0.0], timeout=5.0)
+retry = ClockedSocket(clock, [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"), (0.0, header), (0.0, payload)], [1.2, 0.0], timeout=5.0)
 module.socket.create_connection = lambda endpoint, timeout: retry
 module.time.sleep = lambda seconds: clock.advance(seconds, None)
 module.random.uniform = lambda low, high: 1.0
@@ -261,7 +262,7 @@ def sleep(seconds):
     if {recover!r}: status.write_text('{{"reloading":false}}', encoding="utf-8")
 module.time.sleep = sleep
 # Preflight closes an existing socket; recovered command must connect afresh.
-module.socket.create_connection = lambda endpoint, timeout: ClockedSocket(clock, [(0.0, b"FRAMING=1\\n"), (0.0, header), (0.0, payload)])
+module.socket.create_connection = lambda endpoint, timeout: ClockedSocket(clock, [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"), (0.0, header), (0.0, payload)])
 # When the actual wrapper and actual send_command handle the reload.
 result = module.send_command_with_retry("fixture_query", {{}}, instance_id=conn.instance_id, max_retries=1, retry_ms=250)
 # Then bounded waits retain retry hints or recover normally.

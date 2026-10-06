@@ -22,7 +22,8 @@ def isolated_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(uc.stdio_port_registry, "get_instances", lambda **kwargs: [])
     monkeypatch.setattr(uc.stdio_port_registry, "get_port", lambda instance_id=None: 6400)
     monkeypatch.setattr(uc.time, "sleep", lambda seconds: None)
-    conn = UnityConnection(port=6400)
+    # Synthetic socket fixtures intentionally retain the v1 framing contract.
+    conn = UnityConnection(port=6400, allow_legacy_auth=True)
     conn.sock, peer = socket.socketpair()
     conn.sock.settimeout(1.0)
     peer.settimeout(1.0)
@@ -119,7 +120,7 @@ def test_closed_socket_reconnects_before_dispatching_mutation(isolated_connectio
             peer, _ = listener.accept()
             with peer:
                 peer.settimeout(2)
-                peer.sendall(b"MCP/0.1 FRAMING=1\n")
+                peer.sendall(b"WELCOME UNITY-MCP 1 FRAMING=1\n")
                 commands.append(json.loads(_read_frame(peer)))
                 _write_response(peer, {"status": "success", "result": {"success": True}})
 
@@ -289,7 +290,7 @@ def test_malformed_reply_discards_socket_then_next_call_connects_fresh(isolated_
             fresh_peer, _ = listener.accept()
             with fresh_peer:
                 fresh_peer.settimeout(2)
-                fresh_peer.sendall(b"MCP/0.1 FRAMING=1\n")
+                fresh_peer.sendall(b"WELCOME UNITY-MCP 1 FRAMING=1\n")
                 commands.append(json.loads(_read_frame(fresh_peer)))
                 _write_response(fresh_peer, {"status": "success", "result": {"success": True}})
 

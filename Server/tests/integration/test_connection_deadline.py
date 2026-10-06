@@ -81,7 +81,7 @@ def test_send_command_against_wedged_socket_is_bounded(silent_bridge, monkeypatc
     recv overrun the ceiling: the deadline caps each recv, so the call still stops near
     command_total_timeout rather than connection_timeout."""
     monkeypatch.setattr(config, "connection_timeout", 5.0)
-    conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef")
+    conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef", allow_legacy_auth=True)
     start = time.monotonic()
     response = conn.send_command("get_editor_state", {})
     assert response.success is False
@@ -93,7 +93,7 @@ def test_send_command_against_wedged_socket_is_bounded(silent_bridge, monkeypatc
 
 def test_send_command_with_retry_is_bounded_by_deadline(silent_bridge, tmp_path, monkeypatch):
     """The reload-wait loop honours command_total_timeout, not just max_wait_s."""
-    conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef")
+    conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef", allow_legacy_auth=True)
     monkeypatch.setattr(uc, "get_unity_connection", lambda instance_id=None: conn)
     _write_reloading_status(tmp_path)
 
@@ -105,7 +105,7 @@ def test_send_command_with_retry_is_bounded_by_deadline(silent_bridge, tmp_path,
 
 def test_reload_signal_drops_socket_for_fresh_reconnect(silent_bridge, tmp_path):
     """A 'reloading' status drops the socket so the next command reconnects."""
-    conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef")
+    conn = UnityConnection(port=silent_bridge, instance_id="Repro@deadbeef", allow_legacy_auth=True)
     assert conn.connect() is True
     assert conn.sock is not None
     _write_reloading_status(tmp_path)
