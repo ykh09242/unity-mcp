@@ -16,6 +16,7 @@ from pathlib import Path
 import socket
 import struct
 import sys
+import threading
 import time
 from unittest.mock import patch
 sys.path.insert(0, "src")
@@ -73,6 +74,26 @@ def create_connection(endpoint, timeout):
     created.append((endpoint, sock))
     return sock
 module.socket.create_connection = create_connection
+def assert_lock_excludes_other_thread(lock):
+    outcomes = []
+    def probe():
+        try:
+            acquired = lock.acquire(blocking=False)
+            if acquired:
+                lock.release()
+            outcomes.append(acquired)
+        except BaseException as error:
+            outcomes.append(error)
+    # An RLock can be reacquired by its owner, so check exclusion from another
+    # thread using the public API available before Python 3.14's locked().
+    worker = threading.Thread(target=probe, daemon=True)
+    worker.start()
+    worker.join(timeout=2)
+    assert not worker.is_alive(), "Lock exclusion probe did not finish"
+    assert len(outcomes) == 1, "Lock exclusion probe returned no result"
+    if isinstance(outcomes[0], BaseException):
+        raise outcomes[0]
+    assert outcomes == [False], "Socket close did not hold the I/O lock"
 '''
 
 
@@ -111,7 +132,7 @@ def test_preflight_uses_selected_status_only(tmp_path, instance_id, statuses, bl
         old = FramedSocket(1111)
         conn.sock, conn.use_framing = old, True
         def closed_under_lock():
-            assert conn._io_lock.locked()
+            assert_lock_excludes_other_thread(conn._io_lock)
         old.on_close = closed_under_lock
         result = conn.send_command("fixture_query", {{"zero": 0}}, max_attempts=0)
         if {blocked!r}:
@@ -135,7 +156,7 @@ def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
         old = FramedSocket(1111)
         conn.sock, conn.use_framing = old, True
         def closed_under_lock():
-            assert conn._io_lock.locked()
+            assert_lock_excludes_other_thread(conn._io_lock)
         old.on_close = closed_under_lock
         pool._connections[target.id] = conn
         module._unity_connection_pool = pool
@@ -151,6 +172,20 @@ def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
             assert old.requests == [] and conn.sock is created[0][1]
         else:
             assert not created and conn.sock is old
+    ''', tmp_path)
+
+
+def test_close_lock_assertion_rejects_unlocked_rlock(tmp_path):
+    _run('''
+        lock = threading.RLock()
+        try:
+            assert_lock_excludes_other_thread(lock)
+        except AssertionError as error:
+            assert "did not hold the I/O lock" in str(error)
+        else:
+            raise AssertionError("Unlocked I/O lock was accepted")
+        with lock:
+            assert_lock_excludes_other_thread(lock)
     ''', tmp_path)
 
 
