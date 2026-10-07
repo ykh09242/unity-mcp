@@ -228,16 +228,29 @@ compile() {
   for required in "$bcl" "$manifest"; do
     [ -f "$required" ] || { echo "::error::reference manifest not found: $required" >&2; return 1; }
   done
+  local ignored_warnings=CS1701,CS1702 # benign netstandard facade version unification
+  if [ "$name" = UnityEditor.TestRunner ]; then
+    # Native Unity also disables these unused/unassigned field diagnostics for TestRunner.
+    ignored_warnings+=,CS0169,CS0649
+    if [ "$UNITY_VERSION" = 6000.0.84f1 ]; then
+      # Verified bundled UTF 1.6.0 SwitchPlatformSetup uses obsolete switchRedirectWritesToHostMount.
+      # Keep this vendor exception tied to the exact Editor; product obsolescence stays fatal.
+      ignored_warnings+=,CS0618
+    fi
+  fi
 
   {
     echo "-target:library"
     echo "-langversion:9.0"
     echo "-nostdlib+"
     echo "-preferreduilang:en-US"
-    echo "-nowarn:CS1701,CS1702"      # benign netstandard facade version unification
+    echo "-nowarn:$ignored_warnings"
     echo "-out:\"$dir/$name.dll\""
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
-    case "$name" in MCPForUnity.CustomTools.Roslyn*) echo "-warnaserror+" ;; esac
+    case "$name" in
+      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
+        echo "-warnaserror+" ;;
+    esac
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
     case "$name" in
       UnityEngine.UI|UnityEditor.UI)

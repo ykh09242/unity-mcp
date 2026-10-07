@@ -20,6 +20,13 @@ ROSLYN_REFERENCES = (
     "System.Reflection.Metadata.dll",
 )
 OPTIONAL_ASSEMBLIES = ("MCPForUnity.CustomTools.RoslynOff", "MCPForUnity.CustomTools.RoslynOn")
+OWNED_ASSEMBLIES = (
+    "MCPForUnity.Runtime",
+    "MCPForUnity.Editor",
+    *OPTIONAL_ASSEMBLIES,
+    "TestAsmdef",
+    "MCPForUnityTests.EditMode",
+)
 COROUTINES_ASSEMBLY = "Unity.EditorCoroutines.Editor"
 STALE_REFERENCES = {
     "DATA/Managed/UnityEngine/UnityEditor.PackageManagerUIModule.dll",
@@ -727,6 +734,34 @@ def test_coreclr_netstandard_editor_contract_does_not_change_older_versions(
         assert "ENABLE_CORECLR" not in flags
 
 
+@pytest.mark.parametrize("version", ["6000.0.84f1", "6000.0.85f1", "6000.7.0b3", "7000.0.0a7"])
+def test_warning_policy_keeps_owned_warnings_fatal_and_vendor_exceptions_scoped(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str
+) -> None:
+    # Given repository assemblies and vendor packages on current and adjacent Editor versions.
+    project, framework = staged_tests
+    result = harness.run(version, test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [Path(line) for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    assert set(OWNED_ASSEMBLIES) <= {path.stem for path in calls}
+    # Then every owned assembly rejects warnings without inheriting vendor suppressions.
+    for response in calls:
+        lines = response.read_text(encoding="utf-8").splitlines()
+        assert ("-warnaserror+" in lines) == (response.stem in OWNED_ASSEMBLIES)
+        suppressed = {
+            code
+            for line in lines
+            if line.startswith("-nowarn:")
+            for code in line.removeprefix("-nowarn:").split(",")
+        }
+        expected = {"CS1701", "CS1702"}
+        if response.stem == "UnityEditor.TestRunner":
+            expected |= {"CS0169", "CS0649"}
+            if version == "6000.0.84f1":
+                expected.add("CS0618")
+        assert suppressed == expected, response.stem
+
+
 def test_explicit_staged_project_compiles_fixture_and_editmode_all_platforms(
     harness: CompileHarness,
     staged_tests: tuple[Path, Path],
@@ -1004,6 +1039,7 @@ def test_optional_examples_complete_matrix_preserves_sources_defines_and_referen
         }
         for name in expected:
             lines = responses[name]
+            assert ("-warnaserror+" in lines) == (name in OWNED_ASSEMBLIES)
             assert ("-define:USE_ROSLYN" in lines) == (name == OPTIONAL_ASSEMBLIES[1])
             roslyn_refs = {line for line in lines if f"/{ROSLYN_DIRECTORY}/" in line}
             if name in OPTIONAL_ASSEMBLIES:
@@ -1040,7 +1076,6 @@ def test_optional_examples_complete_matrix_preserves_sources_defines_and_referen
             else:
                 assert not roslyn_refs
                 assert not any("CustomTools/" in line for line in lines)
-                assert "-warnaserror+" not in lines
 
 
 @pytest.mark.parametrize("name", ROSLYN_REFERENCES)
