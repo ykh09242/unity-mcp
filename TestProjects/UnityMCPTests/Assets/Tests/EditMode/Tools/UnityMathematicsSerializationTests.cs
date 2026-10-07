@@ -3,10 +3,12 @@ using MCPForUnity.Editor.Helpers;
 using NUnit.Framework;
 using UnityEngine;
 
-// Stand-ins for com.unity.mathematics, which the test project does not reference. The real structs
+// Unity 6.6+ provides these structs in UnityEngine.MathematicsModule. Older editors use stand-ins
+// for com.unity.mathematics, which the test project does not reference. The real structs
 // have the same shape: public fields plus public swizzle properties that return new structs, which
 // is what made the default Newtonsoft walk never finish (issue #1415). The converter matches on the
 // namespace, so these behave exactly like the package types.
+#if !UNITY_6000_6_OR_NEWER
 namespace Unity.Mathematics
 {
     public struct float3
@@ -73,6 +75,7 @@ namespace Unity.Mathematics
         }
     }
 }
+#endif
 
 namespace MCPForUnityTests.Editor.Tools
 {

@@ -18,6 +18,13 @@ namespace MCPForUnityTests.Editor.Tools
     [Parallelizable(ParallelScope.None)]
     public class ProBuilderUtilityIntegrityTests
     {
+#if UNITY_6000_7_OR_NEWER
+        private const MaterialGlobalIlluminationFlags BakedEmission = MaterialGlobalIlluminationFlags.BakedEmission;
+        private const MaterialGlobalIlluminationFlags RealtimeEmission = MaterialGlobalIlluminationFlags.RealtimeIndirectEmission;
+#else
+        private const MaterialGlobalIlluminationFlags BakedEmission = MaterialGlobalIlluminationFlags.BakedEmissive;
+        private const MaterialGlobalIlluminationFlags RealtimeEmission = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+#endif
         private readonly List<GameObject> ownedObjects = new List<GameObject>();
         private readonly HashSet<Mesh> ownedMeshes = new HashSet<Mesh>();
         private readonly Dictionary<FieldInfo, object> savedResolutionFields = new Dictionary<FieldInfo, object>();
@@ -184,7 +191,7 @@ namespace MCPForUnityTests.Editor.Tools
                 .ToDictionary(name => name, material.GetColor);
             try
             {
-                material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive | MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                material.globalIlluminationFlags = BakedEmission | RealtimeEmission;
                 var expected = material.globalIlluminationFlags;
                 SetResolutionField("_typesResolved", false);
                 var response = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject { ["action"] = action }));
@@ -211,7 +218,7 @@ namespace MCPForUnityTests.Editor.Tools
                 .ToDictionary(name => name, material.GetColor);
             try
             {
-                material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive;
+                material.globalIlluminationFlags = BakedEmission;
                 SetResolutionField("_typesResolved", false);
                 var response = JObject.FromObject(
                     ManageProBuilder.HandleCommand(

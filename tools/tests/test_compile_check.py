@@ -410,6 +410,36 @@ def test_historical_version_defines_select_the_correct_api_branches(
 
 
 @pytest.mark.parametrize(
+    "version,expected",
+    [
+        ("2021.3.45f2", set()),
+        ("2022.3.62f1", set()),
+        ("6000.0.84f1", set()),
+        ("6000.3.14f1", set()),
+        ("6000.6.4f1", {"UNITY_6000_6_OR_NEWER"}),
+        ("6000.7.0b3", {"UNITY_6000_6_OR_NEWER", "UNITY_6000_7_OR_NEWER"}),
+        (
+            "7000.0.0a7",
+            {"UNITY_6000_6_OR_NEWER", "UNITY_6000_7_OR_NEWER", "UNITY_7000_0_OR_NEWER"},
+        ),
+    ],
+)
+def test_editmode_compiler_receives_modern_compatibility_guards_without_relaxing_warnings(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str, expected: set[str]
+) -> None:
+    project, framework = staged_tests
+    result = harness.run(version, test_project=project, framework=framework)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    response = (harness.output / "linux/MCPForUnityTests.EditMode.rsp").read_text(encoding="utf-8")
+    guards = {"UNITY_6000_6_OR_NEWER", "UNITY_6000_7_OR_NEWER", "UNITY_7000_0_OR_NEWER"}
+    defines = {line.removeprefix("-define:") for line in response.splitlines()}
+    assert defines & guards == expected
+    assert "-warnaserror+" in response.splitlines()
+    assert "CS0436" not in response and "CS0618" not in response
+
+
+@pytest.mark.parametrize(
     "reference", ["DATA/Managed/Missing.dll", "EXTRA/Missing.dll", "LIBCACHE/Missing.dll"]
 )
 @pytest.mark.parametrize(
