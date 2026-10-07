@@ -140,6 +140,60 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void Diagnostics_LongLinuxVulkanTest_IsSuspectedWithoutFailingTheJob()
+        {
+            // Given a long single test with no recent progress callback.
+            const long now = 100000;
+            var job = NewJob("long-linux-test", now - 65000);
+            job.CurrentTestFullName = "Suite.LongTest";
+            job.CurrentTestStartedUnixMs = now - 65000;
+            // When the environment diagnosis is built.
+            var data = JObject.FromObject(TestJobManager.BuildDiagnostics(job, now, "6000.0.69f1", "LinuxEditor", "Vulkan", true, false, false));
+            // Then it stays running, with an explicitly conditional reproduction suggestion.
+            Assert.AreEqual(TestJobStatus.Running, job.Status);
+            Assert.IsNull(job.Result);
+            Assert.IsTrue((bool)data["stall_suspected"]);
+            Assert.AreEqual(65000, (long)data["last_progress_age_ms"]);
+            CollectionAssert.Contains(data["possible_causes"].ToObject<string[]>(), "linux_vulkan_backend_candidate");
+            StringAssert.Contains("separate reproduction session", data["recommended_actions"].ToString());
+            StringAssert.Contains("not a confirmed cause", data["recommended_actions"].ToString());
+        }
+
+        [Test]
+        public void Diagnostics_InitializationFailed_PreservesExistingFailureAndEffectiveTimeout()
+        {
+            // Given an initialization failure already finalized by the existing timeout path.
+            var job = NewJob("init-failed", 100000);
+            job.StartedUnixMs = 50000;
+            job.Status = TestJobStatus.Failed;
+            job.Error = "Test job failed to initialize (tests did not start within timeout)";
+            job.InitTimeoutMs = 120000;
+            // When diagnostics are requested.
+            var data = JObject.FromObject(TestJobManager.BuildDiagnostics(job, 100000, "2021.3.45f2", "WindowsEditor", "Direct3D11", false, false, false));
+            // Then they describe the existing failure without replacing its error/result.
+            Assert.IsTrue((bool)data["initialization_failed"]);
+            Assert.IsFalse((bool)data["stall_suspected"]);
+            Assert.AreEqual(120000, (long)data["initialization_timeout_ms"]);
+            Assert.AreEqual(50000, (long)data["last_progress_age_ms"], "Recording a timeout must not fabricate initialization progress.");
+            Assert.AreEqual(TestJobStatus.Failed, job.Status);
+            Assert.AreEqual("Test job failed to initialize (tests did not start within timeout)", job.Error);
+            Assert.IsNull(job.Result);
+        }
+
+        [Test]
+        public void Diagnostics_HealthyLinuxVulkanJob_DoesNotSuggestABackendFault()
+        {
+            // Given a normal recently progressing Linux/Vulkan job.
+            var job = NewJob("healthy", 100000);
+            // When diagnostics are requested before the no-progress threshold.
+            var data = JObject.FromObject(TestJobManager.BuildDiagnostics(job, 100100, "6000.0.69f1", "LinuxEditor", "Vulkan", true, false, false));
+            // Then platform choice alone is not evidence of a fault.
+            Assert.IsFalse((bool)data["stall_suspected"]);
+            Assert.AreEqual(0, ((JArray)data["possible_causes"]).Count);
+            Assert.AreEqual(0, ((JArray)data["recommended_actions"]).Count);
+        }
+
+        [Test]
         public void CompletedHistory_IsBoundedAndRetainsNewestResults()
         {
             for (int i = 0; i < 25; i++)

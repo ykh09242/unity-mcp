@@ -24,6 +24,19 @@ def _busy(reason: str, retry_after_ms: int) -> MCPResponse:
     )
 
 
+def _unresponsive(data: dict[str, Any]) -> MCPResponse | None:
+    diagnostics = data.get("diagnostics")
+    if isinstance(diagnostics, dict) and diagnostics.get("status") == "unresponsive":
+        return MCPResponse(
+            success=False,
+            error="editor_unresponsive",
+            message="No recent editor heartbeat. Inspect Unity for dialogs, blocked work or a disconnected transport before retrying.",
+            hint="inspect_editor",
+            data={"diagnostics": diagnostics},
+        )
+    return None
+
+
 async def preflight(
     ctx,
     *,
@@ -59,6 +72,10 @@ async def preflight(
     data = state.get("data")
     if not isinstance(data, dict):
         return None
+
+    unresponsive = _unresponsive(data)
+    if unresponsive is not None:
+        return unresponsive
 
     # Tests running: fail fast before issuing an optional refresh.
     if requires_no_tests:
@@ -103,6 +120,9 @@ async def preflight(
     if wait_for_no_compile:
         deadline = time.monotonic() + float(max_wait_s)
         while True:
+            unresponsive = _unresponsive(data)
+            if unresponsive is not None:
+                return unresponsive
             # Tests may have started while compilation was being awaited.
             if requires_no_tests:
                 tests = data.get("tests")

@@ -52,5 +52,54 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsNotNull(helper);
             helper.GetMethod("UpdateTimestamp", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { snapshot, time });
         }
+
+        [Test]
+        public void ContentRebuildRetainsStartOfUnchangedActivity()
+        {
+            var cache = typeof(EditorStateCache);
+            var build = cache.GetMethod("BuildSnapshot", BindingFlags.NonPublic | BindingFlags.Static);
+            var since = cache.GetField("_activitySinceUnixMs", BindingFlags.NonPublic | BindingFlags.Static);
+            build.Invoke(null, new object[] { "activity-test-start" });
+            long prior = (long)since.GetValue(null);
+            long started = prior - 60000;
+            try
+            {
+                since.SetValue(null, started);
+                var rebuilt = (JObject)build.Invoke(null, new object[] { "different-content-reason" });
+                Assert.AreEqual(
+                    started,
+                    rebuilt["activity"]["since_unix_ms"].Value<long>(),
+                    "Unrelated snapshot updates must not conceal prolonged editor activity."
+                );
+            }
+            finally
+            {
+                since.SetValue(null, prior);
+            }
+        }
+
+        [Test]
+        public void ChangedActivityStartsANewDuration()
+        {
+            var cache = typeof(EditorStateCache);
+            var build = cache.GetMethod("BuildSnapshot", BindingFlags.NonPublic | BindingFlags.Static);
+            var phase = cache.GetField("_lastTrackedActivityPhase", BindingFlags.NonPublic | BindingFlags.Static);
+            var since = cache.GetField("_activitySinceUnixMs", BindingFlags.NonPublic | BindingFlags.Static);
+            var initial = (JObject)build.Invoke(null, new object[] { "activity-test-start" });
+            string priorPhase = (string)phase.GetValue(null);
+            long priorSince = (long)since.GetValue(null);
+            try
+            {
+                phase.SetValue(null, "previous-activity");
+                since.SetValue(null, 1L);
+                var rebuilt = (JObject)build.Invoke(null, new object[] { "changed-phase" });
+                Assert.AreEqual(rebuilt["observed_at_unix_ms"].Value<long>(), rebuilt["activity"]["since_unix_ms"].Value<long>());
+            }
+            finally
+            {
+                phase.SetValue(null, priorPhase);
+                since.SetValue(null, priorSince);
+            }
+        }
     }
 }

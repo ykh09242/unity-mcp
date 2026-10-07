@@ -662,6 +662,87 @@ namespace MCPForUnity.Editor.Services
                 },
                 error = job.Error,
                 result = resultPayload,
+                diagnostics = BuildDiagnostics(
+                    job,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    UnityEngine.Application.unityVersion,
+                    UnityEngine.Application.platform.ToString(),
+                    UnityEngine.SystemInfo.graphicsDeviceType.ToString(),
+                    InternalEditorUtility.isApplicationActive,
+                    EditorStateCache.GetActualIsCompiling(),
+                    EditorApplication.isUpdating
+                ),
+            };
+        }
+
+        // Pure observation core: tests can model a Linux/Vulkan environment without
+        // switching the active editor's graphics API or launching another editor.
+        internal static object BuildDiagnostics(
+            TestJob job,
+            long nowUnixMs,
+            string unityVersion,
+            string platform,
+            string graphicsApi,
+            bool focused,
+            bool compiling,
+            bool importing
+        )
+        {
+            bool initFailed =
+                job.Status == TestJobStatus.Failed
+                && job.Result == null
+                && (job.Error?.StartsWith("Test job failed to initialize", StringComparison.Ordinal) ?? false);
+            // The timeout finalizer updates LastUpdateUnixMs when it records failure;
+            // that bookkeeping is not evidence that initialization made progress.
+            long lastProgress = !initFailed && job.LastUpdateUnixMs > 0 ? job.LastUpdateUnixMs : job.StartedUnixMs;
+            long progressAge = Math.Max(0, nowUnixMs - lastProgress);
+            bool suspected = job.Status == TestJobStatus.Running && progressAge > StuckThresholdMs;
+            var causes = new List<string>();
+            var actions = new List<string>();
+            if (suspected)
+            {
+                causes.Add(string.IsNullOrEmpty(job.CurrentTestFullName) ? "test_initialization_or_reload_pending" : "long_running_test_or_editor_stall");
+                actions.Add(
+                    "Inspect Test Runner and Editor.log. No progress alone cannot distinguish a long test, a native dialog, or a blocked editor thread; the job remains running."
+                );
+            }
+            if (initFailed)
+            {
+                causes.Add("test_runner_initialization_timeout");
+                actions.Add(
+                    "Inspect Editor.log and Test Runner startup. For PlayMode/domain reload delays, retry with a larger init_timeout (maximum 600000 ms)."
+                );
+            }
+            if (suspected || initFailed)
+            {
+                if (compiling)
+                    causes.Add("editor_compiling");
+                if (importing)
+                    causes.Add("editor_importing_assets");
+                if (!focused)
+                    causes.Add("background_editor_throttling_possible");
+                if (
+                    string.Equals(platform, "LinuxEditor", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(graphicsApi, "Vulkan", StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    causes.Add("linux_vulkan_backend_candidate");
+                    actions.Add(
+                        "Linux/Vulkan is an environment candidate, not a confirmed cause. In a separate reproduction session, compare another supported graphics backend using the same Unity version and test; preserve logs. Do not switch or terminate this editor automatically."
+                    );
+                }
+            }
+            return new
+            {
+                unity_version = unityVersion,
+                platform,
+                graphics_api = graphicsApi,
+                last_progress_age_ms = progressAge,
+                initialization_timeout_ms = job.InitTimeoutMs > 0 ? job.InitTimeoutMs : DefaultInitializationTimeoutMs,
+                initialization_failed = initFailed,
+                stall_suspected = suspected,
+                possible_causes = causes.ToArray(),
+                recommended_actions = actions.ToArray(),
             };
         }
 

@@ -15,7 +15,7 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from core.config import config
 from models import MCPResponse
@@ -335,6 +335,22 @@ class TestJobProgress(BaseModel):
     failures_capped: bool | None = None
 
 
+class TestJobDiagnostics(BaseModel):
+    """Observed environment and possible causes; these never change job status."""
+
+    model_config = ConfigDict(frozen=True)
+
+    unity_version: str
+    platform: str
+    graphics_api: str
+    last_progress_age_ms: int
+    initialization_timeout_ms: int
+    initialization_failed: bool
+    stall_suspected: bool
+    possible_causes: list[str]
+    recommended_actions: list[str]
+
+
 class GetTestJobData(BaseModel):
     job_id: str
     status: str
@@ -345,6 +361,7 @@ class GetTestJobData(BaseModel):
     progress: TestJobProgress | None = None
     error: str | None = None
     result: RunTestsResult | None = None
+    diagnostics: TestJobDiagnostics | None = None
 
 
 class GetTestJobResponse(MCPResponse):

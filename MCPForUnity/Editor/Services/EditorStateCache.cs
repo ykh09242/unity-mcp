@@ -68,6 +68,7 @@ namespace MCPForUnity.Editor.Services
         private static long? _lastTrackedTestStartedMs;
         private static long? _lastTrackedTestFinishedMs;
         private static string _lastTrackedActivityPhase;
+        private static long _activitySinceUnixMs;
         private static int _lastTrackedBatchLimit;
 
         private static JObject _cached;
@@ -538,6 +539,9 @@ namespace MCPForUnity.Editor.Services
                 activityPhase = "playmode_transition";
             }
 
+            if (_activitySinceUnixMs == 0 || activityPhase != _lastTrackedActivityPhase)
+                _activitySinceUnixMs = _observedUnixMs;
+
             var snapshot = new EditorStateSnapshot
             {
                 SchemaVersion = "unity-mcp/editor_state@2",
@@ -570,7 +574,7 @@ namespace MCPForUnity.Editor.Services
                 Activity = new EditorStateActivity
                 {
                     Phase = activityPhase,
-                    SinceUnixMs = _observedUnixMs,
+                    SinceUnixMs = _activitySinceUnixMs,
                     Reasons = new[] { reason },
                 },
                 Compilation = new EditorStateCompilation

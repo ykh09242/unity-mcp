@@ -122,6 +122,15 @@ class EditorStateStaleness(BaseModel):
     is_stale: bool | None = None
 
 
+class EditorStateDiagnostics(BaseModel):
+    status: str
+    heartbeat_age_ms: int
+    activity_age_ms: int | None = None
+    modal_detection: str = "unavailable"
+    possible_causes: list[str] = []
+    suggested_actions: list[str] = []
+
+
 class EditorStateData(BaseModel):
     schema_version: str
     observed_at_unix_ms: int
@@ -136,6 +145,7 @@ class EditorStateData(BaseModel):
     settings: EditorStateSettings | None = None
     advice: EditorStateAdvice | None = None
     staleness: EditorStateStaleness | None = None
+    diagnostics: EditorStateDiagnostics | None = None
 
 
 def _now_unix_ms() -> int:
@@ -236,16 +246,68 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         blocking.append("running_tests")
     if refresh.get("is_refresh_in_progress") is True:
         blocking.append("asset_refresh")
+    if assets.get("is_updating") is True:
+        blocking.append("asset_import")
+    activity = state_v2.get("activity") or {}
+    phase = activity.get("phase")
+    if phase == "playmode_transition":
+        blocking.append("playmode_transition")
     if is_stale:
         blocking.append("stale_status")
 
     ready_for_tools = len(blocking) == 0
+    try:
+        activity_age_ms = max(0, now_ms - int(activity.get("since_unix_ms")))
+    except (TypeError, ValueError, OverflowError):
+        activity_age_ms = None
+    # A missing heartbeat cannot distinguish a native dialog, a blocked editor,
+    # background throttling or a transport interruption. Never dismiss dialogs.
+    unresponsive = age_ms >= 30_000
+    prolonged = (
+        phase in {"compiling", "domain_reload", "asset_import", "playmode_transition"}
+        and activity_age_ms is not None
+        and activity_age_ms >= 60_000
+    )
+    status = (
+        "unresponsive"
+        if unresponsive
+        else "stale"
+        if is_stale
+        else "prolonged_activity"
+        if prolonged
+        else "responsive"
+    )
+    inspect_editor = unresponsive or prolonged
+    state_v2["diagnostics"] = {
+        "status": status,
+        "heartbeat_age_ms": age_ms,
+        "activity_age_ms": activity_age_ms,
+        "modal_detection": "unavailable",
+        "possible_causes": [
+            "modal_dialog",
+            "editor_main_thread_blocked",
+            "background_throttling",
+            "transport_delay",
+        ]
+        if unresponsive
+        else [],
+        "suggested_actions": [
+            "Inspect the Unity Editor for save, reload or import dialogs and resolve them manually.",
+            "Check Editor.log and the connection status before retrying; do not repeat mutations blindly.",
+        ]
+        if inspect_editor
+        else [],
+    }
 
     state_v2["advice"] = {
         "ready_for_tools": ready_for_tools,
         "blocking_reasons": blocking,
-        "recommended_retry_after_ms": 0 if ready_for_tools else 500,
-        "recommended_next_action": "none" if ready_for_tools else "retry_later",
+        "recommended_retry_after_ms": 0 if ready_for_tools else 5000 if inspect_editor else 500,
+        "recommended_next_action": "inspect_editor"
+        if inspect_editor
+        else "none"
+        if ready_for_tools
+        else "retry_later",
     }
     state_v2["staleness"] = {"age_ms": age_ms, "is_stale": is_stale}
     return state_v2

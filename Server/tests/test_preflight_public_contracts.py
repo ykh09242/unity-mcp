@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -19,6 +20,7 @@ import pytest
         "unknown_state",
         "malformed_state",
         "stale_idle",
+        "unresponsive_idle",
         "refresh_error_blocks",
         "refresh_exception_blocks",
         "requires_no_tests_false",
@@ -147,7 +149,9 @@ async def _scenario(case):
                     "tests": {"is_running": running},
                 }
                 if case == "stale_idle":
-                    data["observed_at_unix_ms"] = 1
+                    data["observed_at_unix_ms"] = int(time.time() * 1000) - 3000
+                elif case == "unresponsive_idle":
+                    data["observed_at_unix_ms"] = int(time.time() * 1000) - 60000
                 return {"success": True, "data": data}
             if command == "refresh_unity":
                 if case == "refresh_exception_blocks":
@@ -197,6 +201,10 @@ async def _scenario(case):
             assert response["success"] is False and response["error"] == "busy"
             assert response["hint"] == "retry"
             assert response["data"] == {"reason": "tests_running", "retry_after_ms": 5000}
+            assert "run_tests" not in commands and "refresh_unity" not in commands
+        elif case == "unresponsive_idle":
+            assert response["success"] is False and response["error"] == "editor_unresponsive"
+            assert response["hint"] == "inspect_editor"
             assert "run_tests" not in commands and "refresh_unity" not in commands
         elif case == "refresh_error_blocks":
             assert response["success"] is False and response["error"] == "fixture refresh failure"
