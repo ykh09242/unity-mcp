@@ -192,11 +192,12 @@ class ResponseRetentionMiddleware:
         token = response_owner.set(owner)
         session = _scope_session(scope)
         sse = False
+        legacy_sse = False
         request_owners: list[ResponseOwner] = []
         owned_scope = {**scope, "state": {**scope.get("state", {}), _OWNER_STATE: request_owners}}
 
         async def send_owned(message):
-            nonlocal session, sse
+            nonlocal session, sse, legacy_sse
             if message["type"] == "http.response.start":
                 headers = dict(message.get("headers", []))
                 # Legacy SSE's endpoint can emit an empty final Response after
@@ -206,9 +207,12 @@ class ResponseRetentionMiddleware:
                 if header is not None:
                     session = header.decode("latin-1")
             body = message.get("body", b"")
-            if sse and session is None:
+            # Only legacy SSE advertises a separate POST endpoint. A standalone
+            # Streamable HTTP GET has no ownership of concurrent POST replies.
+            if sse and body.startswith((b"event: endpoint\r\n", b"event: endpoint\n")):
                 match = _endpoint_session.search(body[:65_536])
                 if match is not None:
+                    legacy_sse = True
                     session = match.group(1).decode("ascii")
             request_id = _frame_id(body) if body else None
             await send(message)
@@ -230,7 +234,7 @@ class ResponseRetentionMiddleware:
                 for request_owner in request_owners:
                     request_owner.release()
             if session is not None:
-                if scope.get("method") == "GET" and sse:
+                if scope.get("method") == "GET" and legacy_sse:
                     for key in tuple(_http_response_owners):
                         if key[1] == session and key[0] == _owner_key(scope, session, 0)[0]:
                             _release_http_owner(key, closing=True)

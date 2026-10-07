@@ -284,22 +284,28 @@ class PluginHub(WebSocketEndpoint):
             await asyncio.wait_for(self.on_connect(websocket), self.REGISTRATION_TIMEOUT)
             while websocket.application_state == WebSocketState.CONNECTED:
                 registered = getattr(websocket.state, "plugin_registered", False)
-                if registered:
-                    message = await websocket.receive()
-                else:
-                    remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-                    message = await asyncio.wait_for(websocket.receive(), remaining)
-                if message["type"] == "websocket.disconnect":
-                    close_code = int(message.get("code") or 1000)
-                    break
-                if message["type"] == "websocket.receive":
-                    data = await self.decode(websocket, message)
-                    if websocket.application_state == WebSocketState.CONNECTED:
-                        if registered:
-                            await self.on_receive(websocket, data)
-                        else:
-                            remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-                            await asyncio.wait_for(self.on_receive(websocket, data), remaining)
+                message = data = None
+                try:
+                    if registered:
+                        message = await websocket.receive()
+                    else:
+                        remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                        message = await asyncio.wait_for(websocket.receive(), remaining)
+                    if message["type"] == "websocket.disconnect":
+                        close_code = int(message.get("code") or 1000)
+                        break
+                    if message["type"] == "websocket.receive":
+                        data = await self.decode(websocket, message)
+                        if websocket.application_state == WebSocketState.CONNECTED:
+                            if registered:
+                                await self.on_receive(websocket, data)
+                            else:
+                                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                                await asyncio.wait_for(self.on_receive(websocket, data), remaining)
+                finally:
+                    # Delivery owns accepted results; idle dispatch must not
+                    # retain an uncharged raw frame or its decoded graph.
+                    message = data = None
         except asyncio.TimeoutError:
             close_code = 4408
             try:
