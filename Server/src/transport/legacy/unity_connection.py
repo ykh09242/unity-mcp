@@ -1,4 +1,5 @@
 from core.config import config
+from core.server_build import RUNNING_SERVER
 import contextlib
 from dataclasses import dataclass, field
 import errno
@@ -573,6 +574,7 @@ class UnityConnection:
                             {
                                 "type": command_type,
                                 "params": params,
+                                "server_info": RUNNING_SERVER.command_metadata(),
                             }
                         ).encode("utf-8")
 

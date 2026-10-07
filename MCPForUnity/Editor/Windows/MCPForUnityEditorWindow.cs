@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -15,6 +16,7 @@ using MCPForUnity.Editor.Windows.Components.Connection;
 using MCPForUnity.Editor.Windows.Components.Resources;
 using MCPForUnity.Editor.Windows.Components.Tools;
 using MCPForUnity.Editor.Windows.Components.Validation;
+using Newtonsoft.Json.Linq;
 using Unity.EditorCoroutines.Editor;
 using UnityEditor;
 using UnityEditor.UIElements;
@@ -54,6 +56,7 @@ namespace MCPForUnity.Editor.Windows
         private static readonly HashSet<MCPForUnityEditorWindow> OpenWindows = new();
         private static bool dependencyActionInFlight;
         private VisualElement dependencySection;
+        private string expectedServerSource;
         private bool guiCreated = false;
         private bool toolsLoaded = false;
         private bool resourcesLoaded = false;
@@ -391,10 +394,12 @@ namespace MCPForUnity.Editor.Windows
             versionLabel.text = $"v{version}";
             try
             {
-                versionLabel.tooltip = $"{ProductInfo.ProductName} v{version}\nServer source: {AssetPathUtility.GetMcpServerPackageSource()}";
+                expectedServerSource = AssetPathUtility.GetMcpServerPackageSource();
+                versionLabel.tooltip = $"{ProductInfo.ProductName} v{version}\nServer source: {expectedServerSource}";
             }
             catch (InvalidOperationException ex)
             {
+                expectedServerSource = null;
                 versionLabel.tooltip = $"{ProductInfo.ProductName} v{version}\n{ex.Message}";
             }
         }
@@ -763,19 +768,36 @@ namespace MCPForUnity.Editor.Windows
             var content = new VisualElement();
             content.AddToClassList("section-content");
 
+            var serverVersions = new Label(ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow)) { name = "stdio-server-versions" };
+            serverVersions.AddToClassList("help-text");
+            content.Add(serverVersions);
+            serverVersions.schedule.Execute(() => serverVersions.text = ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow)).Every(1000);
+
             // Install All / Uninstall All buttons
             var bulkRow = new VisualElement();
             bulkRow.AddToClassList("tool-actions");
 
             var upmPackages = new[] { "com.unity.probuilder", "com.unity.cinemachine", "com.unity.visualeffectgraph", "com.unity.cloud.gltfast" };
+            var selectedPackages = upmPackages.ToDictionary(id => id, id => string.Empty);
 
             Button installAllButton = null;
             installAllButton = new Button(() =>
             {
+                var installed = GetInstalledUpmVersions();
+                var missing = upmPackages.Where(id => !installed.ContainsKey(id)).ToArray();
+                if (missing.Any(id => !TryGetExactPackageSelection(id, selectedPackages[id], out _)))
+                {
+                    EditorUtility.DisplayDialog(
+                        "Choose Dependency Versions",
+                        "Enter an exact package@version for each missing package before installing all. Installed packages are preserved.",
+                        "OK"
+                    );
+                    return;
+                }
                 if (
                     !EditorUtility.DisplayDialog(
                         "Install All Dependencies",
-                        "This will install Roslyn DLLs, ProBuilder, Cinemachine, VFX Graph, and glTFast. Continue?",
+                        "Install missing dependencies at the selected exact versions? Existing package versions will be preserved.",
                         "Install All",
                         "Cancel"
                     )
@@ -789,9 +811,12 @@ namespace MCPForUnity.Editor.Windows
                     {
                         try
                         {
-                            if (!RoslynInstaller.IsInstalled())
+                            if (
+                                !RoslynInstaller.IsInstalled()
+                                && Type.GetType("Microsoft.CodeAnalysis.CSharp.CSharpCompilation, Microsoft.CodeAnalysis.CSharp") == null
+                            )
                                 await RoslynInstaller.InstallAsync(interactive: false);
-                            BatchUpmAdd(upmPackages, done);
+                            BatchUpmAdd(SelectMissingPackages(selectedPackages, GetInstalledUpmVersions()), done);
                         }
                         catch (Exception ex)
                         {
@@ -869,62 +894,144 @@ namespace MCPForUnity.Editor.Windows
                     : null
             );
 
-            // ProBuilder
-            bool hasProBuilder = Type.GetType("UnityEngine.ProBuilder.ProBuilderMesh, Unity.ProBuilder") != null;
-            AddDependencyRow(
-                content,
-                "ProBuilder",
-                "Required for the manage_probuilder tool (probuilder group).",
-                hasProBuilder,
-                "Installed",
-                "Not installed",
-                done => InstallUpmPackage("com.unity.probuilder", done),
-                done => RemoveUpmPackage("com.unity.probuilder", done)
-            );
+            AddUpmDependencyRow(content, "com.unity.probuilder", selectedPackages, "ProBuilder", "Required for the manage_probuilder tool (probuilder group).");
 
             // Cinemachine
-            bool hasCinemachine =
-                Type.GetType("Unity.Cinemachine.CinemachineCamera, Unity.Cinemachine") != null
-                || Type.GetType("Cinemachine.CinemachineVirtualCamera, Cinemachine") != null;
-            AddDependencyRow(
+            AddUpmDependencyRow(
                 content,
+                "com.unity.cinemachine",
+                selectedPackages,
                 "Cinemachine",
-                "Enhances manage_camera with virtual camera support (core group).",
-                hasCinemachine,
-                "Installed",
-                "Not installed \u2014 camera tool works without it",
-                done => InstallUpmPackage("com.unity.cinemachine", done),
-                done => RemoveUpmPackage("com.unity.cinemachine", done)
+                "Enhances manage_camera with virtual camera support (core group)."
             );
 
             // VFX Graph — uses preprocessor symbol, so check via UPM package list
-            bool hasVfxGraph = IsUpmPackageInstalled("com.unity.visualeffectgraph");
-            AddDependencyRow(
+            AddUpmDependencyRow(
                 content,
+                "com.unity.visualeffectgraph",
+                selectedPackages,
                 "VFX Graph",
-                "Enables VisualEffect support in manage_vfx tool (vfx group).",
-                hasVfxGraph,
-                "Installed",
-                "Not installed \u2014 VFX tool falls back to ParticleSystem/LineRenderer",
-                done => InstallUpmPackage("com.unity.visualeffectgraph", done),
-                done => RemoveUpmPackage("com.unity.visualeffectgraph", done)
+                "Enables VisualEffect support in manage_vfx tool (vfx group)."
             );
 
             // glTFast — uses an assembly type, but also check via UPM package list
-            bool hasGltfast = IsUpmPackageInstalled("com.unity.cloud.gltfast") || Type.GetType("GLTFast.GltfImport, glTFast") != null;
-            AddDependencyRow(
+            AddUpmDependencyRow(
                 content,
+                "com.unity.cloud.gltfast",
+                selectedPackages,
                 "glTFast (glTF/GLB import)",
-                "Enables .glb/.gltf model import for the AI Asset Generation tools (asset_gen group).",
-                hasGltfast,
-                "Installed — GLB generation/import works",
-                "Not installed — GLB import is unavailable; FBX still works, or install to enable GLB",
-                done => InstallUpmPackage("com.unity.cloud.gltfast", done),
-                done => RemoveUpmPackage("com.unity.cloud.gltfast", done)
+                "Enables .glb/.gltf model import for the AI Asset Generation tools (asset_gen group)."
             );
 
             section.Add(content);
             container.Add(section);
+        }
+
+        private static void AddUpmDependencyRow(
+            VisualElement parent,
+            string packageId,
+            IDictionary<string, string> selectedPackages,
+            string name,
+            string description
+        )
+        {
+            var installed = GetInstalledUpmVersions();
+            bool isInstalled = installed.TryGetValue(packageId, out string installedVersion);
+            var selection = new TextField("Exact package@version")
+            {
+                name = packageId + "-version",
+                value = isInstalled ? packageId + "@" + installedVersion : packageId + "@",
+                tooltip = "Enter an exact registry version compatible with this Unity project, for example " + packageId + "@1.2.3.",
+            };
+            selectedPackages[packageId] = selection.value;
+            selection.RegisterValueChangedCallback(evt => selectedPackages[packageId] = evt.newValue);
+            AddDependencyRow(
+                parent,
+                name,
+                description,
+                isInstalled,
+                "Installed " + installedVersion,
+                "Not installed — choose an exact version to install",
+                done =>
+                {
+                    if (!TryGetExactPackageSelection(packageId, selection.value, out string selected))
+                    {
+                        EditorUtility.DisplayDialog("Choose Dependency Version", "Enter " + packageId + "@version with an exact version number.", "OK");
+                        done();
+                        return;
+                    }
+                    if (GetInstalledUpmVersions().ContainsKey(packageId))
+                    {
+                        done();
+                        return;
+                    }
+                    InstallUpmPackage(selected, done);
+                },
+                done => RemoveUpmPackage(packageId, done)
+            );
+            var row = parent.ElementAt(parent.childCount - 1);
+            row.Insert(2, selection);
+            if (isInstalled)
+            {
+                Button change = null;
+                change = new Button(() =>
+                {
+                    if (!TryGetExactPackageSelection(packageId, selection.value, out string selected))
+                    {
+                        EditorUtility.DisplayDialog("Choose Dependency Version", "Enter " + packageId + "@version with an exact version number.", "OK");
+                        return;
+                    }
+                    if (
+                        !EditorUtility.DisplayDialog(
+                            "Change Dependency Version",
+                            "Install " + selected + "? This explicitly replaces the installed version.",
+                            "Change Version",
+                            "Cancel"
+                        )
+                    )
+                        return;
+                    RunDependencyAction(change, "Installing...", "Change Version", done => InstallUpmPackage(selected, done));
+                })
+                {
+                    text = "Change Version",
+                };
+                change.AddToClassList("action-button");
+                row.Add(change);
+            }
+        }
+
+        internal static bool TryGetExactPackageSelection(string packageId, string selection, out string exact)
+        {
+            exact = null;
+            string prefix = packageId + "@";
+            if (string.IsNullOrWhiteSpace(selection))
+                return false;
+            selection = selection.Trim();
+            if (!selection.StartsWith(prefix, StringComparison.Ordinal))
+                return false;
+            string version = selection.Substring(prefix.Length);
+            if (
+                !Regex.IsMatch(
+                    version,
+                    @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+                )
+            )
+                return false;
+            exact = selection;
+            return true;
+        }
+
+        internal static string[] SelectMissingPackages(IDictionary<string, string> selections, IDictionary<string, string> installed)
+        {
+            return selections
+                .Where(pair => !installed.ContainsKey(pair.Key))
+                .Select(pair =>
+                {
+                    if (!TryGetExactPackageSelection(pair.Key, pair.Value, out string exact))
+                        throw new ArgumentException("Choose an exact version for " + pair.Key);
+                    return exact;
+                })
+                .ToArray();
         }
 
         private static void AddDependencyRow(
@@ -1040,6 +1147,11 @@ namespace MCPForUnity.Editor.Windows
 
         private static void BatchUpmAdd(string[] packageIds, Action onComplete = null)
         {
+            if (packageIds.Length == 0)
+            {
+                onComplete?.Invoke();
+                return;
+            }
             var request = UnityEditor.PackageManager.Client.AddAndRemove(packageIds, null);
             EditorUtility.DisplayProgressBar("Installing Packages", $"Installing {packageIds.Length} package(s)...", 0.5f);
             EditorCoroutineUtility.StartCoroutineOwnerless(PollUpmRequest(request, "install", onComplete));
@@ -1079,7 +1191,17 @@ namespace MCPForUnity.Editor.Windows
                 try
                 {
                     if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
+                    {
                         Debug.Log($"[MCP] Package {verb} succeeded.");
+                        foreach (var window in OpenWindows.Where(window => window != null).ToArray())
+                        {
+                            var parent = window.dependencySection?.parent;
+                            if (parent == null)
+                                continue;
+                            window.dependencySection.RemoveFromHierarchy();
+                            window.BuildDependenciesSection(parent);
+                        }
+                    }
                     else
                         Debug.LogError($"[MCP] Package {verb} failed: {request.Error?.message}");
                 }
@@ -1109,14 +1231,32 @@ namespace MCPForUnity.Editor.Windows
             }
         }
 
-        private static bool IsUpmPackageInstalled(string packageId)
+        private static Dictionary<string, string> GetInstalledUpmVersions()
         {
-            // Check manifest.json directly — faster than async UPM API
+            var versions = new Dictionary<string, string>();
+            foreach (var package in UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages())
+                versions[package.name] = package.version;
+            // Include declared packages while UPM is resolving; never silently replace
+            // an unresolved direct dependency or a Git/local package with a registry release.
             string manifestPath = System.IO.Path.Combine(Application.dataPath, "../Packages/manifest.json");
-            if (!System.IO.File.Exists(manifestPath))
-                return false;
-            string manifest = System.IO.File.ReadAllText(manifestPath);
-            return manifest.Contains($"\"{packageId}\"");
+            if (System.IO.File.Exists(manifestPath))
+            {
+                foreach (var pair in ParseDeclaredUpmVersions(System.IO.File.ReadAllText(manifestPath)))
+                    if (!versions.ContainsKey(pair.Key))
+                        versions[pair.Key] = pair.Value;
+            }
+            return versions;
+        }
+
+        internal static Dictionary<string, string> ParseDeclaredUpmVersions(string manifest)
+        {
+            var versions = new Dictionary<string, string>();
+            if (!(JObject.Parse(manifest)["dependencies"] is JObject dependencies))
+                return versions;
+            foreach (var property in dependencies.Properties())
+                if (property.Value.Type == JTokenType.String)
+                    versions[property.Name] = (string)property.Value;
+            return versions;
         }
     }
 }

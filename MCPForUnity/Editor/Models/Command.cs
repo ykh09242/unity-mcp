@@ -16,5 +16,8 @@ namespace MCPForUnity.Editor.Models
         /// The parameters for the command
         /// </summary>
         public JObject @params { get; set; }
+
+        /// <summary>Optional, untrusted process build metadata; never used for authentication or routing.</summary>
+        public JToken server_info { get; set; }
     }
 }

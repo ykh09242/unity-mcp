@@ -11,6 +11,7 @@ from pydantic import JsonValue
 from starlette.websockets import WebSocket
 
 from core.config import config
+from core.server_build import RUNNING_SERVER
 from models import MCPResponse
 from services.registry import get_group_tool_names, get_registered_tools
 from services.tools.manage_ugui import manage_ugui
@@ -706,6 +707,7 @@ async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
                 "max_nodes": 200,
                 "element_type": "canvas",
             },
+            "server_info": RUNNING_SERVER.command_metadata(),
         }
     ]
     receive.assert_called_once()

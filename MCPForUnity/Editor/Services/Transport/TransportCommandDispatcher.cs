@@ -26,12 +26,19 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private sealed class PendingCommand
         {
-            public PendingCommand(string commandJson, Command command, CancellationToken cancellationToken, CancellationTokenRegistration registration)
+            public PendingCommand(
+                string commandJson,
+                Command command,
+                CancellationToken cancellationToken,
+                CancellationTokenRegistration registration,
+                TransportMode? origin
+            )
             {
                 CommandJson = commandJson;
                 if (commandJson != null)
                     JsonResponseSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 Command = command;
+                Origin = origin;
                 CancellationToken = cancellationToken;
                 CancellationRegistration = registration;
                 QueuedAt = DateTime.UtcNow;
@@ -39,6 +46,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             public string CommandJson { get; }
             public Command Command { get; }
+            public TransportMode? Origin { get; }
             public TaskCompletionSource<string> CompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<TransportCommandResponse> ResponseSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<bool> ExecutionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -110,14 +118,14 @@ namespace MCPForUnity.Editor.Services.Transport
             return operation.JsonResponse;
         }
 
-        internal static TransportCommandOperation ExecuteCommandAsync(Command command, CancellationToken cancellationToken)
+        internal static TransportCommandOperation ExecuteCommandAsync(Command command, CancellationToken cancellationToken, TransportMode? origin = null)
         {
             if (command == null)
                 throw new ArgumentNullException(nameof(command));
-            return Enqueue(null, command, cancellationToken);
+            return Enqueue(null, command, cancellationToken, origin);
         }
 
-        private static TransportCommandOperation Enqueue(string commandJson, Command command, CancellationToken cancellationToken)
+        private static TransportCommandOperation Enqueue(string commandJson, Command command, CancellationToken cancellationToken, TransportMode? origin = null)
         {
             EnsureInitialised();
 
@@ -125,7 +133,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             var registration = cancellationToken.CanBeCanceled ? cancellationToken.Register(() => CancelPending(id, cancellationToken)) : default;
 
-            var pending = new PendingCommand(commandJson, command, cancellationToken, registration);
+            var pending = new PendingCommand(commandJson, command, cancellationToken, registration, origin);
             var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
 
             lock (PendingLock)
@@ -364,6 +372,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     RemovePending(id, pending);
                     return;
                 }
+
+                ServerVersionDiagnostics.Observe(command.server_info, pending.Origin, DateTime.UtcNow);
 
                 if (string.Equals(command.type, "ping", StringComparison.OrdinalIgnoreCase))
                 {

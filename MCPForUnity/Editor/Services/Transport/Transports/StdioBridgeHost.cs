@@ -1256,7 +1256,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 try
                 {
                     var command = JsonConvert.DeserializeObject<MCPForUnity.Editor.Models.Command>(payload);
-                    operation = TransportCommandDispatcher.ExecuteCommandAsync(command, cts.Token);
+                    operation = TransportCommandDispatcher.ExecuteCommandAsync(command, cts.Token, TransportMode.Stdio);
                     var response = await operation.Response.ConfigureAwait(true);
                     completionSource.TrySetResult(response.ToJson());
                 }

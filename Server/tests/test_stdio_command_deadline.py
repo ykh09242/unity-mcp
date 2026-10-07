@@ -25,6 +25,7 @@ def deny(*args, **kwargs):
 socket.socket.connect = deny
 socket.create_connection = deny
 from core.config import config
+from core.server_build import RUNNING_SERVER
 from transport.legacy import unity_connection as module
 config.http_remote_hosted = False
 config.connection_timeout = 1.0
@@ -258,10 +259,12 @@ result = conn.send_command("fixture_query", {}, max_attempts=1, deadline=5.0)
 # Then only receive keeps its historical short retry limit.
 assert result == {"ok": True} and clock.now < 5.0
 assert retry.timeout == 5.0 and not retry.closed
-assert first.closed and first.send_attempts == [struct.pack(">Q", len(b'{"type": "fixture_query", "params": {}}'))]
+expected_request = json.dumps({"type": "fixture_query", "params": {}, "server_info": RUNNING_SERVER.command_metadata()}).encode("utf-8")
+assert first.closed and first.send_attempts == [struct.pack(">Q", len(expected_request))]
 assert retry.write_timeouts[0] > 1.2
 assert retry.read_timeouts[-2:] == [1.0, 1.0]
 assert len(retry.send_attempts) == 2
+assert retry.send_attempts == [struct.pack(">Q", len(expected_request)), expected_request]
 """,
         tmp_path,
     )

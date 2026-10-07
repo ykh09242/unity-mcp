@@ -104,7 +104,7 @@ All of these follow the same pattern:
    - Any JSON behavior flags as needed.
 3. **Override `GetInstallationSteps`** to describe how users open or edit the config.
 4. Rely on **base implementations** for:
-   - `CheckStatus` – reads and validates the JSON config; can auto-rewrite to match Unity MCP.
+   - `CheckStatus` – reads and validates the JSON config without rewriting it.
    - `Configure` – writes/rewrites the config file.
    - `GetManualSnippet` – builds a JSON snippet using `ConfigJsonBuilder`.
 
@@ -126,6 +126,18 @@ All of these follow the same pattern:
   - `DefaultUnityFields` adds client-specific fields if they are missing (e.g. `disabled: false`).
 
 All of this logic is centralized in **`ConfigJsonBuilder`**, so most JSON-based clients **do not need to override** `GetManualSnippet`.
+
+### Preserve manual stdio configuration
+
+An explicit **Configure** action records ownership of the generated UnityMCP entry.
+Startup refresh may update that entry only when automatic registration is enabled,
+the stored fingerprint still matches, and the entry is recognized as generated.
+Manual edits, custom commands, deliberate source/version pins, and entries created
+before ownership tracking are preserved. A status check does not claim ownership.
+
+Use **Configure** when intentionally replacing an existing entry with the selected
+settings. To diagnose an already running server after an update, inspect the observed
+stdio build information described in [Troubleshooting](./troubleshooting.md#server-still-uses-the-previous-build-after-an-update).
 
 ---
 

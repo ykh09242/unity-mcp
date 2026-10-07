@@ -2,7 +2,7 @@ from typing import Any
 import os
 import sys
 
-from core.telemetry import get_package_version
+from core.server_build import RUNNING_SERVER
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -88,7 +88,13 @@ async def debug_request_context(ctx: Context) -> dict[str, Any]:
         "success": True,
         "data": {
             "server": {
-                "version": get_package_version(),
+                **RUNNING_SERVER.command_metadata(),
+                "version_guidance": (
+                    "Compare source_commit with the Unity package's selected pinned server source. "
+                    "Unity package and Python server versions are independent. After updating, "
+                    "restart this client's MCP server connection. Reconfigure only when you intend "
+                    "to change its source; preserve intentional manual version pins."
+                ),
                 "cwd": os.getcwd(),
                 "argv": _redact_argv(sys.argv),
             },

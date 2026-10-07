@@ -15,14 +15,18 @@ async def test_debug_request_context_includes_server_diagnostics(monkeypatch):
         async def get_state(self, _k):
             return None
 
-    # Ensure get_package_version is stable for assertion
-    monkeypatch.setattr(mod, "get_package_version", lambda: "9.9.9-test")
+    from core.server_build import ServerBuild
+
+    monkeypatch.setattr(mod, "RUNNING_SERVER", ServerBuild("9.9.9-test", "a" * 40, "b" * 32))
 
     res = await mod.debug_request_context(DummyCtx())
     assert res.get("success") is True
     data = res.get("data") or {}
     server = data.get("server") or {}
     assert server.get("version") == "9.9.9-test"
+    assert server.get("source_commit") == "a" * 40
+    assert server.get("server_id") == "b" * 32
+    assert "restart" in server.get("version_guidance", "").lower()
     assert "cwd" in server
     assert "argv" in server
 
@@ -42,7 +46,6 @@ async def test_debug_request_context_redacts_secret_argv(monkeypatch):
         async def get_state(self, _k):
             return None
 
-    monkeypatch.setattr(mod, "get_package_version", lambda: "9.9.9-test")
     monkeypatch.setattr(
         mod.sys,
         "argv",

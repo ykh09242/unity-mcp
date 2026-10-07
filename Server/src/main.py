@@ -11,7 +11,6 @@ from core.telemetry import (
     record_telemetry,
     MilestoneType,
     RecordType,
-    get_package_version,
 )
 from services.resources import register_all_resources
 from transport.plugin_registry import PluginRegistry
@@ -21,6 +20,7 @@ from services.custom_tool_service import (
     CustomToolService,
     resolve_project_id_for_unity_instance,
 )
+from core.server_build import RUNNING_SERVER
 from core.config import config
 from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
@@ -169,7 +169,7 @@ custom_tool_service: CustomToolService | None = None
 async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Handle server startup and shutdown."""
     global _unity_connection_pool, _server_version
-    _server_version = get_package_version()
+    _server_version = RUNNING_SERVER.version
     api_key_service = ApiKeyService.get_instance() if ApiKeyService.is_initialized() else None
     logger.info("Unity MCP (ykh09242) v%s starting up", _server_version)
 
@@ -553,6 +553,7 @@ def create_mcp_server(
 ) -> FastMCP:
     mcp = UnityMCP(
         name="mcp-for-unity-server",
+        version=RUNNING_SERVER.version,
         lifespan=server_lifespan,
         instructions=_build_instructions(project_scoped_tools),
     )
@@ -567,7 +568,8 @@ def create_mcp_server(
             {
                 "status": "healthy",
                 "timestamp": time.time(),
-                "version": _server_version or "unknown",
+                "version": _server_version or RUNNING_SERVER.version,
+                "server_build": RUNNING_SERVER.command_metadata(),
                 "message": "Unity MCP (ykh09242) server is running",
             }
         )

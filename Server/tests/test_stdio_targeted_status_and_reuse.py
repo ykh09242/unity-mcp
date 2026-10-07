@@ -24,6 +24,7 @@ def deny(*args, **kwargs):
     raise AssertionError("real network/discovery forbidden")
 socket.socket.connect = deny
 from core.config import config
+from core.server_build import RUNNING_SERVER
 from models.models import UnityInstanceInfo
 from transport.legacy import unity_connection as module
 config.http_remote_hosted = False
@@ -148,7 +149,7 @@ def test_preflight_uses_selected_status_only(tmp_path, instance_id, statuses, bl
         else:
             assert result == {{"endpoint": 1111}}
             assert not old.closed and conn.sock is old and not created
-            assert old.requests == [{{"type": "fixture_query", "params": {{"zero": 0}}}}]
+            assert old.requests == [{{"type": "fixture_query", "params": {{"zero": 0}}, "server_info": RUNNING_SERVER.command_metadata()}}]
     """,
         tmp_path,
     )

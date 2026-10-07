@@ -28,6 +28,27 @@ Work from package import to server, bridge, client, then target. Do not delete p
 
 `GET /health` checks only the process. Verify an Editor by reading `mcpforunity://instances` and its project info. Never share token-file contents, API keys or complete private payloads in diagnostics.
 
+## Server still uses the previous build after an update
+
+An externally owned stdio server can stay alive after the Unity package changes.
+Open **Dependencies** in the MCP window and inspect **Observed stdio servers** after
+running a tool from the affected client. It shows the server-reported Python version,
+installed source commit when available, last-observed time, and comparison with the
+selected pinned server source. Multiple observed stdio processes are listed separately;
+these observations do not describe the active HTTP server. Entries become stale after
+two minutes without a command and do not prove a process is still running.
+
+The Unity package and Python server use independent version numbers. A build mismatch
+is reported only when both source commits are available. Editable/local installations,
+unavailable installed-origin metadata, and older servers remain **comparison unavailable**;
+an older server may send no build metadata at all. The existing `debug_request_context`
+tool also reports the process-frozen version and sanitized build identity. HTTP clients
+can inspect the existing MCP initialize server version and `/health` metadata.
+
+Restart the affected client's MCP connection to load the selected server. Reconfigure
+only when intending to change its source, and preserve deliberate manual version pins.
+The editor does not terminate or restart externally owned clients for this diagnostic.
+
 ## "No Unity Instances Found"
 
 Check bridge status and read `mcpforunity://instances`. A domain reload can temporarily remove a connection; let compilation/reconnection finish and rediscover. After transport/config changes, reconnect the client. Do not send a write to another Editor merely because the intended one is temporarily unavailable.

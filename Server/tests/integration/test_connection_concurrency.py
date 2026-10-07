@@ -11,6 +11,7 @@ import time
 import pytest
 
 from core.config import config
+from core.server_build import RUNNING_SERVER
 from models.models import UnityInstanceInfo
 import transport.legacy.unity_connection as uc
 from transport.legacy.unity_connection import UnityConnection
@@ -133,7 +134,13 @@ def test_closed_socket_reconnects_before_dispatching_mutation(isolated_connectio
             result = conn.send_command("manage_gameobject", {"action": "modify"}, max_attempts=0)
             bridge.result(timeout=2)
     assert result == {"success": True}
-    assert commands == [{"type": "manage_gameobject", "params": {"action": "modify"}}]
+    assert commands == [
+        {
+            "type": "manage_gameobject",
+            "params": {"action": "modify"},
+            "server_info": RUNNING_SERVER.command_metadata(),
+        }
+    ]
 
 
 def test_unity_error_does_not_reconnect_and_replay_mutation(isolated_connection, monkeypatch):
@@ -324,6 +331,14 @@ def test_malformed_reply_discards_socket_then_next_call_connects_fresh(
             bridge.result(timeout=2)
     assert result == {"success": True}
     assert commands == [
-        {"type": "manage_gameobject", "params": {"action": "modify"}},
-        {"type": "get_editor_state", "params": {}},
+        {
+            "type": "manage_gameobject",
+            "params": {"action": "modify"},
+            "server_info": RUNNING_SERVER.command_metadata(),
+        },
+        {
+            "type": "get_editor_state",
+            "params": {},
+            "server_info": RUNNING_SERVER.command_metadata(),
+        },
     ]
