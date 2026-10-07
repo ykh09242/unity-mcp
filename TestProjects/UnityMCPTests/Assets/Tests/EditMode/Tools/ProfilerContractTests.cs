@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -7,6 +8,7 @@ using MCPForUnity.Editor.Tools.Profiler;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine.Profiling;
+using UnityEngine.TestTools;
 using UProfiler = UnityEngine.Profiling.Profiler;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -130,6 +132,56 @@ namespace MCPForUnityTests.Editor.Tools
             // Explicit counter selection is tested without starting native recorders.
             var result = (List<string>)method.Invoke(null, new object[] { new ToolParams(parameters), Unity.Profiling.ProfilerCategory.Render });
             CollectionAssert.AreEqual(new[] { "first", "First", "last" }, result);
+        }
+
+        [TestCase("42")]
+        [TestCase("true")]
+        [TestCase("{}")]
+        [TestCase("[42]")]
+        [TestCase("[true]")]
+        [TestCase("[{}]")]
+        [TestCase("[null]")]
+        [TestCase("[\"Known\",42]")]
+        [TestCase("[[\"Known\"],\"Other\"]")]
+        [TestCase("\"[42]\"")]
+        [TestCase("[\"[42]\"]")]
+        [TestCase("[[42]]")]
+        public void MalformedCounterSelector_IsRejectedInsteadOfBroadeningSelection(string selector)
+        {
+            // Given an explicit selector that cannot name a set of counters.
+            var parameters = new ToolParams(new JObject { ["counters"] = JToken.Parse(selector) });
+            var select = typeof(CounterOps).GetMethod("GetRequestedCounters", BindingFlags.NonPublic | BindingFlags.Static);
+
+            // When selection runs, then malformed input must fail before discovery or recorder creation.
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                select.Invoke(null, new object[] { parameters, Unity.Profiling.ProfilerCategory.Render })
+            );
+            Assert.That(error.InnerException, Is.InstanceOf<ArgumentException>());
+        }
+
+        [UnityTest]
+        public IEnumerator MalformedCounterSelector_RejectsBeforeWaitingForFrames()
+        {
+            // Given a malformed selector at the public tool boundary.
+            var parameters = new JObject
+            {
+                ["action"] = "get_counters",
+                ["category"] = "Render",
+                ["counters"] = new JObject(),
+            };
+
+            // When the tool runs, admission must settle without starting frame-driven native work.
+            var task = ManageProfiler.HandleCommand(parameters);
+            bool completedAtAdmission = task.IsCompleted;
+            // Drain the original implementation's two-frame capture during a RED run too.
+            for (int frame = 0; frame < 10 && !task.IsCompleted; frame++)
+                yield return null;
+
+            // Then the caller receives an immediate error instead of an unfiltered capture.
+            Assert.IsTrue(task.IsCompleted, "The owned recorder capture must settle before this test exits.");
+            var result = JObject.FromObject(task.GetAwaiter().GetResult());
+            Assert.IsTrue(completedAtAdmission, "Invalid selectors must be rejected before awaiting a capture frame.");
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
 
         [TestCase("Owned", "Owned_valid", "Owned_valid")]

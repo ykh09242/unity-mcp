@@ -77,7 +77,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         private static List<string> GetRequestedCounters(ToolParams p, ProfilerCategory category)
         {
-            var explicitCounters = p.GetStringArray("counters");
+            var explicitCounters = p.GetStringArray("counters", strict: true);
             if (explicitCounters != null && explicitCounters.Length > 0)
                 return explicitCounters.Distinct(StringComparer.Ordinal).ToList();
 
