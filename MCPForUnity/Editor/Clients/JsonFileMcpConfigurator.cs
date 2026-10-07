@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
@@ -82,7 +85,9 @@ namespace MCPForUnity.Editor.Clients
                 }
 
                 // Determine and set the configured transport type
-                if (args != null && args.Length > 0)
+                bool hasCommand = serverConfig["command"]?.Type == JTokenType.String && !string.IsNullOrWhiteSpace((string)serverConfig["command"]);
+                bool generatedStdio = IsGeneratedStdioEntry(serverConfig);
+                if (hasCommand || (args != null && args.Length > 0))
                 {
                     client.configuredTransport = Models.ConfiguredTransport.Stdio;
                 }
@@ -110,7 +115,19 @@ namespace MCPForUnity.Editor.Clients
                 string mismatchReason = null;
                 bool expectsHttp = client.SupportsHttpTransport && EditorConfigurationCache.Instance.UseHttpTransport;
 
-                if (args != null && args.Length > 0)
+                if (hasCommand && !generatedStdio)
+                {
+                    // An arbitrary executable, wrapper, uv tool run or Python script is a
+                    // valid manual stdio entry. Source/version inference cannot validate it.
+                    matches =
+                        !expectsHttp
+                        && string.IsNullOrEmpty(configuredUrl)
+                        && (
+                            serverConfig["args"] == null
+                            || serverConfig["args"] is JArray manualArgs && manualArgs.All(argument => argument.Type == JTokenType.String)
+                        );
+                }
+                else if (args != null && args.Length > 0)
                 {
                     // Use beta-aware expected package source for comparison
                     string expectedUvxUrl = GetExpectedPackageSourceForValidation();
@@ -118,7 +135,10 @@ namespace MCPForUnity.Editor.Clients
 
                     if (!string.IsNullOrEmpty(configuredUvxUrl) && !string.IsNullOrEmpty(expectedUvxUrl))
                     {
-                        if (McpConfigurationHelper.PathsEqual(configuredUvxUrl, expectedUvxUrl))
+                        if (
+                            string.Equals(configuredUvxUrl, expectedUvxUrl, StringComparison.Ordinal)
+                            || McpConfigurationHelper.PathsEqual(configuredUvxUrl, expectedUvxUrl)
+                        )
                         {
                             matches = !expectsHttp && string.IsNullOrEmpty(configuredUrl);
                         }
@@ -168,11 +188,16 @@ namespace MCPForUnity.Editor.Clients
                     return client.status;
                 }
 
+                bool canAutoRewrite =
+                    attemptAutoRewrite
+                    && generatedStdio
+                    && OwnsGeneratedEntry(path, serverConfig)
+                    && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true);
                 if (hasVersionMismatch)
                 {
-                    if (attemptAutoRewrite)
+                    if (canAutoRewrite)
                     {
-                        var result = McpConfigurationHelper.WriteMcpConfiguration(path, client);
+                        var result = WriteGeneratedConfiguration(path);
                         if (result == "Configured successfully")
                         {
                             return CheckStatus(attemptAutoRewrite: false);
@@ -187,9 +212,9 @@ namespace MCPForUnity.Editor.Clients
                         client.SetStatus(McpStatus.VersionMismatch, mismatchReason);
                     }
                 }
-                else if (attemptAutoRewrite)
+                else if (canAutoRewrite)
                 {
-                    var result = McpConfigurationHelper.WriteMcpConfiguration(path, client);
+                    var result = WriteGeneratedConfiguration(path);
                     if (result == "Configured successfully")
                     {
                         return CheckStatus(attemptAutoRewrite: false);
@@ -213,6 +238,93 @@ namespace MCPForUnity.Editor.Clients
             return client.status;
         }
 
+        // No fingerprint migration is inferred from an existing command shape: legacy
+        // entries remain user-owned until an explicit Configure succeeds in this editor.
+        internal static string GeneratedOwnershipKey(string path) => "MCPForUnity.GeneratedJsonConfig." + Fingerprint(path);
+
+        private static string Fingerprint(string value)
+        {
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", string.Empty);
+        }
+
+        private static bool OwnsGeneratedEntry(string path, JObject entry)
+        {
+            string stored = EditorPrefs.GetString(GeneratedOwnershipKey(path), string.Empty);
+            return !string.IsNullOrEmpty(stored) && stored == Fingerprint(entry.ToString(Formatting.None));
+        }
+
+        private string WriteGeneratedConfiguration(string path)
+        {
+            string result = McpConfigurationHelper.WriteMcpConfiguration(path, client);
+            if (result != "Configured successfully")
+                return result;
+            var root = JObject.Parse(File.ReadAllText(path));
+            string containerKey = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
+            var entry =
+                (client.IsVsCodeLayout ? root["servers"]?["unityMCP"] ?? root["mcp"]?["servers"]?["unityMCP"] : root[containerKey]?["unityMCP"]) as JObject;
+            string key = GeneratedOwnershipKey(path);
+            if (IsGeneratedStdioEntry(entry))
+                EditorPrefs.SetString(key, Fingerprint(entry.ToString(Formatting.None)));
+            else
+                EditorPrefs.DeleteKey(key);
+            return result;
+        }
+
+        internal static bool IsGeneratedStdioEntry(JObject entry)
+        {
+            if (
+                entry?["command"]?.Type != JTokenType.String
+                || !(entry["args"] is JArray array)
+                || entry["url"] != null
+                || entry["serverUrl"] != null
+                || entry["httpUrl"] != null
+                || entry["headersHelper"] != null
+                || entry["http_headers_helper"] != null
+                || entry["env"] != null && (!(entry["env"] is JObject env) || env.HasValues)
+                || entry
+                    .Properties()
+                    .Any(property =>
+                        property.Name != "command"
+                        && property.Name != "args"
+                        && property.Name != "type"
+                        && property.Name != "env"
+                        && property.Name != "disabled"
+                        && property.Name != "enabled"
+                    )
+            )
+                return false;
+            string command = ((string)entry["command"]).Replace('\\', '/');
+            command = command.Substring(command.LastIndexOf('/') + 1);
+            if (command != "uvx" && command != "uvx.exe")
+                return false;
+            if (array.Any(token => token.Type != JTokenType.String))
+                return false;
+            string[] args = array.ToObject<string[]>();
+            int index = 0;
+            while (index < args.Length && (args[index] == "--no-cache" || args[index] == "--refresh" || args[index] == "--offline"))
+                index++;
+            if (index + 1 < args.Length && args[index] == "--python" && args[index + 1] == ">=3.11")
+                index += 2;
+            if (index + 1 >= args.Length || args[index++] != "--from")
+                return false;
+            string source = args[index++];
+            bool knownSource =
+                source == "mcpforunity"
+                || source.StartsWith("mcpforunity==", StringComparison.Ordinal)
+                || source.StartsWith("mcpforunity>=", StringComparison.Ordinal)
+                || source.StartsWith("git+https://github.com/CoplayDev/unity-mcp@", StringComparison.OrdinalIgnoreCase)
+                || source.StartsWith("https://github.com/ykh09242/unity-mcp/archive/", StringComparison.OrdinalIgnoreCase)
+                    && source.EndsWith(".zip#subdirectory=Server", StringComparison.Ordinal);
+            if (!knownSource)
+                return false;
+            if (index + 1 < args.Length && args[index] == "--prerelease" && args[index + 1] == "allow")
+                index += 2;
+            if (index >= args.Length || args[index++] != "mcp-for-unity")
+                return false;
+            return index == args.Length || index + 2 == args.Length && args[index] == "--transport" && args[index + 1] == "stdio";
+        }
+
         public override void Configure()
         {
             // Always idempotent-write. The per-client UI button routes through Unregister
@@ -220,7 +332,7 @@ namespace MCPForUnity.Editor.Clients
             // "Configure All" path calls this directly and expects an unconditional write.
             string path = GetConfigPath();
             McpConfigurationHelper.EnsureConfigDirectoryExists(path);
-            string result = McpConfigurationHelper.WriteMcpConfiguration(path, client);
+            string result = WriteGeneratedConfiguration(path);
             if (result == "Configured successfully")
             {
                 CheckStatus(attemptAutoRewrite: false);
@@ -285,6 +397,7 @@ namespace MCPForUnity.Editor.Clients
 
                 client.SetStatus(McpStatus.NotConfigured);
                 client.configuredTransport = Models.ConfiguredTransport.Unknown;
+                EditorPrefs.DeleteKey(GeneratedOwnershipKey(path));
             }
             catch (Exception ex)
             {

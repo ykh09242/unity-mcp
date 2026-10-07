@@ -9,7 +9,9 @@ using UnityEditor;
 namespace MCPForUnity.Editor.Services
 {
     /// <summary>
-    /// Once per Editor session, sweeps registered configurators and re-runs CheckStatus(attemptAutoRewrite: true)
+    /// Once per Editor session, checks registered configurators with automatic registration enabled.
+    /// JSON configurators only rewrite entries fingerprinted by an explicit Configure;
+    /// legacy and manually edited entries are preserved until explicitly configured again.
     /// for any installed client that already has a config on disk. Catches the case where the user updated the
     /// MCP for Unity package while the Editor was closed — without this sweep, stale package versions in client
     /// configs would persist until the user opens the MCP window.
