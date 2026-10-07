@@ -1314,13 +1314,15 @@ class TestEditorEnhancedCommands:
 
     def test_editor_refresh(self, runner, mock_unity_response):
         """Test editor refresh."""
-        with patch("cli.commands.editor.run_command", return_value=mock_unity_response):
+        ready = {"success": True, "data": {"schema_version": "unity-mcp/editor_state@2"}}
+        with patch("cli.commands.editor.run_command", side_effect=[mock_unity_response, ready]):
             result = runner.invoke(cli, ["editor", "refresh"])
             assert result.exit_code == 0
 
     def test_editor_refresh_with_compile(self, runner, mock_unity_response):
         """Test editor refresh with compile flag."""
-        with patch("cli.commands.editor.run_command", return_value=mock_unity_response):
+        ready = {"success": True, "data": {"schema_version": "unity-mcp/editor_state@2"}}
+        with patch("cli.commands.editor.run_command", side_effect=[mock_unity_response, ready]):
             result = runner.invoke(cli, ["editor", "refresh", "--compile"])
             assert result.exit_code == 0
 

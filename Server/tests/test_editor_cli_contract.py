@@ -14,7 +14,7 @@ from cli.utils.config import CLIConfig
     ["add-tag", "Fixture"], ["remove-tag", "Fixture"],
     ["add-layer", "Fixture"], ["remove-layer", "Fixture"],
     ["tool", "Move"], ["deploy"], ["restore"], ["undo"], ["redo"],
-    ["menu", "Fixture/Action"], ["refresh"], ["custom-tool", "Fixture"],
+    ["menu", "Fixture/Action"], ["refresh", "--no-wait"], ["custom-tool", "Fixture"],
 ])
 @pytest.mark.parametrize("success", [True, False])
 def test_editor_command_json_is_one_document(args, success):

@@ -511,17 +511,63 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
     params: dict[str, Any] = {
         "mode": mode,
         "scope": scope,
-        "wait_for_ready": not no_wait,
+        "compile": "request" if compile else "none",
+        # Keep the native compilation start barrier, but wait for asset refresh
+        # readiness here so stable Play Mode and domain reload do not strand it.
+        "wait_for_ready": compile and not no_wait,
     }
-    if compile:
-        params["compile"] = "request"
 
     if config.format != "json":
         click.echo("Refreshing Unity...")
+    deadline = time.monotonic() + config.timeout
     result = run_command("refresh_unity", params, config)
+    if not no_wait and result.get("success") is True:
+        # Use the canonical resource's pure advice calculation on authoritative
+        # native snapshots; the CLI HTTP boundary exposes commands, not resources.
+        from services.resources.editor_state import _enrich_advice_and_staleness
+
+        ready = False
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                state = run_command("get_editor_state", {}, config, timeout=min(2.0, remaining))
+            except UnityConnectionError as error:
+                if str(error).startswith("HTTP error from server:") and not str(error).startswith(
+                    ("HTTP error from server: 404", "HTTP error from server: 503")
+                ):
+                    raise
+                pass  # Read-only retries can survive a domain reload disconnect.
+            except UnityCommandError as error:
+                response = error.response
+                message = str(response.get("error") or response.get("message") or "").lower()
+                if response.get("hint") != "retry" and not any(
+                    transient in message for transient in ("disconnected", "connection closed", "timeout", "timed out")
+                ):
+                    raise
+            else:
+                if time.monotonic() >= deadline:
+                    break
+                data = state.get("data")
+                if not isinstance(data, dict) or data.get("schema_version") != "unity-mcp/editor_state@2":
+                    raise UnityCommandError({"success": False, "error": "invalid_editor_state",
+                                             "message": "Readiness requires a canonical editor state snapshot."})
+                advice = _enrich_advice_and_staleness(data)["advice"]
+                if advice["ready_for_tools"] is True:
+                    ready = True
+                    break
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.25, remaining))
+        if not ready:
+            raise UnityCommandError({
+                "success": False,
+                "error": "refresh_timeout_waiting_for_ready",
+                "message": f"Refresh was acknowledged, but editor readiness was not confirmed within {config.timeout}s.",
+                "data": {"timeout": True, "wait_seconds": config.timeout, "refresh_response": result},
+                "hint": "Check editor state before deciding whether to refresh again.",
+            })
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
-        print_success("Unity refreshed")
+        print_success(result.get("message") or "Unity refresh requested")
 
 
 @editor.command("custom-tool")
