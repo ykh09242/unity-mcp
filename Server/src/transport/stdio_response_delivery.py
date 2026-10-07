@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import BinaryIO, Final
+from typing import Any, BinaryIO, Final
 
 import anyio
 from mcp.server import stdio as sdk_stdio
@@ -287,17 +287,21 @@ async def _settled_stdio_operation(operation: Callable[[], None]) -> None:
     """Keep protected descriptor work owned until its worker actually settles."""
     with anyio.CancelScope(shield=True):
         worker = asyncio.create_task(anyio.to_thread.run_sync(operation))
-        cancelled = False
-        while True:
-            try:
-                await asyncio.shield(worker)
-                break
-            except asyncio.CancelledError:
-                cancelled = True
-                if worker.cancelled():
-                    raise
-        if cancelled:
-            raise asyncio.CancelledError
+        await _settled_stdio_worker(worker)
+
+
+async def _settled_stdio_worker(worker: asyncio.Task) -> None:
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(worker)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if worker.cancelled():
+                raise
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def _settled_binary_write(stdout: BinaryIO, payload: bytes) -> None:
@@ -306,9 +310,44 @@ async def _settled_binary_write(stdout: BinaryIO, payload: bytes) -> None:
     await _settled_stdio_operation(operation.run)
 
 
+@dataclass
+class _TextWriteOperation:
+    stdout: Any
+    payload: str
+
+    async def run(self) -> None:
+        try:
+            await _settled_text_call(self.stdout.write, self.payload + '\n')
+            await _settled_text_call(self.stdout.flush)
+        finally:
+            self.payload = ''
+
+
+async def _settled_text_write(stdout, payload: str) -> None:
+    operation = _TextWriteOperation(stdout, payload)
+    payload = ''
+    await operation.run()
+
+
+async def _settled_text_call(method, *args) -> None:
+    try:
+        if getattr(method, '__func__', None) in (anyio.AsyncFile.write, anyio.AsyncFile.flush):
+            # Native Task.cancel can bypass AsyncFile's internal CancelScope.
+            # Protect each inherited file method, including mixed subclasses.
+            with anyio.CancelScope(shield=True):
+                worker = asyncio.create_task(method(*args))
+                args = ()
+                await _settled_stdio_worker(worker)
+        else:
+            # Opaque async sinks receive cancellation and settle their cleanup.
+            await method(*args)
+    finally:
+        args = ()
+
+
 @asynccontextmanager
-async def _binary_stdio_server(stdin, stdout: BinaryIO, delivery: StdioResponseDelivery):
-    """Pinned SDK stream topology with a bytes-only output consumer."""
+async def _owned_stdio_server(stdin, stdout, delivery: StdioResponseDelivery, *, text_output: bool = False):
+    """Pinned SDK stream topology with an owned text or binary consumer."""
     streams = getattr(sdk_stdio, "create_context_streams", None)
     if not callable(streams) or tuple(inspect.signature(streams).parameters) != ("max_buffer_size",):
         raise RuntimeError("Installed MCP stdio context stream API is unsupported")
@@ -339,8 +378,12 @@ async def _binary_stdio_server(stdin, stdout: BinaryIO, delivery: StdioResponseD
                     if isinstance(message, (JSONRPCResponse, JSONRPCError)):
                         entry = delivery.pending.get((type(message.id), message.id))
                     try:
-                        payload = jsonrpc_message_adapter.dump_json(message, by_alias=True, exclude_unset=True)
-                        await _settled_binary_write(stdout, payload)
+                        if text_output:
+                            payload = message.model_dump_json(by_alias=True, exclude_unset=True)
+                            await _settled_text_write(stdout, payload)
+                        else:
+                            payload = jsonrpc_message_adapter.dump_json(message, by_alias=True, exclude_unset=True)
+                            await _settled_binary_write(stdout, payload)
                     finally:
                         payload = message = envelope = None
                         if entry is not None and not entry.ambiguous:
@@ -372,12 +415,12 @@ async def retained_stdio_server(stdin=None, stdout=None, *, binary_stdout: Binar
         if stdout is not None:
             if binary_stdout is not None:
                 raise ValueError("Supply either text or binary MCP stdout")
-            async with sdk_stdio.stdio_server(stdin=stdin, stdout=DeliveryWriter(stdout, delivery)) as (read, write):
+            async with _owned_stdio_server(stdin, stdout, delivery, text_output=True) as (read, write):
                 yield read, DeliverySendStream(write, delivery)
         else:
             if binary_stdout is None:
                 binary_stdout, restore = _claim_sdk_stdout()
-            async with _binary_stdio_server(stdin, binary_stdout, delivery) as (read, write):
+            async with _owned_stdio_server(stdin, binary_stdout, delivery) as (read, write):
                 yield read, DeliverySendStream(write, delivery)
     finally:
         delivery.close()
