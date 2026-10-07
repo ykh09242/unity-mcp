@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             string prefabPath = @params["prefabPath"]?.ToString();
             string tag = @params["tag"]?.ToString();
             string primitiveType = @params["primitiveType"]?.ToString();
+            bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
             GameObject newGo = null;
 
             if (saveAsPrefab && string.IsNullOrEmpty(prefabPath))
@@ -201,6 +202,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             Undo.RecordObject(newGo.transform, "Set GameObject Transform");
             Undo.RecordObject(newGo, "Set GameObject Properties");
+
+            if (setActive.HasValue && newGo.activeSelf != setActive.Value)
+            {
+                newGo.SetActive(setActive.Value);
+                if (PrefabUtility.IsPartOfPrefabInstance(newGo))
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(newGo);
+            }
 
             // Set Parent
             if (parentGo != null)
