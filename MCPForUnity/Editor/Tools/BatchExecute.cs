@@ -58,14 +58,54 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            // Preflight the entire batch before any command can have side effects.
-            foreach (var token in commandsToken)
-                if (token is JObject entry && string.Equals(entry["tool"]?.ToString(), "batch_execute", StringComparison.OrdinalIgnoreCase))
-                    return new ErrorResponse("Nested batch_execute commands are not allowed.");
-
             bool failFast = @params.ReadScalar<bool?>("failFast") ?? false;
             bool parallelRequested = @params.ReadScalar<bool?>("parallel") ?? false;
             int? maxParallel = @params.ReadScalar<int?>("maxParallelism");
+
+            // Validate every command's envelope before dispatching any command. Operational
+            // failures from otherwise valid commands retain the best-effort behavior below.
+            var validationFailures = new List<object>();
+            foreach (var token in commandsToken)
+            {
+                string toolName = null;
+                string error = null;
+                if (token is not JObject entry)
+                    error = "Command entries must be JSON objects.";
+                else
+                {
+                    var toolToken = entry["tool"];
+                    if (toolToken?.Type == JTokenType.String)
+                        toolName = toolToken.Value<string>();
+                    if (string.IsNullOrWhiteSpace(toolName))
+                        error = "Each command must include a non-empty string 'tool' field.";
+                    else if (string.Equals(toolName, "batch_execute", StringComparison.OrdinalIgnoreCase))
+                        return new ErrorResponse("Nested batch_execute commands are not allowed.");
+                    else if (entry["params"] is JToken parameters && parameters.Type != JTokenType.Null && parameters is not JObject)
+                        error = "Command 'params' must be a JSON object or null when provided.";
+                }
+                if (error != null)
+                    validationFailures.Add(
+                        new
+                        {
+                            tool = toolName,
+                            callSucceeded = false,
+                            error,
+                        }
+                    );
+            }
+            if (validationFailures.Count > 0)
+                return new ErrorResponse(
+                    "One or more commands failed validation.",
+                    new
+                    {
+                        results = validationFailures,
+                        callSuccessCount = 0,
+                        callFailureCount = validationFailures.Count,
+                        parallelRequested,
+                        parallelApplied = false,
+                        maxParallelism = maxParallel,
+                    }
+                );
 
             if (parallelRequested)
             {
@@ -80,45 +120,8 @@ namespace MCPForUnity.Editor.Tools
             foreach (var token in commandsToken)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (token is not JObject commandObj)
-                {
-                    invocationFailureCount++;
-                    anyCommandFailed = true;
-                    commandResults.Add(
-                        new
-                        {
-                            tool = (string)null,
-                            callSucceeded = false,
-                            error = "Command entries must be JSON objects.",
-                        }
-                    );
-                    if (failFast)
-                    {
-                        break;
-                    }
-                    continue;
-                }
-
-                string toolName = commandObj["tool"]?.ToString();
-
-                if (string.IsNullOrWhiteSpace(toolName))
-                {
-                    invocationFailureCount++;
-                    anyCommandFailed = true;
-                    commandResults.Add(
-                        new
-                        {
-                            tool = toolName,
-                            callSucceeded = false,
-                            error = "Each command must include a non-empty 'tool' field.",
-                        }
-                    );
-                    if (failFast)
-                    {
-                        break;
-                    }
-                    continue;
-                }
+                var commandObj = (JObject)token;
+                string toolName = commandObj.Value<string>("tool");
 
                 // CommandRegistry dispatches resources as well as tools. Apply both policies.
                 var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(toolName);

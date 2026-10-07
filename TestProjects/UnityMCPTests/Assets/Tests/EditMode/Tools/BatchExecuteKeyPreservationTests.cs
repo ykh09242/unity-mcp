@@ -1,3 +1,4 @@
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -34,6 +35,92 @@ namespace MCPForUnityTests.Editor.Tools
         {
             if (testGo != null)
                 Object.DestroyImmediate(testGo);
+        }
+
+        [TestCase("null")]
+        [TestCase("[]")]
+        [TestCase("42")]
+        [TestCase("{}")]
+        [TestCase("{\"tool\":\" \"}")]
+        [TestCase("{\"tool\":42}")]
+        [TestCase("{\"tool\":{}}")]
+        [TestCase("{\"tool\":\"manage_components\",\"params\":[]}")]
+        [TestCase("{\"tool\":\"manage_components\",\"params\":true}")]
+        [TestCase("{\"tool\":\"manage_components\",\"params\":\"invalid\"}")]
+        public void MalformedLaterCommand_PreservesEarlierMutationTarget(string invalidCommandJson)
+        {
+            var audio = testGo.AddComponent<AudioSource>();
+            audio.volume = 0.8f;
+            int dirtyCount = EditorUtility.GetDirtyCount(audio);
+            var discovery = MCPServiceLocator.ToolDiscovery;
+            bool wasEnabled = discovery.IsToolEnabled("manage_components");
+            discovery.SetToolEnabled("manage_components", true);
+            try
+            {
+                var response = JObject.FromObject(
+                    BatchExecute
+                        .HandleCommand(
+                            new JObject
+                            {
+                                ["commands"] = new JArray(
+                                    new JObject
+                                    {
+                                        ["tool"] = "manage_components",
+                                        ["params"] = new JObject
+                                        {
+                                            ["action"] = "set_property",
+                                            ["target"] = testGo.GetInstanceIDCompat(),
+                                            ["search_method"] = "by_id",
+                                            ["component_type"] = "AudioSource",
+                                            ["property"] = "volume",
+                                            ["value"] = 0.2f,
+                                        },
+                                    },
+                                    JToken.Parse(invalidCommandJson)
+                                ),
+                            }
+                        )
+                        .GetAwaiter()
+                        .GetResult()
+                );
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(0, response.SelectToken("data.callSuccessCount").Value<int>());
+                Assert.AreEqual(1, response.SelectToken("data.callFailureCount").Value<int>());
+                Assert.AreEqual(1, ((JArray)response.SelectToken("data.results")).Count, "Only the malformed command should be reported; none are dispatched.");
+                Assert.AreEqual(0.8f, audio.volume, 0.001f, "Every command shape must be validated before the first dispatch.");
+                Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(audio));
+            }
+            finally
+            {
+                discovery.SetToolEnabled("manage_components", wasEnabled);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MissingOrNullCommandParameters_RemainSupported(bool explicitNull)
+        {
+            var discovery = MCPServiceLocator.ToolDiscovery;
+            bool wasEnabled = discovery.IsToolEnabled("manage_vfx");
+            discovery.SetToolEnabled("manage_vfx", true);
+            try
+            {
+                var command = new JObject { ["tool"] = "manage_vfx" };
+                if (explicitNull)
+                    command["params"] = JValue.CreateNull();
+                var response = JObject.FromObject(BatchExecute.HandleCommand(new JObject { ["commands"] = new JArray(command) }).GetAwaiter().GetResult());
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(
+                    "Action is required",
+                    response.SelectToken("data.results[0].result.message").Value<string>(),
+                    "Valid empty envelopes must reach the handler."
+                );
+            }
+            finally
+            {
+                discovery.SetToolEnabled("manage_vfx", wasEnabled);
+            }
         }
 
         [Test]
