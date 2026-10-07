@@ -81,6 +81,8 @@ jobs:
       - name: Build
         working-directory: website
         env:
+          # Static SSR does not need Node's experimental, file-backed Web Storage.
+          NODE_OPTIONS: --no-experimental-webstorage
           WEBSITE_URL: ${{ steps.pages.outputs.origin }}
           # Inject the cookieless GoatCounter beacon when provisioned. The site
           # gates on process.env.GOATCOUNTER_CODE, which Actions does NOT
@@ -115,3 +117,6 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        env:
+          # The pinned action still imports node:punycode; keep all other diagnostics visible.
+          NODE_OPTIONS: --disable-warning=DEP0040

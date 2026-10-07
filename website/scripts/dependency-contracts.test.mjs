@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const siteDir = fileURLToPath(new URL('../', import.meta.url));
@@ -12,6 +13,56 @@ const require = createRequire(import.meta.url);
 const coreRequire = createRequire(require.resolve('@docusaurus/core/package.json'));
 const notifierUrl = pathToFileURL(coreRequire.resolve('update-notifier')).href;
 const removed = ['got', 'cacheable-request', 'http-cache-semantics'];
+
+test('locked search dependencies exclude deprecated whatwg-encoding', () => {
+  const lock = JSON.parse(readFileSync(path.join(siteDir, 'package-lock.json'), 'utf8'));
+  for (const [location, entry] of Object.entries(lock.packages)) {
+    assert.notEqual(location.split('node_modules/').at(-1), 'whatwg-encoding', location);
+    assert.equal(entry.dependencies?.['whatwg-encoding'], undefined, location);
+  }
+});
+
+const searchRequire = createRequire(require.resolve('@easyops-cn/docusaurus-search-local/package.json'));
+const cheerioRequire = createRequire(searchRequire.resolve('cheerio'));
+
+test('search Cheerio can consume the encoding API through CommonJS', () => {
+  const encoding = cheerioRequire('encoding-sniffer');
+  assert.equal(typeof encoding.decodeBuffer, 'function');
+  assert.equal(typeof encoding.DecodeStream, 'function');
+  assert.equal(typeof encoding.getEncoding, 'function');
+  assert.equal(typeof searchRequire('cheerio').loadBuffer, 'function');
+});
+
+// Cross the decoder's sniffing window before the text that needs decoding.
+const encodingPadding = '<!--' + 'x'.repeat(1024) + '-->';
+const encodingFixtures = [
+  ['UTF-8', Buffer.from(`<meta charset="utf-8">${encodingPadding}<p>검색 café 🎮</p>`), '검색 café 🎮'],
+  ['UTF-8 BOM', Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(`${encodingPadding}<p>검색 café 🎮</p>`),
+  ]), '검색 café 🎮'],
+  ['Windows-1252', Buffer.concat([
+    Buffer.from(`<meta charset="windows-1252">${encodingPadding}<p>caf`),
+    Buffer.from([0xe9, 0x20, 0x80]), Buffer.from('</p>'),
+  ]), 'café €'],
+];
+
+for (const [name, buffer, expected] of encodingFixtures) {
+  test(`search Cheerio decodes ${name} HTML buffers`, () => {
+    const { loadBuffer } = searchRequire('cheerio');
+    assert.equal(loadBuffer(buffer)('p').text(), expected);
+  });
+
+  test(`search Cheerio decodes ${name} HTML across stream chunk boundaries`, async () => {
+    const { decodeStream } = searchRequire('cheerio');
+    const document = await new Promise((resolve, reject) => {
+      const decoder = decodeStream({}, (error, result) => error ? reject(error) : resolve(result));
+      decoder.on('error', reject);
+      // One-byte chunks split the BOM, metadata and multibyte UTF-8 characters.
+      Readable.from(Array.from(buffer, (byte) => Buffer.from([byte]))).pipe(decoder);
+    });
+    assert.equal(document('p').text(), expected);
+  });
+}
 
 for (const [name, minimum] of [['tinypool', '2.1.2'], ['postcss-selector-parser', '7.1.6']]) {
   test(`every locked ${name} includes the published security fixes`, () => {
