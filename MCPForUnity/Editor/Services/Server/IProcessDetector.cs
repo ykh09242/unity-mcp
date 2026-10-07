@@ -39,10 +39,10 @@ namespace MCPForUnity.Editor.Services.Server
         int GetCurrentProcessId();
 
         /// <summary>
-        /// Checks if a process exists on Unix systems.
+        /// Checks process liveness without treating an inspection failure as an exit.
         /// </summary>
         /// <param name="pid">The process ID to check</param>
-        /// <returns>True if the process exists</returns>
+        /// <returns>True if the process exists or its exit cannot be established.</returns>
         bool ProcessExists(int pid);
 
         /// <summary>

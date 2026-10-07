@@ -44,27 +44,22 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public bool ProcessExists(int pid)
         {
+            if (pid <= 0)
+                return false;
             try
             {
-                if (Application.platform == RuntimePlatform.WindowsEditor)
-                {
-                    // On Windows, use tasklist to check if process exists
-                    bool ok = ExecPath.TryRun("tasklist", $"/FI \"PID eq {pid}\"", Application.dataPath, out var stdout, out var stderr, 5000);
-                    string combined = ((stdout ?? string.Empty) + "\n" + (stderr ?? string.Empty)).ToLowerInvariant();
-                    return ok && combined.Contains(pid.ToString());
-                }
-
-                // Unix: ps exits non-zero when PID is not found.
-                string psPath = "/bin/ps";
-                if (!File.Exists(psPath))
-                    psPath = "ps";
-                ExecPath.TryRun(psPath, $"-p {pid} -o pid=", Application.dataPath, out var psStdout, out var psStderr, 2000);
-                string combined2 = ((psStdout ?? string.Empty) + "\n" + (psStderr ?? string.Empty)).Trim();
-                return !string.IsNullOrEmpty(combined2) && combined2.Any(char.IsDigit);
+                using var process = System.Diagnostics.Process.GetProcessById(pid);
+                return !process.HasExited;
+            }
+            catch (ArgumentException)
+            {
+                // GetProcessById reports a missing PID through ArgumentException.
+                return false;
             }
             catch
             {
-                return true; // Assume it exists if we cannot verify.
+                // Inspection failure is not proof of exit. Keep ownership intact.
+                return true;
             }
         }
 
