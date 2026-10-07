@@ -13,12 +13,13 @@ from .test_helpers import DummyContext
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("compile_mode", ["none", "request"])
 @pytest.mark.parametrize(
     "busy_polls,stale,expected_success,expected_polls",
     [(1, False, True, 2), (1, True, True, 2), (None, False, False, 240), (0, True, True, 1)],
 )
 async def test_refresh_waits_for_canonical_asset_refresh(
-    monkeypatch, busy_polls, stale, expected_success, expected_polls
+    monkeypatch, busy_polls, stale, expected_success, expected_polls, compile_mode
 ):
     instance = "ReadinessFixture@12345678"
     ctx = DummyContext()
@@ -46,7 +47,7 @@ async def test_refresh_waits_for_canonical_asset_refresh(
         if command == "refresh_unity":
             refreshes += 1
             assert kwargs == {"retry_on_reload": False}
-            assert params["wait_for_ready"] is True
+            assert params["wait_for_ready"] is (compile_mode == "request")
             return {"success": True, "message": "Refresh requested"}
         if command == "get_project_info":
             return {"success": True, "data": {}}
@@ -64,7 +65,7 @@ async def test_refresh_waits_for_canonical_asset_refresh(
 
     monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", transport)
     monkeypatch.setattr(project_info, "send_with_unity_instance", transport)
-    response = await refresh_module.refresh_unity(ctx, wait_for_ready=True)
+    response = await refresh_module.refresh_unity(ctx, compile=compile_mode, wait_for_ready=True)
     assert response.success is expected_success
     assert polls == expected_polls
     assert refreshes == 1

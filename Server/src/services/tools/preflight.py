@@ -72,10 +72,16 @@ async def preflight(
         if isinstance(assets, dict) and assets.get("external_changes_dirty") is True:
             try:
                 from services.tools.refresh_unity import refresh_unity
-                await refresh_unity(ctx, mode="if_dirty", scope="all", compile="request", wait_for_ready=True)
-            except Exception:
-                # Best-effort only; fall through to normal tool dispatch.
-                pass
+                # Refresh imports changed scripts itself. An explicit compile also
+                # reloads the domain for ordinary asset changes or already-imported edits.
+                refreshed = await refresh_unity(ctx, mode="if_dirty", scope="all", compile="none", wait_for_ready=True)
+                refresh_result = refreshed.model_dump() if hasattr(refreshed, "model_dump") else refreshed
+                if isinstance(refresh_result, dict) and refresh_result.get("success") is False:
+                    return MCPResponse(**refresh_result)
+                if not isinstance(refresh_result, dict) or refresh_result.get("success") is not True:
+                    return MCPResponse(success=False, error="refresh_failed", message="Preflight refresh did not confirm success.")
+            except Exception as exc:
+                return MCPResponse(success=False, error="refresh_failed", message=f"Preflight refresh failed: {exc}")
 
     # Compilation: optionally wait for a bounded time.
     if wait_for_no_compile:

@@ -11,7 +11,7 @@ from .test_helpers import DummyContext
 async def test_refresh_unity_recovers_from_retry_disconnect(monkeypatch):
     """
     Option A: if Unity disconnects and the transport returns hint=retry, refresh_unity(wait_for_ready=true)
-    should poll readiness and then return success + clear external dirty.
+    should poll readiness without replay, but cannot acknowledge an unconfirmed import.
     """
     from services.tools.refresh_unity import refresh_unity
 
@@ -37,7 +37,7 @@ async def test_refresh_unity_recovers_from_retry_disconnect(monkeypatch):
     assert payload["success"] is True
     assert payload.get("data", {}).get("recovered_from_disconnect") is True
 
-    # Dirty should be cleared
-    assert external_changes_scanner._states[inst].dirty is False
+    assert "execution is unconfirmed" in payload["message"]
+    assert external_changes_scanner._states[inst].dirty is True
 
 

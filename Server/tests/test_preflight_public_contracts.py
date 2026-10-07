@@ -11,7 +11,8 @@ import pytest
 @pytest.mark.parametrize("case", [
     "tests_start_during_compile", "known_tests_dirty", "compile_finishes_ready",
     "clear_stuck", "unknown_state", "malformed_state", "stale_idle",
-    "refresh_error_best_effort", "requires_no_tests_false", "invalid_init_timeout",
+    "refresh_error_blocks", "refresh_exception_blocks", "requires_no_tests_false", "invalid_init_timeout",
+    "dirty_assets_ready", "dirty_script_compiles",
 ])
 def test_preflight_public_contract(case, tmp_path):
     owned = tmp_path / case
@@ -64,6 +65,7 @@ async def _scenario(case):
     for protocol in ("2026-07-28", "legacy"):
         requests = []
         index = 0
+        refresh_started = False
         clock = [0.0]
 
         # Each protocol's callbacks finish before the next iteration replaces them.
@@ -75,13 +77,13 @@ async def _scenario(case):
         # Narrow clock/sleep boundary leaves SDK scheduling on the actual asyncio runtime.
         preflight.time = SimpleNamespace(monotonic=lambda: clock[0])
         preflight.asyncio = SimpleNamespace(sleep=sleep)
-        dirty = case in ("known_tests_dirty", "refresh_error_best_effort")
+        dirty = case in ("known_tests_dirty", "refresh_error_blocks", "refresh_exception_blocks", "dirty_assets_ready", "dirty_script_compiles")
         async def external_changes(instance):
             return {"external_changes_dirty": dirty}
         editor_state.external_changes_scanner.update_and_get_async = external_changes
 
         async def send(instance, command, params, **kwargs):
-            nonlocal index
+            nonlocal index, refresh_started
             assert instance == "Selected@fixture"
             requests.append({"instance": instance, "command": command, "params": copy.deepcopy(params)})
             if command == "get_project_info":
@@ -92,6 +94,8 @@ async def _scenario(case):
                 if case == "malformed_state":
                     return {"success": True, "data": {"compilation": ["fixture malformed"]}}
                 compiling = index == 0 and case in ("tests_start_during_compile", "compile_finishes_ready", "requires_no_tests_false")
+                if case == "dirty_script_compiles" and refresh_started and index < 3:
+                    compiling = True
                 running = case == "known_tests_dirty" or (case in ("tests_start_during_compile", "requires_no_tests_false") and index > 0)
                 index += 1
                 data = {"compilation": {"is_compiling": compiling, "is_domain_reload_pending": False}, "tests": {"is_running": running}}
@@ -99,7 +103,11 @@ async def _scenario(case):
                     data["observed_at_unix_ms"] = 1
                 return {"success": True, "data": data}
             if command == "refresh_unity":
-                # Keep refresh's explicit best-effort/nonrecoverable behavior in production.
+                if case == "refresh_exception_blocks":
+                    raise RuntimeError("fixture refresh transport exception")
+                if case in ("dirty_assets_ready", "dirty_script_compiles"):
+                    refresh_started = True
+                    return {"success": True, "data": {"refresh_triggered": True}}
                 return {"success": False, "error": "tests_running" if case == "known_tests_dirty" else "fixture refresh failure"}
             assert command == "run_tests"
             return {"success": True, "data": {"job_id": "fixture-job", "status": "queued"}}
@@ -132,12 +140,25 @@ async def _scenario(case):
             assert response["hint"] == "retry"
             assert response["data"] == {"reason": "tests_running", "retry_after_ms": 5000}
             assert "run_tests" not in commands and "refresh_unity" not in commands
+        elif case == "refresh_error_blocks":
+            assert response["success"] is False and response["error"] == "fixture refresh failure"
+            assert commands.count("refresh_unity") == 1 and "run_tests" not in commands
+        elif case == "refresh_exception_blocks":
+            assert response["success"] is False and response["error"] == "fixture refresh transport exception"
+            assert response["hint"] == "retry"
+            assert commands.count("refresh_unity") == 1 and "run_tests" not in commands
         else:
             assert response["success"] is True and commands.count("run_tests") == 1
             if case == "clear_stuck":
                 assert commands == ["run_tests"] and requests[0]["params"] == {"clear_stuck": True}
-            if case == "refresh_error_best_effort":
-                assert commands.count("refresh_unity") == 1
+            if case in ("dirty_assets_ready", "dirty_script_compiles"):
+                refresh_requests = [r for r in requests if r["command"] == "refresh_unity"]
+                assert len(refresh_requests) == 1
+                assert refresh_requests[0]["params"] == {
+                    "mode": "if_dirty", "scope": "all", "compile": "none", "wait_for_ready": False,
+                }
+                assert commands.count("get_editor_state") == (4 if case == "dirty_script_compiles" else 2)
+                assert commands[-1] == "run_tests"
         receipts.append({"protocol": protocol, "response": response, "requests": requests})
     print(json.dumps({"case": case, "receipts": receipts}))
 

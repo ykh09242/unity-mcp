@@ -15,7 +15,6 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
 import transport.legacy.unity_connection as _legacy_conn
-from transport.legacy.unity_connection import _extract_response_reason
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
 
@@ -222,12 +221,17 @@ async def refresh_unity(
                               "If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true"] = True,
 ) -> MCPResponse | dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
+    dirty_instance = unity_instance or await editor_state.infer_single_instance_id(ctx)
+    dirty_snapshot = external_changes_scanner.capture_dirty_state(dirty_instance) if dirty_instance else None
 
     params: dict[str, Any] = {
         "mode": mode,
         "scope": scope,
         "compile": compile,
-        "wait_for_ready": bool(wait_for_ready),
+        # Explicit compilation needs the native start barrier. For an asset refresh,
+        # wait on the server instead: the native wait cannot survive domain reload
+        # and also waits for an otherwise-ready Play Mode session to end.
+        "wait_for_ready": bool(wait_for_ready and compile == "request"),
     }
 
     recovered_from_disconnect = False
@@ -241,43 +245,18 @@ async def refresh_unity(
         retry_on_reload=False,
     )
 
-    # Handle connection errors during refresh/compile gracefully.
-    # Unity disconnects during domain reload, which is expected behavior - not a failure.
-    # If we sent the command and connection closed, the refresh was likely triggered successfully.
+    # A domain reload may lose the response after dispatch. Recover readiness
+    # without replaying the refresh; execution remains unconfirmed in that case.
     # Convert MCPResponse to dict if needed
     response_dict = response if isinstance(response, dict) else (response.model_dump() if hasattr(response, "model_dump") else response.__dict__)
     if not response_dict.get("success", True):
-        hint = response_dict.get("hint")
         err = (response_dict.get("error") or response_dict.get("message") or "").lower()
-        reason = _extract_response_reason(response_dict)
-
-        # Connection closed/timeout during compile = refresh was triggered, Unity is reloading
-        # This is SUCCESS, not failure - don't return error to prevent Claude Code from retrying
-        is_connection_lost = (
-            "connection closed" in err
-            or "disconnected" in err
-            or "aborted" in err  # WinError 10053: connection aborted
-            or "timeout" in err
-            or reason == "reloading"
-        )
-
-        if is_connection_lost and compile == "request":
-            # EXPECTED BEHAVIOR: When compile="request", Unity triggers domain reload which
-            # causes connection to close mid-command. This is NOT a failure - the refresh
-            # was successfully triggered. Treating this as success prevents Claude Code from
-            # retrying unnecessarily (which would cause multiple domain reloads - issue #577).
-            # The subsequent wait_for_ready loop (below) will verify Unity becomes ready.
-            logger.info("refresh_unity: Connection lost during compile (expected - domain reload triggered)")
-            recovered_from_disconnect = True
-        elif hint == "retry" or "could not connect" in err:
-            # Retryable error - proceed to wait loop if wait_for_ready
-            if not wait_for_ready:
-                return MCPResponse(**response_dict)
-            recovered_from_disconnect = True
-        else:
-            # Non-recoverable error - connection issue unrelated to domain reload
-            logger.warning(f"refresh_unity: Non-recoverable error (compile={compile}): {err[:100]}")
+        is_connection_lost = is_connection_lost_after_send(response_dict) or ("timeout" in err and compile == "request")
+        # A rejected command never ran. Later readiness cannot prove refresh success.
+        # Only an ambiguous lost response may recover, without replaying the write.
+        if is_reloading_rejection(response_dict) or not wait_for_ready or not is_connection_lost:
             return MCPResponse(**response_dict)
+        recovered_from_disconnect = True
 
     # Optional server-side wait loop (defensive): if Unity tool doesn't wait or returns quickly,
     # poll the canonical editor_state resource until ready or timeout.
@@ -294,18 +273,18 @@ async def refresh_unity(
                 data={"timeout": True, "wait_seconds": 60.0},
             )
 
-    # After readiness is restored, clear any external-dirty flag for this instance so future tools can proceed cleanly.
-    try:
-        inst = unity_instance or await editor_state.infer_single_instance_id(ctx)
-        if inst:
-            external_changes_scanner.clear_dirty(inst)
-    except Exception:
-        pass
+    # A dispatch-only response does not confirm import. Acknowledge only the edits
+    # observed before dispatch, leaving concurrent or subsequently sampled edits dirty.
+    response_data = response_dict.get("data")
+    refresh_performed = (response_dict.get("success") is True and scope in ("assets", "all")
+                         and (not isinstance(response_data, dict) or response_data.get("refresh_triggered") is not False))
+    if ready_confirmed and refresh_performed and dirty_snapshot is not None:
+        external_changes_scanner.clear_dirty(dirty_instance, expected=dirty_snapshot)
 
     if recovered_from_disconnect:
         return MCPResponse(
             success=True,
-            message="Refresh recovered after Unity disconnect/retry; editor is ready.",
+            message="Editor is ready after the refresh response was lost; refresh execution is unconfirmed.",
             data={"recovered_from_disconnect": True},
         )
 

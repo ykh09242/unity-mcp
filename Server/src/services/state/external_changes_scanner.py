@@ -45,6 +45,12 @@ class ExternalChangesState:
     manifest_last_mtime_ns: int | None = None
 
 
+@dataclass(frozen=True)
+class ExternalChangesSnapshot:
+    state: ExternalChangesState
+    last_seen_mtime_ns: int | None
+
+
 class ExternalChangesScanner:
     """
     Lightweight external-changes detector using recursive max-mtime scan.
@@ -101,15 +107,27 @@ class ExternalChangesScanner:
                 # Cached package paths, timestamps and dirty state belong to this project.
                 self._states[instance_id] = ExternalChangesState(project_root=project_root)
 
-    def clear_dirty(self, instance_id: str) -> None:
+    def capture_dirty_state(self, instance_id: str) -> ExternalChangesSnapshot | None:
+        """Capture the observed edits before dispatch, without scanning or advancing them."""
         if config.http_remote_hosted or len(instance_id) > 256:
-            return
-        st = self._get_state(instance_id)
-        st.dirty = False
-        st.dirty_since_unix_ms = None
-        st.last_cleared_unix_ms = _now_unix_ms()
-        # Reset baseline to “now” on next scan.
-        st.last_seen_mtime_ns = None
+            return None
+        with self._state_lock:
+            st = self._get_state(instance_id)
+            return ExternalChangesSnapshot(st, st.last_seen_mtime_ns)
+
+    def clear_dirty(self, instance_id: str, *, expected: ExternalChangesSnapshot | None = None) -> bool:
+        """Acknowledge edits, optionally only if the pre-dispatch snapshot still matches."""
+        if config.http_remote_hosted or len(instance_id) > 256:
+            return False
+        with self._state_lock:
+            st = self._get_state(instance_id)
+            if expected is not None and (st is not expected.state or st.last_seen_mtime_ns != expected.last_seen_mtime_ns):
+                return False
+            st.dirty = False
+            st.dirty_since_unix_ms = None
+            st.last_cleared_unix_ms = _now_unix_ms()
+            # Preserve the watermark so an edit not yet sampled remains detectable.
+            return True
 
     def _scan_paths_max_mtime_ns(self, roots: Iterable[Path]) -> int | None:
         newest: int | None = None
@@ -355,14 +373,15 @@ class ExternalChangesScanner:
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
             }
 
-        if st.last_seen_mtime_ns is None:
-            st.last_seen_mtime_ns = newest
-        elif newest > st.last_seen_mtime_ns:
-            st.last_seen_mtime_ns = newest
-            st.external_changes_last_seen_unix_ms = now
-            if not st.dirty:
-                st.dirty = True
-                st.dirty_since_unix_ms = now
+        with self._state_lock:
+            if st.last_seen_mtime_ns is None:
+                st.last_seen_mtime_ns = newest
+            elif newest > st.last_seen_mtime_ns:
+                st.last_seen_mtime_ns = newest
+                st.external_changes_last_seen_unix_ms = now
+                if not st.dirty:
+                    st.dirty = True
+                    st.dirty_since_unix_ms = now
 
         return {
             "external_changes_dirty": st.dirty,
