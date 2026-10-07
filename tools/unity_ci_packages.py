@@ -123,6 +123,7 @@ def extract_package(content: bytes, destination: Path) -> None:
     """Validate every member before extracting only ordinary package files/directories."""
     with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as archive:
         members = archive.getmembers()
+        planned: dict[str, tuple[PurePosixPath, tarfile.TarInfo]] = {}
         for member in members:
             path = PurePosixPath(member.name)
             if (
@@ -130,11 +131,44 @@ def extract_package(content: bytes, destination: Path) -> None:
                 or ".." in path.parts
                 or "\\" in member.name
                 or ":" in member.name
+                or any(character in member.name for character in '<>"|?*')
+                or any(ord(character) < 32 for character in member.name)
+                or any(part.endswith((".", " ")) for part in path.parts)
+                or any(
+                    re.fullmatch(r"(?i)(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", part)
+                    for part in path.parts
+                )
                 or not path.parts
                 or path.parts[0] != "package"
                 or not (member.isfile() or member.isdir())
+                or (member.isfile() and len(path.parts) == 1)
             ):
                 raise PreparationError(f"Unsafe package archive member: {member.name}")
+            relative = PurePosixPath(*path.parts[1:])
+            key = relative.as_posix().casefold()
+            previous = planned.get(key)
+            if previous is not None and not (
+                previous[0] == relative and previous[1].isdir() and member.isdir()
+            ):
+                raise PreparationError(f"Conflicting package archive member: {member.name}")
+            planned[key] = relative, member
+        for relative, member in planned.values():
+            for parent in relative.parents:
+                ancestor = planned.get(parent.as_posix().casefold())
+                if ancestor is not None and ancestor[1].isfile():
+                    raise PreparationError(f"Package archive ancestor is a file: {parent}")
+            target = destination.absolute().joinpath(*relative.parts)
+            for current in (target, *target.parents):
+                junction = getattr(current, "is_junction", lambda: False)()
+                if current.is_symlink() or junction:
+                    raise PreparationError(f"Linked package archive destination: {current}")
+                if current.exists():
+                    if current == target and member.isfile():
+                        raise PreparationError(
+                            f"Package archive cannot overwrite existing path: {current}"
+                        )
+                    if not current.is_dir():
+                        raise PreparationError(f"Package archive ancestor is a file: {current}")
         for member in members:
             target = destination.joinpath(*PurePosixPath(member.name).parts[1:])
             if member.isdir():
@@ -144,7 +178,7 @@ def extract_package(content: bytes, destination: Path) -> None:
                 stream = archive.extractfile(member)
                 if stream is None:
                     raise PreparationError(f"Missing package archive content: {member.name}")
-                with stream, target.open("wb") as output:
+                with stream, target.open("xb") as output:
                     shutil.copyfileobj(stream, output)
 
 
@@ -591,11 +625,15 @@ def prepare(
     repo, output = repo.resolve(), output.resolve()
     package_root = repo / "MCPForUnity"
     project_root = repo / "TestProjects" / "UnityMCPTests"
+    input_roots = [unity_data.resolve()]
+    if registry_cache is not None:
+        input_roots.append(registry_cache.resolve())
     if (
         not output.is_relative_to(repo)
         or output == repo
         or output.is_relative_to(package_root)
         or output.is_relative_to(project_root)
+        or any(output.is_relative_to(root) for root in input_roots)
         or output.exists()
     ):
         raise PreparationError(
@@ -655,10 +693,6 @@ def prepare(
                         )
                 case _:
                     raise PreparationError(f"Unsupported package source for {name}")
-            # Native modules remain built-in; package code is materialized once and referenced by file:.
-            if not name.startswith("com.unity.modules.") and package.directory != destination:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                copy_source(package.directory, destination)
             resolved[name] = package
             for dependency, _ in package.dependencies:
                 if dependency not in specs and not dependency.startswith("com.unity.modules."):
@@ -671,6 +705,13 @@ def prepare(
         for name, minimum in original_package.get("dependencies", {}).items():
             if package_numbers(resolved[name].version) < package_numbers(minimum):
                 raise PreparationError(f"MCP package requires {name}>={minimum}")
+        # Validate the complete dependency closure before copying potentially large source trees.
+        # Downloaded packages already occupy their destination; native modules remain built-in.
+        for name, package in resolved.items():
+            destination = scratch / "packages" / name
+            if not name.startswith("com.unity.modules.") and package.directory != destination:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                copy_source(package.directory, destination)
         refs = scratch / "refs"
         refs.mkdir()
         nunit = nunit_reference_path(

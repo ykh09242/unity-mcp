@@ -1194,3 +1194,155 @@ def test_family_only_minimum_accepts_prerelease_editor(
     value["unity"] = "6000.7"
     metadata.write_text(json.dumps(value), encoding="utf-8")
     assert prepare(environment, "6000.7.0a6").project_path.endswith("/project")
+
+
+@pytest.mark.parametrize("input_kind", ["editor", "registry-cache"])
+def test_output_inside_package_inputs_is_rejected_before_copying_or_creating_parents(
+    environment: tuple[Path, Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    input_kind: str,
+) -> None:
+    repo, data, cache, profiles = environment
+    inputs = repo / "package-inputs"
+    shutil.copytree(data if input_kind == "editor" else cache, inputs)
+    if input_kind == "editor":
+        data = inputs
+        package = inputs / "Resources/PackageManager/BuiltInPackages/com.unity.ugui"
+    else:
+        cache = inputs
+        package = inputs / "com.unity.nuget.newtonsoft-json@3.2.2"
+    output = package / "new-parent/output"
+    original_files = {
+        path.relative_to(inputs): path.read_bytes() for path in inputs.rglob("*") if path.is_file()
+    }
+    original_directories = {path.relative_to(inputs) for path in inputs.rglob("*") if path.is_dir()}
+    monkeypatch.setattr(
+        packages,
+        "copy_source",
+        lambda *args: pytest.fail("copied before rejecting output inside inputs"),
+    )
+    with pytest.raises(packages.PreparationError, match="[Oo]utput"):
+        packages.prepare(
+            "6000.0.69f1", data, output, repo=repo, profiles_path=profiles, registry_cache=cache
+        )
+    assert not output.parent.exists()
+    assert {
+        path.relative_to(inputs): path.read_bytes() for path in inputs.rglob("*") if path.is_file()
+    } == original_files
+    assert {
+        path.relative_to(inputs) for path in inputs.rglob("*") if path.is_dir()
+    } == original_directories
+
+
+@pytest.mark.parametrize("input_kind", ["editor", "registry-cache"])
+def test_repo_local_package_inputs_allow_separate_output_with_existing_owned_parent(
+    environment: tuple[Path, Path, Path, Path],
+    input_kind: str,
+) -> None:
+    repo, data, cache, profiles = environment
+    inputs = repo / "package-inputs"
+    shutil.copytree(data if input_kind == "editor" else cache, inputs)
+    if input_kind == "editor":
+        data = inputs
+    else:
+        cache = inputs
+    output = repo / "owned/nested/output"
+    output.parent.mkdir(parents=True)
+    original_files = {
+        path.relative_to(inputs): path.read_bytes() for path in inputs.rglob("*") if path.is_file()
+    }
+    result = packages.prepare(
+        "6000.0.69f1", data, output, repo=repo, profiles_path=profiles, registry_cache=cache
+    )
+    assert (repo / result.project_path).is_dir()
+    assert {
+        path.relative_to(inputs): path.read_bytes() for path in inputs.rglob("*") if path.is_file()
+    } == original_files
+
+
+def registry_archive(entries: list[tuple[str, bytes]]) -> bytes:
+    content = io.BytesIO()
+    with tarfile.open(fileobj=content, mode="w:gz") as archive:
+        for name, payload in entries:
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+    return content.getvalue()
+
+
+@pytest.mark.parametrize("conflict", ["package/a", "package/./a", "package/A", "package/a/child"])
+def test_registry_archive_collisions_fail_before_extracting_any_files(
+    tmp_path: Path,
+    conflict: str,
+) -> None:
+    destination = tmp_path / "destination"
+    content = registry_archive([("package/a", b"first"), (conflict, b"second")])
+    with pytest.raises(packages.PreparationError):
+        packages.extract_package(content, destination)
+    assert not destination.exists()
+
+
+def test_registry_archive_existing_file_conflict_preserves_all_destination_files(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    original = destination / "existing"
+    original.write_bytes(b"preserve")
+    content = registry_archive([("package/new", b"new"), ("package/existing", b"overwrite")])
+    with pytest.raises(packages.PreparationError):
+        packages.extract_package(content, destination)
+    assert original.read_bytes() == b"preserve"
+    assert not (destination / "new").exists()
+
+
+@pytest.mark.parametrize(
+    "unsafe", ["package/CON.asset", "package/a.", "package/a ", "package/a?b", "package/a\nb"]
+)
+def test_registry_archive_nonportable_paths_fail_before_writing(
+    tmp_path: Path, unsafe: str
+) -> None:
+    destination = tmp_path / "destination"
+    content = registry_archive([("package/valid", b"valid"), (unsafe, b"unsafe")])
+    with pytest.raises(packages.PreparationError):
+        packages.extract_package(content, destination)
+    assert not destination.exists()
+
+
+def test_registry_archive_accepts_nested_files_and_existing_owned_directories(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "destination"
+    (destination / "nested").mkdir(parents=True)
+    (destination / "nested/keep").write_bytes(b"keep")
+    content = io.BytesIO()
+    with tarfile.open(fileobj=content, mode="w:gz") as archive:
+        for name in ("package", "package/nested", "package/nested"):
+            member = tarfile.TarInfo(name)
+            member.type = tarfile.DIRTYPE
+            archive.addfile(member)
+        member = tarfile.TarInfo("package/nested/new")
+        member.size = 3
+        archive.addfile(member, io.BytesIO(b"new"))
+    packages.extract_package(content.getvalue(), destination)
+    assert (destination / "nested/keep").read_bytes() == b"keep"
+    assert (destination / "nested/new").read_bytes() == b"new"
+
+
+def test_incompatible_dependency_is_rejected_before_materializing_package_sources(
+    environment: tuple[Path, Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, data, _, _ = environment
+    metadata = data / "Resources/PackageManager/BuiltInPackages/com.unity.ext.nunit/package.json"
+    value = json.loads(metadata.read_text(encoding="utf-8"))
+    value["version"] = "2.0.2"
+    metadata.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setattr(
+        packages,
+        "copy_source",
+        lambda *args: pytest.fail("materialized package sources before dependency validation"),
+    )
+    with pytest.raises(packages.PreparationError, match="requires com.unity.ext.nunit"):
+        prepare(environment)
+    assert not (repo / ".unity-ci/6000.0.69f1").exists()
