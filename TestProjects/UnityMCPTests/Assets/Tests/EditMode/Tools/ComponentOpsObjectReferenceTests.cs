@@ -10,11 +10,11 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ObjectReferenceProbe : MonoBehaviour
     {
-        public Light light;
+        public Light lightReference;
         public Behaviour behaviour;
         public GameObject target;
         public int count;
-        [SerializeField] private Light privateLight;
+        [SerializeField] private Light privateLight = null;
         public Light PrivateLight => privateLight;
     }
 
@@ -54,8 +54,8 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetProperty_ComponentReference_IntegerAndObjectFormsResolveSameComponent(bool objectForm, bool gameObjectId)
         {
             JToken value = Reference(gameObjectId ? (Object)source : light, objectForm);
-            Assert.IsTrue(ComponentOps.SetProperty(probe, "light", value, out string error), error);
-            Assert.AreSame(light, probe.light);
+            Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference), value, out string error), error);
+            Assert.AreSame(light, probe.lightReference);
         }
 
         [TestCase(false)]
@@ -131,41 +131,44 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(true)]
         public void SetProperty_WrongComponentType_FailsWithoutChangingReference(bool objectForm)
         {
-            probe.light = light;
-            Assert.IsFalse(ComponentOps.SetProperty(probe, "light", Reference(owner.transform, objectForm), out string error));
+            probe.lightReference = light;
+            Assert.IsFalse(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference),
+                Reference(owner.transform, objectForm), out string error));
             Assert.IsNotEmpty(error);
-            Assert.AreSame(light, probe.light);
+            Assert.AreSame(light, probe.lightReference);
         }
 
         [TestCase(false)]
         [TestCase(true)]
         public void SetProperty_GameObjectWithoutRequiredComponent_FailsWithoutChangingReference(bool objectForm)
         {
-            probe.light = light;
-            Assert.IsFalse(ComponentOps.SetProperty(probe, "light", Reference(owner, objectForm), out string error));
+            probe.lightReference = light;
+            Assert.IsFalse(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference),
+                Reference(owner, objectForm), out string error));
             Assert.IsNotEmpty(error);
-            Assert.AreSame(light, probe.light);
+            Assert.AreSame(light, probe.lightReference);
         }
 
         [TestCase(false)]
         [TestCase(true)]
         public void SetProperty_DestroyedReference_FailsWithoutChangingReference(bool objectForm)
         {
-            probe.light = light;
+            probe.lightReference = light;
             var destroyed = new GameObject("DestroyedReference");
             JToken value = Reference(destroyed, objectForm);
             Object.DestroyImmediate(destroyed);
-            Assert.IsFalse(ComponentOps.SetProperty(probe, "light", value, out string error));
+            Assert.IsFalse(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference), value, out string error));
             Assert.IsNotEmpty(error);
-            Assert.AreSame(light, probe.light);
+            Assert.AreSame(light, probe.lightReference);
         }
 
         [Test]
         public void SetProperty_NullReference_ClearsExistingReference()
         {
-            probe.light = light;
-            Assert.IsTrue(ComponentOps.SetProperty(probe, "light", JValue.CreateNull(), out string error), error);
-            Assert.IsNull(probe.light);
+            probe.lightReference = light;
+            Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.lightReference),
+                JValue.CreateNull(), out string error), error);
+            Assert.IsNull(probe.lightReference);
         }
 
         [Test]
