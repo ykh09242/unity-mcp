@@ -46,6 +46,7 @@ DATA/Managed/UnityEngine/UnityEngine.RuntimeInitializeOnLoadManagerInitializerMo
 DATA/Managed/UnityEngine/UnityEngine.ScreenCaptureModule.dll
 DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll
 DATA/Managed/UnityEngine/UnityEngine.ManagedKernelModule.dll
+DATA/Managed/UnityEngine/UnityEngine.MathematicsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.SpriteMaskModule.dll
 DATA/Managed/UnityEngine/UnityEngine.SpriteShapeModule.dll
 DATA/Managed/UnityEngine/UnityEngine.StreamingModule.dll

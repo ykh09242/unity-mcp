@@ -474,11 +474,65 @@ def test_unity66_profile_removes_only_compiler_proven_absent_modules(name: str) 
         f"DATA/Managed/UnityEngine/UnityEngine.{module}Module.dll"
         for module in ("SharedInternals", "UnityTestProtocol", "VR")
     }
-    assert selected - default == {"DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll"} | {
+    assert selected - default == {
+        "DATA/Managed/UnityEngine/UnityEngine.MathematicsModule.dll",
+        "DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll",
+    } | {
         entry
         for entry in ("DATA/Managed/UnityEngine/UnityEditor.MediaModule.dll",)
         if name == "Editor"
     }
+
+
+@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b3", "7000.0.0a7"])
+def test_mathematics_module_resolves_from_real_profiles_for_all_consumers(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str
+) -> None:
+    project, framework = staged_tests
+    family = ".".join(version.split(".")[:2])
+    mathematics = "DATA/Managed/UnityEngine/UnityEngine.MathematicsModule.dll"
+    roots = {
+        "DATA": harness.data,
+        "EXTRA": harness.extra,
+        "LIBCACHE": harness.data
+        / "Resources/PackageManager/ProjectTemplates/libcache/fixture/ScriptAssemblies",
+    }
+    for name in ("Runtime", "Editor"):
+        profile = Path("tools/compile-refs") / family / f"{name}.txt"
+        text = (ROOT / profile).read_text(encoding="utf-8")
+        assert mathematics in text.splitlines()
+        (harness.repo / profile).write_text(text, encoding="utf-8")
+        for entry in text.splitlines():
+            prefix, relative = entry.split("/", 1)
+            if prefix == "COMPILED":
+                continue
+            reference = roots[prefix] / relative
+            reference.parent.mkdir(parents=True, exist_ok=True)
+            reference.touch()
+
+    result = harness.run(version, "win osx linux", test_project=project, framework=framework)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    for platform in ("win", "osx", "linux"):
+        for assembly in (*OWNED_ASSEMBLIES, COROUTINES_ASSEMBLY):
+            response = (harness.output / platform / f"{assembly}.rsp").read_text(encoding="utf-8")
+            assert '/Managed/UnityEngine/UnityEngine.MathematicsModule.dll"' in response
+
+
+@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b3", "7000.0.0a7"])
+def test_missing_mathematics_module_fails_before_invoking_compiler(
+    harness: CompileHarness, version: str
+) -> None:
+    family = ".".join(version.split(".")[:2])
+    entry = "DATA/Managed/UnityEngine/UnityEngine.MathematicsModule.dll"
+    manifest = harness.repo / "tools/compile-refs" / family / "Runtime.txt"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + entry + "\n", encoding="utf-8")
+
+    result = harness.run(version)
+
+    assert result.returncode != 0
+    assert f"required reference not found: {entry}" in result.stderr
+    assert not harness.calls.exists()
 
 
 @pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
@@ -551,6 +605,7 @@ def test_unity67_profile_removes_only_beta_compiler_proven_absent_modules(name: 
     }
     assert selected - default == {
         "DATA/Managed/UnityEngine/UnityEngine.ManagedKernelModule.dll",
+        "DATA/Managed/UnityEngine/UnityEngine.MathematicsModule.dll",
         "DATA/Managed/UnityEngine/UnityEngine.ScriptingModule.dll",
         "DATA/Managed/UnityEngine/UnityEngine.UICommonModule.dll",
     } | {

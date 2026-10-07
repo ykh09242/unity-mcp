@@ -38,6 +38,7 @@ DATA/Managed/UnityEngine/UnityEngine.InputLegacyModule.dll
 DATA/Managed/UnityEngine/UnityEngine.InputModule.dll
 DATA/Managed/UnityEngine/UnityEngine.JSONSerializeModule.dll
 DATA/Managed/UnityEngine/UnityEngine.LocalizationModule.dll
+DATA/Managed/UnityEngine/UnityEngine.MathematicsModule.dll
 DATA/Managed/UnityEngine/UnityEngine.NVIDIAModule.dll
 DATA/Managed/UnityEngine/UnityEngine.ParticleSystemModule.dll
 DATA/Managed/UnityEngine/UnityEngine.PerformanceReportingModule.dll
