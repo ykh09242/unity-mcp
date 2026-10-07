@@ -288,6 +288,105 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
         }
 
+        [TestCase("set_body", "Body", "bodyType", "CinemachineFollow", "CinemachineThirdPersonFollow")]
+        [TestCase("set_aim", "Aim", "aimType", "CinemachineRotationComposer", "CinemachineHardLookAt")]
+        public void InvalidLaterPipelinePropertyPreservesExistingStage(string action, string stage, string typeKey, string oldTypeName, string newTypeName)
+        {
+            var existing = target.AddComponent(CameraHelpers.ResolveComponentType(oldTypeName));
+            var components = target.GetComponents<Component>();
+            int objectDirty = EditorUtility.GetDirtyCount(target);
+            int componentDirty = EditorUtility.GetDirtyCount(existing);
+
+            var response = Send(
+                action,
+                new JObject
+                {
+                    [typeKey] = newTypeName,
+                    ["enabled"] = false,
+                    ["NoSuchPipelineProperty"] = 3,
+                }
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("NoSuchPipelineProperty", response.ToString());
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
+            Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
+        }
+
+        [TestCase("set_body", "Body", "CinemachineFollow")]
+        [TestCase("set_aim", "Aim", "CinemachineRotationComposer")]
+        public void InvalidLaterExistingPipelinePropertyPreservesEarlierValue(string action, string stage, string typeName)
+        {
+            var existing = (Behaviour)target.AddComponent(CameraHelpers.ResolveComponentType(typeName));
+            existing.enabled = true;
+            int componentDirty = EditorUtility.GetDirtyCount(existing);
+
+            var response = Send(action, new JObject { ["enabled"] = false, ["NoSuchPipelineProperty"] = 3 });
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreSame(existing, CameraHelpers.GetPipelineComponent(camera, stage));
+            Assert.IsTrue(existing.enabled);
+            Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
+        }
+
+        [TestCase("set_noise", "CinemachineBasicMultiChannelPerlin")]
+        [TestCase("add_extension", "CinemachineRecomposer")]
+        public void InvalidLaterAddedComponentPropertyDoesNotAddComponent(string action, string typeName)
+        {
+            var components = target.GetComponents<Component>();
+            int objectDirty = EditorUtility.GetDirtyCount(target);
+            var properties = new JObject { ["enabled"] = false, ["NoSuchPipelineProperty"] = 3 };
+            if (action == "add_extension")
+                properties.AddFirst(new JProperty("extensionType", typeName));
+
+            var response = Send(action, properties);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("NoSuchPipelineProperty", response.ToString());
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
+        }
+
+        [Test]
+        public void InvalidLaterNoisePropertyPreservesExistingComponentAndValue()
+        {
+            var existing = (Behaviour)target.AddComponent(CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin"));
+            existing.enabled = true;
+            int componentDirty = EditorUtility.GetDirtyCount(existing);
+            var response = Send("set_noise", new JObject { ["enabled"] = false, ["NoSuchPipelineProperty"] = 3 });
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(existing.enabled);
+            Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void NullNoiseProfilePathDoesNotAddOrChangeNoiseComponent(bool existingNoise)
+        {
+            var noiseType = CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin");
+            Assert.IsNotNull(noiseType);
+            var existing = existingNoise ? (Behaviour)target.AddComponent(noiseType) : null;
+            if (existing != null)
+                existing.enabled = true;
+            var components = target.GetComponents<Component>();
+            int objectDirty = EditorUtility.GetDirtyCount(target);
+            int componentDirty = existing != null ? EditorUtility.GetDirtyCount(existing) : 0;
+
+            var response = Send("set_noise", new JObject { ["enabled"] = false, ["NoiseProfile.name"] = "Changed" });
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("NoiseProfile.name", response.ToString());
+            CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            Assert.AreEqual(objectDirty, EditorUtility.GetDirtyCount(target));
+            if (existing != null)
+            {
+                Assert.IsTrue(existing.enabled);
+                Assert.AreEqual(componentDirty, EditorUtility.GetDirtyCount(existing));
+            }
+        }
+
         [Test]
         public void ConcreteExtensionCanBeAdded()
         {

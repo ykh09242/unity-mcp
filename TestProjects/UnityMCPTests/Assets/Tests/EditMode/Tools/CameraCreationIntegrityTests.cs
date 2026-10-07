@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -18,6 +19,7 @@ namespace MCPForUnityTests.Editor.Tools
     [Parallelizable(ParallelScope.None)]
     public class CameraCreationIntegrityTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene originalScene;
         private Scene ownedScene;
         private UnityEngine.Object[] originalSelection;
@@ -28,6 +30,12 @@ namespace MCPForUnityTests.Editor.Tools
         private object originalBrainType;
         private readonly List<GameObject> ownedObjects = new();
         private const BindingFlags CacheFlags = BindingFlags.NonPublic | BindingFlags.Static;
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -44,8 +52,7 @@ namespace MCPForUnityTests.Editor.Tools
             originalCameraType = Cache("_cmCameraType").GetValue(null);
             originalBrainType = Cache("_cmBrainType").GetValue(null);
             captured = true;
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            ownedScene = sceneFixture.Create("McpCameraCreation_", Guid.NewGuid().ToString("N"));
         }
 
         [TearDown]
@@ -69,7 +76,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (ownedScene.IsValid() && ownedScene.isLoaded)
                 {
                     Assert.AreEqual(0, ownedScene.rootCount, "Unexpected objects retained for diagnosis.");
-                    Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
+                    sceneFixture.Close();
                 }
             }
             finally

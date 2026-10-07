@@ -252,22 +252,45 @@ namespace MCPForUnity.Editor.Tools.Cameras
             // Optionally swap body component
             string bodyTypeName = ParamCoercion.CoerceString(props["bodyType"] ?? props["body_type"], null);
             Component bodyComponent;
+            List<Action<Component>> setters;
+            ErrorResponse propertyError;
 
             if (bodyTypeName != null)
             {
-                bodyComponent = SwapPipelineComponent(go, "Body", bodyTypeName);
-                if (bodyComponent == null)
+                var bodyType = CameraHelpers.ResolveComponentType(bodyTypeName);
+                if (bodyType == null || !IsConcreteCinemachineType(bodyType, "CinemachineComponentBase"))
                     return new ErrorResponse($"Could not resolve body component type '{bodyTypeName}'.");
+                propertyError = PrepareComponentPropertiesForTarget(
+                    bodyType,
+                    go.GetComponent(bodyType),
+                    props,
+                    new[] { "bodyType", "body_type" },
+                    out setters,
+                    go
+                );
+                if (propertyError != null)
+                    return propertyError;
+                bodyComponent = SwapPipelineComponent(go, "Body", bodyType);
             }
             else
             {
                 bodyComponent = CameraHelpers.GetPipelineComponent(cmCamera, "Body");
                 if (bodyComponent == null)
                     return new ErrorResponse("No Body component found on this CinemachineCamera. Provide 'bodyType' to add one.");
+                propertyError = PrepareComponentPropertiesForTarget(
+                    bodyComponent.GetType(),
+                    bodyComponent,
+                    props,
+                    new[] { "bodyType", "body_type" },
+                    out setters,
+                    go
+                );
+                if (propertyError != null)
+                    return propertyError;
             }
 
             // Set properties on body component
-            var propertyError = SetComponentProperties(bodyComponent, props, new[] { "bodyType", "body_type" });
+            propertyError = ApplyPreparedComponentProperties(bodyComponent, setters);
             if (propertyError != null)
                 return propertyError;
             CameraHelpers.MarkDirty(go);
@@ -291,21 +314,37 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             string aimTypeName = ParamCoercion.CoerceString(props["aimType"] ?? props["aim_type"], null);
             Component aimComponent;
+            List<Action<Component>> setters;
+            ErrorResponse propertyError;
 
             if (aimTypeName != null)
             {
-                aimComponent = SwapPipelineComponent(go, "Aim", aimTypeName);
-                if (aimComponent == null)
+                var aimType = CameraHelpers.ResolveComponentType(aimTypeName);
+                if (aimType == null || !IsConcreteCinemachineType(aimType, "CinemachineComponentBase"))
                     return new ErrorResponse($"Could not resolve aim component type '{aimTypeName}'.");
+                propertyError = PrepareComponentPropertiesForTarget(aimType, go.GetComponent(aimType), props, new[] { "aimType", "aim_type" }, out setters, go);
+                if (propertyError != null)
+                    return propertyError;
+                aimComponent = SwapPipelineComponent(go, "Aim", aimType);
             }
             else
             {
                 aimComponent = CameraHelpers.GetPipelineComponent(cmCamera, "Aim");
                 if (aimComponent == null)
                     return new ErrorResponse("No Aim component found. Provide 'aimType' to add one.");
+                propertyError = PrepareComponentPropertiesForTarget(
+                    aimComponent.GetType(),
+                    aimComponent,
+                    props,
+                    new[] { "aimType", "aim_type" },
+                    out setters,
+                    go
+                );
+                if (propertyError != null)
+                    return propertyError;
             }
 
-            var propertyError = SetComponentProperties(aimComponent, props, new[] { "aimType", "aim_type" });
+            propertyError = ApplyPreparedComponentProperties(aimComponent, setters);
             if (propertyError != null)
                 return propertyError;
             CameraHelpers.MarkDirty(go);
@@ -331,8 +370,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             var noiseType = CameraHelpers.ResolveComponentType("CinemachineBasicMultiChannelPerlin");
             if (noiseType == null)
                 return new ErrorResponse("CinemachineBasicMultiChannelPerlin type not found.");
-
             var noiseComponent = go.GetComponent(noiseType);
+            var propertyError = PrepareComponentPropertiesForTarget(noiseType, noiseComponent, props, Array.Empty<string>(), out var setters, go);
+            if (propertyError != null)
+                return propertyError;
+
             bool added = false;
             if (noiseComponent == null)
             {
@@ -340,8 +382,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 added = true;
             }
 
-            Undo.RecordObject(noiseComponent, "Set Cinemachine Noise");
-            var propertyError = SetComponentProperties(noiseComponent, props, Array.Empty<string>());
+            propertyError = ApplyPreparedComponentProperties(noiseComponent, setters);
             if (propertyError != null)
                 return propertyError;
             CameraHelpers.MarkDirty(go);
@@ -376,8 +417,11 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (existing != null)
                 return new { success = true, message = $"Extension '{extTypeName}' already exists on '{go.name}'." };
 
+            var propertyError = PrepareComponentPropertiesForTarget(extType, null, props, new[] { "extensionType", "extension_type" }, out var setters, go);
+            if (propertyError != null)
+                return propertyError;
             var ext = Undo.AddComponent(go, extType);
-            var propertyError = SetComponentProperties(ext, props, new[] { "extensionType", "extension_type" });
+            propertyError = ApplyPreparedComponentProperties(ext, setters);
             if (propertyError != null)
                 return propertyError;
             CameraHelpers.MarkDirty(go);
@@ -436,12 +480,8 @@ namespace MCPForUnity.Editor.Tools.Cameras
                 sub.floatValue = ParamCoercion.CoerceFloat(value, sub.floatValue);
         }
 
-        private static Component SwapPipelineComponent(GameObject go, string stage, string newTypeName)
+        private static Component SwapPipelineComponent(GameObject go, string stage, Type newType)
         {
-            var newType = CameraHelpers.ResolveComponentType(newTypeName);
-            if (newType == null || !IsConcreteCinemachineType(newType, "CinemachineComponentBase"))
-                return null;
-
             // Remove existing component of same pipeline stage
             var cmCamera = go.GetComponent(CameraHelpers.CinemachineCameraType);
             if (cmCamera != null)
@@ -463,6 +503,63 @@ namespace MCPForUnity.Editor.Tools.Cameras
         {
             var baseType = CameraHelpers.CinemachineCameraType?.Assembly.GetType("Unity.Cinemachine." + baseTypeName);
             return baseType != null && baseType.IsAssignableFrom(type) && !type.IsAbstract && !type.ContainsGenericParameters;
+        }
+
+        private static ErrorResponse PrepareComponentProperties(Type type, JObject props, string[] skipKeys, out List<Action<Component>> setters)
+        {
+            setters = new List<Action<Component>>();
+            var skipSet = new HashSet<string>(skipKeys, StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in props)
+            {
+                if (skipSet.Contains(kv.Key))
+                    continue;
+                if (!ComponentOps.TryPrepareProperty(type, kv.Key, kv.Value, out var setter, out string error))
+                    return new ErrorResponse($"Failed to set '{kv.Key}' on {type.Name}: {error}");
+                setters.Add(setter);
+            }
+            return null;
+        }
+
+        private static ErrorResponse PrepareComponentPropertiesForTarget(
+            Type type,
+            Component component,
+            JObject props,
+            string[] skipKeys,
+            out List<Action<Component>> setters,
+            GameObject targetContext = null
+        )
+        {
+            var error = PrepareComponentProperties(type, props, skipKeys, out setters);
+            if (error != null)
+                return error;
+            var skipSet = new HashSet<string>(skipKeys, StringComparer.OrdinalIgnoreCase);
+            var writes = new JObject();
+            foreach (var property in props)
+                if (!skipSet.Contains(property.Key))
+                    writes.Add(property.Key, property.Value.DeepClone());
+            if (!ComponentOps.TryValidatePropertyOwners(type, component, writes, out string ownerError, targetContext))
+                return new ErrorResponse($"Failed to configure {type.Name}: {ownerError}");
+            return null;
+        }
+
+        private static ErrorResponse ApplyPreparedComponentProperties(Component component, List<Action<Component>> setters)
+        {
+            if (component == null)
+                return new ErrorResponse("Could not add the requested Cinemachine component.");
+            if (setters.Count == 0)
+                return null;
+
+            Undo.RecordObject(component, $"Configure {component.GetType().Name}");
+            try
+            {
+                foreach (var setter in setters)
+                    setter(component);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return new ErrorResponse($"Failed to configure {component.GetType().Name}: {ex.Message}");
+            }
         }
 
         private static ErrorResponse SetComponentProperties(Component component, JObject props, string[] skipKeys)
