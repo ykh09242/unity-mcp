@@ -909,6 +909,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     cts.CancelAfter(remainingTimeout);
                 }
+                using var abortRead = cts.Token.Register(() =>
+                {
+                    try { stream.Dispose(); } catch { }
+                });
 
                 try
                 {
@@ -917,25 +921,35 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 #else
                     int read = await stream.ReadAsync(buffer, offset, remaining, cts.Token).ConfigureAwait(false);
 #endif
+                    cts.Token.ThrowIfCancellationRequested();
                     if (read == 0)
                     {
                         throw new IOException("Connection closed before reading expected bytes");
                     }
                     offset += read;
                 }
-                catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+                catch (Exception ex) when (cts.IsCancellationRequested)
                 {
-                    throw new IOException("Read timed out");
+                    cancel.ThrowIfCancellationRequested();
+                    throw new IOException("Read timed out", ex);
                 }
             }
 
             return buffer;
         }
 
-        private static Task WriteFrameAsync(NetworkStream stream, byte[] payload)
+        private static async Task WriteFrameAsync(NetworkStream stream, byte[] payload)
         {
             using var cts = new CancellationTokenSource(FrameIOTimeoutMs);
-            return WriteFrameAsync(stream, payload, cts.Token);
+            // Unity Mono may only check the token before beginning socket I/O.
+            // Closing this connection's stream also releases an in-flight write.
+            using var abortWrite = cts.Token.Register(() =>
+            {
+                try { stream.Dispose(); } catch { }
+            });
+            await WriteFrameAsync(stream, payload, cts.Token).ConfigureAwait(false);
+            // A disposed Mono socket can report a partially sent buffer as success.
+            cts.Token.ThrowIfCancellationRequested();
         }
 
         private static async Task WriteFrameAsync(NetworkStream stream, byte[] payload, CancellationToken cancel)
@@ -1023,6 +1037,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 List<(string id, QueuedCommand command)> work;
                 lock (lockObj)
                 {
+                    // Avoid cancellation-scan allocations on idle editor updates.
+                    if (commandQueue.Count == 0) return;
+
                     var canceled = commandQueue.Where(item => !item.Value.IsExecuting
                         && item.Value.OwnerCancellation.IsCancellationRequested).Select(item => item.Key).ToArray();
                     foreach (var id in canceled)
