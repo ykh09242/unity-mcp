@@ -10,6 +10,35 @@ description: Choose focused checks and distinguish fixture tests, compilation, l
 
 Choose checks that observe the changed contract. Markdown-only work needs links, command/schema examples and pins checked, not a product launch. Website presentation needs rendered desktop/mobile checks. Behavior changes need focused regressions, broadening when shared contracts are affected.
 
+## Validate before changing state
+
+Native handlers must validate their inputs even when the Python tool schema already does.
+Parse all applicable values and resolve required types, references, indices, dependencies
+and destination conflicts before creating settings, registering Undo, changing targets,
+making folders or submitting external work. Validate an entire batch envelope before
+dispatching its first command. Keep discovery and preparation free of writes; getters
+such as `Renderer.material`, `Collider.material` and `MeshFilter.mesh` can allocate native objects too.
+
+Regression tests should place an invalid value after an otherwise valid change and
+compare target values, component/native-object inventories, dirty state, asset bytes,
+GUIDs and output folders as relevant. Include accepted-value controls. When native
+metadata requires an owned temporary object, check cleanup on rejection and avoid
+applying any property until instance-dependent validation finishes.
+
+Preserve each tool's documented partial-success boundary. A valid item may still fail
+during execution; arbitrary user callbacks and external work are not transactional.
+Distinguish those cases from malformed input that can be rejected before the first
+effect. Explicitly test mixed-success responses and failed-item cleanup instead of
+assuming that every error rolls back the whole request.
+
+GameObject component creation accepts native `m_` aliases when their writable type is
+known from reflection. Opaque native-only serialized fields require an explicit add
+followed by editing the existing component; the add request must not create a component
+just to discover whether such a field exists. Nested reference writes likewise require
+a resolvable owner before mutation. Keep controls for the target's GameObject/Transform,
+value-type members, indexed collection owners and references supplied by earlier
+properties in the same request.
+
 ## Python and tooling
 
 Prepare the locked development environment as described in [Dev Setup](./dev-setup.md). From `Server/`:
