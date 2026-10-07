@@ -97,13 +97,14 @@ jobs:
           Write-Output 'Cold and offline bootstrap and registration passed without Git checkout or a server listener.'
 
   test:
-    name: Run Python Tests (${{ matrix.python-version }})
+    name: Run Python ${{ matrix.suite }} tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Keep the declared support floor alongside the latest stable interpreter.
-        python-version: ["3.11", "3.14.8"]
+        # Run both complete suites on every supported minor, without serializing them.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        suite: [server, tools]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,12 +117,19 @@ jobs:
         with:
           version: "0.12.22"
           python-version: ${{ matrix.python-version }}
-          enable-cache: false
+          enable-cache: true
+          cache-suffix: python-${{ matrix.python-version }}
+          cache-dependency-glob: |
+            Server/pyproject.toml
+            Server/uv.lock
+          # One writer per interpreter avoids duplicate uploads from parallel suites.
+          save-cache: ${{ matrix.suite == 'tools' }}
 
       - name: Set up Python
         run: uv python install "${{ matrix.python-version }}"
 
       - name: Verify unlocked candidate startup
+        if: matrix.suite == 'server'
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/unity-mcp-candidate-cache
         run: |
@@ -137,26 +145,34 @@ jobs:
           uv sync --python "${{ matrix.python-version }}" --locked --extra dev
 
       - name: Run Pylint
-        # One interpreter is enough for static analysis; tests retain the full matrix.
-        if: matrix.python-version != '3.11'
+        # Keep static analysis off the longer server-test path and run it once.
+        if: matrix.suite == 'tools' && matrix.python-version == '3.14'
         run: |
           cd Server
           uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/lint_python.py
 
       - name: Run tests with coverage
+        if: matrix.suite == 'server' && matrix.python-version == '3.14'
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -v -W error --tb=short --cov --cov-report=xml --cov-report=html --cov-report=term
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+
+      - name: Run server tests
+        if: matrix.suite == 'server' && matrix.python-version != '3.14'
+        run: |
+          cd Server
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Run local harness unit tests (hermetic, no Unity)
+        if: matrix.suite == 'tools'
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -v -W error --tb=short
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         # Forks retain coverage artifacts without requiring Codecov credentials.
-        if: always() && github.repository == 'CoplayDev/unity-mcp'
+        if: always() && matrix.suite == 'server' && matrix.python-version == '3.14' && github.repository == 'CoplayDev/unity-mcp'
         # Upload/download outages must not fail the successful test gate.
         continue-on-error: true
         with:
@@ -169,9 +185,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: pytest-results-${{ matrix.python-version }}
+          name: pytest-results-${{ matrix.python-version }}-${{ matrix.suite }}
           path: |
-            Server/.pytest_cache/
-            Server/tests/
+            Server/test-results.xml
             Server/coverage.xml
             Server/htmlcov/

@@ -237,13 +237,14 @@ def test_python_lint_is_a_blocking_step_with_locked_dependencies() -> None:
     # Then: diagnostics cannot be ignored and CI uses the committed dependency lock.
     assert not lint.get("continue-on-error", False)
     assert "--locked --extra dev" in lint["run"]
-    assert lint["if"] == "matrix.python-version != '3.11'"
+    assert lint["if"] == "matrix.suite == 'tools' && matrix.python-version == '3.14'"
 
 
 @pytest.mark.parametrize(
     "step_name",
     [
         "Run tests with coverage",
+        "Run server tests",
         "Run local harness unit tests (hermetic, no Unity)",
     ],
 )
@@ -255,39 +256,91 @@ def test_python_validation_treats_warnings_as_errors(step_name: str) -> None:
 
 def test_forks_keep_coverage_artifacts_without_external_uploads() -> None:
     steps = {step["name"]: step for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]}
-    assert steps["Upload coverage reports"]["if"] == f"always() && {UPSTREAM_ONLY}"
+    assert steps["Upload coverage reports"]["if"] == (
+        "always() && matrix.suite == 'server' && matrix.python-version == '3.14' "
+        f"&& {UPSTREAM_ONLY}"
+    )
     artifact = steps["Upload test results"]
     assert artifact["if"] == "always()"
     assert artifact["uses"].startswith("actions/upload-artifact@")
-    assert {"Server/coverage.xml", "Server/htmlcov/"} <= set(artifact["with"]["path"].splitlines())
+    assert {"Server/test-results.xml", "Server/coverage.xml", "Server/htmlcov/"} <= set(
+        artifact["with"]["path"].splitlines()
+    )
 
 
-def test_python_validation_selects_minimum_and_current_interpreters() -> None:
-    # Given: reusable validation must cover both support-floor and current Python.
+def test_python_validation_runs_both_suites_on_every_supported_minor() -> None:
+    # Given: each declared Python minor needs the complete server and tool suites.
     job = workflow("python-tests.yml")["jobs"]["test"]
     # When: the matrix and commands are inspected together.
-    versions = job["strategy"]["matrix"]["python-version"]
+    matrix = job["strategy"]["matrix"]
     steps = {step["name"]: step for step in job["steps"]}
     # Then: every environment is explicitly selected and uploads cannot collide.
     assert job["strategy"]["fail-fast"] is False
-    assert "3.11" in versions
-    assert "3.10" not in versions
-    assert any(version.startswith("3.14.") for version in versions)
+    assert matrix["python-version"] == ["3.11", "3.12", "3.13", "3.14"]
+    assert matrix["suite"] == ["server", "tools"]
+    assert "exclude" not in matrix
+    assert "needs" not in job
     assert "${{ matrix.python-version }}" in job["name"]
+    assert "${{ matrix.suite }}" in job["name"]
     assert 'uv python install "${{ matrix.python-version }}"' in steps["Set up Python"]["run"]
     for name in (
         "Install dependencies",
         "Run tests with coverage",
+        "Run server tests",
         "Run local harness unit tests (hermetic, no Unity)",
     ):
         assert '--python "${{ matrix.python-version }}"' in steps[name]["run"]
     assert "${{ matrix.python-version }}" in steps["Upload test results"]["with"]["name"]
+    assert "${{ matrix.suite }}" in steps["Upload test results"]["with"]["name"]
     assert "${{ matrix.python-version }}" in steps["Upload coverage reports"]["with"]["name"]
     candidate = steps["Verify unlocked candidate startup"]
+    assert candidate["if"] == "matrix.suite == 'server'"
     assert '--python "${{ matrix.python-version }}" --from ./Server' in candidate["run"]
     assert "python tools/check_server_startup.py" in candidate["run"]
     assert "--locked" not in candidate["run"]
     assert not candidate.get("continue-on-error", False)
+
+
+def test_python_suites_are_disjoint_and_keep_structured_results() -> None:
+    # Given: parallel jobs must not duplicate tests or omit coverage on the selected version.
+    steps = {step["name"]: step for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]}
+    # When: the three mutually exclusive test invocations are selected.
+    covered = steps["Run tests with coverage"]
+    plain = steps["Run server tests"]
+    tools = steps["Run local harness unit tests (hermetic, no Unity)"]
+    # Then: each matrix cell runs one full suite, and every outcome has a JUnit artifact.
+    assert covered["if"] == "matrix.suite == 'server' && matrix.python-version == '3.14'"
+    assert plain["if"] == "matrix.suite == 'server' && matrix.python-version != '3.14'"
+    assert tools["if"] == "matrix.suite == 'tools'"
+    for step in (covered, plain, tools):
+        assert "--junitxml=test-results.xml" in step["run"]
+        assert "--durations=20" in step["run"]
+        assert not step.get("continue-on-error", False)
+    assert "pytest tests/" in covered["run"]
+    assert "pytest tests/" in plain["run"]
+    assert "--cov --cov-report=xml --cov-report=html --cov-report=term" in covered["run"]
+    assert "--cov" not in plain["run"]
+    assert '"$GITHUB_WORKSPACE/tools/tests/"' in tools["run"]
+
+
+def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:
+    # Given: unit jobs may reuse dependency wheels, but bootstrap proves fresh/offline startup.
+    jobs = workflow("python-tests.yml")["jobs"]
+    # When: the setup action cache policy is read for both job families.
+    installs = {
+        name: next(step["with"] for step in job["steps"] if step["name"] == "Install uv")
+        for name, job in jobs.items()
+    }
+    # Then: only unit jobs cache pinned dependencies, separated by Python minor.
+    assert installs["server_bootstrap"]["enable-cache"] is False
+    cache = installs["test"]
+    assert cache["enable-cache"] is True
+    assert cache["cache-suffix"] == "python-${{ matrix.python-version }}"
+    assert set(cache["cache-dependency-glob"].splitlines()) == {
+        "Server/pyproject.toml",
+        "Server/uv.lock",
+    }
+    assert cache["save-cache"] == "${{ matrix.suite == 'tools' }}"
 
 
 @pytest.mark.parametrize(
@@ -339,7 +392,6 @@ def test_local_action_dependencies_use_immutable_commits(path: Path) -> None:
     [
         ("beta-release.yml", True),
         ("release.yml", True),
-        ("python-tests.yml", False),
         ("docs-generate.yml", False),
         ("e2e-bridge.yml", False),
         ("claude-nl-suite.yml", False),
