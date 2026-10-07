@@ -71,22 +71,23 @@ namespace MCPForUnity.Editor.Services.Server
             {
                 if (Application.platform == RuntimePlatform.WindowsEditor)
                 {
-                    // Windows: use wmic to get command line
-                    ExecPath.TryRun(
-                        "cmd.exe",
-                        $"/c wmic process where \"ProcessId={pid}\" get CommandLine /value",
+                    // CIM is present on supported Windows versions; wmic is removed
+                    // from newer installations. Only stdout can establish identity.
+                    if (pid <= 1)
+                        return false;
+                    string command = $"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' -ErrorAction Stop).CommandLine";
+                    bool cimOk = ExecPath.TryRun(
+                        "powershell.exe",
+                        $"-NoProfile -NonInteractive -Command \"{command}\"",
                         Application.dataPath,
-                        out var wmicOut,
-                        out var wmicErr,
+                        out var cimOut,
+                        out _,
                         5000
                     );
-                    string wmicCombined = ((wmicOut ?? string.Empty) + "\n" + (wmicErr ?? string.Empty));
-                    if (!string.IsNullOrEmpty(wmicCombined) && wmicCombined.ToLowerInvariant().Contains("commandline="))
-                    {
-                        argsLower = NormalizeForMatch(wmicOut ?? string.Empty);
-                        return true;
-                    }
-                    return false;
+                    if (!cimOk || string.IsNullOrWhiteSpace(cimOut))
+                        return false;
+                    argsLower = NormalizeForMatch(cimOut);
+                    return true;
                 }
 
                 // Unix: ps -p pid -ww -o args=

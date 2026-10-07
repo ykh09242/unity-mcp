@@ -1,6 +1,10 @@
 using System;
+using System.IO;
 using System.Reflection;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Server;
 using NUnit.Framework;
 using UnityEditor;
 
@@ -150,17 +154,17 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         }
 
         /// <summary>
-        /// Current behavior: Process termination uses graceful-then-forced approach.
-        /// Unix: SIGTERM (8s grace) then SIGKILL
-        /// Windows: taskkill /T then /F
+        /// Stop requires a recognized graceful shutdown acknowledgement; legacy
+        /// servers never authorize an OS termination fallback.
         /// </summary>
         [Test]
-        public void ServerManagementService_TerminateProcess_UsesGracefulThenForced_OnUnix()
+        public void ServerManagementService_StopRequiresExplicitShutdownAcknowledgement()
         {
-            // Document the termination strategy without actually terminating anything
-            var platforms = new[] { "Unix: SIGTERM with 8s grace, then SIGKILL", "Windows: taskkill /T, then /F" };
-
-            Assert.Pass($"Process termination strategies: {string.Join("; ", platforms)}");
+            var legacy = ServerManagementService.ParseShutdownResponse(404, "{}");
+            Assert.IsFalse(legacy.Accepted);
+            StringAssert.Contains("does not support atomic shutdown", legacy.Error);
+            Assert.IsFalse(ServerManagementService.ParseShutdownResponse(200, "{\"success\":true}").Accepted);
+            Assert.IsTrue(ServerManagementService.ParseShutdownResponse(200, "{\"success\":true,\"status\":\"shutdown_requested\"}").Accepted);
         }
 
         /// <summary>
@@ -183,26 +187,42 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         }
 
         /// <summary>
-        /// Current behavior: StopLocalHttpServer prefers pidfile-based approach
-        /// for deterministic termination.
+        /// Stop refuses a project without launch ownership before attempting any
+        /// authenticated request, even if another project has a live server.
         /// </summary>
         [Test]
-        [Explicit("Stops the MCP server - kills connection")]
-        public void ServerManagementService_StopLocalHttpServer_PrefersPidfileBasedApproach()
+        public void ServerManagementService_StopRequiresProjectLaunchIdentity()
         {
-            var service = new ServerManagementService();
-
-            // WARNING: This test calls StopLocalHttpServer() which will kill the running MCP server
-            // Calling stop when no server is running should not throw
-            Assert.DoesNotThrow(
-                () =>
-                {
-                    service.StopLocalHttpServer();
-                },
-                "StopLocalHttpServer should handle no-server case gracefully"
-            );
-
-            Assert.Pass("StopLocalHttpServer uses pidfile-based approach with fallbacks");
+            bool hadUrl = EditorPrefs.HasKey(EditorPrefKeys.HttpBaseUrl);
+            string savedUrl = EditorPrefs.GetString(EditorPrefKeys.HttpBaseUrl, string.Empty);
+            var pids = new PidFileManager(Path.Combine(Path.GetTempPath(), "mcp-stop-characterization-" + Guid.NewGuid().ToString("N")));
+            int requests = 0;
+            try
+            {
+                EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:59982");
+                EditorConfigurationCache.Instance.Refresh();
+                var service = new ServerManagementService(
+                    null,
+                    pids,
+                    shutdownRequester: (_endpoint, _token) =>
+                    {
+                        requests++;
+                        return (true, null);
+                    }
+                );
+                Assert.IsFalse(service.StopLocalHttpServer());
+                Assert.AreEqual(0, requests);
+                StringAssert.Contains("no managed launch identity", service.LastStopFailure);
+            }
+            finally
+            {
+                pids.ClearTracking();
+                if (hadUrl)
+                    EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, savedUrl);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.HttpBaseUrl);
+                EditorConfigurationCache.Instance.Refresh();
+            }
         }
 
         /// <summary>

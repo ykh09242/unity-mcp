@@ -15,11 +15,13 @@ namespace MCPForUnityTests.Editor.Services.Server
     {
         private PidFileManager _manager;
         private string _testPidFilePath;
+        private string _testRoot;
 
         [SetUp]
         public void SetUp()
         {
-            _manager = new PidFileManager();
+            _testRoot = Path.Combine(Path.GetTempPath(), "mcp-pid-tests-" + System.Guid.NewGuid().ToString("N"));
+            _manager = new PidFileManager(_testRoot);
             // Clear any test state
             ClearTestEditorPrefs();
         }
@@ -38,38 +40,40 @@ namespace MCPForUnityTests.Editor.Services.Server
             }
             // Clear test state
             ClearTestEditorPrefs();
+            if (Directory.Exists(_testRoot))
+                Directory.Delete(_testRoot, true);
         }
 
         private void ClearTestEditorPrefs()
         {
             try
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPid);
+                EditorPrefs.DeleteKey(_manager.PreferenceKey(EditorPrefKeys.LastLocalHttpServerPid));
             }
             catch { }
             try
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPort);
+                EditorPrefs.DeleteKey(_manager.PreferenceKey(EditorPrefKeys.LastLocalHttpServerPort));
             }
             catch { }
             try
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerStartedUtc);
+                EditorPrefs.DeleteKey(_manager.PreferenceKey(EditorPrefKeys.LastLocalHttpServerStartedUtc));
             }
             catch { }
             try
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash);
+                EditorPrefs.DeleteKey(_manager.PreferenceKey(EditorPrefKeys.LastLocalHttpServerPidArgsHash));
             }
             catch { }
             try
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerPidFilePath);
+                EditorPrefs.DeleteKey(_manager.PreferenceKey(EditorPrefKeys.LastLocalHttpServerPidFilePath));
             }
             catch { }
             try
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.LastLocalHttpServerInstanceToken);
+                EditorPrefs.DeleteKey(_manager.PreferenceKey(EditorPrefKeys.LastLocalHttpServerInstanceToken));
             }
             catch { }
         }
@@ -280,6 +284,29 @@ namespace MCPForUnityTests.Editor.Services.Server
         #endregion
 
         #region Handshake Tests
+
+        [Test]
+        public void Handshake_AnotherProjectCannotReadOrClearOwnership()
+        {
+            // Given two independent projects on the same machine.
+            var other = new PidFileManager(Path.Combine(Path.GetTempPath(), "mcp-pid-peer-" + System.Guid.NewGuid().ToString("N")));
+            _manager.StoreHandshake("/first/mcp_http_8080.pid", "first-token");
+            other.StoreHandshake("/second/mcp_http_8080.pid", "second-token");
+            try
+            {
+                // When the second editor clears its own launch state.
+                other.ClearTracking();
+                // Then the first project's ownership survives.
+                Assert.IsTrue(_manager.TryGetHandshake(out string path, out string token));
+                Assert.AreEqual("/first/mcp_http_8080.pid", path);
+                Assert.AreEqual("first-token", token);
+                Assert.IsFalse(other.TryGetHandshake(out _, out _));
+            }
+            finally
+            {
+                other.ClearTracking();
+            }
+        }
 
         [Test]
         public void StoreHandshake_ValidData_StoresInEditorPrefs()

@@ -42,6 +42,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private Label httpServerCommandHint;
         private TextField httpUrlField;
         private Button startHttpServerButton;
+        private Toggle keepLocalServerAliveToggle;
         private VisualElement unitySocketPortRow;
         private TextField unityPortField;
         private VisualElement statusIndicator;
@@ -109,6 +110,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             httpServerCommandHint = Root.Q<Label>("http-server-command-hint");
             httpUrlField = Root.Q<TextField>("http-url");
             startHttpServerButton = Root.Q<Button>("start-http-server-button");
+            keepLocalServerAliveToggle = Root.Q<Toggle>("keep-local-server-alive");
             unitySocketPortRow = Root.Q<VisualElement>("unity-socket-port-row");
             unityPortField = Root.Q<TextField>("unity-port");
             statusIndicator = Root.Q<VisualElement>("status-indicator");
@@ -124,6 +126,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void InitializeUI()
         {
+            if (keepLocalServerAliveToggle != null)
+            {
+                keepLocalServerAliveToggle.SetValueWithoutNotify(McpEditorShutdownCleanup.KeepLocalServerAlive);
+                keepLocalServerAliveToggle.RegisterValueChangedCallback(evt => McpEditorShutdownCleanup.KeepLocalServerAlive = evt.newValue);
+            }
             // Ensure manual command foldout starts collapsed
             if (manualCommandFoldout != null)
             {
@@ -437,19 +444,24 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 // Check if we're resuming the stdio bridge after a domain reload.
                 // During this brief window, show "Resuming..." instead of "No Session" to avoid UI flicker.
                 bool isStdioResuming = stdioSelected && EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false);
+                bool isHttpResuming = !stdioSelected && HttpBridgeReloadHandler.IsResumePending;
+                string resumeStatus = !stdioSelected ? HttpBridgeReloadHandler.ResumeStatus : string.Empty;
+                connectionStatusLabel.tooltip = resumeStatus;
 
-                if (isStdioResuming)
+                if (isStdioResuming || isHttpResuming)
                 {
-                    connectionStatusLabel.text = "Resuming...";
+                    connectionStatusLabel.text = isHttpResuming && !string.IsNullOrEmpty(resumeStatus) ? resumeStatus : "Resuming...";
                     // Keep the indicator in a neutral/transitional state
                     statusIndicator.RemoveFromClassList("connected");
                     statusIndicator.RemoveFromClassList("disconnected");
                     connectionToggleButton.text = stdioSelected ? "Start Session" : "Connect";
-                    connectionToggleButton.SetEnabled(false);
+                    connectionToggleButton.SetEnabled(isHttpResuming && !connectionToggleInProgress);
                 }
                 else
                 {
-                    connectionStatusLabel.text = "No Session";
+                    connectionStatusLabel.text = resumeStatus.StartsWith("Resume failed", StringComparison.Ordinal)
+                        ? "Resume failed — reconnect"
+                        : "No Session";
                     statusIndicator.RemoveFromClassList("connected");
                     statusIndicator.AddToClassList("disconnected");
                     connectionToggleButton.text = stdioSelected ? "Start Session" : "Connect";
@@ -590,6 +602,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             httpUrlRow.style.display = useHttp ? DisplayStyle.Flex : DisplayStyle.None;
             httpServerControlRow.style.display = useHttp && httpLocalSelected ? DisplayStyle.Flex : DisplayStyle.None;
+            if (keepLocalServerAliveToggle != null)
+                keepLocalServerAliveToggle.style.display = httpLocalSelected ? DisplayStyle.Flex : DisplayStyle.None;
             unitySocketPortRow.style.display = useHttp ? DisplayStyle.None : DisplayStyle.Flex;
 
             // Manual Server Launch foldout only relevant for HTTP Local
@@ -712,19 +726,21 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                 if (serverRunning)
                 {
-                    // Stop Server: end session first (if active), then stop the server.
-                    if (bridgeService.IsRunning)
-                    {
-                        await bridgeService.StopAsync();
-                    }
+                    // Stop also owns pending reconnect/reload work, even when there is
+                    // no active session at this instant.
+                    HttpBridgeReloadHandler.CancelPendingResume();
+                    HttpAutoStartHandler.CancelPendingReconnect();
+                    await bridgeService.StopAsync();
                     bool stopped = MCPServiceLocator.Server.StopLocalHttpServer();
                     if (stopped)
                     {
-                        McpLog.Info("Server stopped");
+                        McpLog.Info("Server shutdown requested; the HTTP runner may take a moment to exit");
                     }
                     else
                     {
-                        McpLog.Warn("Failed to stop HTTP server or no server was running");
+                        string reason =
+                            (MCPServiceLocator.Server as ServerManagementService)?.LastStopFailure ?? "Check the Unity Console for the stop failure reason.";
+                        EditorUtility.DisplayDialog("HTTP Server Shutdown Not Confirmed", reason, "OK");
                     }
                 }
                 else

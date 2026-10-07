@@ -23,11 +23,13 @@ namespace MCPForUnityTests.Editor.Services
         private TransportManager _savedManager;
         private bool _savedResumeFlag;
         private bool _savedUseHttpTransport;
+        private string _savedResumeStatus;
 
         [SetUp]
         public void SetUp()
         {
             _savedResumeFlag = SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
+            _savedResumeStatus = HttpBridgeReloadHandler.ResumeStatus;
             _savedUseHttpTransport = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
             _savedManager = MCPServiceLocator.TransportManager;
 
@@ -47,6 +49,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             // Stored-false and absent are indistinguishable: every read uses GetBool(key, false).
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, _savedResumeFlag);
+            SessionState.SetString(HttpBridgeReloadHandler.ResumeStatusSessionKey, _savedResumeStatus);
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, _savedUseHttpTransport);
             EditorConfigurationCache.Instance.Refresh();
             MCPServiceLocator.Register(_savedManager);
@@ -112,7 +115,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
 
-            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule);
+            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule, () => false);
 
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.IsTrue(_manager.IsRunning(TransportMode.Http));
@@ -126,11 +129,28 @@ namespace MCPForUnityTests.Editor.Services
             _fakeClient.StartResult = false;
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
 
-            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule);
+            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule, () => false);
 
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.AreEqual(ZeroSchedule.Length, _fakeClient.StartCalls);
             Assert.IsFalse(ResumeFlagSet, "exhaustion erases the flag so later reload boundaries don't replay the failure loop");
+            StringAssert.Contains("Resume failed after 3 attempts", HttpBridgeReloadHandler.ResumeStatus);
+            StringAssert.Contains("reconnect manually", HttpBridgeReloadHandler.ResumeStatus);
+        }
+
+        [Test]
+        public void Resume_EditorBecomesBusy_DefersWithoutConsumingFlag()
+        {
+            // Given a pending connection and a newly started compilation/import.
+            SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
+            // When recovery attempts to run while the editor is busy.
+            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule, () => true);
+            // Then no connection is attempted and the next editor tick retains the work.
+            Assert.IsTrue(resume.IsCompleted);
+            Assert.AreEqual(0, _fakeClient.StartCalls);
+            Assert.IsTrue(ResumeFlagSet);
+            StringAssert.Contains("compilation or asset import", HttpBridgeReloadHandler.ResumeStatus);
+            HttpBridgeReloadHandler.CancelPendingResume();
         }
 
         [Test]
@@ -141,7 +161,7 @@ namespace MCPForUnityTests.Editor.Services
             _fakeClient.OnStart = () => SessionState.EraseBool(HttpBridgeReloadHandler.ResumeSessionKey);
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
 
-            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule);
+            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule, () => false);
 
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.AreEqual(1, _fakeClient.StartCalls, "erasing the flag must abort the retry loop");
@@ -153,7 +173,7 @@ namespace MCPForUnityTests.Editor.Services
             StartBridge();
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
 
-            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule);
+            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule, () => false);
 
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.AreEqual(1, _fakeClient.StartCalls, "a session established while the resume waited must not be bounced");
@@ -180,7 +200,7 @@ namespace MCPForUnityTests.Editor.Services
 
             // After pass 2: editor idle, resume runs and reconnects.
             Assert.IsTrue(HttpBridgeReloadHandler.OnAfterAssemblyReloadCore());
-            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule);
+            Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(ZeroSchedule, () => false);
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.IsTrue(_manager.IsRunning(TransportMode.Http));
             Assert.IsFalse(ResumeFlagSet);

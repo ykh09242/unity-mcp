@@ -13,6 +13,7 @@ import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from collections.abc import Callable
 
 import anyio
 from starlette.endpoints import WebSocketEndpoint
@@ -201,6 +202,7 @@ class PluginHub(WebSocketEndpoint):
     MAX_RETAINED_RESULT_BYTES = 1024 * 1024 * 1024
     REGISTRATION_TIMEOUT = 10.0
     _admitted: ClassVar[dict[int, tuple[WebSocket, str | None]]] = {}
+    _shutdown_requested: ClassVar[bool] = False
     # Independent of routing/pending maps: disconnect must not release a result
     # still owned by the command coroutine during cancellation-sensitive cleanup.
     _retained_results: ClassVar[ChargeLedger] = ChargeLedger()
@@ -447,6 +449,7 @@ class PluginHub(WebSocketEndpoint):
         cls._loop = loop or asyncio.get_running_loop()
         # Ensure coordination primitives are bound to the configured loop
         cls._lock = asyncio.Lock()
+        cls._shutdown_requested = False
         cls._editor_states = EditorStateStore()
         cls._readiness_reads = SharedToolReads()
         cls._ordinary_state_reads = SharedToolReads()
@@ -531,6 +534,30 @@ class PluginHub(WebSocketEndpoint):
             await registry.clear()
         await asyncio.gather(*(cls._close_websocket(ws) for ws in connections))
 
+    @classmethod
+    async def request_idle_shutdown(
+        cls, request_exit: Callable[[], bool]
+    ) -> Literal["shutdown_requested", "sessions_active", "runner_unavailable"]:
+        """Reserve shutdown against all admitted sockets under the admission lock."""
+        lock, registry = cls._lock, cls._registry
+        if lock is None or registry is None:
+            return "runner_unavailable"
+        async with lock:
+            if cls._lock is not lock or cls._registry is not registry:
+                return "runner_unavailable"
+            if cls._shutdown_requested:
+                return "shutdown_requested"
+            if cls._admitted or cls._connections or await registry.list_sessions():
+                return "sessions_active"
+            cls._shutdown_requested = True
+            try:
+                if request_exit():
+                    return "shutdown_requested"
+            except Exception:
+                logger.warning("Owned HTTP runner rejected graceful shutdown", exc_info=False)
+            cls._shutdown_requested = False
+            return "runner_unavailable"
+
     async def on_connect(self, websocket: WebSocket) -> None:
         cls = type(self)
         lock = cls._lock
@@ -542,11 +569,19 @@ class PluginHub(WebSocketEndpoint):
             # Include sockets admitted before registration and compatibility
             # connections inserted directly by an embedding application.
             sockets = set(cls._admitted) | {id(ws) for ws in cls._connections.values()}
-            accepted = len(sockets) < registry.MAX_SESSIONS
+            unavailable = (
+                cls._shutdown_requested or cls._registry is not registry or cls._lock is not lock
+            )
+            accepted = not unavailable and len(sockets) < registry.MAX_SESSIONS
             if accepted:
                 cls._admitted[id(websocket)] = (websocket, None)
         if not accepted:
-            await websocket.close(code=4429, reason="Plugin connection limit reached")
+            await websocket.close(
+                code=1013 if unavailable else 4429,
+                reason="Plugin server closing"
+                if unavailable
+                else "Plugin connection limit reached",
+            )
             return
         try:
             await self._connect_authenticated(websocket)
@@ -1199,6 +1234,9 @@ class PluginHub(WebSocketEndpoint):
             raise RuntimeError("PluginHub not configured")
 
         async with lock:
+            if cls._shutdown_requested or cls._registry is not registry:
+                await websocket.close(code=1013, reason="Plugin server closing")
+                return
             registered = getattr(websocket.state, "plugin_registered", False) or getattr(
                 websocket.state, "plugin_registering", False
             )
@@ -1225,7 +1263,7 @@ class PluginHub(WebSocketEndpoint):
             # The registry and routing insertion form one transaction. There is
             # no cancellation point after register mutates its maps and before
             # this socket becomes discoverable by disconnect cleanup.
-            if cls._registry is not registry:
+            if cls._shutdown_requested or cls._registry is not registry:
                 await websocket.close(code=1013, reason="Plugin server unavailable")
                 return
             try:

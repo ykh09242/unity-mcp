@@ -24,6 +24,7 @@ from services.custom_tool_service import (
 from core.config import config
 from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
+from transport.local_server_lifecycle import request_local_shutdown
 from transport.remote_auth_middleware import RemoteControlAuthMiddleware
 from transport.request_body_limit_middleware import (
     MAX_HTTP_REQUEST_BYTES,
@@ -545,7 +546,11 @@ class UnityMCP(FastMCP):
         return app
 
 
-def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
+def create_mcp_server(
+    project_scoped_tools: bool,
+    *,
+    managed_instance_token: str | None = None,
+) -> FastMCP:
     mcp = UnityMCP(
         name="mcp-for-unity-server",
         lifespan=server_lifespan,
@@ -587,6 +592,10 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
 
     # Only expose CLI routes if running locally (not in remote hosted mode)
     if not config.http_remote_hosted:
+
+        @mcp.custom_route("/api/server/shutdown", methods=["POST"])
+        async def local_shutdown_route(request: Request) -> JSONResponse:
+            return await request_local_shutdown(request, managed_instance_token)
 
         @mcp.custom_route("/api/command", methods=["POST"])
         async def cli_command_route(request: Request) -> JSONResponse:
@@ -1118,7 +1127,14 @@ Examples:
                 "Could not discover Unity instances for project-scoped tool default", exc_info=True
             )
 
-    mcp = create_mcp_server(project_scoped_tools)
+    mcp = create_mcp_server(
+        project_scoped_tools,
+        managed_instance_token=(
+            args.unity_instance_token
+            if args.pidfile and config.transport_mode == "http" and not config.http_remote_hosted
+            else None
+        ),
+    )
 
     # Determine transport mode
     if config.transport_mode == "http":

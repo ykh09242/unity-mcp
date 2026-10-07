@@ -61,3 +61,19 @@ Explicit targets are preserved through reconnect attempts, but domain reload can
 Routing does not provide transaction isolation or exactly-once writes. Coordinate agents that edit the same scene/assets. A timeout after dispatch can leave a completed or in-progress mutation even when no result arrived. Inspect state before retrying; use returned job IDs to poll long-running work rather than launching duplicates.
 
 See [Instance Routing](../architecture/instance-routing.md) for implementation details and [Security And Consent](./security.md) for hosted isolation.
+
+## Shared local server lifetime
+
+The local HTTP server can serve several Editors. Keeping it running when an Editor
+closes is enabled by default and configured per project. Closing a bridge connection
+does not by itself grant permission to terminate the shared server.
+
+The project that launched the server retains its own launch identity. An explicit
+stop request must match that identity and is refused while another Editor connection
+is admitted or registered. The server decides admission and shutdown together, so a
+new connection cannot slip between a peer-count check and process termination.
+
+Older or externally managed servers may not support this shutdown handshake. In that
+case the window reports the reason and leaves the process running. A port match alone
+never authorizes terminating an unrelated process. Use the server's owning terminal
+or service manager when deliberate manual shutdown is needed.

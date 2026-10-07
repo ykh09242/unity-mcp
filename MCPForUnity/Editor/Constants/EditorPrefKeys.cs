@@ -8,6 +8,7 @@ namespace MCPForUnity.Editor.Constants
     {
         internal const string UseHttpTransport = "MCPForUnity.UseHttpTransport";
         internal const string HttpTransportScope = "MCPForUnity.HttpTransportScope"; // "local" | "remote"
+        internal const string KeepLocalHttpServerAlive = "MCPForUnity.KeepLocalHttpServerAlive";
         internal const string LastLocalHttpServerPid = "MCPForUnity.LocalHttpServer.LastPid";
         internal const string LastLocalHttpServerPort = "MCPForUnity.LocalHttpServer.LastPort";
         internal const string LastLocalHttpServerStartedUtc = "MCPForUnity.LocalHttpServer.LastStartedUtc";

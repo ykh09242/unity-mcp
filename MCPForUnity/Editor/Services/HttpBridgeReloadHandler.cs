@@ -19,6 +19,10 @@ namespace MCPForUnity.Editor.Services
         // crash mid-compile would leave a stale flag that resurrects the bridge on the next
         // launch (#1229).
         internal const string ResumeSessionKey = "MCPForUnity.ResumeHttpAfterReload";
+        internal const string ResumeStatusSessionKey = ResumeSessionKey + ".Status";
+        private static int _resumeGeneration;
+
+        internal static string ResumeStatus => SessionState.GetString(ResumeStatusSessionKey, string.Empty);
 
         private static readonly TimeSpan[] ResumeRetrySchedule =
         {
@@ -60,7 +64,13 @@ namespace MCPForUnity.Editor.Services
         /// bridge lifecycle (Connect, End Session, transport switch, orphan cleanup); the
         /// retry loop re-checks the flag per attempt, so this also aborts an in-flight loop.
         /// </summary>
-        internal static void CancelPendingResume() => SessionState.EraseBool(ResumeSessionKey);
+        internal static void CancelPendingResume()
+        {
+            _resumeGeneration++;
+            SessionState.EraseBool(ResumeSessionKey);
+            SessionState.EraseString(ResumeStatusSessionKey);
+            EditorApplication.update -= ResumeTick;
+        }
 
         private static void OnBeforeAssemblyReload()
         {
@@ -79,6 +89,7 @@ namespace MCPForUnity.Editor.Services
             if (transport.IsRunning(TransportMode.Http))
             {
                 SessionState.SetBool(ResumeSessionKey, true);
+                SessionState.SetString(ResumeStatusSessionKey, "Waiting for assembly reload to finish");
 
                 // beforeAssemblyReload is synchronous; force a synchronous teardown so we do not
                 // leave an orphaned socket due to an unfinished async close handshake.
@@ -94,6 +105,7 @@ namespace MCPForUnity.Editor.Services
         {
             if (OnAfterAssemblyReloadCore())
             {
+                EditorApplication.update -= ResumeTick;
                 EditorApplication.update += ResumeTick;
             }
         }
@@ -115,6 +127,7 @@ namespace MCPForUnity.Editor.Services
                 if (!EditorConfigurationCache.Instance.UseHttpTransport)
                 {
                     SessionState.EraseBool(ResumeSessionKey);
+                    SessionState.EraseString(ResumeStatusSessionKey);
                     return false;
                 }
 
@@ -133,10 +146,20 @@ namespace MCPForUnity.Editor.Services
 
         private static void ResumeTick()
         {
-            if (IsEditorBusy())
+            if (DeferResumeIfBusy(IsEditorBusy()))
                 return;
             EditorApplication.update -= ResumeTick;
             _ = ResumeHttpWithRetriesAsync();
+        }
+
+        internal static bool DeferResumeIfBusy(bool busy)
+        {
+            if (!IsResumePending || !busy)
+                return false;
+            SessionState.SetString(ResumeStatusSessionKey, "Waiting for editor compilation or asset import");
+            EditorApplication.update -= ResumeTick;
+            EditorApplication.update += ResumeTick;
+            return true;
         }
 
         /// <summary>
@@ -149,19 +172,24 @@ namespace MCPForUnity.Editor.Services
 
         // scheduleOverride lets EditMode tests pass an all-zero schedule so the loop
         // completes synchronously (the test framework floor cannot run async tests).
-        internal static async Task ResumeHttpWithRetriesAsync(TimeSpan[] scheduleOverride = null)
+        internal static async Task ResumeHttpWithRetriesAsync(TimeSpan[] scheduleOverride = null, Func<bool> isEditorBusy = null)
         {
             TimeSpan[] schedule = scheduleOverride ?? ResumeRetrySchedule;
             Exception lastException = null;
+            string lastReason = "no transport error detail";
+            int generation = _resumeGeneration;
 
             for (int i = 0; i < schedule.Length; i++)
             {
+                if (!IsResumePending || generation != _resumeGeneration)
+                    return;
                 int attempt = i + 1;
                 McpLog.Debug($"[HTTP Reload] Resume attempt {attempt}/{schedule.Length}");
 
                 TimeSpan delay = schedule[i];
                 if (delay > TimeSpan.Zero)
                 {
+                    SessionState.SetString(ResumeStatusSessionKey, $"Retry {attempt}/{schedule.Length} in {delay.TotalSeconds:0.#}s");
                     McpLog.Debug($"[HTTP Reload] Waiting {delay.TotalSeconds:0.#}s before resume attempt {attempt}");
                     try
                     {
@@ -174,11 +202,15 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 // The flag doubles as the cancel signal (see CancelPendingResume).
-                if (!IsResumePending)
+                if (!IsResumePending || generation != _resumeGeneration)
                     return;
-
                 try
                 {
+                    // A second compile/import can start between attempts. Yield back to
+                    // editor ticks without consuming the reload flag or forcing focus.
+                    if (DeferResumeIfBusy(isEditorBusy?.Invoke() ?? IsEditorBusy()))
+                        return;
+                    SessionState.SetString(ResumeStatusSessionKey, $"Connecting after reload ({attempt}/{schedule.Length})");
                     // Inside the attempt try: a service read racing the reload boundary must
                     // burn a retry, not kill this fire-and-forget task with the flag still set
                     // (which would leave nothing scheduled to consume it until the next reload).
@@ -187,6 +219,7 @@ namespace MCPForUnity.Editor.Services
                     if (!EditorConfigurationCache.Instance.UseHttpTransport)
                     {
                         SessionState.EraseBool(ResumeSessionKey);
+                        SessionState.EraseString(ResumeStatusSessionKey);
                         return;
                     }
 
@@ -195,13 +228,17 @@ namespace MCPForUnity.Editor.Services
                     if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http))
                     {
                         SessionState.EraseBool(ResumeSessionKey);
+                        SessionState.EraseString(ResumeStatusSessionKey);
                         return;
                     }
 
                     bool started = await MCPServiceLocator.TransportManager.StartAsync(TransportMode.Http);
+                    if (!IsResumePending || generation != _resumeGeneration)
+                        return;
                     if (started)
                     {
                         SessionState.EraseBool(ResumeSessionKey);
+                        SessionState.EraseString(ResumeStatusSessionKey);
                         McpLog.Debug($"[HTTP Reload] Resume succeeded on attempt {attempt}");
                         MCPForUnityEditorWindow.RequestHealthVerification();
                         return;
@@ -209,11 +246,13 @@ namespace MCPForUnity.Editor.Services
 
                     var state = MCPServiceLocator.TransportManager.GetState(TransportMode.Http);
                     string reason = string.IsNullOrWhiteSpace(state?.Error) ? "no error detail" : state.Error;
+                    lastReason = reason;
                     McpLog.Debug($"[HTTP Reload] Resume attempt {attempt} failed: {reason}");
                 }
                 catch (Exception ex)
                 {
                     lastException = ex;
+                    lastReason = ex.GetType().Name;
                     McpLog.Debug($"[HTTP Reload] Resume attempt {attempt} threw: {ex.Message}");
                 }
             }
@@ -222,6 +261,11 @@ namespace MCPForUnity.Editor.Services
             // loop for the rest of the session. This cannot swallow a multi-pass resume — a
             // reload mid-loop kills the task before this line, leaving the flag set.
             SessionState.EraseBool(ResumeSessionKey);
+            SessionState.SetString(
+                ResumeStatusSessionKey,
+                $"Resume failed after {schedule.Length} attempts: {lastReason}. Check the local server and reconnect manually. "
+                    + "If this only occurs in the background, include OS/Unity version and Editor.log with the report."
+            );
 
             if (lastException != null)
             {
@@ -229,7 +273,7 @@ namespace MCPForUnity.Editor.Services
             }
             else
             {
-                McpLog.Warn("Failed to resume HTTP MCP bridge after domain reload");
+                McpLog.Warn($"Failed to resume HTTP MCP bridge after domain reload: {lastReason}");
             }
         }
     }
