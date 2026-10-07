@@ -412,7 +412,6 @@ namespace MCPForUnity.Editor.Tools
 
                 if (saved)
                 {
-                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport); // Ensure Unity sees the new scene file
                     return new SuccessResponse(
                         $"Scene '{Path.GetFileName(relativePath)}' created successfully at '{relativePath}'.",
                         new { path = relativePath }
@@ -555,7 +554,6 @@ namespace MCPForUnity.Editor.Tools
 
                 if (saved)
                 {
-                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                     return new SuccessResponse(
                         $"Scene '{currentScene.name}' saved successfully to '{finalPath}'.",
                         new { path = finalPath, name = currentScene.name }

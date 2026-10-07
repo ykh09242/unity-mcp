@@ -286,7 +286,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             if (success)
             {
                 AssetDatabase.SaveAssets();
-                AssetDatabase.Refresh();
             }
 
             return success;
@@ -670,8 +669,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     return new ErrorResponse($"Failed to save prefab asset at '{sanitizedPath}'.");
                 }
-
-                AssetDatabase.Refresh();
 
                 McpLog.Info($"[ManagePrefabs] Successfully modified and saved prefab '{sanitizedPath}' (headless).");
 
@@ -1445,7 +1442,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             prefabStage.ClearDirtiness();
             AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
             return true;
         }
 

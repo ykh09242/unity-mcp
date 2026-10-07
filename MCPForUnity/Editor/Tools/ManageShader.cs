@@ -190,8 +190,7 @@ namespace MCPForUnity.Editor.Tools
                     AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 }
                 File.WriteAllText(fullPath, contents, StrictUtf8);
-                AssetDatabase.ImportAsset(relativePath);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport); // Ensure Unity recognizes the new shader
+                AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
                 return new SuccessResponse(
                     $"Shader '{name}.shader' created successfully at '{relativePath}'.",
                     new { path = relativePath }
@@ -291,8 +290,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 StrictUtf8.GetByteCount(contents);
                 File.WriteAllText(fullPath, contents, StrictUtf8);
-                AssetDatabase.ImportAsset(relativePath);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
                 return new SuccessResponse(
                     $"Shader '{Path.GetFileName(relativePath)}' updated successfully.",
                     new { path = relativePath }
