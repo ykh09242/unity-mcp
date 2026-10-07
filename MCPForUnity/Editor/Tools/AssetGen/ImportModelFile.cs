@@ -45,9 +45,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 if (string.IsNullOrWhiteSpace(baseName))
                     baseName = Path.GetFileNameWithoutExtension(srcAbs);
 
-                string destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
-
                 var job = new AssetGenJob { TargetSize = p.GetFloat("targetSize", 1f) ?? 1f, AnimationType = p.Get("animationType") };
+                string destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
                 AssetGenJob result = ModelImportPipeline.ImportInto(job, destRel);
 
                 if (result == null || result.State == AssetGenJobState.Failed)

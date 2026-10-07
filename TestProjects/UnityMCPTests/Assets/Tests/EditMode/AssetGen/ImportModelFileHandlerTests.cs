@@ -140,6 +140,36 @@ namespace MCPForUnityTests.Editor.AssetGen
             return path;
         }
 
+        [TestCase("bad")]
+        [TestCase("NaN")]
+        [TestCase("Infinity")]
+        [TestCase(true)]
+        public void InvalidTargetSize_DoesNotStageBytesOrCreateOutput(object targetSize)
+        {
+            string source = WriteCubeObj();
+            string absoluteSource = Path.Combine(Path.GetDirectoryName(Application.dataPath), source);
+            byte[] before = File.ReadAllBytes(absoluteSource);
+            string outputFolder = TestFolder + "/Rejected/Nested";
+            string absoluteParent = Path.Combine(Path.GetDirectoryName(Application.dataPath), TestFolder, "Rejected");
+
+            JObject response = Call(
+                new JObject
+                {
+                    ["sourcePath"] = source,
+                    ["name"] = "ShouldNotStage",
+                    ["outputFolder"] = outputFolder,
+                    ["targetSize"] = JToken.FromObject(targetSize),
+                }
+            );
+
+            Assert.AreEqual(false, (bool)response["success"], response.ToString());
+            StringAssert.Contains("targetSize", (string)response["error"]);
+            Assert.IsFalse(Directory.Exists(absoluteParent), "invalid scalar input must be rejected before staging creates any output directory");
+            Assert.IsFalse(File.Exists(absoluteParent + ".meta"));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(outputFolder, AssetPathToGUIDOptions.OnlyExistingAssets));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(absoluteSource), "rejection must preserve source bytes");
+        }
+
         [TestCase("empty")]
         [TestCase("blocked_entries")]
         [TestCase("invalid_archive")]
