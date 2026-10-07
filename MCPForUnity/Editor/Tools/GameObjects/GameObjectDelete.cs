@@ -20,6 +20,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             List<object> deletedObjects = new List<object>();
+            string deletedName = null;
             foreach (var targetGo in targets)
             {
                 if (targetGo != null)
@@ -31,15 +32,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     // TODO: Investigate Undo.DestroyObjectImmediate behavior in Unity 2022+
                     Object.DestroyImmediate(targetGo);
                     deletedObjects.Add(new { name = goName, instanceID = goId });
+                    deletedName = goName;
                 }
             }
 
             if (deletedObjects.Count > 0)
             {
                 string message =
-                    targets.Count == 1
-                        ? $"GameObject '{((dynamic)deletedObjects[0]).name}' deleted successfully."
-                        : $"{deletedObjects.Count} GameObjects deleted successfully.";
+                    targets.Count == 1 ? $"GameObject '{deletedName}' deleted successfully." : $"{deletedObjects.Count} GameObjects deleted successfully.";
                 return new SuccessResponse(message, deletedObjects);
             }
 
