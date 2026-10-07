@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using NUnit.Framework;
@@ -110,6 +112,43 @@ namespace MCPForUnityTests.Editor.AssetGen
 
             Assert.IsTrue(AssetGenPaths.TryGetAssetsRelativePath(abs, out string rel));
             Assert.AreEqual("Assets/Refs/ref.png", rel);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OutputFolder_RejectsExistingFileAtDestinationOrAncestor(bool ancestor)
+        {
+            string relative = "Assets/__McpOutputFile_" + Guid.NewGuid().ToString("N") + ".txt";
+            string absolute = Path.Combine(Application.dataPath, Path.GetFileName(relative));
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                File.WriteAllText(absolute, "preserve");
+                string requested = ancestor ? relative + "/new/child" : relative;
+                Assert.IsFalse(AssetGenPaths.TryGetAssetsFolder(requested, out _));
+                Assert.IsFalse(AssetGenPaths.NormalizeOutputFolder(requested, out _, out string error));
+                StringAssert.Contains("output_folder", error);
+                Assert.AreEqual("preserve", File.ReadAllText(absolute));
+                Assert.IsFalse(Directory.Exists(absolute + "/new"));
+            }
+            finally
+            {
+                File.Delete(absolute);
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OutputFolder_AcceptsMissingDestinationWithoutCreatingFolders(bool absolute)
+        {
+            string relative = "Assets/__McpMissingOutput_" + Guid.NewGuid().ToString("N") + "/new/child";
+            string fullPath = AssetGenPaths.ToAbsolute(relative);
+            Assert.IsFalse(Directory.Exists(fullPath));
+            Assert.IsTrue(AssetGenPaths.NormalizeOutputFolder(absolute ? fullPath : relative, out string normalized, out string error), error);
+            Assert.AreEqual(relative, normalized);
+            Assert.IsFalse(Directory.Exists(fullPath));
+            Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(Path.GetDirectoryName(fullPath))));
         }
     }
 }

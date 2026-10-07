@@ -102,6 +102,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
+            req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Models");
             string provider = string.IsNullOrEmpty(req.Provider) ? "tripo" : req.Provider;
             IModelProviderAdapter adapter = AssetGenProviders.Model(provider); // throws NotSupportedException if unimplemented
 
@@ -141,6 +142,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
+            req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Images");
             string provider = string.IsNullOrEmpty(req.Provider) ? "fal" : req.Provider;
             IImageProviderAdapter adapter = AssetGenProviders.Image(provider); // throws NotSupportedException if unimplemented
 
@@ -186,6 +188,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
+            req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Audio");
             string provider = string.IsNullOrEmpty(req.Provider) ? "fal" : req.Provider;
             IAudioProviderAdapter adapter = AssetGenProviders.Audio(provider); // throws NotSupportedException if unimplemented
 
@@ -224,6 +227,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (string.IsNullOrEmpty(uid))
                 throw new ArgumentException("uid required");
+            outputFolder = AssetGenPaths.ResolveOutputFolder(outputFolder, "Sketchfab");
             var adapter = AssetGenProviders.Marketplace("sketchfab"); // throws NotSupported if unimplemented
             var job = NewJob("marketplace", "sketchfab", "import");
             job.TargetSize = targetSize <= 0 ? 1f : targetSize;
@@ -617,9 +621,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     ext = actual;
                 r.Job.Format = ext;
             }
-            string requestedRoot = !string.IsNullOrEmpty(r.OutputFolder) ? r.OutputFolder : (AssetGenPrefs.OutputRoot + "/" + r.Subfolder);
-            if (!AssetGenPaths.TryGetAssetsFolder(requestedRoot, out string root))
-                root = AssetGenPrefs.DefaultOutputRoot + "/" + r.Subfolder;
+            string root = AssetGenPaths.ResolveOutputFolder(r.OutputFolder, r.Subfolder);
             using var folders = new AssetFolderScope();
             folders.EnsureFolder(root);
             string absRoot = AssetGenPaths.ToAbsolute(root);

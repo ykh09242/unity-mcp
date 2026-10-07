@@ -2,11 +2,14 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using Newtonsoft.Json;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnityTests.Editor.AssetGen
@@ -55,6 +58,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             Environment.SetEnvironmentVariable(FalEnvVar, null);
             try
             {
+                // Output folders are registered through AssetFolderScope. Remove them through
+                // Unity too, so the next test cannot observe a stale folder registration.
+                AssetDatabase.DeleteAsset(TestFolder);
                 string abs = Path.Combine(ProjectRoot(), TestFolder);
                 if (Directory.Exists(abs))
                     Directory.Delete(abs, true);
@@ -106,6 +112,64 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.Less(guard, 50, "state machine did not reach a terminal state");
         }
 
+        [TestCase("model", false)]
+        [TestCase("image", false)]
+        [TestCase("audio", false)]
+        [TestCase("model", true)]
+        [TestCase("image", true)]
+        [TestCase("audio", true)]
+        public void StartGeneration_FileConflictRejectsBeforeJobAllocation(string kind, bool configuredDefault)
+        {
+            string relative = "Assets/__McpJobOutput_" + Guid.NewGuid().ToString("N") + ".txt";
+            string absolute = AssetGenPaths.ToAbsolute(relative);
+            bool hadRoot = EditorPrefs.HasKey(EditorPrefKeys.AssetGenOutputRoot);
+            string savedRoot = AssetGenPrefs.OutputRoot;
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                File.WriteAllText(absolute, "preserve");
+                if (configuredDefault)
+                    AssetGenPrefs.OutputRoot = relative;
+                string output = configuredDefault ? null : relative + "/new/child";
+                Assert.Throws<ArgumentException>(() =>
+                {
+                    if (kind == "model")
+                    {
+                        ModelGenRequest request = Req();
+                        request.OutputFolder = output;
+                        AssetGenJobManager.StartModelGeneration(request);
+                    }
+                    else if (kind == "image")
+                        AssetGenJobManager.StartImageGeneration(
+                            new ImageGenRequest
+                            {
+                                Provider = "fal",
+                                Prompt = "fixture",
+                                OutputFolder = output,
+                            }
+                        );
+                    else
+                    {
+                        AudioGenRequest request = AudioReq();
+                        request.OutputFolder = output;
+                        AssetGenJobManager.StartAudioGeneration(request);
+                    }
+                });
+                Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+                Assert.AreEqual(0, _fake.RecordedRequests.Count);
+                Assert.AreEqual("preserve", File.ReadAllText(absolute));
+            }
+            finally
+            {
+                File.Delete(absolute);
+                if (hadRoot)
+                    AssetGenPrefs.OutputRoot = savedRoot;
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.AssetGenOutputRoot);
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
         [TestCase(false), TestCase(true)]
         public void ImageResult_JpegBytesUseJpgExtension_ForDownloadedAndInlineResults(bool inline)
         {
@@ -125,7 +189,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                                 : "{\"response_url\":\"https://queue.fal.run/test/image/requests/r1\"}"
                         )
                     : r.Url.EndsWith("/status") ? Json("{\"status\":\"COMPLETED\"}")
-                    : r.Url.Contains("queue.fal.run") ? Json("{\"images\":[{\"url\":\"https://example.com/image.png\",\"content_type\":\"image/png\"}]}")
+                    : r.Url.Contains("queue.fal.run") ? Json("{\"images\":[{\"url\":\"https://fal.media/image.png\",\"content_type\":\"image/png\"}]}")
                     : new HttpResult
                     {
                         Status = 200,
@@ -174,7 +238,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             Pump(job.JobId);
 
-            Assert.AreEqual(AssetGenJobState.Done, job.State);
+            Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
             Assert.IsNotNull(job.AssetPath);
             StringAssert.EndsWith("jobtest.glb", job.AssetPath);
             Assert.AreEqual(1f, job.Progress);
@@ -237,7 +301,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJob job = AssetGenJobManager.StartAudioGeneration(AudioReq());
             Pump(job.JobId);
 
-            Assert.AreEqual(AssetGenJobState.Done, job.State);
+            Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
             StringAssert.EndsWith("audiotest.mp3", job.AssetPath);
         }
 

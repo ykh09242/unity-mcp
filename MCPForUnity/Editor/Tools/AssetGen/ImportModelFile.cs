@@ -77,13 +77,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
         private static string StageUnderAssets(string srcAbs, string baseName, string ext, string outputFolder)
         {
-            string root = !string.IsNullOrWhiteSpace(outputFolder) ? outputFolder : AssetGenPrefs.OutputRoot + "/Imported";
-            if (!AssetGenPaths.TryGetAssetsFolder(root, out root))
-            {
-                if (!string.IsNullOrWhiteSpace(outputFolder))
-                    throw new ArgumentException("'output_folder' must resolve under the project's Assets folder.");
-                root = AssetGenPrefs.DefaultOutputRoot + "/Imported";
-            }
+            string root = AssetGenPaths.ResolveOutputFolder(outputFolder, "Imported");
 
             using var folders = new AssetFolderScope();
             folders.EnsureFolder(root);

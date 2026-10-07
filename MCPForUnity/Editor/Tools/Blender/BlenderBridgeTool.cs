@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.Blender;
 using MCPForUnity.Editor.Tools.AssetGen;
 using MCPForUnity.Runtime.Helpers;
@@ -252,10 +253,11 @@ namespace MCPForUnity.Editor.Tools.Blender
             bool selectionOnly = p.GetBool("selection_only", false);
             bool applyModifiers = p.GetBool("apply_modifiers", true);
             bool place = p.GetBool("place_in_scene", true);
+            Vector3 position = ParsePosition(p.GetRaw("position"));
+            if (fmt == "glb" && !ModelImportPipeline.IsGltfastAvailable())
+                return new ErrorResponse("GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
             float target = Mathf.Max(0f, p.GetFloat("target_size", 0f) ?? 0f);
-            string outputFolder = p.Get("output_folder");
-            if (!AssetGenPaths.NormalizeOutputFolder(outputFolder, out outputFolder, out string folderError))
-                return new ErrorResponse(folderError);
+            string outputFolder = AssetGenPaths.ResolveOutputFolder(p.Get("output_folder"), "Imported");
             string animationType = p.Get("animation_type");
             bool autoAnimate = p.GetBool("auto_animate", true);
             bool savePrefab = p.GetBool("save_prefab", false);
@@ -335,7 +337,7 @@ namespace MCPForUnity.Editor.Tools.Blender
             GameObject go = PrefabUtility.InstantiatePrefab(prefab) as GameObject ?? UnityEngine.Object.Instantiate(prefab);
             go.name = name;
             Undo.RegisterCreatedObjectUndo(go, "Import from Blender");
-            go.transform.position = ParsePosition(p.GetRaw("position"));
+            go.transform.position = position;
 
             float scaleFactor = 1f;
             if (target > 0f && TryGetWorldBounds(go, out Bounds b0))
@@ -1249,7 +1251,14 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             }
             if (arr == null || arr.Count < 3)
                 throw new ArgumentException("Position must contain three finite numeric components.");
-            return new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
+            try
+            {
+                return new Vector3(arr[0].ReadScalar<float>(), arr[1].ReadScalar<float>(), arr[2].ReadScalar<float>());
+            }
+            catch (ArgumentException ex)
+            {
+                throw new ArgumentException("Position must contain three finite numeric components.", ex);
+            }
         }
 
         /// <summary>World-space bounds over every renderer in the hierarchy; false when it has none.</summary>

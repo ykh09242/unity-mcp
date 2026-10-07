@@ -77,12 +77,25 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
-        /// <summary>Normalize an Assets folder path, trimming trailing slashes.</summary>
+        /// <summary>Normalize an Assets folder path without creating it; reject existing files at any folder component.</summary>
         public static bool TryGetAssetsFolder(string path, out string projectRelative)
         {
             if (!TryGetAssetsRelativePath(path, out projectRelative))
                 return false;
             projectRelative = projectRelative.TrimEnd('/');
+            string current = ToAbsolute(projectRelative);
+            string assetsRoot = Path.GetFullPath(Application.dataPath).Replace('\\', '/').TrimEnd('/');
+            while (!string.IsNullOrEmpty(current))
+            {
+                if (File.Exists(current))
+                {
+                    projectRelative = null;
+                    return false;
+                }
+                if (string.Equals(current, assetsRoot, StringComparison.Ordinal))
+                    break;
+                current = Path.GetDirectoryName(current)?.Replace('\\', '/');
+            }
             return true;
         }
 
@@ -99,8 +112,19 @@ namespace MCPForUnity.Editor.Helpers
                 return true;
             if (TryGetAssetsFolder(outputFolder, out normalized))
                 return true;
-            error = "'output_folder' must resolve under the project's Assets folder.";
+            error = "'output_folder' must resolve to a folder under the project's Assets folder, without an existing file at the destination or an ancestor.";
             return false;
+        }
+
+        /// <summary>Resolve the effective destination before allocating work, preserving the legacy fallback for invalid configured roots.</summary>
+        internal static string ResolveOutputFolder(string outputFolder, string subfolder)
+        {
+            string requested = !string.IsNullOrWhiteSpace(outputFolder) ? outputFolder : AssetGenPrefs.OutputRoot + "/" + subfolder;
+            if (string.IsNullOrWhiteSpace(outputFolder) && !TryGetAssetsRelativePath(requested, out _))
+                requested = AssetGenPrefs.DefaultOutputRoot + "/" + subfolder;
+            if (!NormalizeOutputFolder(requested, out string normalized, out string error))
+                throw new ArgumentException(error);
+            return normalized;
         }
 
         private static string ProjectRoot()

@@ -4,8 +4,11 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Threading;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -90,6 +93,96 @@ namespace MCPForUnityTests.Editor.Blender
             JObject resp = Call(new JObject { ["action"] = "import_model", ["format"] = "obj" });
             Assert.AreEqual(false, (bool)resp["success"]);
             StringAssert.Contains("glb or fbx", (string)resp["error"]);
+        }
+
+        [TestCase("[0,1]")]
+        [TestCase("[0,1,\"bad\"]")]
+        public void ImportModel_InvalidPositionRejectsBeforeExport(string position)
+        {
+            JObject response = CallWithoutReachableBlender(
+                new JObject
+                {
+                    ["action"] = "import_model",
+                    ["format"] = "fbx",
+                    ["position"] = JArray.Parse(position),
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("Position", response.Value<string>("error"));
+        }
+
+        [Test]
+        public void ImportModel_MissingGltfastRejectsBeforeExport()
+        {
+            FieldInfo availability = typeof(ModelImportPipeline).GetField("_gltfastAvailable", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(availability);
+            object saved = availability.GetValue(null);
+            try
+            {
+                availability.SetValue(null, false);
+                JObject response = CallWithoutReachableBlender(new JObject { ["action"] = "import_model", ["format"] = "glb" });
+                Assert.IsFalse(response.Value<bool>("success"));
+                StringAssert.Contains("glTFast", response.Value<string>("error"));
+            }
+            finally
+            {
+                availability.SetValue(null, saved);
+            }
+        }
+
+        [TestCase("screenshot", false)]
+        [TestCase("screenshot", true)]
+        [TestCase("import_model", false)]
+        [TestCase("import_model", true)]
+        public void OutputFolderFileConflictRejectsBeforeContactingBlender(string action, bool ancestor)
+        {
+            string relative = "Assets/__McpBlenderOutput_" + Guid.NewGuid().ToString("N") + ".txt";
+            string absolute = AssetGenPaths.ToAbsolute(relative);
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                File.WriteAllText(absolute, "preserve");
+                JObject response = CallWithoutReachableBlender(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["format"] = "fbx",
+                        ["output_folder"] = ancestor ? relative + "/new/child" : relative,
+                    }
+                );
+                Assert.IsFalse(response.Value<bool>("success"));
+                StringAssert.Contains("output_folder", response.Value<string>("error"));
+                Assert.AreEqual("preserve", File.ReadAllText(absolute));
+            }
+            finally
+            {
+                File.Delete(absolute);
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        // An invalid raw port fails before a connection can be made, including on the old code.
+        // Disable the synchronization context only for this deterministic failure path so awaiting
+        // the async error cannot block the editor thread.
+        private static JObject CallWithoutReachableBlender(JObject request)
+        {
+            bool hadPort = EditorPrefs.HasKey(EditorPrefKeys.BlenderPort);
+            int savedPort = EditorPrefs.GetInt(EditorPrefKeys.BlenderPort);
+            SynchronizationContext context = SynchronizationContext.Current;
+            try
+            {
+                EditorPrefs.SetInt(EditorPrefKeys.BlenderPort, -1);
+                SynchronizationContext.SetSynchronizationContext(null);
+                return Call(request);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(context);
+                if (hadPort)
+                    EditorPrefs.SetInt(EditorPrefKeys.BlenderPort, savedPort);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.BlenderPort);
+            }
         }
 
         [Test]

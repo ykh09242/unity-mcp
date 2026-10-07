@@ -48,6 +48,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             catch { }
             try
             {
+                // Keep Unity's folder registration synchronized with fixture cleanup.
+                AssetDatabase.DeleteAsset(TestFolder);
                 string dp = Application.dataPath.Replace('\\', '/');
                 string abs = Path.Combine(dp.Substring(0, dp.Length - "Assets".Length), TestFolder);
                 if (Directory.Exists(abs))
@@ -59,6 +61,48 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(GenerateImage.HandleCommand(p)));
+
+        [TestCase("image", false)]
+        [TestCase("image", true)]
+        [TestCase("audio", false)]
+        [TestCase("audio", true)]
+        [TestCase("model", false)]
+        [TestCase("model", true)]
+        public void Generate_OutputFolderFileConflict_DoesNotCreateJobOrSubmit(string kind, bool ancestor)
+        {
+            _store.Set("fal", "fixture-only");
+            _store.Set("tripo", "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            string relative = "Assets/__McpGenerationOutput_" + Guid.NewGuid().ToString("N") + ".txt";
+            string absolute = AssetGenPaths.ToAbsolute(relative);
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                File.WriteAllText(absolute, "preserve");
+                var request = new JObject
+                {
+                    ["action"] = "generate",
+                    ["prompt"] = "fixture",
+                    ["output_folder"] = ancestor ? relative + "/new/child" : relative,
+                };
+                object result =
+                    kind == "image" ? GenerateImage.HandleCommand(request)
+                    : kind == "audio" ? GenerateAudio.HandleCommand(request)
+                    : GenerateModel.HandleCommand(request);
+                var response = JObject.FromObject(result);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("output_folder", response.Value<string>("error"));
+                Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+                Assert.AreEqual(0, transport.RecordedRequests.Count);
+                Assert.AreEqual("preserve", File.ReadAllText(absolute));
+            }
+            finally
+            {
+                File.Delete(absolute);
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
 
         [TestCase("fal", "garbage")]
         [TestCase("openrouter", "text_typo")]
@@ -409,7 +453,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void OpenRouterInline_EndToEnd_ReachesDone()
         {
             _store.Set("openrouter", "orkey");
-            byte[] png = { 137, 80, 78, 71, 13, 10, 26, 10 }; // PNG magic; bytes only need to be written, not validated
+            byte[] png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP8A//8G/gL+712xfAAAAABJRU5ErkJggg==");
             string b64 = Convert.ToBase64String(png);
             AssetGenJobManager.TransportOverrideForTests = new FakeHttpTransport
             {
@@ -440,7 +484,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             int guard = 0;
             while (!AssetGenJobManager.TryAdvanceForTests(job.JobId) && guard++ < 50) { }
             Assert.Less(guard, 50);
-            Assert.AreEqual(AssetGenJobState.Done, job.State);
+            Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
             StringAssert.EndsWith("imgtest.png", job.AssetPath);
         }
     }
