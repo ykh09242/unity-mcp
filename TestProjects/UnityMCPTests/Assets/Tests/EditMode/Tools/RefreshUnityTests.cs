@@ -13,6 +13,79 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase("mode", "\"bogus\"")]
+        [TestCase("mode", "42")]
+        [TestCase("mode", "[]")]
+        [TestCase("scope", "\"bogus\"")]
+        [TestCase("scope", "false")]
+        [TestCase("scope", "{}")]
+        [TestCase("compile", "\"bogus\"")]
+        [TestCase("compile", "true")]
+        [TestCase("compile", "[]")]
+        [TestCase("wait_for_ready", "\"invalid\"")]
+        [TestCase("wait_for_ready", "2")]
+        [TestCase("wait_for_ready", "{}")]
+        [TestCase("waitForReady", "\"invalid\"")]
+        [TestCase("waitForReady", "[]")]
+        public void InvalidInput_IsRejectedBeforeRefreshCompileOrReadinessChecks(string field, string json)
+        {
+            bool alreadyRunning = TestRunStatus.IsRunning;
+            if (!alreadyRunning)
+                TestRunStatus.MarkStarted(UnityEditor.TestTools.TestRunner.Api.TestMode.EditMode);
+            try
+            {
+                var parameters = new JObject
+                {
+                    ["mode"] = "force",
+                    ["scope"] = "all",
+                    ["compile"] = "request",
+                    ["wait_for_ready"] = false,
+                };
+                parameters[field] = JToken.Parse(json);
+                var task = RefreshUnity.HandleCommand(parameters);
+
+                Assert.IsTrue(task.IsCompleted, "Invalid inputs must fail before any refresh, compilation, or editor update wait.");
+                var response = ToJObject(task.Result);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains(field, response.Value<string>("error"), response.ToString());
+                Assert.AreNotEqual("tests_running", response.Value<string>("error"), "Pure validation must precede the runtime guard.");
+            }
+            finally
+            {
+                if (!alreadyRunning)
+                    TestRunStatus.MarkFinished();
+            }
+        }
+
+        [TestCase("\"if_dirty\"", "\"scripts\"", "\"none\"", "false")]
+        [TestCase("\"FORCE\"", "\"SCRIPTS\"", "\"NONE\"", "\"false\"")]
+        [TestCase("null", "null", "null", "null")]
+        public void SupportedOptionForms_ReachRuntimeGuard(string mode, string scope, string compile, string wait)
+        {
+            bool alreadyRunning = TestRunStatus.IsRunning;
+            if (!alreadyRunning)
+                TestRunStatus.MarkStarted(UnityEditor.TestTools.TestRunner.Api.TestMode.EditMode);
+            try
+            {
+                var task = RefreshUnity.HandleCommand(
+                    new JObject
+                    {
+                        ["mode"] = JToken.Parse(mode),
+                        ["scope"] = JToken.Parse(scope),
+                        ["compile"] = JToken.Parse(compile),
+                        ["wait_for_ready"] = JToken.Parse(wait),
+                    }
+                );
+                Assert.IsTrue(task.IsCompleted);
+                Assert.AreEqual("tests_running", ToJObject(task.Result).Value<string>("error"));
+            }
+            finally
+            {
+                if (!alreadyRunning)
+                    TestRunStatus.MarkFinished();
+            }
+        }
+
         [UnityTest]
         public IEnumerator HandleCommand_BatchNormalizedWaitForReady_WaitsForEditorUpdate()
         {

@@ -30,12 +30,43 @@ namespace MCPForUnity.Editor.Tools
         /// until exit. Both are reported as <c>compile_started = false</c>.</summary>
         private const int CompileStartGraceSeconds = 10;
 
+        private static string ReadOption(JObject parameters, string name, string defaultValue, params string[] allowedValues)
+        {
+            var token = parameters?[name];
+            if (token == null || token.Type == JTokenType.Null)
+                return defaultValue;
+            if (token.Type == JTokenType.String)
+            {
+                string value = token.Value<string>();
+                foreach (string allowed in allowedValues)
+                    if (string.Equals(value, allowed, StringComparison.OrdinalIgnoreCase))
+                        return value;
+            }
+            throw new ArgumentException($"Invalid parameter '{name}': expected one of {string.Join(", ", allowedValues)}.", name);
+        }
+
         public static async Task<object> HandleCommand(JObject @params)
         {
-            string mode = @params?["mode"]?.ToString() ?? "if_dirty";
-            string scope = @params?["scope"]?.ToString() ?? "all";
-            string compile = @params?["compile"]?.ToString() ?? "none";
-            bool waitForReady = ParamCoercion.CoerceBool(@params?["wait_for_ready"] ?? @params?["waitForReady"], false);
+            string mode;
+            string scope;
+            string compile;
+            bool waitForReady;
+            try
+            {
+                mode = ReadOption(@params, "mode", "if_dirty", "if_dirty", "force");
+                scope = ReadOption(@params, "scope", "all", "assets", "scripts", "all");
+                compile = ReadOption(@params, "compile", "none", "none", "request");
+                var snakeCaseWait = @params?["wait_for_ready"];
+                var camelCaseWait = @params?["waitForReady"];
+                // Validate both supplied aliases, even when one is shadowed by precedence.
+                ParamCoercion.CoerceBool(snakeCaseWait, false);
+                ParamCoercion.CoerceBool(camelCaseWait, false);
+                waitForReady = ParamCoercion.CoerceBool(snakeCaseWait ?? camelCaseWait, false);
+            }
+            catch (ArgumentException error)
+            {
+                return new ErrorResponse(error.Message);
+            }
 
             if (TestRunStatus.IsRunning)
             {
