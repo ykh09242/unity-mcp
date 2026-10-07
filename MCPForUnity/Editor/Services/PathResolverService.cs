@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using UnityEditor;
@@ -17,6 +18,17 @@ namespace MCPForUnity.Editor.Services
     public class PathResolverService : IPathResolverService
     {
         private bool _hasUvxPathFallback;
+        private readonly object _validationLock = new object();
+        private readonly Dictionary<string, (DateTime Started, Task<string> Result)> _validations = new();
+        private readonly Func<string, string> _probe;
+
+        public PathResolverService()
+            : this(null) { }
+
+        internal PathResolverService(Func<string, string> probe)
+        {
+            _probe = probe ?? ProbeUvxVersion;
+        }
 
         public bool HasUvxPathOverride => !string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, null));
         public bool HasClaudeCliPathOverride => !string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ClaudeCliPathOverride, null));
@@ -27,12 +39,23 @@ namespace MCPForUnity.Editor.Services
             // Reset fallback flag at the start of each resolution
             _hasUvxPathFallback = false;
 
-            // Check override first - only validate if explicitly set
+            // Check override first using filesystem and cached validation results.
             if (HasUvxPathOverride)
             {
                 string overridePath = EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, string.Empty);
-                // Validate the override - if invalid, fall back to system discovery
-                if (TryValidateUvxExecutable(overridePath, out string version))
+                // Resolution must never start a process on focus/repaint. Validation is
+                // asynchronous; a known failed probe enables the existing fallback behavior.
+                bool knownInvalid = false;
+                lock (_validationLock)
+                {
+                    if (
+                        _validations.TryGetValue(overridePath, out var validation)
+                        && DateTime.UtcNow - validation.Started < TimeSpan.FromSeconds(30)
+                        && validation.Result.Status == TaskStatus.RanToCompletion
+                    )
+                        knownInvalid = validation.Result.Result == null;
+                }
+                if (File.Exists(overridePath) && !knownInvalid)
                 {
                     return overridePath;
                 }
@@ -133,6 +156,8 @@ namespace MCPForUnity.Editor.Services
             }
 
             EditorPrefs.SetString(EditorPrefKeys.UvxPathOverride, path);
+            lock (_validationLock)
+                _validations.Remove(path);
         }
 
         public void SetClaudeCliPathOverride(string path)
@@ -169,10 +194,46 @@ namespace MCPForUnity.Editor.Services
         /// <returns>True when the executable runs and returns a uvx version string.</returns>
         public bool TryValidateUvxExecutable(string uvxPath, out string version)
         {
-            version = null;
+            version = ValidateUvxExecutableAsync(uvxPath).GetAwaiter().GetResult();
+            return version != null;
+        }
+
+        public Task<string> ValidateUvxExecutableAsync(string uvxPath)
+        {
+            if (string.IsNullOrEmpty(uvxPath))
+                return Task.FromResult<string>(null);
+            lock (_validationLock)
+            {
+                if (
+                    _validations.TryGetValue(uvxPath, out var cached)
+                    && (!cached.Result.IsCompleted || DateTime.UtcNow - cached.Started < TimeSpan.FromSeconds(30))
+                )
+                    return cached.Result;
+                if (_validations.Count >= 32)
+                    foreach (string key in _validations.Where(pair => pair.Value.Result.IsCompleted).Select(pair => pair.Key).ToArray())
+                        _validations.Remove(key);
+                var task = Task.Run(() =>
+                {
+                    try
+                    {
+                        return _probe(uvxPath);
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                });
+                _validations[uvxPath] = (DateTime.UtcNow, task);
+                return task;
+            }
+        }
+
+        private static string ProbeUvxVersion(string uvxPath)
+        {
+            string version = null;
 
             if (string.IsNullOrEmpty(uvxPath))
-                return false;
+                return null;
 
             try
             {
@@ -184,13 +245,13 @@ namespace MCPForUnity.Editor.Services
                     // For bare commands like "uvx" or "uv", use EnumerateCommandCandidates to find full path first
                     string fullPath = FindUvxExecutableInPath(uvxPath);
                     if (string.IsNullOrEmpty(fullPath))
-                        return false;
+                        return null;
                     uvxPath = fullPath;
                 }
 
                 // Use ExecPath.TryRun which properly handles async output reading and timeouts
                 if (!ExecPath.TryRun(uvxPath, "--version", null, out string stdout, out string stderr, 5000))
-                    return false;
+                    return null;
 
                 // Check stdout first, then stderr (some tools output to stderr)
                 string versionOutput = !string.IsNullOrWhiteSpace(stdout) ? stdout.Trim() : stderr.Trim();
@@ -208,7 +269,7 @@ namespace MCPForUnity.Editor.Services
                         int parenIndex = afterCommand.IndexOf('(');
                         int endIndex = Math.Min(nextSpace >= 0 ? nextSpace : int.MaxValue, parenIndex >= 0 ? parenIndex : int.MaxValue);
                         version = endIndex < int.MaxValue ? afterCommand.Substring(0, endIndex).Trim() : afterCommand;
-                        return true;
+                        return string.IsNullOrEmpty(version) ? null : version;
                     }
                 }
             }
@@ -217,10 +278,10 @@ namespace MCPForUnity.Editor.Services
                 // Ignore validation errors
             }
 
-            return false;
+            return null;
         }
 
-        private string FindUvxExecutableInPath(string commandName)
+        private static string FindUvxExecutableInPath(string commandName)
         {
             try
             {

@@ -1,3 +1,5 @@
+using System.Threading.Tasks;
+
 namespace MCPForUnity.Editor.Services
 {
     /// <summary>
@@ -73,5 +75,8 @@ namespace MCPForUnity.Editor.Services
         /// <param name="version">Parsed version string if successful.</param>
         /// <returns>True when the executable runs and returns a uv version string.</returns>
         bool TryValidateUvxExecutable(string uvPath, out string version);
+
+        /// <summary>Validates off the editor thread; concurrent requests share a cached probe.</summary>
+        Task<string> ValidateUvxExecutableAsync(string uvPath);
     }
 }
