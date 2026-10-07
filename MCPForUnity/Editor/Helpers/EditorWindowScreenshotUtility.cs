@@ -137,6 +137,19 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+        /// <summary>Reads the displayed Scene View without changing focus or rendering its camera manually.
+        /// The caller owns the returned texture. Call after the window has repainted.</summary>
+        public static Texture2D CaptureSceneViewViewport(SceneView sceneView, Action<int, int> validateDimensions = null)
+        {
+            if (sceneView == null)
+                throw new ArgumentNullException(nameof(sceneView));
+            if (Application.isBatchMode)
+                throw new InvalidOperationException("Scene View capture requires an interactive Editor.");
+            Rect viewport = GetSceneViewViewportPixelRect(sceneView);
+            validateDimensions?.Invoke(Mathf.RoundToInt(viewport.width), Mathf.RoundToInt(viewport.height));
+            return CaptureViewRect(sceneView, viewport);
+        }
+
         private static void FocusAndRepaint(SceneView sceneView)
         {
             try

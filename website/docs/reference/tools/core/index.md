@@ -6,7 +6,7 @@ description: "MCP for Unity tools in the core group."
 
 # `core` tools
 
-Essential scene, script, asset & editor tools (always on by default)
+Essential scene, script, asset, editor & view recording tools (always on by default)
 
 - **[`apply_text_edits`](./apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -30,6 +30,7 @@ Essential scene, script, asset & editor tools (always on by default)
 - **[`manage_packages`](./manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
 - **[`manage_prefabs`](./manage_prefabs.md)** — Manages Unity Prefab assets.
+- **[`manage_recording`](./manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
 - **[`manage_scene`](./manage_scene.md)** — Performs CRUD operations on Unity scenes.
 - **[`manage_script`](./manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).

@@ -452,7 +452,7 @@ def render_resources_catalog(resources: list[dict[str, Any]]) -> str:
 
 # Same text as TOOL_GROUPS in Server/src/services/registry/tool_registry.py, so a fallback run writes the same pages.
 GROUP_BLURBS_FALLBACK = {
-    "core": "Essential scene, script, asset & editor tools (always on by default)",
+    "core": "Essential scene, script, asset, editor & view recording tools (always on by default)",
     "docs": "Unity API reflection and documentation lookup",
     "vfx": "Visual effects – VFX Graph, shaders, procedural textures",
     "animation": "Animator control, AnimationClip creation & 2D sprite-sheet animation",

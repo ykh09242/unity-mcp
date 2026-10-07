@@ -26,8 +26,8 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (31 tools)
-Essential scene, script, asset & editor tools (always on by default)
+## `core` &nbsp; (32 tools)
+Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
 - **[`create_script`](./core/create_script.md)** — Create a new C# script at the given project path.
@@ -50,6 +50,7 @@ Essential scene, script, asset & editor tools (always on by default)
 - **[`manage_packages`](./core/manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./core/manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
 - **[`manage_prefabs`](./core/manage_prefabs.md)** — Manages Unity Prefab assets.
+- **[`manage_recording`](./core/manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
 - **[`manage_scene`](./core/manage_scene.md)** — Performs CRUD operations on Unity scenes.
 - **[`manage_script`](./core/manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./core/manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).

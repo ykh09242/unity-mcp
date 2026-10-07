@@ -19,7 +19,7 @@ _tool_registry: list[dict[str, Any]] = []
 
 # Valid group names. ``None`` is also accepted (always-visible meta-tools).
 TOOL_GROUPS: dict[str, str] = {
-    "core": "Essential scene, script, asset & editor tools (always on by default)",
+    "core": "Essential scene, script, asset, editor & view recording tools (always on by default)",
     "docs": "Unity API reflection and documentation lookup",
     "vfx": "Visual effects – VFX Graph, shaders, procedural textures",
     "animation": "Animator control, AnimationClip creation & 2D sprite-sheet animation",

@@ -167,6 +167,10 @@
       "description": "Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger (group: profiling)"
     },
     {
+      "name": "manage_recording",
+      "description": "Start, poll and stop bounded silent Game View or Scene View MP4 recording on supported interactive Editors (group: core)"
+    },
+    {
       "name": "manage_scene",
       "description": "Load, save, query hierarchy, multi-scene editing, templates, validation, and manage Unity scenes"
     },
