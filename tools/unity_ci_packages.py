@@ -313,19 +313,18 @@ def nunit_reference_path(unity_version: str, package: ResolvedPackage, root: Pat
     directory = root / package.name
     reason = None
     major, minor, _ = unity_numbers(unity_version)
-    if (
-        package.version not in {"2.1.0", "2.1.1"}
-        or package.source != "editor"
-        or major != 6000
-        or minor < 6
-    ):
+    verified = (major == 6000 and minor >= 6 and package.version in {"2.1.0", "2.1.1"}) or (
+        (major, minor) == (7000, 0) and package.version == "2.1.2"
+    )
+    if not verified or package.source != "editor":
         reason = "Unverified NUnit package/layout"
     elif sorted(
         path.relative_to(directory).as_posix() for path in directory.rglob("nunit.framework.dll")
     ) != [relative]:
         reason = "Required reference DLL missing or ambiguous"
     else:
-        # Hosted Unity 6.6/6.7 bundles 2.1.0/2.1.1 with this path and default Editor metadata.
+        # Unity 6.6/6.7 bundles 2.1.0/2.1.1; the verified 7000.0.0a7 archive bundles 2.1.2.
+        # Both use this path and default Editor metadata.
         # Do not interpret arbitrary PluginImporter restrictions as a compatible alternative.
         metadata = (directory / relative).with_suffix(".dll.meta")
         if not metadata.is_file() or metadata.is_symlink():

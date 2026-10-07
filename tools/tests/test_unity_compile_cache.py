@@ -586,6 +586,94 @@ def test_missing_declared_ui_reference_never_publishes_cache(environment, monkey
     assert list((repo / ".unity-ci-sdk").iterdir()) == []
 
 
+def unity7_environment(environment):
+    repo, manifest, image_data = environment
+    version = "7000.0.0a7"
+    download = unity_ci.EditorDownload(
+        "https://download.unity3d.com/download_unity/581996e1a8f7/"
+        "LinuxEditorInstaller/Unity-7000.0.0a7.tar.xz",
+        "a" * 32,
+        4233266752,
+    )
+    row = unity_ci.Version(version, "alpha", None, download, None, ())
+    manifest = replace(manifest, default_version=version, versions=(row,))
+    shutil.rmtree(image_data / cache.LIBCACHE)
+    shutil.rmtree(image_data / "DotNetSdkRoslyn")
+    shutil.rmtree(image_data / "NetCoreRuntime")
+    for relative in ("DotNetSdk/dotnet", "DotNetSdk/sdk/10.0.303/Roslyn/bincore/csc.dll"):
+        path = image_data / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"bundled compiler")
+    for assembly, source in (("UnityEngine.UI", "Runtime"), ("UnityEditor.UI", "Editor")):
+        directory = image_data / cache.BUILTINS / "com.unity.ugui" / source / "UGUI"
+        directory.mkdir(parents=True)
+        (directory / f"{assembly}.asmdef").write_text(json.dumps({"name": assembly}))
+        (directory / "Fixture.cs").write_text("class Fixture {}")
+    return repo, manifest, image_data
+
+
+def test_unity7_cache_restores_ui_sources_without_absent_template_dlls(environment, monkeypatch):
+    # Given the actual alpha layout: top-level SDK, bundled uGUI sources, no libcache.
+    repo, manifest, image_data = unity7_environment(environment)
+    monkeypatch.setattr(unity_ci, "prepare", lambda *args, **kwargs: "unity-mcp-editor:7000.0.0a7")
+    install_docker(monkeypatch, image_data)
+    destination = Path(".unity-ci-sdk/7000.0.0a7")
+    # When populating then restoring the compiler cache, source-built UI remains available.
+    result = cache.prepare(manifest, "7000.0.0a7", destination)
+    monkeypatch.setattr(
+        cache.subprocess, "run", Mock(side_effect=AssertionError("No Docker on hit"))
+    )
+    restored = cache.prepare(manifest, "7000.0.0a7", destination)
+    # Then missing template DLLs are intentional, while altered UI sources are rejected.
+    assert result["populated"] and not restored["populated"]
+    assert not (repo / destination / "Data" / cache.LIBCACHE).exists()
+    source = repo / destination / "Data" / cache.BUILTINS / "com.unity.ugui/Runtime/UGUI/Fixture.cs"
+    source.unlink()
+    with pytest.raises(ValueError, match="Invalid compiler cache"):
+        cache.prepare(manifest, "7000.0.0a7", destination)
+
+
+@pytest.mark.parametrize("source", ["Runtime/UGUI", "Editor/UGUI"])
+@pytest.mark.parametrize("damage", ["definition", "name", "sources"])
+def test_unity7_cache_rejects_incomplete_bundled_ui_sources(
+    environment, monkeypatch, source, damage
+):
+    # Given a Unity 7 archive without usable source metadata for one required UI assembly.
+    repo, manifest, image_data = unity7_environment(environment)
+    directory = image_data / cache.BUILTINS / "com.unity.ugui" / source
+    definition = next(directory.glob("*.asmdef"))
+    if damage == "definition":
+        definition.unlink()
+    elif damage == "name":
+        definition.write_text('{"name":"Unexpected.Assembly"}')
+    else:
+        (directory / "Fixture.cs").unlink()
+    monkeypatch.setattr(unity_ci, "prepare", lambda *args, **kwargs: "unity-mcp-editor:7000.0.0a7")
+    calls = install_docker(monkeypatch, image_data)
+    # When preparing the cache, absent template DLLs cannot hide incomplete uGUI source inputs.
+    with pytest.raises(ValueError, match="Required bundled UI assembly sources missing"):
+        cache.prepare(manifest, "7000.0.0a7", Path(".unity-ci-sdk/7000.0.0a7"))
+    # Then no partially usable cache is published and the stopped container is removed.
+    assert list((repo / ".unity-ci-sdk").iterdir()) == []
+    assert calls[-1][1] == "rm"
+
+
+def test_unity7_cache_does_not_accept_legacy_compiler_as_sdk_fallback(environment, monkeypatch):
+    # Given complete UI sources but only the former split compiler/runtime distribution.
+    repo, manifest, image_data = unity7_environment(environment)
+    shutil.rmtree(image_data / "DotNetSdk")
+    for relative in ("DotNetSdkRoslyn/csc.dll", "NetCoreRuntime/dotnet"):
+        path = image_data / relative
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"legacy distribution")
+    monkeypatch.setattr(unity_ci, "prepare", lambda *args, **kwargs: "unity-mcp-editor:7000.0.0a7")
+    install_docker(monkeypatch, image_data)
+    # When caching Unity 7 inputs, an older compiler cannot satisfy its SDK contract.
+    with pytest.raises(ValueError, match="Complete bundled compiler"):
+        cache.prepare(manifest, "7000.0.0a7", Path(".unity-ci-sdk/7000.0.0a7"))
+    assert list((repo / ".unity-ci-sdk").iterdir()) == []
+
+
 @pytest.mark.parametrize(
     "entry",
     [

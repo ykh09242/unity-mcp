@@ -199,7 +199,7 @@ def _records(directory: Path) -> dict:
     return records
 
 
-def _check_inputs(data: Path, directories: list[str]) -> None:
+def _check_inputs(data: Path, directories: list[str], version: str) -> None:
     if (
         not isinstance(directories, list)
         or not directories
@@ -219,15 +219,28 @@ def _check_inputs(data: Path, directories: list[str]) -> None:
         for value in directories
         if PurePosixPath(value).name == "DotNetSdk"
     )
-    if not old and not modern:
+    if (not old and not modern) or (version.startswith("7000.0.") and not modern):
         raise ValueError("Complete bundled compiler and .NET runtime missing")
     if not any(value.startswith(BUILTINS + "/com.unity.modules.") for value in directories):
         raise ValueError("Bundled Unity module metadata missing")
-    for name in UI_REFERENCES:
-        if not any(
-            _ui_reference(value) and PurePosixPath(value).name == name for value in directories
-        ):
-            raise ValueError(f"Required template UI reference missing: {name}")
+    if version.startswith("7000.0."):
+        # The verified 7000.0.0a7 archive has no template libcache or precompiled uGUI.
+        # Compile these two bundled assemblies before the package and test assemblies.
+        for source, name in (("Runtime/UGUI", "UnityEngine.UI"), ("Editor/UGUI", "UnityEditor.UI")):
+            directory = data / BUILTINS / "com.unity.ugui" / source
+            definition = directory / f"{name}.asmdef"
+            if (
+                not definition.is_file()
+                or json.loads(definition.read_text(encoding="utf-8")).get("name") != name
+                or not any(directory.rglob("*.cs"))
+            ):
+                raise ValueError(f"Required bundled UI assembly sources missing: {name}")
+    else:
+        for name in UI_REFERENCES:
+            if not any(
+                _ui_reference(value) and PurePosixPath(value).name == name for value in directories
+            ):
+                raise ValueError(f"Required template UI reference missing: {name}")
     for value in ROSLYN_REFERENCES:
         if value not in directories or not (data / value).is_file():
             raise ValueError(
@@ -264,7 +277,7 @@ def _validate(directory: Path, details: dict) -> None:
             or receipt["provenance"] != details["provenance"]
         ):
             raise ValueError("Compiler input source identity changed")
-        _check_inputs(directory / "Data", receipt["directories"])
+        _check_inputs(directory / "Data", receipt["directories"], details["provenance"]["version"])
         if not receipt["files"] or _records(directory / "Data") != receipt["files"]:
             raise ValueError("Compiler input size, mode or SHA256 mismatch")
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -314,7 +327,7 @@ def prepare(manifest: unity_ci.Manifest, version: str, output: Path) -> dict:
                         check=True,
                         stdout=sys.stderr,
                     )
-                _check_inputs(data, directories)
+                _check_inputs(data, directories, version)
                 files = _records(data)
                 (staging / RECEIPT).write_text(
                     json.dumps(

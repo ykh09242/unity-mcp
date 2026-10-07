@@ -104,11 +104,17 @@ def harness(tmp_path: Path) -> CompileHarness:
     roslyn.mkdir(parents=True)
     for name in ROSLYN_REFERENCES:
         (roslyn / name).touch()
+    ugui = data / "Resources/PackageManager/BuiltInPackages/com.unity.ugui"
+    for source, name in (("Runtime/UGUI", "UnityEngine.UI"), ("Editor/UGUI", "UnityEditor.UI")):
+        directory = ugui / source
+        directory.mkdir(parents=True)
+        (directory / "Fixture.cs").write_text("class UiFixture {}\n", encoding="utf-8")
+        (directory / f"{name}.asmdef").write_text(json.dumps({"name": name}), encoding="utf-8")
     bcl = repo / "tools" / "compile-refs" / "BCL"
     bcl.mkdir()
     for name in ("Runtime", "Editor"):
         (bcl / f"{name}.txt").write_text("", encoding="utf-8")
-    for version in ("2021.3", "2022.3", "6000.3", "6000.6", "6000.7"):
+    for version in ("2021.3", "2022.3", "6000.3", "6000.6", "6000.7", "7000.0"):
         profile = repo / "tools" / "compile-refs" / version
         profile.mkdir()
         for name in ("Runtime", "Editor"):
@@ -161,6 +167,7 @@ done < "$rsp"
         ("6000.6.4f1", "6000.6"),
         ("6000.7.0b2", "6000.7"),
         ("6000.7.0a6", "6000.7"),
+        ("7000.0.0a7", "7000.0"),
     ],
 )
 def test_matrix_compiles_all_platforms_with_selected_explicit_profile(
@@ -190,7 +197,9 @@ def test_matrix_compiles_all_platforms_with_selected_explicit_profile(
         )
         assert '/Managed/Selected.dll"' in coroutine_rsp
         assert f"-define:UNITY_EDITOR_{platform.upper()}" in coroutine_rsp
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 15
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == (
+        21 if version.startswith("7000.") else 15
+    )
 
 
 @pytest.mark.parametrize("version", ["6000.7.0b2", "6000.7.0a6", "6000.8.0a1"])
@@ -261,7 +270,7 @@ def modern_sdk(
     return sdk
 
 
-@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6"])
+@pytest.mark.parametrize("version", ["6000.6.4f1", "6000.7.0b2", "6000.7.0a6", "7000.0.0a7"])
 def test_modern_sdk_uses_one_coherent_bundled_toolchain(
     harness: CompileHarness, version: str
 ) -> None:
@@ -273,7 +282,9 @@ def test_modern_sdk_uses_one_coherent_bundled_toolchain(
     assert "Tools/Scripting/DotNetSdk/sdk/9.0.100/Roslyn/bincore/csc.dll" in result.stdout
     assert "Runtime       : " in result.stdout
     assert "Tools/Scripting/DotNetSdk/dotnet" in result.stdout
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 5
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == (
+        7 if version.startswith("7000.") else 5
+    )
 
 
 @pytest.mark.parametrize(
@@ -345,7 +356,15 @@ def test_shared_bcl_references_are_required(harness: CompileHarness) -> None:
 
 @pytest.mark.parametrize(
     "version",
-    ["2021.3.45f2", "2022.3.62f1", "6000.3.25f1", "6000.6.4f1", "6000.7.0b2", "6000.7.0a6"],
+    [
+        "2021.3.45f2",
+        "2022.3.62f1",
+        "6000.3.25f1",
+        "6000.6.4f1",
+        "6000.7.0b2",
+        "6000.7.0a6",
+        "7000.0.0a7",
+    ],
 )
 def test_missing_selected_legacy_manifest_does_not_fall_back(
     harness: CompileHarness, version: str
@@ -632,6 +651,82 @@ def staged_tests(harness: CompileHarness) -> tuple[Path, Path]:
     return project, framework
 
 
+def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
+    harness: CompileHarness, staged_tests: tuple[Path, Path]
+) -> None:
+    # Given the verified alpha's top-level SDK and actual declared reference manifests.
+    project, framework = staged_tests
+    shutil.rmtree(harness.data / "Tools/Scripting/DotNetSdk")
+    modern_sdk(harness, root="DotNetSdk", version="10.0.303")
+    profile = Path("tools/compile-refs/7000.0")
+    for name in ("Runtime", "Editor"):
+        text = (ROOT / profile / f"{name}.txt").read_text(encoding="utf-8")
+        (harness.repo / profile / f"{name}.txt").write_text(text, encoding="utf-8")
+        for entry in text.splitlines():
+            if entry.startswith("DATA/") or entry.startswith("EXTRA/"):
+                prefix, relative = entry.split("/", 1)
+                target = (harness.data if prefix == "DATA" else harness.extra) / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+    # When all target defines compile, uGUI must come from sources before any consumer.
+    for platform in ("win", "osx"):
+        (harness.output / platform).mkdir()
+    result = harness.run("7000.0.0a7", "win osx linux", test_project=project, framework=framework)
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Then every platform compiles both UI assemblies and all nine previous assemblies.
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    assert len(calls) == 33
+    for platform in ("win", "osx", "linux"):
+        for name in ("UnityEngine.UI", "UnityEditor.UI"):
+            rsp = (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8")
+            assert "/UGUI/Fixture.cs" in rsp
+            assert ("-define:PACKAGE_UITOOLKIT" in rsp) == (name == "UnityEngine.UI")
+        editor = (harness.output / platform / "MCPForUnity.Editor.rsp").read_text(encoding="utf-8")
+        assert f'/{platform}/UnityEditor.UI.dll"' in editor
+        assert f'/{platform}/UnityEngine.UI.dll"' in editor
+        assert "Unity.Scripting.dll" in editor
+        assert "UnityEngine.EntitiesModule.dll" in editor
+    assert not (harness.data / "Resources/PackageManager/ProjectTemplates/libcache").exists()
+
+
+@pytest.mark.parametrize("version", ["6000.7.0b2", "7000.0.0a7"])
+def test_coreclr_netstandard_editor_contract_does_not_change_older_versions(
+    harness: CompileHarness, version: str
+) -> None:
+    # Given distinct framework and standard reference APIs and the shared legacy defines.
+    legacy = {"ENABLE_MONO", "PLATFORM_SUPPORTS_MONO", "NET_4_6", "NET_UNITY_4_8"}
+    (harness.repo / "tools/compile-defines.txt").write_text("\n".join(sorted(legacy)) + "\n")
+    for assembly, reference in (("Editor", "FrameworkApi"), ("Runtime", "StandardApi")):
+        (harness.data / "Managed" / f"{reference}.dll").touch()
+        (harness.repo / "tools/compile-refs/BCL" / f"{assembly}.txt").write_text(
+            f"DATA/Managed/{reference}.dll\n"
+        )
+    # When compiling either Editor generation, select the matching API and backend contract.
+    result = harness.run(version)
+    assert result.returncode == 0, result.stdout + result.stderr
+    editor = (harness.output / "linux/MCPForUnity.Editor.rsp").read_text(encoding="utf-8")
+    flags = {
+        line.removeprefix("-define:") for line in editor.splitlines() if line.startswith("-define:")
+    }
+    # Then Unity 7 uses Standard 2.1/CoreCLR and Unity 6 retains its prior framework/Mono setup.
+    if version.startswith("7000."):
+        assert '/Managed/StandardApi.dll"' in editor
+        assert "FrameworkApi.dll" not in editor
+        assert not flags & legacy
+        assert {
+            "ENABLE_CORECLR",
+            "NET_STANDARD_2_1",
+            "NET_STANDARD",
+            "NETSTANDARD2_1",
+            "NETSTANDARD",
+        } <= flags
+    else:
+        assert '/Managed/FrameworkApi.dll"' in editor
+        assert "StandardApi.dll" not in editor
+        assert legacy <= flags
+        assert "ENABLE_CORECLR" not in flags
+
+
 def test_explicit_staged_project_compiles_fixture_and_editmode_all_platforms(
     harness: CompileHarness,
     staged_tests: tuple[Path, Path],
@@ -882,6 +977,8 @@ def test_optional_examples_complete_matrix_preserves_sources_defines_and_referen
     nested = harness.repo / "CustomTools/RoslynRuntimeCompilation/Nested/Additional.cs"
     nested.parent.mkdir()
     nested.write_text("class Additional {}", encoding="utf-8")
+    for platform in ("win", "osx"):
+        (harness.output / platform).mkdir()
     result = harness.run(version, "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
     core = (
@@ -891,7 +988,8 @@ def test_optional_examples_complete_matrix_preserves_sources_defines_and_referen
         COROUTINES_ASSEMBLY,
         "MCPForUnity.Editor",
     )
-    expected = (*core, *OPTIONAL_ASSEMBLIES, "TestAsmdef", "MCPForUnityTests.EditMode")
+    ui = ("UnityEngine.UI", "UnityEditor.UI") if version.startswith("7000.") else ()
+    expected = (*ui, *core, *OPTIONAL_ASSEMBLIES, "TestAsmdef", "MCPForUnityTests.EditMode")
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
     assert calls == list(expected) * 3
     for platform in ("win", "osx", "linux"):

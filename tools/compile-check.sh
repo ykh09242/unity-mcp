@@ -159,7 +159,7 @@ UNITY_RELEASES="5.3 5.4 5.5 5.6 2017.1 2017.2 2017.3 2017.4 2018.1 2018.2 2018.3
 
 REFS_ROOT="$REPO/tools/compile-refs"
 case "$ver_major.$ver_minor" in
-  2021.3|2022.3|6000.3|6000.6|6000.7) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
+  2021.3|2022.3|6000.3|6000.6|6000.7|7000.0) REFS_PROFILE="$REFS_ROOT/$ver_major.$ver_minor" ;;
   *) REFS_PROFILE="$REFS_ROOT" ;;
 esac
 
@@ -197,6 +197,7 @@ resolve_ref() {
   case "$1" in
     DATA/*)     echo "$UNITY_DATA/${1#DATA/}" ;;
     EXTRA/*)    echo "$EXTRA_REFS/${1#EXTRA/}" ;;
+    COMPILED/*) echo "$OUT/$platform/${1#COMPILED/}" ;;
     LIBCACHE/*)
       if [ -n "$TEST_FRAMEWORK_SOURCE" ] && [[ "$1" == *TestRunner.dll ]]; then
         echo "$OUT/$platform/${1#LIBCACHE/}"
@@ -216,7 +217,11 @@ compile() {
   local rsp="$dir/$name.rsp"
   local missing=0 nrefs=0
   local bcl="$REFS_ROOT/BCL/Editor.txt"
-  case "$name" in MCPForUnity.Runtime|TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;; esac
+  # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
+  # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
+  case "$ver_major.$ver_minor:$name" in
+    7000.0:*|*:MCPForUnity.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+  esac
   [ -d "$srcdir" ] && [ -n "$(find "$srcdir" -name '*.cs' -type f -print -quit)" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
   }
@@ -234,10 +239,29 @@ compile() {
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in MCPForUnity.CustomTools.Roslyn*) echo "-warnaserror+" ;; esac
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
+    case "$name" in
+      UnityEngine.UI|UnityEditor.UI)
+        # Module versionDefines from the verified bundled uGUI 7.0.0 asmdefs.
+        printf '%s\n' PACKAGE_PHYSICS PACKAGE_PHYSICS2D PACKAGE_ANIMATION \
+          | while read -r d; do echo "-define:$d"; done ;;
+    esac
+    if [ "$name" = UnityEngine.UI ]; then
+      printf '%s\n' PACKAGE_TILEMAP PACKAGE_UITOOLKIT | while read -r d; do echo "-define:$d"; done
+    fi
     # ${var%$'\r'} strips the CR a core.autocrlf checkout appends to every line: a CR inside
     # -define:FOO silently defines the wrong symbol, and inside a LIBCACHE/ name it makes
     # `find -name` match nothing, so the Editor build fails on TestRunner/UI types.
-    while read -r d; do d=${d%$'\r'}; [ -n "$d" ] && echo "-define:$d"; done < "$REPO/tools/compile-defines.txt"
+    while read -r d; do
+      d=${d%$'\r'}
+      case "$ver_major.$ver_minor:$d" in
+        7000.0:ENABLE_MONO|7000.0:PLATFORM_SUPPORTS_MONO|7000.0:NET_4_6|7000.0:NET_UNITY_4_8) continue ;;
+      esac
+      [ -n "$d" ] && echo "-define:$d"
+    done < "$REPO/tools/compile-defines.txt"
+    if [ "$ver_major.$ver_minor" = 7000.0 ]; then
+      printf '%s\n' ENABLE_CORECLR NET_STANDARD_2_1 NET_STANDARD NETSTANDARD2_1 NETSTANDARD \
+        | while read -r d; do echo "-define:$d"; done
+    fi
     version_defines            | while read -r d; do echo "-define:$d"; done
     platform_defines "$platform" | while read -r d; do echo "-define:$d"; done
     for reference_manifest in "$bcl" "$manifest"; do
@@ -246,7 +270,7 @@ compile() {
         [ -n "$entry" ] || continue
         # Compile the pinned package itself without referencing the template's TestRunner.
         case "$name:$entry" in
-          UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll|Unity.EditorCoroutines.Editor:LIBCACHE/*TestRunner.dll) continue ;;
+          UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll|Unity.EditorCoroutines.Editor:LIBCACHE/*TestRunner.dll|UnityEngine.UI:LIBCACHE/*TestRunner.dll|UnityEditor.UI:LIBCACHE/*TestRunner.dll|UnityEngine.UI:COMPILED/*|UnityEditor.UI:COMPILED/*) continue ;;
         esac
         local p; p=$(resolve_ref "$entry")
         if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))
@@ -278,6 +302,13 @@ compile() {
 
 failed=0
 for platform in $PLATFORMS; do
+  if [ "$ver_major.$ver_minor" = 7000.0 ]; then
+    ugui="$UNITY_DATA/Resources/PackageManager/BuiltInPackages/com.unity.ugui"
+    compile UnityEngine.UI "$ugui/Runtime/UGUI" "$platform" "$REFS_PROFILE/Runtime.txt" \
+      || { failed=1; continue; }
+    compile UnityEditor.UI "$ugui/Editor/UGUI" "$platform" "$REFS_PROFILE/Editor.txt" \
+      "$OUT/$platform/UnityEngine.UI.dll" || { failed=1; continue; }
+  fi
   if [ -n "$TEST_FRAMEWORK_SOURCE" ]; then
     compile UnityEngine.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEngine.TestRunner" "$platform" \
       "$REFS_PROFILE/Editor.txt" || { failed=1; continue; }
@@ -285,7 +316,7 @@ for platform in $PLATFORMS; do
     # These editor versions ship Unity's fork with the Mono.Cecil namespace. Select
     # its complete editor-managed group by version, never by DLL search order.
     case "$ver_major.$ver_minor" in
-      2021.3|2022.3|6000.3|6000.6|6000.7) cecil_dir="$UNITY_DATA/Managed"; cecil_name=Unity.Cecil ;;
+      2021.3|2022.3|6000.3|6000.6|6000.7|7000.0) cecil_dir="$UNITY_DATA/Managed"; cecil_name=Unity.Cecil ;;
       *) cecil_dir="$UNITY_DATA/Tools/Compilation/ApiUpdater"; cecil_name=Mono.Cecil ;;
     esac
     for suffix in '' .Pdb .Mdb .Rocks; do

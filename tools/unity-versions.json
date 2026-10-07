@@ -1,5 +1,5 @@
 {
-  "$comment": "Pinned Unity CI channels, verified 2026-10-04 against official release metadata and public GameCI tags. Both CI workflows use every row and validate test-capable Linux images. Stable images include immutable digests; previews use official archives with publisher integrity metadata and the pinned GameCI base. No local project or published package version is changed.",
+  "$comment": "Pinned Unity CI channels, verified 2026-10-04 against official release metadata and public GameCI tags; Unity 7 alpha metadata verified 2026-10-08. Both CI workflows use every row and validate test-capable Linux images. Stable images include immutable digests; previews use official archives with publisher integrity metadata and the pinned GameCI base. No local project or published package version is changed.",
   "$sources": [
     "https://services.api.unity.com/unity/editor/release/v1/releases",
     "https://unity.com/releases/editor/whats-new/2022.3.76f1",
@@ -103,7 +103,34 @@
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         }
       ],
-      "notes": "Latest verified alpha-channel artifact. Test separately even though its branch also has a later beta."
+      "notes": "Retained Unity 6.7 alpha-channel artifact. Test separately even though its branch also has a later beta."
+    },
+    {
+      "id": "7000.0.0a7",
+      "role": "unity7-alpha",
+      "channel": "alpha",
+      "editorDownload": {
+        "url": "https://download.unity3d.com/download_unity/581996e1a8f7/LinuxEditorInstaller/Unity-7000.0.0a7.tar.xz",
+        "integrity": "md5-D0oGXJsoPEethFkursqeWw==",
+        "size": 4233266752
+      },
+      "testModules": [
+        {
+          "name": "linux-il2cpp",
+          "url": "https://download.unity3d.com/download_unity/581996e1a8f7/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-7000.0.0a7.tar.xz",
+          "integrity": "md5-AclOFw2tFBz/g1G8Sr4wcQ==",
+          "size": 65252880,
+          "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
+        },
+        {
+          "name": "linux-server",
+          "url": "https://download.unity3d.com/download_unity/581996e1a8f7/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-7000.0.0a7.tar.xz",
+          "integrity": "md5-6DYz+hNnNITV31FPy8xmRA==",
+          "size": 261052704,
+          "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
+        }
+      ],
+      "notes": "First Unity 7 alpha stream: CoreCLR Editor, with C# 9 and .NET Standard 2.1 scripting APIs. Uses its verified official Editor and Linux test modules."
     }
   ]
 }

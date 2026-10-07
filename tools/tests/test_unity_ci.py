@@ -93,6 +93,39 @@ def test_real_matrix_cli_emits_every_row_in_manifest_order(tmp_path, metadata):
     ]
 
 
+@pytest.mark.parametrize("purpose", ["compile", "tests"])
+def test_unity7_alpha_prepares_verified_archive_and_native_modules(monkeypatch, purpose):
+    # Given the real matrix, preserve its seven previously supported Editor versions.
+    manifest = unity_ci.load_manifest(Path(unity_ci.__file__).with_name("unity-versions.json"))
+    expected = {
+        "2021.3.45f2",
+        "2022.3.76f1",
+        "6000.0.84f1",
+        "6000.3.25f1",
+        "6000.6.4f1",
+        "6000.7.0b2",
+        "6000.7.0a6",
+        "7000.0.0a7",
+    }
+    assert {row.id for row in manifest.versions} == expected
+    commands = []
+    monkeypatch.setattr(
+        unity_ci.subprocess, "run", lambda command, **kwargs: commands.append(command)
+    )
+    # When preparing either purpose, the row must select its own verified inputs.
+    image = unity_ci.prepare(manifest, "7000.0.0a7", purpose=purpose)
+    # Then compilation excludes modules and native testing includes both exact archives.
+    assert image == "unity-mcp-editor:7000.0.0a7" + ("-tests" if purpose == "tests" else "")
+    arguments = commands[0]
+    assert "EDITOR_MD5=0f4a065c9b283c47ad84592eaeca9e5b" in arguments
+    assert "EDITOR_SIZE=4233266752" in arguments
+    modules = [arg for arg in arguments if arg.startswith(("IL2CPP_", "SERVER_"))]
+    assert len(modules) == (6 if purpose == "tests" else 0)
+    if modules:
+        assert "IL2CPP_SIZE=65252880" in modules
+        assert "SERVER_SIZE=261052704" in modules
+
+
 @pytest.mark.parametrize("problem", ["empty", "duplicate", "missing_default", "bad_base"])
 def test_rejects_invalid_manifest_structure(tmp_path, metadata, problem):
     if problem == "empty":

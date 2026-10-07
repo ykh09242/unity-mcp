@@ -418,6 +418,34 @@ def test_bundled_nunit_21_uses_verified_net472_editor_reference(
     assert dll.read_bytes() == original
 
 
+def test_unity7_profile_stages_its_verified_bundled_framework_nunit_and_ugui(environment):
+    # Given the package versions and default Editor import metadata in 7000.0.0a7.
+    repo, data, cache, _ = environment
+    dll = bundled_nunit_21(environment, "2.1.2")
+    builtin = data / "Resources/PackageManager/BuiltInPackages"
+    for name, version in (("com.unity.test-framework", "1.9.0"), ("com.unity.ugui", "7.0.0")):
+        metadata = builtin / name / "package.json"
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        value["version"] = version
+        metadata.write_text(json.dumps(value), encoding="utf-8")
+    config = json.loads(packages.PROFILES.read_text(encoding="utf-8"))
+    for name in config["requiredModules"]:
+        if not (builtin / name).exists():
+            make_package(builtin, name, "1.0.0")
+    # When preparing the real Unity 7 profile, preserve the public package minimum.
+    result = packages.prepare(
+        "7000.0.0a7", data, repo / ".unity-ci/7000.0.0a7", repo=repo, registry_cache=cache
+    )
+    # Then native testing and compilation consume these bundled sources and NUnit DLL.
+    report = json.loads((repo / result.resolution_report).read_text(encoding="utf-8"))
+    assert report["profile"] == "unity-seven"
+    assert (repo / result.refs / "nunit.framework.dll").read_bytes() == dll.read_bytes()
+    resolved = {item["name"]: item for item in report["packages"]}
+    for name in ("com.unity.test-framework", "com.unity.ext.nunit", "com.unity.ugui"):
+        assert resolved[name]["source"] == "editor"
+    assert resolved["com.unity.ext.nunit"]["version"] == "2.1.2"
+
+
 @pytest.mark.parametrize(
     "invalid", ["missing", "ambiguous", "importer", "metadata", "version", "registry", "old-editor"]
 )
