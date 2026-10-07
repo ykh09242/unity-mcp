@@ -4,6 +4,26 @@ MCP for Unity makes it easy to extend your AI assistant with custom capabilities
 
 This guide will walk you through creating your own tools, from simple synchronous operations to complex long-running tasks that survive Unity's domain reloads.
 
+## Project-specific startup instructions
+
+To supplement the built-in MCP guidance without adding a tool, pass an explicit file
+when launching the Python server:
+
+```bash
+mcp-for-unity --instructions-file "C:/Projects/MyProject/mcp-instructions.txt"
+```
+
+Relative paths resolve from the server's working directory. The regular file must
+contain nonblank UTF-8 text, contain no NUL characters, and be at most 32,768 bytes.
+Its contents are sent to connected MCP clients in a labeled appendix after the built-in
+instructions, so use project guidance suitable for those clients. The file is read once
+at startup; restart the server after editing it. Invalid requested files prevent startup.
+
+This option does not discover or watch files. It does not change tool availability,
+authorization, consent, transport enforcement, or the client's own instruction hierarchy.
+Omitting the option preserves the default instructions. It does not register dynamic
+MCP prompts.
+
 ---
 
 # Quick Start Guide

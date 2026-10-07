@@ -22,6 +22,11 @@ from services.custom_tool_service import (
 )
 from core.server_build import RUNNING_SERVER
 from core.config import config
+from core.custom_instructions import (
+    CustomInstructionsError,
+    append_custom_instructions,
+    load_custom_instructions,
+)
 from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.local_server_lifecycle import request_local_shutdown
@@ -550,12 +555,15 @@ def create_mcp_server(
     project_scoped_tools: bool,
     *,
     managed_instance_token: str | None = None,
+    custom_instructions: str | None = None,
 ) -> FastMCP:
     mcp = UnityMCP(
         name="mcp-for-unity-server",
         version=RUNNING_SERVER.version,
         lifespan=server_lifespan,
-        instructions=_build_instructions(project_scoped_tools),
+        instructions=append_custom_instructions(
+            _build_instructions(project_scoped_tools), custom_instructions
+        ),
     )
     mcp.add_middleware(ResponseLimitMiddleware())
 
@@ -992,7 +1000,20 @@ Examples:
         "Can also set via UNITY_MCP_PROJECT_SCOPED_TOOLS=true.",
     )
 
+    parser.add_argument(
+        "--instructions-file",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Optional project instructions file (strict UTF-8, at most 32768 bytes). "
+        "Read once at startup and appended to the built-in instructions.",
+    )
+
     args = parser.parse_args()
+    try:
+        custom_instructions = load_custom_instructions(args.instructions_file)
+    except CustomInstructionsError as exc:
+        parser.error(str(exc))
 
     # Set environment variables from command line args
     if args.default_instance:
@@ -1131,6 +1152,7 @@ Examples:
 
     mcp = create_mcp_server(
         project_scoped_tools,
+        custom_instructions=custom_instructions,
         managed_instance_token=(
             args.unity_instance_token
             if args.pidfile and config.transport_mode == "http" and not config.http_remote_hosted
