@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.bench_transport import Options, run
 from tools.bench_transport_report import Observation, equivalent_outputs, fingerprint
-from tools.bench_transport_resource import normalize_resource
+from tools.bench_transport_resource import NORMALIZATION_PATHS, normalize_resource
 
 
 class FrozenModel(BaseModel):
@@ -162,7 +162,7 @@ def check_resources(row: ModeCapture) -> None:
             or not cohort.after.accounting.clean()
         ):
             raise ValueError("Resource held-body ownership is unobserved, unbounded or leaked")
-        if cohort.normalization_paths != ["data.observed_at_unix_ms", "data.staleness.age_ms"]:
+        if cohort.normalization_paths != list(NORMALIZATION_PATHS):
             raise ValueError("Resource parity normalized additional fields")
         hashes = [fingerprint(normalize_resource(raw))[0] for raw in cohort.raw_results]
         if len(hashes) != 2 or len(set(hashes)) != 1 or hashes != cohort.normalized_sha256:

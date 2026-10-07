@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from typing import Final
 
 import anyio
 from mcp import ClientSession
@@ -13,10 +14,15 @@ from pydantic import JsonValue, TypeAdapter
 from tools.bench_transport_report import fingerprint
 
 Control = Callable[[str, dict[str, JsonValue] | None], Awaitable[JsonValue]]
+NORMALIZATION_PATHS: Final = (
+    "data.observed_at_unix_ms",
+    "data.staleness.age_ms",
+    "data.diagnostics.heartbeat_age_ms",
+)
 
 
 def normalize_resource(raw: JsonValue) -> JsonValue:
-    """Validate volatile integers; omit exactly two named time fields for parity."""
+    """Validate volatile integers; omit only the declared time fields for parity."""
     value = TypeAdapter(JsonValue).validate_json(json.dumps(raw))
     if (
         not isinstance(value, dict)
@@ -35,6 +41,17 @@ def normalize_resource(raw: JsonValue) -> JsonValue:
         or staleness["age_ms"] < 0
     ):
         raise ValueError("Resource dynamic timestamp fields are invalid")
+    diagnostics = data.get("diagnostics")
+    if diagnostics is not None:
+        if (
+            not isinstance(diagnostics, dict)
+            or type(diagnostics.get("heartbeat_age_ms")) is not int
+            or diagnostics["heartbeat_age_ms"] != staleness["age_ms"]
+        ):
+            raise ValueError("Resource diagnostic heartbeat age is invalid or inconsistent")
+        # The server derives heartbeat age from the same clock as staleness age.
+        # Keep status, activity age and all other diagnostics in the semantic hash.
+        del diagnostics["heartbeat_age_ms"]
     del data["observed_at_unix_ms"]
     del staleness["age_ms"]
     return value
@@ -82,7 +99,7 @@ async def observe_resources(
             "after": after,
             "raw_results": raw,
             "normalized_sha256": hashes,
-            "normalization_paths": ["data.observed_at_unix_ms", "data.staleness.age_ms"],
+            "normalization_paths": list(NORMALIZATION_PATHS),
         }
 
     return [await observe_cohort(mode) for mode in ("ordinary", "authoritative")]

@@ -581,13 +581,14 @@ def test_comparison_rejects_when_contract_regresses(
 
 @pytest.mark.parametrize("sequence,equal", [(1, True), (2, False)])
 def test_resource_parity_when_only_declared_time_fields_change(sequence: int, equal: bool) -> None:
-    # Given: actual resource shape with two volatile timing fields.
+    # Given: actual resource shape includes heartbeat age derived from staleness age.
     first = {
         "success": True,
         "data": {
             "observed_at_unix_ms": 100,
             "sequence": 1,
             "staleness": {"age_ms": 0, "is_stale": False},
+            "diagnostics": {"heartbeat_age_ms": 0, "status": "responsive"},
         },
     }
     second = {
@@ -596,12 +597,14 @@ def test_resource_parity_when_only_declared_time_fields_change(sequence: int, eq
             "observed_at_unix_ms": 200,
             "sequence": sequence,
             "staleness": {"age_ms": 5, "is_stale": False},
+            "diagnostics": {"heartbeat_age_ms": 5, "status": "responsive"},
         },
     }
     # When: apply the explicit normalization policy to copies of both raw values.
     same = fingerprint(normalize_resource(first)) == fingerprint(normalize_resource(second))
     # Then: semantic hashes match and raw evidence retains both original integers.
     assert same is equal and first["data"]["observed_at_unix_ms"] == 100
+    assert second["data"]["diagnostics"]["heartbeat_age_ms"] == 5
 
 
 @pytest.mark.parametrize("observed,age", [(False, 0), (0, 0), (10, -1), (10, True)])
@@ -611,3 +614,34 @@ def test_resource_parity_rejects_when_time_fields_are_invalid(observed, age) -> 
     # When/Then: normalization rejects before any semantic comparison.
     with pytest.raises(ValueError, match="timestamp"):
         normalize_resource(raw)
+
+
+@pytest.mark.parametrize("heartbeat", [-1, True, 1.5, "0", None, 1])
+def test_resource_parity_rejects_invalid_or_inconsistent_heartbeat_age(heartbeat) -> None:
+    # Given: diagnostics heartbeat must be the same valid age as staleness.
+    raw = {
+        "success": True,
+        "data": {
+            "observed_at_unix_ms": 100,
+            "staleness": {"age_ms": 0},
+            "diagnostics": {"heartbeat_age_ms": heartbeat, "status": "responsive"},
+        },
+    }
+    # When/Then: normalization cannot hide invalid or internally inconsistent diagnostics.
+    with pytest.raises(ValueError, match="heartbeat"):
+        normalize_resource(raw)
+
+
+@pytest.mark.parametrize("change", [{"status": "stale"}, {"activity_age_ms": 1}, {}])
+def test_resource_parity_preserves_diagnostic_semantics(change) -> None:
+    # Given: a valid baseline and a diagnostic change, including a missing section.
+    data = {
+        "observed_at_unix_ms": 100,
+        "staleness": {"age_ms": 0},
+        "diagnostics": {"heartbeat_age_ms": 0, "status": "responsive", "activity_age_ms": None},
+    }
+    first = {"success": True, "data": data}
+    diagnostics = {**data["diagnostics"], **change} if change else None
+    second = {"success": True, "data": {**data, "diagnostics": diagnostics}}
+    # When/Then: ignoring elapsed heartbeat time must retain other semantic differences.
+    assert fingerprint(normalize_resource(first)) != fingerprint(normalize_resource(second))
