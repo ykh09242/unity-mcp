@@ -25,7 +25,7 @@ TOOL_GROUPS: dict[str, str] = {
     "animation": "Animator control, AnimationClip creation & 2D sprite-sheet animation",
     "ui": "UI Toolkit (UXML, USS, UIDocument) and Canvas-based uGUI editing and diagnostics",
     "scripting_ext": "ScriptableObject management",
-    "testing": "Test runner & async test jobs",
+    "testing": "Test runner, async test jobs & bounded Play Mode input simulation",
     "probuilder": "ProBuilder 3D modeling – requires com.unity.probuilder package",
     "profiling": "Unity Profiler session control, counters, memory snapshots & Frame Debugger",
     "asset_gen": "AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-your-own-key)",

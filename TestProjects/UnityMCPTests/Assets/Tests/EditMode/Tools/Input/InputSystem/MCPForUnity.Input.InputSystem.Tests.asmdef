@@ -1,0 +1,35 @@
+{
+  "name": "MCPForUnity.Input.InputSystem.Tests",
+  "rootNamespace": "",
+  "references": [
+    "MCPForUnity.Editor",
+    "MCPForUnity.Input.InputSystem.Editor",
+    "Unity.InputSystem",
+    "Unity.InputSystem.TestFramework",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll",
+    "Newtonsoft.Json.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS",
+    "MCP_INPUT_SYSTEM"
+  ],
+  "versionDefines": [
+    {
+      "name": "com.unity.inputsystem",
+      "expression": "1.7.0",
+      "define": "MCP_INPUT_SYSTEM"
+    }
+  ],
+  "noEngineReferences": false
+}

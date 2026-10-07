@@ -139,6 +139,10 @@
       "description": "Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features"
     },
     {
+      "name": "manage_input",
+      "description": "Simulate bounded Play Mode UI clicks and optional Input System key, mouse and touch input (group: testing)"
+    },
+    {
       "name": "manage_material",
       "description": "Create and modify Unity materials and shaders"
     },
