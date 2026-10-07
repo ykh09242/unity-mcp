@@ -37,6 +37,8 @@ def _read_exact(sock: socket.socket, count: int, deadline: float) -> bytes:
             raise StdioAuthenticationError('Stdio authentication deadline expired')
         sock.settimeout(remaining)
         chunk = sock.recv(count - len(data))
+        if time.monotonic() >= deadline:
+            raise StdioAuthenticationError('Stdio authentication deadline expired')
         if not chunk:
             raise StdioAuthenticationError('Stdio authentication peer closed')
         data.extend(chunk)
@@ -82,4 +84,6 @@ def authenticate_stdio(sock: socket.socket, banner: str, options: StdioAuthentic
     expected = authentication_proof(token, ['server', generation, challenge, client_nonce, session])
     if not hmac.compare_digest(proof, expected):
         raise StdioAuthenticationError('Stdio server authentication failed')
+    if time.monotonic() >= options.deadline:
+        raise StdioAuthenticationError('Stdio authentication deadline expired')
     return generation + ':' + session

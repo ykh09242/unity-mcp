@@ -184,7 +184,7 @@ class UnityConnection:
                             # Consume only through LF, leaving framed bytes for
                             # their existing reader (including v2 authentication).
                             chunk = self.sock.recv(1)
-                            self._check_deadline(deadline)
+                            self._check_deadline(handshake_deadline)
                             if not chunk:
                                 break
                             buf.extend(chunk)
@@ -192,15 +192,18 @@ class UnityConnection:
                                 break
                         except socket.timeout:
                             break
+                    self._check_deadline(handshake_deadline)
                     if b"\n" not in buf:
-                        self._check_deadline(handshake_deadline)
+                        raise StdioAuthenticationError('Incomplete stdio greeting')
                     text = bytes(buf).decode('ascii').strip()
 
                     if text.startswith('WELCOME UNITY-MCP 2') or 'AUTH=' in text:
-                        self.session_generation = authenticate_stdio(
+                        session_generation = authenticate_stdio(
                             self.sock, text,
                             StdioAuthentication(self.auth_token_provider or read_stdio_token, handshake_deadline),
                         )
+                        self._check_deadline(handshake_deadline)
+                        self.session_generation = session_generation
                         self.use_framing = True
                         logger.debug('Authenticated stdio connection established')
                     else:
@@ -228,6 +231,7 @@ class UnityConnection:
                                 'MCP for Unity handshake missing FRAMING=1; proceeding in legacy mode by configuration')
                 finally:
                     self.sock.settimeout(config.connection_timeout)
+                self._check_deadline(handshake_deadline)
                 self._check_deadline(deadline)
                 return True
             except Exception as e:
