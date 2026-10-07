@@ -894,13 +894,22 @@ namespace MCPForUnity.Editor.Windows
                     : null
             );
 
-            AddUpmDependencyRow(content, "com.unity.probuilder", selectedPackages, "ProBuilder", "Required for the manage_probuilder tool (probuilder group).");
+            var installedPackages = GetInstalledUpmVersions();
+            AddUpmDependencyRow(
+                content,
+                "com.unity.probuilder",
+                selectedPackages,
+                installedPackages,
+                "ProBuilder",
+                "Required for the manage_probuilder tool (probuilder group)."
+            );
 
             // Cinemachine
             AddUpmDependencyRow(
                 content,
                 "com.unity.cinemachine",
                 selectedPackages,
+                installedPackages,
                 "Cinemachine",
                 "Enhances manage_camera with virtual camera support (core group)."
             );
@@ -910,6 +919,7 @@ namespace MCPForUnity.Editor.Windows
                 content,
                 "com.unity.visualeffectgraph",
                 selectedPackages,
+                installedPackages,
                 "VFX Graph",
                 "Enables VisualEffect support in manage_vfx tool (vfx group)."
             );
@@ -919,6 +929,7 @@ namespace MCPForUnity.Editor.Windows
                 content,
                 "com.unity.cloud.gltfast",
                 selectedPackages,
+                installedPackages,
                 "glTFast (glTF/GLB import)",
                 "Enables .glb/.gltf model import for the AI Asset Generation tools (asset_gen group)."
             );
@@ -931,12 +942,12 @@ namespace MCPForUnity.Editor.Windows
             VisualElement parent,
             string packageId,
             IDictionary<string, string> selectedPackages,
+            IReadOnlyDictionary<string, string> installedPackages,
             string name,
             string description
         )
         {
-            var installed = GetInstalledUpmVersions();
-            bool isInstalled = installed.TryGetValue(packageId, out string installedVersion);
+            bool isInstalled = installedPackages.TryGetValue(packageId, out string installedVersion);
             var selection = new TextField("Exact package@version")
             {
                 name = packageId + "-version",
