@@ -125,7 +125,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // 5. Ensure directory exists
-            EnsureAssetDirectoryExists(finalPath);
+            using var folders = new AssetFolderScope();
+            folders.EnsureParentDirectory(finalPath);
 
             // 6. Unlink from existing prefab if needed
             if (unlinkIfInstance && objectValidation.shouldUnlink)
@@ -147,7 +148,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             // 7. Persist any runtime-only materials so they survive prefab serialization
-            var persistResult = PersistRuntimeMaterials(sourceObject, finalPath);
+            var persistResult = PersistRuntimeMaterials(sourceObject, finalPath, folders);
 
             // 8. Create the prefab
             try
@@ -162,7 +163,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 // Unity may give the saved asset root a different name from the scene instance.
                 GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(finalPath);
 
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Prefab created at '{finalPath}' and instance linked.",
                     new
                     {
@@ -178,6 +179,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         materialsPersisted = persistResult.count
                     }
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {
@@ -296,7 +299,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// (MaterialPropertyBlock overrides or in-memory instances from renderer.material)
         /// as .mat assets so they survive prefab serialization.
         /// </summary>
-        private static (int count, List<string> paths) PersistRuntimeMaterials(GameObject root, string prefabPath)
+        private static (int count, List<string> paths) PersistRuntimeMaterials(GameObject root, string prefabPath, AssetFolderScope folders)
         {
             var renderers = root.GetComponentsInChildren<Renderer>(true);
             var persistedPaths = new List<string>();
@@ -334,7 +337,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     }
 
                     // Ensure the Materials directory exists (recursive)
-                    EnsureAssetFolderExists(materialsFolder);
+                    folders.EnsureFolder(materialsFolder);
 
                     matPath = AssetDatabase.GenerateUniqueAssetPath(matPath);
                     // Never update an existing asset just because its generated name matches this slot.
@@ -342,6 +345,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         ? mat.shader
                         : RenderPipelineUtility.ResolveShader("Standard");
                     Material persisted = new Material(shader);
+                    AssetPathUtility.GetFullAssetPath(matPath);
                     AssetDatabase.CreateAsset(persisted, matPath);
 
                     // Copy properties from the runtime instance if available
@@ -376,25 +380,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             return (persistedPaths.Count, persistedPaths);
         }
 
-        /// <summary>
-        /// Recursively creates the folder hierarchy for the given asset path if it doesn't exist.
-        /// </summary>
-        private static void EnsureAssetFolderExists(string assetFolderPath)
-        {
-            if (AssetDatabase.IsValidFolder(assetFolderPath))
-                return;
-
-            string[] parts = assetFolderPath.Replace('\\', '/').Split('/');
-            string current = parts[0]; // "Assets"
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                    AssetDatabase.CreateFolder(current, parts[i]);
-                current = next;
-            }
-        }
-
         private static bool HasPropertyBlockColors(Renderer renderer, int slot)
         {
             MaterialPropertyBlock block = new MaterialPropertyBlock();
@@ -425,29 +410,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         }
 
         #endregion
-
-        /// <summary>
-        /// Ensures the directory for an asset path exists, creating it if necessary.
-        /// </summary>
-        private static void EnsureAssetDirectoryExists(string assetPath)
-        {
-            string directory = Path.GetDirectoryName(assetPath);
-            if (string.IsNullOrEmpty(directory))
-            {
-                return;
-            }
-
-            // Use Application.dataPath for more reliable path resolution
-            // Application.dataPath points to the Assets folder (e.g., ".../ProjectName/Assets")
-            string fullDirectory = AssetPathUtility.GetFullAssetPath(directory);
-
-            if (!Directory.Exists(fullDirectory))
-            {
-                Directory.CreateDirectory(fullDirectory);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                McpLog.Info($"[ManagePrefabs] Created directory: {directory}");
-            }
-        }
 
         /// <summary>
         /// Finds a GameObject by instance ID, unique name or full hierarchy path.

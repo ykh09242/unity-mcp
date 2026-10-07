@@ -183,10 +183,15 @@ namespace MCPForUnity.Editor.Tools
                 UnityEngine.Object.DestroyImmediate(instance);
                 return new ErrorResponse(CodeInvalidParams, new { message = growthError });
             }
-            if (!EnsureFolderExists(normalizedFolder, out var folderError))
+            using var folders = new AssetFolderScope();
+            try
+            {
+                folders.EnsureFolder(normalizedFolder);
+            }
+            catch (Exception ex)
             {
                 UnityEngine.Object.DestroyImmediate(instance);
-                return new ErrorResponse(CodeInvalidFolderPath, new { message = folderError, folderPath = normalizedFolder });
+                return new ErrorResponse(CodeInvalidFolderPath, new { message = ex.Message, folderPath = normalizedFolder });
             }
 
             // GUID-preserving overwrite logic
@@ -229,10 +234,15 @@ namespace MCPForUnity.Editor.Tools
                     instance.name = Path.GetFileNameWithoutExtension(finalPath);
                     AssetPathUtility.GetFullAssetPath(finalPath);
                     AssetDatabase.CreateAsset(instance, finalPath);
+                    if (!EditorUtility.IsPersistent(instance)
+                        || !string.Equals(AssetDatabase.GetAssetPath(instance), finalPath, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException($"Unity could not create the asset at '{finalPath}'.");
                 }
             }
             catch (Exception ex)
             {
+                if (instance != null && !EditorUtility.IsPersistent(instance))
+                    UnityEngine.Object.DestroyImmediate(instance);
                 return new ErrorResponse(CodeAssetCreateFailed, new { message = ex.Message, path = finalPath });
             }
 
@@ -252,7 +262,7 @@ namespace MCPForUnity.Editor.Tools
             EditorUtility.SetDirty(instance);
             AssetDatabase.SaveAssets();
 
-            return new SuccessResponse(
+            var response = new SuccessResponse(
                 "ScriptableObject created.",
                 new
                 {
@@ -263,6 +273,8 @@ namespace MCPForUnity.Editor.Tools
                     warnings = warnings.Count > 0 ? warnings : null
                 }
             );
+            folders.Complete();
+            return response;
         }
 
         private static object HandleModify(JObject @params)
@@ -1818,64 +1830,6 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"[MCP] Could not parse '{paramName}' JSON string: {e.Message}");
                 }
             }
-        }
-
-        private static bool EnsureFolderExists(string folderPath, out string error)
-        {
-            error = null;
-            if (string.IsNullOrWhiteSpace(folderPath))
-            {
-                error = "Folder path is empty.";
-                return false;
-            }
-
-            // Expect normalized input here (Assets/... or Assets).
-            string sanitized = SanitizeSlashes(folderPath);
-
-            if (!sanitized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(sanitized, "Assets", StringComparison.OrdinalIgnoreCase))
-            {
-                error = "Folder path must be under Assets/.";
-                return false;
-            }
-
-            if (string.Equals(sanitized, "Assets", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            sanitized = sanitized.TrimEnd('/');
-            if (AssetDatabase.IsValidFolder(sanitized))
-            {
-                return true;
-            }
-
-            // Create recursively from Assets/
-            var parts = sanitized.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0 || !string.Equals(parts[0], "Assets", StringComparison.OrdinalIgnoreCase))
-            {
-                error = "Folder path must start with Assets/";
-                return false;
-            }
-
-            string current = "Assets";
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetPathUtility.GetFullAssetPath(next);
-                    string guid = AssetDatabase.CreateFolder(current, parts[i]);
-                    if (string.IsNullOrEmpty(guid))
-                    {
-                        error = $"Failed to create folder: {next}";
-                        return false;
-                    }
-                }
-                current = next;
-            }
-
-            return AssetDatabase.IsValidFolder(sanitized);
         }
 
         private static string SanitizeSlashes(string path)

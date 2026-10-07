@@ -120,15 +120,15 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse($"GameObject '{go.name}' does not have a ReflectionProbe component.");
 
             string dir = "Assets/Lightmaps";
-            if (!AssetDatabase.IsValidFolder(dir))
-                AssetDatabase.CreateFolder("Assets", "Lightmaps");
-
-            string outputPath = $"{dir}/{probe.name}_ReflectionProbe.exr";
+            string outputPath = AssetPathUtility.GetContainedAssetPath($"{dir}/{probe.name}_ReflectionProbe.exr");
+            using var folders = new AssetFolderScope();
+            folders.EnsureParentDirectory(outputPath);
 
             bool result = Lightmapping.BakeReflectionProbe(probe, outputPath);
             if (!result)
                 return new ErrorResponse($"Failed to bake reflection probe '{probe.name}'.");
 
+            folders.Complete();
             return new
             {
                 success = true,

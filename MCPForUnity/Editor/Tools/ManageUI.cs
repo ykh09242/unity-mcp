@@ -184,12 +184,9 @@ namespace MCPForUnity.Editor.Tools
                 contents = EnsureEditorExtensionMode(contents);
             }
 
-            string dir = Path.GetDirectoryName(fullPath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
+            using var folders = new AssetFolderScope();
+            folders.EnsureParentDirectory(path);
+            fullPath = AssetPathUtility.GetFullAssetPath(path);
             File.WriteAllText(fullPath, contents, Utf8NoBom);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
 
@@ -201,13 +198,17 @@ namespace MCPForUnity.Editor.Tools
             string ext = Path.GetExtension(path).TrimStart('.');
             if (validationWarnings.Count > 0)
             {
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Created {ext} file at {path} with {validationWarnings.Count} warning(s)",
                     new { path, validationWarnings });
+                folders.Complete();
+                return response;
             }
 
-            return new SuccessResponse($"Created {ext} file at {path}",
+            var created = new SuccessResponse($"Created {ext} file at {path}",
                 new { path });
+            folders.Complete();
+            return created;
         }
 
         private static object ReadFile(JObject @params)
@@ -332,6 +333,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Load or create PanelSettings
+            int sortOrder = p.GetInt("sort_order") ?? 0;
+            using var folders = new AssetFolderScope();
             string panelSettingsPath = p.Get("panel_settings") ?? p.Get("panelSettings");
             PanelSettings panelSettings = null;
 
@@ -359,7 +362,7 @@ namespace MCPForUnity.Editor.Tools
 
                 if (panelSettings == null)
                 {
-                    panelSettings = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset");
+                    panelSettings = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset", folders);
                     if (panelSettings == null)
                     {
                         return new ErrorResponse("Failed to create default PanelSettings.");
@@ -379,12 +382,11 @@ namespace MCPForUnity.Editor.Tools
             uiDoc.visualTreeAsset = vta;
             uiDoc.panelSettings = panelSettings;
 
-            int sortOrder = p.GetInt("sort_order") ?? 0;
             uiDoc.sortingOrder = sortOrder;
 
             EditorUtility.SetDirty(go);
 
-            return new SuccessResponse($"Attached UIDocument to {go.name}",
+            var response = new SuccessResponse($"Attached UIDocument to {go.name}",
                 new
                 {
                     gameObject = go.name,
@@ -392,6 +394,8 @@ namespace MCPForUnity.Editor.Tools
                     panelSettings = AssetDatabase.GetAssetPath(panelSettings),
                     sortOrder
                 });
+            folders.Complete();
+            return response;
         }
 
         private static object CreatePanelSettings(JObject @params)
@@ -420,7 +424,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var changes = new List<string>();
-            var ps = CreateDefaultPanelSettings(path, panel =>
+            using var folders = new AssetFolderScope();
+            var ps = CreateDefaultPanelSettings(path, folders, panel =>
             {
                 JToken settingsToken = p.GetRaw("settings");
                 if (settingsToken is JObject settingsObj)
@@ -455,8 +460,10 @@ namespace MCPForUnity.Editor.Tools
             EditorUtility.SetDirty(ps);
             AssetDatabase.SaveAssets();
 
-            return new SuccessResponse($"Created PanelSettings at {path}",
+            var response = new SuccessResponse($"Created PanelSettings at {path}",
                 new { path, applied = changes });
+            folders.Complete();
+            return response;
         }
 
         private static object UpdatePanelSettings(JObject @params)
@@ -495,7 +502,7 @@ namespace MCPForUnity.Editor.Tools
                 new { path, applied = changes });
         }
 
-        private static PanelSettings CreateDefaultPanelSettings(string path, Action<PanelSettings> configure = null)
+        private static PanelSettings CreateDefaultPanelSettings(string path, AssetFolderScope folders, Action<PanelSettings> configure = null)
         {
             // This helper returns only a newly owned asset, never a borrowed one.
             if (File.Exists(AssetPathUtility.GetFullAssetPath(path))
@@ -506,9 +513,8 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 configure?.Invoke(ps);
-                string dir = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(dir)) EnsureFolderExists(dir);
-
+                folders.EnsureParentDirectory(path);
+                AssetPathUtility.GetFullAssetPath(path);
                 AssetDatabase.CreateAsset(ps, path);
                 if (!AssetDatabase.Contains(ps)
                     || !string.Equals(AssetPathUtility.NormalizeSeparators(AssetDatabase.GetAssetPath(ps)),
@@ -710,24 +716,6 @@ namespace MCPForUnity.Editor.Tools
             return false;
         }
 
-        private static void EnsureFolderExists(string assetFolderPath)
-        {
-            if (AssetDatabase.IsValidFolder(assetFolderPath))
-                return;
-
-            string[] parts = assetFolderPath.Replace('\\', '/').Split('/');
-            string current = parts[0]; // "Assets"
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetDatabase.CreateFolder(current, parts[i]);
-                }
-                current = next;
-            }
-        }
-
         private static object GetVisualTree(JObject @params)
         {
             var p = new ToolParams(@params);
@@ -889,10 +877,9 @@ namespace MCPForUnity.Editor.Tools
             }
 
             string resolvedFolderSpec = ScreenshotPreferences.Resolve(outputFolderOverride);
-            string resolvedFolderAbs;
             try
             {
-                resolvedFolderAbs = ScreenshotUtility.ResolveFolderAbsolute(resolvedFolderSpec);
+                ScreenshotUtility.ResolveFolderAbsolute(resolvedFolderSpec);
                 // Validate caller-supplied names before rendering or scheduling a capture.
                 ScreenshotUtility.PrepareCaptureResult(fileName, 1, true, resolvedFolderSpec, false);
             }
@@ -917,7 +904,6 @@ namespace MCPForUnity.Editor.Tools
                 if (!resolvedPlayName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                     resolvedPlayName += ".png";
 
-                Directory.CreateDirectory(resolvedFolderAbs);
                 string playFullPath = ScreenshotUtility.PrepareCaptureResult(resolvedPlayName, 1, true, resolvedFolderSpec, false).FullPath;
                 string playProjectRelPath = ScreenshotUtility.ToProjectRelativePath(playFullPath);
 
@@ -949,7 +935,7 @@ namespace MCPForUnity.Editor.Tools
                         UnityEngine.Object.DestroyImmediate(captureTex);
                     }
 
-                    File.WriteAllBytes(playFullPath, capturePng);
+                    ScreenshotFileUtility.WriteCaptureBytes(playFullPath, capturePng);
                     if (ScreenshotUtility.IsUnderAssets(playProjectRelPath))
                         AssetDatabase.ImportAsset(playProjectRelPath, ImportAssetOptions.ForceSynchronousImport);
 
@@ -1042,6 +1028,7 @@ namespace MCPForUnity.Editor.Tools
             GameObject tempGo = null;
             PanelSettings tempPs = null;
             Texture2D tex = null;
+            var renderAssetFolders = new AssetFolderScope();
 
             try
             {
@@ -1077,7 +1064,7 @@ namespace MCPForUnity.Editor.Tools
                             AssetPathUtility.GetAssetPathFromGuid(guids[0], allowPackages: true));
                     if (ps == null)
                     {
-                        ps = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset");
+                        ps = CreateDefaultPanelSettings("Assets/UI/DefaultPanelSettings.asset", renderAssetFolders);
                         tempPs = ps;
                     }
 
@@ -1149,8 +1136,7 @@ namespace MCPForUnity.Editor.Tools
                         rt.Create();
 
                         string rtFolder = "Assets/UI";
-                        if (!AssetDatabase.IsValidFolder(rtFolder))
-                            AssetDatabase.CreateFolder("Assets", "UI");
+                        renderAssetFolders.EnsureFolder(rtFolder);
                         string rtAssetPath = $"{rtFolder}/RT_MCP_UI_Render_{psId}.renderTexture";
                         AssetDatabase.CreateAsset(rt, rtAssetPath);
                         AssetDatabase.SaveAssets();
@@ -1228,11 +1214,10 @@ namespace MCPForUnity.Editor.Tools
                 if (!resolvedName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
                     resolvedName += ".png";
 
-                Directory.CreateDirectory(resolvedFolderAbs);
                 string fullPath = ScreenshotUtility.PrepareCaptureResult(resolvedName, 1, true, resolvedFolderSpec, false).FullPath;
 
                 byte[] png = tex.EncodeToPNG();
-                File.WriteAllBytes(fullPath, png);
+                ScreenshotFileUtility.WriteCaptureBytes(fullPath, png);
 
                 string projectRelPath = ScreenshotUtility.ToProjectRelativePath(fullPath);
                 if (ScreenshotUtility.IsUnderAssets(projectRelPath))
@@ -1287,19 +1272,27 @@ namespace MCPForUnity.Editor.Tools
                         ? $"RenderTexture assigned to PanelSettings. Call render_ui again to capture the rendered content."
                         : $"UI render saved to '{projectRelPath}' (no visible content detected).";
 
+                renderAssetFolders.Complete();
                 return new SuccessResponse(msg, data);
             }
             finally
             {
-                if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
-                if (tempGo != null) UnityEngine.Object.DestroyImmediate(tempGo);
-                if (tempPs != null)
+                try
                 {
-                    string tempPsPath = AssetDatabase.GetAssetPath(tempPs);
-                    if (!string.IsNullOrEmpty(tempPsPath))
-                        AssetDatabase.DeleteAsset(tempPsPath);
-                    else
-                        UnityEngine.Object.DestroyImmediate(tempPs, true);
+                    if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
+                    if (tempGo != null) UnityEngine.Object.DestroyImmediate(tempGo);
+                    if (tempPs != null)
+                    {
+                        string tempPsPath = AssetDatabase.GetAssetPath(tempPs);
+                        if (!string.IsNullOrEmpty(tempPsPath))
+                            AssetDatabase.DeleteAsset(tempPsPath);
+                        else
+                            UnityEngine.Object.DestroyImmediate(tempPs, true);
+                    }
+                }
+                finally
+                {
+                    renderAssetFolders.Dispose();
                 }
             }
         }

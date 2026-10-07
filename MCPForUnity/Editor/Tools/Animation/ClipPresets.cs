@@ -62,10 +62,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (existing != null)
                 return new { success = false, message = $"An asset already exists at '{clipPath}'. Delete it first or use a different path." };
 
-            string dir = Path.GetDirectoryName(clipPath)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
-                CreateFoldersRecursive(dir);
-
+            using var folders = new AssetFolderScope();
             var clip = new AnimationClip();
             try
             {
@@ -128,11 +125,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                         return new { success = false, message = $"Unknown preset '{preset}'. Valid: {string.Join(", ", ValidPresets)}" };
                 }
 
+                folders.EnsureParentDirectory(clipPath);
                 AssetPathUtility.GetFullAssetPath(clipPath);
                 AssetDatabase.CreateAsset(clip, clipPath);
                 if (!EditorUtility.IsPersistent(clip))
                     return new { success = false, message = $"Failed to create AnimationClip at '{clipPath}'." };
                 AssetDatabase.SaveAssets();
+                folders.Complete();
 
                 return new
                 {
@@ -398,24 +397,6 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             var binding = EditorCurveBinding.FloatCurve("", typeof(Transform), propertyName);
             AnimationUtility.SetEditorCurve(clip, binding, curve);
-        }
-
-        private static void CreateFoldersRecursive(string folderPath)
-        {
-            folderPath = AssetPathUtility.GetContainedAssetPath(folderPath);
-            if (AssetDatabase.IsValidFolder(folderPath))
-                return;
-
-            string parent = Path.GetDirectoryName(folderPath)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(parent) && parent != "Assets" && !AssetDatabase.IsValidFolder(parent))
-                CreateFoldersRecursive(parent);
-
-            string folderName = Path.GetFileName(folderPath);
-            if (!string.IsNullOrEmpty(parent) && !string.IsNullOrEmpty(folderName))
-            {
-                AssetPathUtility.GetFullAssetPath(folderPath);
-                AssetDatabase.CreateFolder(parent, folderName);
-            }
         }
     }
 }

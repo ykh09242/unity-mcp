@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -204,11 +205,35 @@ namespace MCPForUnityTests.Editor.Tools
             var helper = typeof(ManageUI).GetMethod("CreateDefaultPanelSettings", BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(helper);
 
-            object result = helper.Invoke(null, new object[] { path, null });
+            using var folders = new AssetFolderScope();
+            object result = helper.Invoke(null, new object[] { path, folders, null });
 
             Assert.IsNull(result, "RenderUI cleanup must never receive a borrowed asset.");
             Assert.AreSame(panel, AssetDatabase.LoadAssetAtPath<PanelSettings>(path));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+        }
+
+        [Test]
+        public void CreateFileWriteFailurePreservesPreexistingFolderAndContent()
+        {
+            string parent = assetRoot + "/Existing";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Existing"));
+            string parentGuid = AssetDatabase.AssetPathToGUID(parent);
+            string path = parent + "/Occupied.uss";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(parent, "Occupied.uss"));
+            string occupiedGuid = AssetDatabase.AssetPathToGUID(path);
+            string sentinel = Path.Combine(Application.dataPath, path.Substring("Assets/".Length), "Retained.txt");
+            File.WriteAllText(sentinel, "retain occupied output");
+
+            var response = JObject.FromObject(ManageUI.HandleCommand(new JObject
+            {
+                ["action"] = "create", ["path"] = path, ["contents"] = "Label { color: red; }"
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(parentGuid, AssetDatabase.AssetPathToGUID(parent));
+            Assert.AreEqual(occupiedGuid, AssetDatabase.AssetPathToGUID(path));
+            Assert.AreEqual("retain occupied output", File.ReadAllText(sentinel));
         }
 
         [Test]

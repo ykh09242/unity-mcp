@@ -203,8 +203,13 @@ namespace MCPForUnity.Runtime.Helpers
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: true);
             // ScreenCapture.CaptureScreenshot accepts paths relative to the project root.
-            SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), result.FullPath);
-            ScreenCapture.CaptureScreenshot(result.ProjectRelativePath, result.SuperSize);
+            using (var folders = new OutputFolderScope(GetProjectRootPath()))
+            {
+                folders.EnsureParentDirectory(result.FullPath);
+                SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), result.FullPath);
+                ScreenCapture.CaptureScreenshot(result.ProjectRelativePath, result.SuperSize);
+                folders.Complete();
+            }
             return result;
         }
 
@@ -801,10 +806,16 @@ namespace MCPForUnity.Runtime.Helpers
         {
             if (bytes == null) throw new ArgumentNullException(nameof(bytes));
             string containedPath = SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), fullPath);
-            using (var output = new FileStream(containedPath,
-                ensureUniqueFileName ? FileMode.CreateNew : FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var folders = new OutputFolderScope(GetProjectRootPath()))
             {
-                output.Write(bytes, 0, bytes.Length);
+                folders.EnsureParentDirectory(containedPath);
+                containedPath = SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), containedPath);
+                using (var output = new FileStream(containedPath,
+                    ensureUniqueFileName ? FileMode.CreateNew : FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    output.Write(bytes, 0, bytes.Length);
+                }
+                folders.Complete();
             }
         }
 
@@ -814,8 +825,6 @@ namespace MCPForUnity.Runtime.Helpers
             int size = Mathf.Max(1, superSize);
             string resolvedName = BuildFileName(fileName);
             string folderAbsolute = ResolveFolderAbsolute(folderOverride);
-            Directory.CreateDirectory(folderAbsolute);
-
             string fullPath = SafePathUtility.ResolveWithinRoot(folderAbsolute, resolvedName);
             if (ensureUniqueFileName)
             {

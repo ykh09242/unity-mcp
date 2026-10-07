@@ -45,6 +45,80 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.AreEqual("Captures/security-test.png", result.ProjectRelativePath);
         }
 
+        [Test]
+        public void CapturePreparationDoesNotCreateOutputFolders()
+        {
+            string root = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Temp", "McpCapturePrepare-" + Guid.NewGuid().ToString("N"));
+            var prepared = ScreenshotUtility.PrepareCaptureResult("capture", 1, true, root, false);
+            Assert.AreEqual("capture.png", Path.GetFileName(prepared.FullPath));
+            Assert.IsFalse(Directory.Exists(root), "Path validation must not create folders before an image exists.");
+
+            var prepare = typeof(EditorWindowScreenshotUtility).GetMethod("PrepareCaptureResult", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(prepare);
+            prepare.Invoke(null, new object[] { "capture", 1, true, root });
+            Assert.IsFalse(Directory.Exists(root), "Scene View path preparation must also be side-effect free.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FailedOutputScopeRemovesOnlyNewEmptyAncestors(bool preservePartialFile)
+        {
+            string root = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Temp", "McpCaptureFolders-" + Guid.NewGuid().ToString("N"));
+            string existing = Path.Combine(root, "Existing");
+            string owned = Path.Combine(existing, "New", "Nested");
+            string output = Path.Combine(owned, "capture.png");
+            Directory.CreateDirectory(existing);
+            try
+            {
+                using (var folders = new OutputFolderScope(root))
+                {
+                    folders.EnsureParentDirectory(output);
+                    if (preservePartialFile) File.WriteAllBytes(output, new byte[] { 1, 2, 3 });
+                }
+                Assert.IsTrue(Directory.Exists(existing), "A pre-existing empty parent must survive failure.");
+                Assert.AreEqual(preservePartialFile, Directory.Exists(owned));
+                if (preservePartialFile) CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(output));
+                else Assert.IsFalse(Directory.Exists(Path.Combine(existing, "New")));
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
+        [Test]
+        public void OutputScopeUnwindsEarlierFoldersAfterLaterParentFailure()
+        {
+            string root = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Temp", "McpCaptureFailure-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string blocker = Path.Combine(root, "Blocker");
+            File.WriteAllText(blocker, "sentinel");
+            try
+            {
+                using (var folders = new OutputFolderScope(root))
+                {
+                    folders.EnsureParentDirectory(Path.Combine(root, "New", "Nested", "capture.png"));
+                    Assert.Throws<IOException>(() => folders.EnsureParentDirectory(Path.Combine(blocker, "capture.png")));
+                }
+                Assert.IsFalse(Directory.Exists(Path.Combine(root, "New")));
+                Assert.AreEqual("sentinel", File.ReadAllText(blocker));
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
+        [Test]
+        public void CaptureWriteCreatesFoldersOnlyForValidBytesAndKeepsSuccessfulOutput()
+        {
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
+            string root = Path.Combine(projectRoot, "Temp", "McpCaptureWrite-" + Guid.NewGuid().ToString("N"));
+            string output = Path.Combine(root, "Nested", "capture.png");
+            Assert.Throws<ArgumentNullException>(() => ScreenshotUtility.WriteCaptureBytes(output, null));
+            Assert.IsFalse(Directory.Exists(root));
+            try
+            {
+                ScreenshotUtility.WriteCaptureBytes(output, new byte[] { 4, 5, 6 });
+                CollectionAssert.AreEqual(new byte[] { 4, 5, 6 }, File.ReadAllBytes(output));
+            }
+            finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        }
+
         [TestCase(false, false, false)]
         [TestCase(false, false, true)]
         [TestCase(false, true, false)]

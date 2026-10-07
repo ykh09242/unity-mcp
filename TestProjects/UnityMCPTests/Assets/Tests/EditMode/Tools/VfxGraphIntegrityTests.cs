@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
 using Newtonsoft.Json.Linq;
@@ -60,6 +61,49 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.IsNotNull(_effect);
                 Assert.IsFalse(response.Value<bool>("success"));
                 StringAssert.Contains("Unknown vfx action", response["message"]?.ToString());
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MissingTemplate_DoesNotCreateFoldersOrReplaceExistingFolder(bool existingFolder)
+        {
+            RequireEnabledGraph();
+            string root = "Assets/VfxMissingTemplate_" + Guid.NewGuid().ToString("N");
+            string folder = root + "/Nested";
+            string originalGuid = null;
+            if (existingFolder)
+                originalGuid = UnityEditor.AssetDatabase.CreateFolder("Assets", Path.GetFileName(root));
+            try
+            {
+                var response = JObject.FromObject(ManageVFX.HandleCommand(new JObject
+                {
+                    ["action"] = "vfx_create_asset", ["assetName"] = "Missing",
+                    ["folderPath"] = folder, ["template"] = "Missing_" + Guid.NewGuid().ToString("N"),
+                }));
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("VFX template not found", response.Value<string>("message"));
+                Assert.IsFalse(UnityEditor.AssetDatabase.IsValidFolder(folder));
+                Assert.IsFalse(Directory.Exists(AssetPathUtility.GetFullAssetPath(folder)));
+                Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(folder) + ".meta"));
+                if (existingFolder)
+                {
+                    Assert.IsTrue(UnityEditor.AssetDatabase.IsValidFolder(root));
+                    Assert.AreEqual(originalGuid, UnityEditor.AssetDatabase.AssetPathToGUID(root));
+                }
+                else
+                {
+                    Assert.IsFalse(UnityEditor.AssetDatabase.IsValidFolder(root));
+                    Assert.IsFalse(Directory.Exists(AssetPathUtility.GetFullAssetPath(root)));
+                    Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath(root) + ".meta"));
+                }
+                UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                if (UnityEditor.AssetDatabase.IsValidFolder(root))
+                    UnityEditor.AssetDatabase.DeleteAsset(root);
             }
         }
 

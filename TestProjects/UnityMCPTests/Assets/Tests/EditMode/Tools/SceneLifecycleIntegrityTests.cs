@@ -11,6 +11,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using MCPForUnity.Runtime.Helpers;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -117,6 +118,36 @@ namespace MCPForUnityTests.Editor.Tools
         private static Scene[] LoadedScenes() => Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray();
         private static int SceneIndex(Scene scene) => Array.IndexOf(LoadedScenes(), scene);
         private JObject Select(string action) => new JObject { ["action"] = action, ["sceneName"] = sceneName, ["scenePath"] = secondPath };
+
+        [Test]
+        public void SaveFailurePreservesPreexistingOutputDirectoryAndContent()
+        {
+            string directory = assetRoot + "/Existing";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Existing"));
+            string directoryGuid = AssetDatabase.AssetPathToGUID(directory);
+            string occupiedPath = directory + "/Occupied.unity";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(directory, "Occupied.unity"));
+            string occupiedGuid = AssetDatabase.AssetPathToGUID(occupiedPath);
+            string sentinel = SystemPath(occupiedPath + "/Retained.txt");
+            File.WriteAllText(sentinel, "retain existing output");
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            JObject response;
+            try
+            {
+                // Unity emits a native save diagnostic when a directory occupies the destination file.
+                LogAssert.ignoreFailingMessages = true;
+                response = Call(new JObject { ["action"] = "save", ["path"] = occupiedPath });
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+            }
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(directoryGuid, AssetDatabase.AssetPathToGUID(directory));
+            Assert.AreEqual(occupiedGuid, AssetDatabase.AssetPathToGUID(occupiedPath));
+            Assert.AreEqual("retain existing output", File.ReadAllText(sentinel));
+        }
 
         [TestCase("create", "rooted")]
         [TestCase("create", "traversal")]

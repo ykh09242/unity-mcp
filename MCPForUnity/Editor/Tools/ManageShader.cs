@@ -183,18 +183,17 @@ namespace MCPForUnity.Editor.Tools
             {
                 // Validate before preparing directories or opening a file, which could truncate existing content.
                 StrictUtf8.GetByteCount(contents);
-                string fullPathDir = Path.GetDirectoryName(fullPath);
-                if (!Directory.Exists(fullPathDir))
-                {
-                    Directory.CreateDirectory(fullPathDir);
-                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                }
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(relativePath);
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
                 File.WriteAllText(fullPath, contents, StrictUtf8);
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Shader '{name}.shader' created successfully at '{relativePath}'.",
                     new { path = relativePath }
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {

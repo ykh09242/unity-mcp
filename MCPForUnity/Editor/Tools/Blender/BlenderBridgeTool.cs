@@ -513,9 +513,13 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         {
             string parent = (Path.GetDirectoryName(assetPath) ?? "Assets").Replace('\\', '/');
             string dir = $"{parent}/Prefabs";
-            if (!AssetDatabase.IsValidFolder(dir)) AssetDatabase.CreateFolder(parent, "Prefabs");
+            using var folders = new AssetFolderScope();
+            folders.EnsureFolder(dir);
             string prefabPath = AssetDatabase.GenerateUniqueAssetPath($"{dir}/{name}.prefab");
-            PrefabUtility.SaveAsPrefabAssetAndConnect(go, prefabPath, InteractionMode.AutomatedAction);
+            AssetPathUtility.GetFullAssetPath(prefabPath);
+            if (PrefabUtility.SaveAsPrefabAssetAndConnect(go, prefabPath, InteractionMode.AutomatedAction) == null)
+                throw new IOException($"Failed to save prefab at '{prefabPath}'.");
+            folders.Complete();
             return prefabPath;
         }
 
@@ -867,9 +871,43 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         {
             string relative = "Assets/.BlenderBridge/" + Guid.NewGuid().ToString("N") + "/" + Path.GetFileName(exportPath);
             string staged = AssetGenPaths.ToAbsolute(relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(staged));
-            File.Copy(exportPath, staged);
-            return staged;
+            string stagingDirectory = Path.GetDirectoryName(staged);
+            string stagingRoot = Path.GetDirectoryName(stagingDirectory);
+            bool ownsRoot = false;
+            bool ownsDirectory = false;
+            try
+            {
+                if (!Directory.Exists(stagingRoot))
+                {
+                    Directory.CreateDirectory(stagingRoot);
+                    ownsRoot = true;
+                }
+                if (Directory.Exists(stagingDirectory) || File.Exists(stagingDirectory))
+                    throw new IOException("The Blender staging directory already exists.");
+                Directory.CreateDirectory(stagingDirectory);
+                ownsDirectory = true;
+                staged = AssetGenPaths.ToAbsolute(relative);
+                File.Copy(exportPath, staged);
+                return staged;
+            }
+            catch
+            {
+                try
+                {
+                    staged = AssetGenPaths.ToAbsolute(relative);
+                    if (ownsDirectory)
+                    {
+                        File.Delete(staged);
+                        Directory.Delete(stagingDirectory);
+                    }
+                    if (ownsRoot) Directory.Delete(stagingRoot);
+                }
+                catch (Exception ex)
+                {
+                    McpLog.Warn($"Could not remove failed Blender staging directory ({ex.GetType().Name}).");
+                }
+                throw;
+            }
         }
 
         internal static string QuoteGitArgument(string value)

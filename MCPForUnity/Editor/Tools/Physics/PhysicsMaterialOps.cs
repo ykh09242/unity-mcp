@@ -28,8 +28,6 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             AssetPathUtility.GetFullAssetPath($"{folder}/{name}" +
                 (dimension == "2d" ? ".physicsMaterial2D" : ".physicMaterial"));
-            if (!EnsureFolderExists(folder, out string folderError))
-                return new ErrorResponse(folderError);
 
             if (dimension == "2d")
                 return Create2D(name, folder, p);
@@ -190,6 +188,16 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) != null)
                 return new ErrorResponse($"A physics material already exists at '{assetPath}'. Use configure_physics_material to modify it.");
 
+            using var folders = new AssetFolderScope();
+            try
+            {
+                folders.EnsureFolder(folder);
+            }
+            catch (System.IO.IOException ex)
+            {
+                return new ErrorResponse(ex.Message);
+            }
+
 #if UNITY_6000_0_OR_NEWER
             var mat = new PhysicsMaterial(name)
             {
@@ -229,6 +237,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 if (!EditorUtility.IsPersistent(mat))
                     return new ErrorResponse($"Failed to create physics material at '{assetPath}'.");
                 AssetDatabase.SaveAssets();
+                folders.Complete();
 
                 return new
                 {
@@ -263,6 +272,16 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath) != null)
                 return new ErrorResponse($"A 2D physics material already exists at '{assetPath}'. Use configure_physics_material to modify it.");
 
+            using var folders = new AssetFolderScope();
+            try
+            {
+                folders.EnsureFolder(folder);
+            }
+            catch (System.IO.IOException ex)
+            {
+                return new ErrorResponse(ex.Message);
+            }
+
             var mat = new PhysicsMaterial2D(name)
             {
                 friction = friction,
@@ -276,6 +295,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 if (!EditorUtility.IsPersistent(mat))
                     return new ErrorResponse($"Failed to create 2D physics material at '{assetPath}'.");
                 AssetDatabase.SaveAssets();
+                folders.Complete();
 
                 return new
                 {
@@ -531,52 +551,6 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
 
             return go.GetComponent<Collider2D>();
-        }
-
-        // =====================================================================
-        // Folder helpers
-        // =====================================================================
-
-        private static bool EnsureFolderExists(string folderPath, out string error)
-        {
-            error = null;
-            if (string.IsNullOrWhiteSpace(folderPath))
-            {
-                error = "Folder path is empty.";
-                return false;
-            }
-
-            folderPath = folderPath.TrimEnd('/');
-
-            if (!folderPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(folderPath, "Assets", StringComparison.OrdinalIgnoreCase))
-            {
-                error = "Folder path must be under Assets/.";
-                return false;
-            }
-
-            if (AssetDatabase.IsValidFolder(folderPath))
-                return true;
-
-            var parts = folderPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-            string current = "Assets";
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetPathUtility.GetFullAssetPath(next);
-                    string guid = AssetDatabase.CreateFolder(current, parts[i]);
-                    if (string.IsNullOrEmpty(guid))
-                    {
-                        error = $"Failed to create folder: {next}";
-                        return false;
-                    }
-                }
-                current = next;
-            }
-
-            return true;
         }
     }
 }

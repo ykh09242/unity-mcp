@@ -379,7 +379,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                EnsureDirectoryExists(fullPath);
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
@@ -391,7 +392,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"[ManageTexture] {warning}");
                 }
 
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Texture created at '{fullPath}' ({width}x{height})" + (asSprite ? " as sprite" : ""),
                     new
                     {
@@ -402,6 +403,8 @@ namespace MCPForUnity.Editor.Tools
                         warnings = warnings.Count > 0 ? warnings : null
                     }
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {
@@ -614,7 +617,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                EnsureDirectoryExists(fullPath);
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
@@ -627,7 +631,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"[ManageTexture] {warning}");
                 }
 
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Gradient texture created at '{fullPath}' ({width}x{height})",
                     new
                     {
@@ -638,6 +642,8 @@ namespace MCPForUnity.Editor.Tools
                         warnings = warnings.Count > 0 ? warnings : null
                     }
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {
@@ -692,7 +698,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                EnsureDirectoryExists(fullPath);
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(fullPath);
                 File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
@@ -705,7 +712,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn($"[ManageTexture] {warning}");
                 }
 
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Noise texture created at '{fullPath}' ({width}x{height})",
                     new
                     {
@@ -717,6 +724,8 @@ namespace MCPForUnity.Editor.Tools
                         warnings = warnings.Count > 0 ? warnings : null
                     }
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {
@@ -1288,16 +1297,6 @@ namespace MCPForUnity.Editor.Tools
         private static bool AssetExists(string path)
         {
             return !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path));
-        }
-
-        private static void EnsureDirectoryExists(string assetPath)
-        {
-            string directory = Path.GetDirectoryName(assetPath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(GetAbsolutePath(directory)))
-            {
-                Directory.CreateDirectory(GetAbsolutePath(directory));
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            }
         }
 
         private static string GetAbsolutePath(string assetPath)

@@ -165,8 +165,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     continue;
                 }
 
-                if (!AssetDatabase.IsValidFolder(outputDir))
-                    CreateFolders(outputDir);
+                using var folders = new AssetFolderScope();
+                folders.EnsureFolder(outputDir);
 
                 string fullClipPath = AssetPathUtility.GetFullAssetPath(clipPath);
                 if (Directory.Exists(fullClipPath))
@@ -232,6 +232,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         loop        = loop,
                         duration    = duration,
                     });
+                    folders.Complete();
                 }
                 finally
                 {
@@ -265,23 +266,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
             return sb.ToString();
-        }
-
-        /// <summary>Creates an asset folder and any missing parents above it.</summary>
-        internal static void CreateFolders(string path)
-        {
-            path = AssetPathUtility.GetContainedAssetPath(path);
-            if (AssetDatabase.IsValidFolder(path))
-                return;
-            string parent = Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
-            if (!AssetDatabase.IsValidFolder(parent))
-                CreateFolders(parent);
-            string folderName = Path.GetFileName(path);
-            if (!string.IsNullOrEmpty(folderName))
-            {
-                AssetPathUtility.GetFullAssetPath(path);
-                AssetDatabase.CreateFolder(parent, folderName);
-            }
         }
     }
 }

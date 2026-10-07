@@ -535,6 +535,24 @@ namespace MCPForUnityTests.Editor.Tools
         // Clip: Create
         // =============================================================================
 
+        [TestCase("clip_create", "anim", "clip_path")]
+        [TestCase("clip_create_preset", "anim", "clip_path")]
+        [TestCase("controller_create", "controller", "controller_path")]
+        public void AssetCreate_NewNestedFolders_PreservesPersistedOutput(string action, string extension, string pathKey)
+        {
+            string folder = $"{TempRoot}/Created/Nested";
+            string path = $"{folder}/Created.{extension}";
+            var result = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = action, [pathKey] = path, ["preset"] = "bounce",
+            }));
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(folder));
+            Assert.IsNotNull(AssetDatabase.LoadMainAssetAtPath(path));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
         [Test]
         public void ClipCreate_CreatesAsset()
         {

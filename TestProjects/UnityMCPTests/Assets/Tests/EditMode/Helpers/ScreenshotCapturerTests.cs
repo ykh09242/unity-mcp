@@ -59,6 +59,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 texture.SetPixel(0, 0, Color.red);
                 byte[] expected = texture.EncodeToPNG();
                 byte[] winner = { 1, 2, 3 };
+                Directory.CreateDirectory(Path.GetDirectoryName(prepared.FullPath));
                 File.WriteAllBytes(prepared.FullPath, winner);
                 var encode = typeof(ScreenshotUtility).GetMethod(
                     "EncodeAndSaveComposited", BindingFlags.Static | BindingFlags.NonPublic);

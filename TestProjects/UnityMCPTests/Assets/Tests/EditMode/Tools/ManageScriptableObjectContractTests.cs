@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using MCPForUnity.Editor.Tools;
 using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
@@ -113,6 +114,31 @@ namespace MCPForUnityTests.Editor.Tools
             }));
             Assert.IsFalse((bool)response["success"], response.ToString());
             Assert.IsFalse(AssetDatabase.IsValidFolder(_root + "/Rejected"));
+        }
+
+        [Test]
+        public void FolderPreparationFailurePreservesPreexistingContent()
+        {
+            string parent = _root + "/Existing";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(_root, "Existing"));
+            string guid = AssetDatabase.AssetPathToGUID(parent);
+            string occupied = parent + "/Occupied";
+            string physical = Path.Combine(Application.dataPath, occupied.Substring("Assets/".Length));
+            File.WriteAllText(physical, "retain existing content");
+            AssetDatabase.ImportAsset(occupied, ImportAssetOptions.ForceSynchronousImport);
+            string occupiedGuid = AssetDatabase.AssetPathToGUID(occupied);
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(new JObject
+            {
+                ["action"] = "create", ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName,
+                ["folderPath"] = occupied + "/Nested", ["assetName"] = "Rejected"
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(parent));
+            Assert.AreEqual(occupiedGuid, AssetDatabase.AssetPathToGUID(occupied));
+            Assert.AreEqual("retain existing content", File.ReadAllText(physical));
+            Assert.IsFalse(Directory.Exists(physical + "/Nested"));
         }
 
         [Test]

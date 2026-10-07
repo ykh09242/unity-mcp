@@ -60,21 +60,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, message = versionError };
             }
 
-            // Ensure folder exists
-            if (!AssetDatabase.IsValidFolder(folderPath))
+            string templatePath = FindTemplate(template);
+            string templateAssetPath = TryGetAssetPathFromFileSystem(templatePath);
+            if (string.IsNullOrEmpty(templateAssetPath))
             {
-                string[] folders = folderPath.Split('/');
-                string currentPath = folders[0];
-                for (int i = 1; i < folders.Length; i++)
-                {
-                    string newPath = currentPath + "/" + folders[i];
-                    if (!AssetDatabase.IsValidFolder(newPath))
-                    {
-                        AssetDatabase.CreateFolder(currentPath, folders[i]);
-                    }
-                    currentPath = newPath;
-                }
+                return new { success = false, message = "VFX template not found. Add a .vfx template asset or install VFX Graph templates." };
             }
+
+            using var folders = new AssetFolderScope();
+            folders.EnsureFolder(folderPath);
 
             string assetPath = $"{folderPath}/{assetName}.vfx";
 
@@ -90,30 +84,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             // Find template asset and copy it
-            string templatePath = FindTemplate(template);
-            string templateAssetPath = TryGetAssetPathFromFileSystem(templatePath);
-            VisualEffectAsset newAsset = null;
-
-            if (!string.IsNullOrEmpty(templateAssetPath))
+            if (!AssetDatabase.CopyAsset(templateAssetPath, assetPath))
             {
-                // Copy the asset to create a new VFX Graph asset
-                if (!AssetDatabase.CopyAsset(templateAssetPath, assetPath))
-                {
-                    return new { success = false, message = $"Failed to copy VFX template from {templateAssetPath}" };
-                }
-                AssetDatabase.Refresh();
-                newAsset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
-            }
-            else
-            {
-                return new { success = false, message = "VFX template not found. Add a .vfx template asset or install VFX Graph templates." };
+                return new { success = false, message = $"Failed to copy VFX template from {templateAssetPath}" };
             }
 
+            var newAsset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
             if (newAsset == null)
             {
                 return new { success = false, message = "Failed to create VFX asset. Try using a template from list_templates." };
             }
 
+            folders.Complete();
             return new
             {
                 success = true,

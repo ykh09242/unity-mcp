@@ -177,6 +177,25 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(AssetDatabase.GetAssetPath(_renderer.sharedMaterial), Is.EqualTo(UniquePath()));
         }
 
+        [Test]
+        public void UniqueBlockedMaterialFolderPreservesFileAndCreatesNoAlternateFolder()
+        {
+            string blocking = AssetPathUtility.GetFullAssetPath(_root + "/Materials");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                File.WriteAllText(blocking, "Existing file at the requested folder.");
+                string[] before = Directory.GetFileSystemEntries(Path.GetDirectoryName(blocking));
+
+                Fails(ColorRequest("create_unique", 0));
+
+                CollectionAssert.AreEquivalent(before, Directory.GetFileSystemEntries(Path.GetDirectoryName(blocking)));
+                Assert.That(File.ReadAllText(blocking), Is.EqualTo("Existing file at the requested folder."));
+                Assert.That(_renderer.sharedMaterials, Is.EqualTo(new[] { _material, _material }));
+            }
+            finally { AssetDatabase.AllowAutoRefresh(); }
+        }
+
         [TestCase(0, 1)]
         [TestCase(1, 0)]
         public void GeneratedColorsDoNotAliasAnotherSlot(int first, int second)

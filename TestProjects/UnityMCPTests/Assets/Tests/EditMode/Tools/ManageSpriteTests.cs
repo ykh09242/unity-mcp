@@ -6,6 +6,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Sprite2D;
 using static MCPForUnityTests.Editor.TestUtilities;
 
@@ -1035,6 +1036,30 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void SetupClips_LaterRefusal_PreservesSuccessfulClipInNewFolder()
+        {
+            string path = CreateSheet("partialfolders", 4, 1);
+            Slice(path, 4, 1);
+            string outputDir = $"{TempRoot}/Partial/Nested";
+            var result = Run(new JObject
+            {
+                ["action"] = "setup_clips", ["path"] = path, ["output_dir"] = outputDir,
+                ["clips"] = new JArray
+                {
+                    new JObject { ["name"] = "idle", ["start_frame"] = 0, ["end_frame"] = 1 },
+                    new JObject { ["name"] = "walk", ["start_frame"] = 2, ["end_frame"] = 3, ["fps"] = 0 },
+                },
+            });
+
+            Assert.AreEqual(1, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_FPS"));
+            Assert.IsTrue(AssetDatabase.IsValidFolder(outputDir));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/idle.anim"));
+            Assert.IsFalse(File.Exists(AssetPathUtility.GetFullAssetPath($"{outputDir}/walk.anim")));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
         public void SetupClips_KeyframesFollowTheSlicedOrder()
         {
             string path = CreateSheet("seq", 4, 1);
@@ -1892,6 +1917,33 @@ namespace MCPForUnityTests.Editor.Tools
             var oneShot = sm.states.Select(s => s.state).Single(s => s.name == clipName);
             bool exitsToIdle = oneShot.transitions.Any(t => t.destinationState != null && t.destinationState.name == "Idle");
             Assert.AreEqual(expectExit, exitsToIdle);
+        }
+
+        [Test]
+        public void FullSetup_ControllerRefusal_PreservesClipsWrittenToNewFolder()
+        {
+            string path = CreateSheet("controllerrefusal", 4, 1);
+            string controllerPath = $"{TempRoot}/Existing.controller";
+            var existing = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            AssetDatabase.SaveAssets();
+            string controllerGuid = AssetDatabase.AssetPathToGUID(controllerPath);
+            string outputDir = $"{TempRoot}/CompletedClips/Nested";
+
+            var result = Run(new JObject
+            {
+                ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
+                ["animation_name"] = "walk", ["output_dir"] = outputDir,
+                ["controller_path"] = controllerPath,
+            });
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.AreEqual("setup_controller", result.Value<string>("step"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CONTROLLER_EXISTS"));
+            Assert.IsTrue(AssetDatabase.IsValidFolder(outputDir));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/walk.anim"));
+            Assert.AreEqual(controllerGuid, AssetDatabase.AssetPathToGUID(controllerPath));
+            Assert.AreEqual(existing, AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
         [Test]

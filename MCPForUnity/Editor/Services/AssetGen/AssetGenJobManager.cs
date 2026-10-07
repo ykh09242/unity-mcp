@@ -438,10 +438,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         break;
 
                     case RunnerPhase.Import:
-                        // The result file was just written via File.WriteAllBytes (outside the
-                        // AssetDatabase). Refresh so Unity registers it before we import it,
-                        // mirroring ImportModelFile. Skipped under the test import seam.
-                        if (ImportOverrideForTests == null) AssetDatabase.Refresh();
+                        // Each pipeline synchronously imports its output; no project-wide Refresh is needed.
                         AssetGenJob imported = r.ImportFn(r.Job, r.LocalPath);
                         if (imported != null) r.Job = imported;
                         if (r.Job.State != AssetGenJobState.Failed)
@@ -518,14 +515,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
                                                                          : (AssetGenPrefs.OutputRoot + "/" + r.Subfolder);
             if (!AssetGenPaths.TryGetAssetsFolder(requestedRoot, out string root))
                 root = AssetGenPrefs.DefaultOutputRoot + "/" + r.Subfolder;
+            using var folders = new AssetFolderScope();
+            folders.EnsureFolder(root);
             string absRoot = AssetGenPaths.ToAbsolute(root);
-            Directory.CreateDirectory(absRoot);
             string baseName = SanitizeName(r.Name);
             string fileName = baseName + "." + ext;
             string abs = Path.Combine(absRoot, fileName);
             int n = 1;
             while (File.Exists(abs)) { fileName = baseName + "_" + n++ + "." + ext; abs = Path.Combine(absRoot, fileName); }
             File.WriteAllBytes(abs, bytes);
+            folders.Complete();
             return (root.TrimEnd('/') + "/" + fileName).Replace('\\', '/');
         }
 

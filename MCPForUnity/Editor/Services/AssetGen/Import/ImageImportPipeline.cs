@@ -28,7 +28,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!AssetGenJobManager.IsAllowedResultExtension("image", Path.GetExtension(rel)))
                     return Fail(job, "Refusing to import a non-image file type.");
 
-                AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate);
+                AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
 
                 var importer = AssetImporter.GetAtPath(rel) as TextureImporter;
                 if (importer == null)

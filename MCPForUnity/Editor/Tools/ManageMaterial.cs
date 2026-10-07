@@ -389,26 +389,6 @@ namespace MCPForUnity.Editor.Tools
             return new ErrorResponse($"Unknown mode: {mode}");
         }
 
-        private static void EnsureAssetFolderExists(string assetFolderPath)
-        {
-            assetFolderPath = AssetPathUtility.GetContainedAssetPath(assetFolderPath);
-            if (AssetDatabase.IsValidFolder(assetFolderPath))
-                return;
-
-            string[] parts = assetFolderPath.Replace('\\', '/').Split('/');
-            string current = parts[0]; // "Assets"
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetPathUtility.GetFullAssetPath(next);
-                    AssetDatabase.CreateFolder(current, parts[i]);
-                }
-                current = next;
-            }
-        }
-
         private static void SetColorProperties(Material mat, Color color)
         {
             if (AssetDatabase.Contains(mat))
@@ -497,6 +477,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
+            using var folders = new AssetFolderScope();
             Material created = null;
             try
             {
@@ -515,10 +496,9 @@ namespace MCPForUnity.Editor.Tools
                     if (shader == null)
                         return new ErrorResponse("Could not resolve a suitable shader for the active render pipeline.");
 
-                    // Ensure the Materials directory exists (recursive).
-                    EnsureAssetFolderExists(materialFolder);
                     existing = created = new Material(shader);
                     SetColorProperties(existing, color);
+                    folders.EnsureParentDirectory(matPath);
                     AssetPathUtility.GetFullAssetPath(matPath);
                     AssetDatabase.CreateAsset(existing, matPath);
                     if (!AssetDatabase.Contains(existing) || AssetDatabase.GetAssetPath(existing) != matPath)
@@ -535,6 +515,7 @@ namespace MCPForUnity.Editor.Tools
                 renderer.sharedMaterials = sharedMats;
                 EditorUtility.SetDirty(renderer);
 
+                folders.Complete();
                 return new SuccessResponse($"Created unique material at {matPath} and assigned to {go.name}",
                     new { materialPath = matPath });
             }

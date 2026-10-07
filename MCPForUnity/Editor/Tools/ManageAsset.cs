@@ -278,7 +278,8 @@ namespace MCPForUnity.Editor.Tools
             UnityEngine.Object newAsset = null;
             try
             {
-                EnsureDirectoryExists(Path.GetDirectoryName(fullPath));
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(fullPath);
 
                 // Handle common asset types
                 if (lowerAssetType == "material")
@@ -325,10 +326,12 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetDatabase.SaveAssets();
                 // AssetDatabase.Refresh(); // CreateAsset often handles refresh
-                return new SuccessResponse(
+                var response = new SuccessResponse(
                     $"Asset '{fullPath}' created successfully.",
                     GetAssetData(fullPath)
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {
@@ -346,8 +349,6 @@ namespace MCPForUnity.Editor.Tools
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for create_folder.");
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
-            string parentDir = AssetPathUtility.NormalizeSeparators(Path.GetDirectoryName(fullPath));
-            string folderName = Path.GetFileName(fullPath);
 
             if (AssetExists(fullPath))
             {
@@ -369,28 +370,14 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // Ensure parent exists
-                if (!string.IsNullOrEmpty(parentDir) && !AssetDatabase.IsValidFolder(parentDir))
-                {
-                    var parentResult = CreateFolder(parentDir, includeData: false);
-                    if (parentResult is ErrorResponse)
-                        return parentResult;
-                }
-
-                AssetPathUtility.GetFullAssetPath(fullPath);
-                string guid = AssetDatabase.CreateFolder(parentDir, folderName);
-                if (string.IsNullOrEmpty(guid))
-                {
-                    return new ErrorResponse(
-                        $"Failed to create folder '{fullPath}'. Check logs and permissions."
-                    );
-                }
-
-                // AssetDatabase.Refresh(); // CreateFolder usually handles refresh
-                return new SuccessResponse(
+                using var folders = new AssetFolderScope();
+                folders.EnsureFolder(fullPath);
+                var response = new SuccessResponse(
                     $"Folder '{fullPath}' created successfully.",
                     includeData ? GetAssetData(fullPath) : null
                 );
+                folders.Complete();
+                return response;
             }
             catch (Exception e)
             {
@@ -615,8 +602,6 @@ namespace MCPForUnity.Editor.Tools
                 destPath = AssetPathUtility.GetContainedAssetPath(destinationPath);
                 if (AssetExists(destPath))
                     return new ErrorResponse($"Asset already exists at destination path: {destPath}");
-                // Ensure destination directory exists
-                EnsureDirectoryExists(Path.GetDirectoryName(destPath));
             }
 
             try
@@ -625,14 +610,20 @@ namespace MCPForUnity.Editor.Tools
                 AssetPathUtility.GetFullAssetPath(destPath);
                 var consentError = RequireScriptConsent(sourcePath, destPath);
                 if (consentError != null) return consentError;
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(destPath);
+                AssetPathUtility.GetFullAssetPath(sourcePath);
+                AssetPathUtility.GetFullAssetPath(destPath);
                 bool success = AssetDatabase.CopyAsset(sourcePath, destPath);
                 if (success)
                 {
                     // AssetDatabase.Refresh();
-                    return new SuccessResponse(
+                    var response = new SuccessResponse(
                         $"Asset '{sourcePath}' duplicated to '{destPath}'.",
                         GetAssetData(destPath)
                     );
+                    folders.Complete();
+                    return response;
                 }
                 else
                 {
@@ -664,11 +655,12 @@ namespace MCPForUnity.Editor.Tools
                     $"An asset already exists at the destination path: {destPath}"
                 );
 
-            // Ensure destination directory exists
-            EnsureDirectoryExists(Path.GetDirectoryName(destPath));
-
             try
             {
+                var consentError = RequireScriptConsent(sourcePath, destPath);
+                if (consentError != null) return consentError;
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(destPath);
                 // Validate will return an error string if failed, null if successful
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
@@ -682,16 +674,16 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetPathUtility.GetFullAssetPath(sourcePath);
                 AssetPathUtility.GetFullAssetPath(destPath);
-                var consentError = RequireScriptConsent(sourcePath, destPath);
-                if (consentError != null) return consentError;
                 string moveError = AssetDatabase.MoveAsset(sourcePath, destPath);
                 if (string.IsNullOrEmpty(moveError))
                 {
                     // AssetDatabase.Refresh(); // MoveAsset usually handles refresh
-                    return new SuccessResponse(
+                    var response = new SuccessResponse(
                         $"Asset moved/renamed from '{sourcePath}' to '{destPath}'.",
                         GetAssetData(destPath)
                     );
+                    folders.Complete();
+                    return response;
                 }
                 else
                 {
@@ -946,23 +938,6 @@ namespace MCPForUnity.Editor.Tools
             return false;
             // Alternative: return !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(sanitizedPath));
         }
-
-        /// <summary>
-        /// Ensures the directory for a given asset path exists, creating it if necessary.
-        /// </summary>
-        private static void EnsureDirectoryExists(string directoryPath)
-        {
-            if (string.IsNullOrEmpty(directoryPath))
-                return;
-            string fullDirPath = AssetPathUtility.GetFullAssetPath(directoryPath);
-            if (!Directory.Exists(fullDirPath))
-            {
-                Directory.CreateDirectory(AssetPathUtility.GetFullAssetPath(directoryPath));
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport); // Let Unity know about the new folder
-            }
-        }
-
-
 
         /// <summary>
         ///  Applies properties from JObject to a PhysicsMaterial.

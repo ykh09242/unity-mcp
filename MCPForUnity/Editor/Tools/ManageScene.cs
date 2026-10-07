@@ -287,14 +287,6 @@ namespace MCPForUnity.Editor.Tools
                             : $"Scene already exists at '{relativePath}'. Delete it first or use a different name.");
                     var createDirtyError = RequireSavedScenesBeforeReplacement();
                     if (createDirtyError != null) return createDirtyError;
-                    try
-                    {
-                        Directory.CreateDirectory(fullPathDir);
-                    }
-                    catch (Exception e)
-                    {
-                        return new ErrorResponse($"Could not create directory '{fullPathDir}': {e.Message}");
-                    }
                     if (!string.IsNullOrEmpty(cmd.template))
                         return CreateSceneFromTemplate(fullPath, relativePath, cmd.template);
                     return CreateScene(fullPath, relativePath);
@@ -402,20 +394,25 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(relativePath);
                 // Create a new empty scene
                 Scene newScene = EditorSceneManager.NewScene(
                     NewSceneSetup.EmptyScene,
                     NewSceneMode.Single
                 );
                 // Save it to the specified path
+                AssetPathUtility.GetFullAssetPath(relativePath);
                 bool saved = EditorSceneManager.SaveScene(newScene, relativePath);
 
                 if (saved)
                 {
-                    return new SuccessResponse(
+                    var response = new SuccessResponse(
                         $"Scene '{Path.GetFileName(relativePath)}' created successfully at '{relativePath}'.",
                         new { path = relativePath }
                     );
+                    folders.Complete();
+                    return response;
                 }
                 else
                 {
@@ -514,6 +511,7 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
+                using var folders = new AssetFolderScope();
                 Scene currentScene = EditorSceneManager.GetActiveScene();
                 if (!currentScene.IsValid())
                 {
@@ -529,9 +527,7 @@ namespace MCPForUnity.Editor.Tools
                     // Ensure directory exists
                     relativePath = GetContainedScenePath(relativePath, true);
                     fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
-                    string dir = Path.GetDirectoryName(fullPath);
-                    if (!Directory.Exists(dir))
-                        Directory.CreateDirectory(dir);
+                    folders.EnsureParentDirectory(relativePath);
 
                     AssetPathUtility.GetFullAssetPath(relativePath);
                     saved = EditorSceneManager.SaveScene(currentScene, relativePath);
@@ -554,10 +550,12 @@ namespace MCPForUnity.Editor.Tools
 
                 if (saved)
                 {
-                    return new SuccessResponse(
+                    var response = new SuccessResponse(
                         $"Scene '{currentScene.name}' saved successfully to '{finalPath}'.",
                         new { path = finalPath, name = currentScene.name }
                     );
+                    folders.Complete();
+                    return response;
                 }
                 else
                 {
@@ -1321,11 +1319,9 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return new ErrorResponse(ex.Message);
                     }
-                    Directory.CreateDirectory(folderAbsolute);
-
                     string fullPath = output.FullPath;
                     byte[] pngBytes = System.Convert.FromBase64String(b64);
-                    ScreenshotUtility.WriteCaptureBytes(fullPath, pngBytes);
+                    ScreenshotFileUtility.WriteCaptureBytes(fullPath, pngBytes);
 
                     string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace('\\', '/');
                     string normalizedFull = fullPath.Replace('\\', '/');
@@ -1885,6 +1881,9 @@ namespace MCPForUnity.Editor.Tools
             if (!string.IsNullOrEmpty(fullPath) && File.Exists(fullPath))
                 return new ErrorResponse($"Scene already exists at '{relativePath}'. Delete it first or use a different name.");
 
+            using var folders = new AssetFolderScope();
+            if (!string.IsNullOrEmpty(fullPath) && !string.IsNullOrEmpty(relativePath))
+                folders.EnsureParentDirectory(relativePath);
             var scene = EditorSceneManager.NewScene(setup, NewSceneMode.Single);
 
             if (template == "3d_basic")
@@ -1902,20 +1901,20 @@ namespace MCPForUnity.Editor.Tools
 
             if (!string.IsNullOrEmpty(fullPath) && !string.IsNullOrEmpty(relativePath))
             {
-                string dir = Path.GetDirectoryName(fullPath);
-                if (!string.IsNullOrEmpty(dir))
-                    Directory.CreateDirectory(dir);
+                AssetPathUtility.GetFullAssetPath(relativePath);
                 if (!EditorSceneManager.SaveScene(scene, relativePath))
                     return new ErrorResponse($"Scene created in memory but failed to save to '{relativePath}'.");
             }
 
-            return new SuccessResponse($"Created scene from template '{template}'.", new
+            var response = new SuccessResponse($"Created scene from template '{template}'.", new
             {
                 sceneName = scene.name,
                 scenePath = scene.path,
                 template,
                 rootObjectCount = scene.rootCount
             });
+            folders.Complete();
+            return response;
         }
 
         // ── Scene validation ───────────────────────────────────────────────

@@ -59,7 +59,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     "GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
             }
 
-            AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate);
+            AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
 
             if (!isGltf)
                 ApplyModelImporterSettings(rel, job);
@@ -95,13 +95,12 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 folderAbs = AssetGenPaths.ToAbsolute(folderRel);
             }
 
-            Directory.CreateDirectory(folderAbs);
+            using var folders = new AssetFolderScope();
+            folders.EnsureFolder(folderRel);
             // Provider archives are untrusted: only inert model/texture files are written under
             // Assets/ — scripts/assemblies are skipped so they can't be compiled on import.
-            SafeZipExtractor.ExtractTo(zipAbs, folderAbs, ArchiveAllowedExtensions);
-
-            AssetDatabase.Refresh();
-            AssetDatabase.ImportAsset(folderRel, ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate);
+            SafeZipExtractor.ExtractTo(zipAbs, folderAbs, ArchiveAllowedExtensions,
+                ensureDirectory: directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory)));
 
             string modelRel = FindFirstModel(folderAbs);
             if (string.IsNullOrEmpty(modelRel))
@@ -115,7 +114,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     "This model is glTF (.glb/.gltf), which requires glTFast. Install it from the MCP for Unity → Dependencies tab.");
             }
 
-            AssetDatabase.ImportAsset(modelRel, ImportAssetOptions.ForceUpdate);
+            AssetDatabase.ImportAsset(folderRel,
+                ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
 
             if (!isGltf)
                 ApplyModelImporterSettings(modelRel, job);
@@ -127,6 +127,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
             if (job.State != AssetGenJobState.Failed)
                 job.State = AssetGenJobState.Done;
+            folders.Complete();
             return job;
         }
 

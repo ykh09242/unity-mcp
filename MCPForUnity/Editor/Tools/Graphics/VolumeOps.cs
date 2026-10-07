@@ -50,6 +50,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return new ErrorResponse($"A file already exists at '{profilePath}' and could not be loaded as a VolumeProfile.");
             }
 
+            using var folders = new AssetFolderScope();
             var go = new GameObject(name);
             UnityEngine.Object allocatedProfile = null;
             bool completed = false;
@@ -77,10 +78,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         profile = allocatedProfile;
                         if (profile == null)
                             return new ErrorResponse("Could not create VolumeProfile.");
-                        // Ensure directory exists
-                        var dir = System.IO.Path.GetDirectoryName(AssetPathUtility.GetFullAssetPath(profilePath));
-                        if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
-                            System.IO.Directory.CreateDirectory(dir);
+                        folders.EnsureParentDirectory(profilePath);
+                        AssetPathUtility.GetFullAssetPath(profilePath);
                         AssetDatabase.CreateAsset(allocatedProfile, profilePath);
                         if (!AssetDatabase.Contains(allocatedProfile) || AssetDatabase.GetAssetPath(allocatedProfile) != profilePath)
                             return new ErrorResponse($"Failed to create VolumeProfile asset at '{profilePath}'.");
@@ -147,6 +146,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
 
                 GraphicsHelpers.MarkDirty(volumeComp);
+                folders.Complete();
                 completed = true;
 
                 return new
@@ -467,32 +467,19 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null)
                 return new ErrorResponse($"An asset or file already exists at '{path}'.");
 
-            // Ensure directory exists
-            var dir = System.IO.Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
-            {
-                // Create folders recursively
-                var parts = dir.Replace("\\", "/").Split('/');
-                string current = parts[0];
-                for (int i = 1; i < parts.Length; i++)
-                {
-                    string next = current + "/" + parts[i];
-                    if (!AssetDatabase.IsValidFolder(next))
-                        AssetDatabase.CreateFolder(current, parts[i]);
-                    current = next;
-                }
-            }
-
+            using var folders = new AssetFolderScope();
             UnityEngine.Object profile = null;
             try
             {
                 profile = ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType);
                 if (profile == null)
                     return new ErrorResponse("Could not create VolumeProfile.");
+                folders.EnsureParentDirectory(path);
                 AssetDatabase.CreateAsset(profile, path);
                 if (!AssetDatabase.Contains(profile) || AssetDatabase.GetAssetPath(profile) != path)
                     return new ErrorResponse($"Failed to create VolumeProfile asset at '{path}'.");
                 AssetDatabase.SaveAssets();
+                folders.Complete();
 
                 return new
                 {

@@ -341,6 +341,64 @@ namespace MCPForUnityTests.Editor.Tools
         // GetCollisionMatrix
         // =====================================================================
 
+        [TestCase("3d", "dynamic_friction")]
+        [TestCase("2d", "friction")]
+        public void CreatePhysicsMaterial_InvalidFloat_DoesNotPrepareOutputFolders(string dimension, string property)
+        {
+            string folder = TempRoot + "/Invalid/Nested";
+            UnityEngine.TestTools.LogAssert.Expect(LogType.Error,
+                new System.Text.RegularExpressions.Regex("\\[ManagePhysics\\] Action 'create_physics_material' failed:"));
+            var result = ToJObject(ManagePhysics.HandleCommand(new JObject
+            {
+                ["action"] = "create_physics_material", ["name"] = "Invalid",
+                ["path"] = folder, ["dimension"] = dimension, [property] = "not-a-number",
+            }));
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(TempRoot + "/Invalid"));
+            Assert.IsFalse(System.IO.Directory.Exists(System.IO.Path.Combine(
+                System.IO.Directory.GetParent(Application.dataPath).FullName, TempRoot + "/Invalid")));
+        }
+
+        [TestCase("3d", false)]
+        [TestCase("3d", true)]
+        [TestCase("2d", false)]
+        [TestCase("2d", true)]
+        public void CreatePhysicsMaterial_NativeFailure_RemovesOnlyNewEmptyFolders(string dimension, bool existingFolder)
+        {
+            string parent = TempRoot + "/Failed";
+            string folder = parent + "/Nested";
+            if (existingFolder) EnsureFolder(folder);
+            string originalGuid = AssetDatabase.AssetPathToGUID(folder);
+            bool originalIgnore = UnityEngine.TestTools.LogAssert.ignoreFailingMessages;
+            JObject result;
+            try
+            {
+                // The name's missing parent makes the native write fail after output preparation.
+                UnityEngine.TestTools.LogAssert.ignoreFailingMessages = true;
+                result = ToJObject(ManagePhysics.HandleCommand(new JObject
+                {
+                    ["action"] = "create_physics_material", ["name"] = "Missing/Mat",
+                    ["path"] = folder, ["dimension"] = dimension,
+                }));
+            }
+            finally { UnityEngine.TestTools.LogAssert.ignoreFailingMessages = originalIgnore; }
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            if (existingFolder)
+            {
+                Assert.IsTrue(AssetDatabase.IsValidFolder(folder));
+                Assert.AreEqual(originalGuid, AssetDatabase.AssetPathToGUID(folder));
+            }
+            else
+            {
+                Assert.IsFalse(AssetDatabase.IsValidFolder(parent));
+                string fullPath = System.IO.Path.Combine(System.IO.Directory.GetParent(Application.dataPath).FullName, parent);
+                Assert.IsFalse(System.IO.Directory.Exists(fullPath));
+                Assert.IsFalse(System.IO.File.Exists(fullPath + ".meta"));
+            }
+        }
+
         [Test]
         public void CreatePhysicsMaterial_3D_CreatesAsset()
         {

@@ -21,12 +21,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     public static class SafeZipExtractor
     {
         public static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default, Action<string> ensureDirectory = null)
             => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096,
-                512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200);
+                512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory);
 
         internal static void ExtractTo(string zipPath, string destDir, ISet<string> allowedExtensions,
-            CancellationToken cancellationToken, int maxEntries, long maxEntryBytes, long maxTotalBytes, int maxRatio)
+            CancellationToken cancellationToken, int maxEntries, long maxEntryBytes, long maxTotalBytes, int maxRatio,
+            Action<string> ensureDirectory = null)
         {
             if (string.IsNullOrEmpty(zipPath)) throw new ArgumentException("zipPath required", nameof(zipPath));
             if (string.IsNullOrEmpty(destDir)) throw new ArgumentException("destDir required", nameof(destDir));
@@ -55,6 +56,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
                 long totalWritten = 0;
                 var createdFiles = new List<string>();
+                // Asset imports share their outer folder scope, including explicit directory entries.
+                Action<string> prepareDirectory = ensureDirectory ?? (path => Directory.CreateDirectory(path));
                 try
                 {
                     foreach (ZipArchiveEntry entry in archive.Entries)
@@ -75,7 +78,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         // A directory entry has an empty Name (FullName ends with a separator).
                         if (string.IsNullOrEmpty(entry.Name))
                         {
-                            Directory.CreateDirectory(target);
+                            prepareDirectory(target.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
                             continue;
                         }
 
@@ -87,7 +90,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         }
 
                         string parent = Path.GetDirectoryName(target);
-                        if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                        if (!string.IsNullOrEmpty(parent)) prepareDirectory(parent);
 
                         using (Stream src = entry.Open())
                         using (FileStream dst = new FileStream(target, FileMode.CreateNew, FileAccess.Write))

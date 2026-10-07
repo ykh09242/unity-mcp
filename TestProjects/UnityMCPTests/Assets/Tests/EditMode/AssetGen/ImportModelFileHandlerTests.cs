@@ -133,6 +133,77 @@ namespace MCPForUnityTests.Editor.AssetGen
             return path;
         }
 
+        [TestCase("empty")]
+        [TestCase("blocked_entries")]
+        [TestCase("invalid_archive")]
+        [TestCase("directory_only")]
+        [TestCase("traversal_after_directory")]
+        public void FailedArchive_RemovesOnlyEmptyExtractionFolder(string kind)
+        {
+            string source = _sourceFolder + "/source.zip";
+            string absoluteSource = Path.Combine(Path.GetDirectoryName(Application.dataPath), source);
+            if (kind == "invalid_archive")
+                File.WriteAllBytes(absoluteSource, new byte[] { 1, 2, 3 });
+            else
+            {
+                using var stream = File.Create(absoluteSource);
+                using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
+                if (kind == "directory_only" || kind == "traversal_after_directory")
+                    archive.CreateEntry("New/Empty/");
+                if (kind == "traversal_after_directory")
+                    archive.CreateEntry("../outside.obj");
+                if (kind == "blocked_entries")
+                {
+                    using var writer = new StreamWriter(archive.CreateEntry("nested/unsafe.cs").Open());
+                    writer.Write("blocked executable source");
+                }
+            }
+
+            JObject response = Call(new JObject
+            {
+                ["sourcePath"] = source, ["name"] = "failed_bundle", ["outputFolder"] = TestFolder
+            });
+
+            Assert.AreEqual(false, (bool)response["success"], response.ToString());
+            string extracted = TestFolder + "/failed_bundle";
+            Assert.IsFalse(Directory.Exists(extracted), "empty extraction folder must roll back");
+            Assert.IsFalse(File.Exists(extracted + ".meta"));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(extracted));
+            Assert.IsTrue(File.Exists(source), "source archive must remain intact");
+            Assert.IsTrue(File.Exists(TestFolder + "/failed_bundle.zip"), "staged bytes are partial output, not an empty folder");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ImportsModel_DoesNotImportUnrelatedPendingFile(bool archive)
+        {
+            AssetDatabase.ImportAsset(TestFolder, ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceSynchronousImport);
+            string pending = TestFolder + "/unrelated.txt";
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                File.WriteAllText(pending, "unrelated pending asset");
+                string source = WriteCubeObj();
+                if (archive) source = WriteArchive("model", "nested/cube.obj", File.ReadAllText(source));
+                JObject response = Call(new JObject
+                {
+                    ["sourcePath"] = source, ["outputFolder"] = TestFolder + "/New/Nested"
+                });
+
+                Assert.AreEqual(true, (bool)response["success"], response.ToString());
+                Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>((string)response["data"]["asset_path"]));
+                Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending, AssetPathToGUIDOptions.OnlyExistingAssets),
+                    "targeted imports must not scan unrelated pending files");
+                Assert.IsFalse(File.Exists(pending + ".meta"));
+                Assert.AreEqual("unrelated pending asset", File.ReadAllText(pending));
+            }
+            finally
+            {
+                File.Delete(pending);
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
         [Test]
         public void ArchiveWithoutModel_DoesNotSelectExistingSiblingModel()
         {

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
@@ -31,9 +30,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets)))
                 return new { success = false, message = $"An asset already exists at '{controllerPath}'. Delete it first or use a different path." };
 
-            string dir = Path.GetDirectoryName(controllerPath)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
-                CreateFoldersRecursive(dir);
+            using var folders = new AssetFolderScope();
+            folders.EnsureParentDirectory(controllerPath);
 
             AssetPathUtility.GetFullAssetPath(controllerPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
@@ -53,6 +51,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (!string.Equals(AssetDatabase.GetAssetPath(controller), controllerPath, StringComparison.OrdinalIgnoreCase))
                 return new { success = false, message = $"AnimatorController was not persisted at the requested path '{controllerPath}'." };
             AssetDatabase.SaveAssets();
+            folders.Complete();
 
             return new
             {
@@ -481,24 +480,6 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             string path = @params["controllerPath"]?.ToString() ?? "(not specified)";
             return new { success = false, message = $"AnimatorController not found at '{path}'. Provide a valid 'controllerPath'." };
-        }
-
-        private static void CreateFoldersRecursive(string folderPath)
-        {
-            folderPath = AssetPathUtility.GetContainedAssetPath(folderPath);
-            if (AssetDatabase.IsValidFolder(folderPath))
-                return;
-
-            string parent = Path.GetDirectoryName(folderPath)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(parent) && parent != "Assets" && !AssetDatabase.IsValidFolder(parent))
-                CreateFoldersRecursive(parent);
-
-            string folderName = Path.GetFileName(folderPath);
-            if (!string.IsNullOrEmpty(parent) && !string.IsNullOrEmpty(folderName))
-            {
-                AssetPathUtility.GetFullAssetPath(folderPath);
-                AssetDatabase.CreateFolder(parent, folderName);
-            }
         }
     }
 }

@@ -127,9 +127,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 return default;
             }
 
-            string dir = Path.GetDirectoryName(controllerPath)?.Replace('\\', '/');
-            if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
-                SpriteClipBuilder.CreateFolders(dir);
+            using var folders = new AssetFolderScope();
+            folders.EnsureParentDirectory(controllerPath);
 
             AssetPathUtility.GetFullAssetPath(controllerPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
@@ -297,6 +296,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
+            folders.Complete();
 
             return (controllerPath, rootSM.states.Length);
         }

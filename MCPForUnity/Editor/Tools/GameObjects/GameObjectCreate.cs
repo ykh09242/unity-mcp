@@ -313,6 +313,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             // Save as Prefab ONLY if we *created* a new object AND saveAsPrefab is true
+            using var folders = new AssetFolderScope();
             GameObject finalInstance = newGo;
             if (createdNewObject && saveAsPrefab)
             {
@@ -325,13 +326,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                 try
                 {
-                    string directoryPath = System.IO.Path.GetDirectoryName(AssetPathUtility.GetFullAssetPath(finalPrefabPath));
-                    if (!string.IsNullOrEmpty(directoryPath) && !System.IO.Directory.Exists(directoryPath))
-                    {
-                        System.IO.Directory.CreateDirectory(directoryPath);
-                        AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                        McpLog.Info($"[ManageGameObject.Create] Created directory for prefab: {directoryPath}");
-                    }
+                    folders.EnsureParentDirectory(finalPrefabPath);
 
                     AssetPathUtility.GetFullAssetPath(finalPrefabPath);
                     GameObject prefabAsset = PrefabUtility.SaveAsPrefabAssetAndConnect(newGo, finalPrefabPath, InteractionMode.UserAction);
@@ -371,7 +366,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 successMessage = $"GameObject '{finalInstance.name}' created successfully in scene.";
             }
 
-            return new SuccessResponse(successMessage, Helpers.GameObjectSerializer.GetGameObjectData(finalInstance));
+            var response = new SuccessResponse(successMessage, Helpers.GameObjectSerializer.GetGameObjectData(finalInstance));
+            folders.Complete();
+            return response;
         }
     }
 }

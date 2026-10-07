@@ -330,7 +330,9 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+                using var folders = new AssetFolderScope();
+                folders.EnsureParentDirectory(relativePath);
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
                 WriteScriptFile(fullPath, contents, overwrite: false);
 
                 var uri = $"mcpforunity://path/{relativePath}";
@@ -340,7 +342,7 @@ namespace MCPForUnity.Editor.Tools
                 );
 
                 ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
-
+                folders.Complete();
                 return ok;
             }
             catch (Exception e)

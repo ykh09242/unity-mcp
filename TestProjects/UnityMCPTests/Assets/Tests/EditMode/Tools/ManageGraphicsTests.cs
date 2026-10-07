@@ -116,6 +116,37 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void VolumeCreate_ProfileInNewNestedFolders_PersistsAndReusesProfile()
+        {
+            RequireVolumeSystem();
+            string folder = $"{TempRoot}/VolumeProfile/Nested";
+            string path = $"{folder}/Profile.asset";
+            var parameters = new JObject
+            {
+                ["action"] = "volume_create", ["name"] = "GfxTest_NestedProfile",
+                ["profile_path"] = path,
+            };
+
+            var created = ToJObject(ManageGraphics.HandleCommand(parameters));
+
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(folder));
+            var profile = AssetDatabase.LoadMainAssetAtPath(path);
+            Assert.IsNotNull(profile);
+            string folderGuid = AssetDatabase.AssetPathToGUID(folder);
+            string profileGuid = AssetDatabase.AssetPathToGUID(path);
+
+            parameters["name"] = "GfxTest_ReusedNestedProfile";
+            var reused = ToJObject(ManageGraphics.HandleCommand(parameters));
+
+            Assert.IsTrue(reused.Value<bool>("success"), reused.ToString());
+            Assert.AreEqual(folderGuid, AssetDatabase.AssetPathToGUID(folder));
+            Assert.AreEqual(profileGuid, AssetDatabase.AssetPathToGUID(path));
+            Assert.AreEqual(profile, AssetDatabase.LoadMainAssetAtPath(path));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
         public void VolumeCreate_Global_CreatesVolume()
         {
             RequireVolumeSystem();
@@ -395,6 +426,32 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(effects);
             Assert.Greater(effects.Count, 0);
             Assert.IsNotNull(effects[0]["name"]);
+        }
+
+        [Test]
+        public void VolumeCreateProfile_NewNestedFolders_DuplicateRefusalPreservesOutput()
+        {
+            RequireVolumeSystem();
+            string folder = $"{TempRoot}/Created/Nested";
+            string path = $"{folder}/Profile.asset";
+            var parameters = new JObject { ["action"] = "volume_create_profile", ["path"] = path };
+            var created = ToJObject(ManageGraphics.HandleCommand(parameters));
+
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(folder));
+            var profile = AssetDatabase.LoadMainAssetAtPath(path);
+            Assert.IsNotNull(profile);
+            string folderGuid = AssetDatabase.AssetPathToGUID(folder);
+            string profileGuid = AssetDatabase.AssetPathToGUID(path);
+
+            var refused = ToJObject(ManageGraphics.HandleCommand(parameters));
+
+            Assert.IsFalse(refused.Value<bool>("success"));
+            Assert.That(refused["error"].ToString(), Does.Contain("already exists"));
+            Assert.AreEqual(folderGuid, AssetDatabase.AssetPathToGUID(folder));
+            Assert.AreEqual(profileGuid, AssetDatabase.AssetPathToGUID(path));
+            Assert.AreEqual(profile, AssetDatabase.LoadMainAssetAtPath(path));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
         [Test]

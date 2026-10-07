@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools.Blender;
@@ -11,6 +12,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Blender
 {
@@ -132,6 +134,81 @@ namespace MCPForUnityTests.Editor.Blender
                     File.Delete(staged);
                     Directory.Delete(Path.GetDirectoryName(staged));
                 }
+            }
+        }
+
+        [Test]
+        public void StageExportForImport_CopyFailureRemovesNewStagingRoot()
+        {
+            string root = MCPForUnity.Editor.Helpers.AssetGenPaths.ToAbsolute("Assets/.BlenderBridge");
+            if (Directory.Exists(root) || File.Exists(root))
+                Assert.Ignore("An existing staging root must be preserved.");
+            string missing = Path.Combine(Path.GetTempPath(), "missing-blender-export-" + Guid.NewGuid().ToString("N") + ".fbx");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                Assert.Throws<FileNotFoundException>(() => BlenderBridgeTool.StageExportForImport(missing));
+                Assert.IsFalse(Directory.Exists(root));
+                Assert.IsFalse(File.Exists(root + ".meta"));
+            }
+            finally { AssetDatabase.AllowAutoRefresh(); }
+        }
+
+        [Test]
+        public void StageExportForImport_CopyFailurePreservesExistingStagingRootAndSibling()
+        {
+            string root = MCPForUnity.Editor.Helpers.AssetGenPaths.ToAbsolute("Assets/.BlenderBridge");
+            bool ownsRoot = !Directory.Exists(root);
+            string sibling = Path.Combine(root, "keep-" + Guid.NewGuid().ToString("N") + ".txt");
+            string missing = Path.Combine(Path.GetTempPath(), "missing-blender-export-" + Guid.NewGuid().ToString("N") + ".fbx");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                Directory.CreateDirectory(root);
+                File.WriteAllText(sibling, "Keep existing staging data.");
+                string[] before = Directory.GetFileSystemEntries(root);
+
+                Assert.Throws<FileNotFoundException>(() => BlenderBridgeTool.StageExportForImport(missing));
+
+                CollectionAssert.AreEquivalent(before, Directory.GetFileSystemEntries(root));
+                Assert.AreEqual("Keep existing staging data.", File.ReadAllText(sibling));
+            }
+            finally
+            {
+                File.Delete(sibling);
+                if (ownsRoot) Directory.Delete(root);
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SavePrefab_FailedSaveRemovesOnlyNewEmptyPrefabFolder(bool preexisting)
+        {
+            string root = "Assets/__McpBlenderPrefabFailure_" + Guid.NewGuid().ToString("N");
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder("Assets", Path.GetFileName(root)));
+            string folder = root + "/Prefabs";
+            string guid = preexisting ? AssetDatabase.CreateFolder(root, "Prefabs") : null;
+            var go = new GameObject("Prefab failure fixture");
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            try
+            {
+                MethodInfo save = typeof(BlenderBridgeTool).GetMethod("SavePrefab", BindingFlags.Static | BindingFlags.NonPublic);
+                Assert.IsNotNull(save);
+                LogAssert.ignoreFailingMessages = true;
+                Assert.Throws<TargetInvocationException>(() => save.Invoke(null,
+                    new object[] { go, root + "/Model.fbx", "MissingParent/Result" }));
+                LogAssert.ignoreFailingMessages = previousIgnore;
+
+                Assert.AreEqual(preexisting, AssetDatabase.IsValidFolder(folder));
+                Assert.AreEqual(preexisting, Directory.Exists(MCPForUnity.Editor.Helpers.AssetGenPaths.ToAbsolute(folder)));
+                if (preexisting) Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(folder));
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+                UnityEngine.Object.DestroyImmediate(go);
+                AssetDatabase.DeleteAsset(root);
             }
         }
 

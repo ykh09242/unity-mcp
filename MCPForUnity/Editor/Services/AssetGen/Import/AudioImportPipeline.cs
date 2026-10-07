@@ -30,7 +30,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!AssetGenJobManager.IsAllowedResultExtension("audio", Path.GetExtension(rel)))
                     return Fail(job, "Refusing to import a non-audio file type.");
 
-                AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate);
+                AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                 ApplyAudioImporterSettings(rel);
                 if (AssetDatabase.LoadAssetAtPath<AudioClip>(rel) == null)
                     return Fail(job, "Audio import did not produce a usable AudioClip after reimport.");

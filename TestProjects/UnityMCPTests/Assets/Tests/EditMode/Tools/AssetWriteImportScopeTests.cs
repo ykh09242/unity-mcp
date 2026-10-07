@@ -1,8 +1,11 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -104,7 +107,7 @@ namespace MCPForUnityTests.Editor.Tools
             if (marker.scene != ownedScene) SceneManager.MoveGameObjectToScene(marker, ownedScene);
             EditorSceneManager.MarkSceneDirty(ownedScene);
             Assert.IsTrue(ownedScene.isDirty);
-            string destination = saveAs ? assetRoot + "/NewFolder/SavedAs.unity" : originalPath;
+            string destination = saveAs ? assetRoot + "/NewFolder/Nested/SavedAs.unity" : originalPath;
             string pending = CreatePendingUnrelatedFile();
             var request = new JObject { ["action"] = "save" };
             if (saveAs) request["path"] = destination;
@@ -125,24 +128,26 @@ namespace MCPForUnityTests.Editor.Tools
                 "Saving one scene must not refresh and import unrelated filesystem changes.");
         }
 
-        [Test]
-        public void CreateScene_RegistersCleanActiveSceneWithoutImportingUnrelatedPendingFile()
+        [TestCase(null)]
+        [TestCase("empty")]
+        public void CreateScene_RegistersCleanActiveSceneWithoutImportingUnrelatedPendingFile(string template)
         {
             if (!Application.isBatchMode)
                 Assert.Ignore("Single-scene replacement is exercised only in an isolated batch test Editor.");
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/BeforeCreate.unity"));
-            string destination = assetRoot + "/Created.unity";
+            string directory = assetRoot + "/Scenes/Nested";
+            string destination = directory + "/Created.unity";
             string pending = CreatePendingUnrelatedFile();
             restoreSceneSetup = true;
 
             JObject response = JObject.FromObject(ManageScene.HandleCommand(new JObject
             {
-                ["action"] = "create", ["name"] = "Created", ["path"] = assetRoot
+                ["action"] = "create", ["name"] = "Created", ["path"] = directory, ["template"] = template
             }));
             ownedScene = SceneManager.GetActiveScene();
 
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
-            Assert.AreEqual(destination, response["data"].Value<string>("path"));
+            Assert.AreEqual(destination, response["data"].Value<string>(template == null ? "path" : "scenePath"));
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<SceneAsset>(destination));
             Assert.IsNotEmpty(AssetDatabase.AssetPathToGUID(destination));
             Assert.IsTrue(ownedScene.IsValid() && ownedScene.isLoaded);
@@ -203,10 +208,11 @@ namespace MCPForUnityTests.Editor.Tools
         public void ShaderWrite_ImportsOnlyRequestedShaderAndPreservesDiagnostics(bool update, bool invalid)
         {
             string name = "McpScopeShader_" + Guid.NewGuid().ToString("N");
-            string shaderPath = assetRoot + "/" + name + ".shader";
+            string shaderDirectory = assetRoot + "/Shaders/Nested";
+            string shaderPath = shaderDirectory + "/" + name + ".shader";
             if (update)
             {
-                JObject created = ShaderWrite("create", name, ValidShader(name));
+                JObject created = ShaderWrite("create", name, ValidShader(name), shaderDirectory);
                 Assert.IsTrue(created.Value<bool>("success"), created.ToString());
             }
             string initialGuid = AssetDatabase.AssetPathToGUID(shaderPath);
@@ -220,7 +226,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 // Intentionally invalid ShaderLab must preserve importer diagnostics.
                 if (invalid) LogAssert.ignoreFailingMessages = true;
-                response = ShaderWrite(update ? "update" : "create", name, contents);
+                response = ShaderWrite(update ? "update" : "create", name, contents, shaderDirectory);
             }
             finally
             {
@@ -244,7 +250,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(true)]
         public void CreatePrefab_RegistersSavedAssetWithoutImportingUnrelatedPendingFile(bool replace)
         {
-            string prefabPath = assetRoot + "/Created.prefab";
+            string prefabPath = assetRoot + (replace ? "/Created.prefab" : "/Prefabs/Nested/Created.prefab");
             if (replace)
             {
                 var previous = new GameObject("PreviousRoot");
@@ -326,10 +332,226 @@ namespace MCPForUnityTests.Editor.Tools
                 "Saving a prefab stage must not discover unrelated pending filesystem changes.");
         }
 
-        private JObject ShaderWrite(string action, string name, string contents) =>
+        [TestCase("create")]
+        [TestCase("apply_gradient")]
+        [TestCase("apply_noise")]
+        public void TextureWrite_CreatesNestedFoldersWithoutImportingUnrelatedPendingFile(string action)
+        {
+            string destination = assetRoot + "/Textures/Nested/Created.png";
+            string pending = CreatePendingUnrelatedFile();
+            var response = JObject.FromObject(ManageTexture.HandleCommand(new JObject
+            {
+                ["action"] = action, ["path"] = destination, ["width"] = 2, ["height"] = 2
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(assetRoot + "/Textures/Nested"));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Texture2D>(destination));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [Test]
+        public void CreateFolder_KeepsRequestedEmptyHierarchyWithoutImportingUnrelatedPendingFile()
+        {
+            string destination = assetRoot + "/Requested/Nested/Empty";
+            string pending = CreatePendingUnrelatedFile();
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "create_folder", ["path"] = destination
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(destination));
+            Assert.IsTrue(Directory.Exists(FullPath(destination)));
+            Assert.IsEmpty(Directory.GetFileSystemEntries(FullPath(destination)));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UIWrite_CreatesNestedFoldersWithoutImportingUnrelatedPendingFile(bool panelSettings)
+        {
+            string destination = assetRoot + "/UI/Nested/" + (panelSettings ? "Panel.asset" : "Styles.uss");
+            string pending = CreatePendingUnrelatedFile();
+            var request = new JObject
+            {
+                ["action"] = panelSettings ? "create_panel_settings" : "create", ["path"] = destination
+            };
+            if (!panelSettings) request["contents"] = "Label { color: red; }";
+            var response = JObject.FromObject(ManageUI.HandleCommand(request));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(assetRoot + "/UI/Nested"));
+            Assert.IsNotNull(AssetDatabase.LoadMainAssetAtPath(destination));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [Test]
+        public void ScriptableObjectWrite_CreatesNestedFoldersWithoutImportingUnrelatedPendingFile()
+        {
+            string folder = assetRoot + "/Definitions/Nested";
+            string pending = CreatePendingUnrelatedFile();
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(new JObject
+            {
+                ["action"] = "create", ["folderPath"] = folder, ["assetName"] = "Definition",
+                ["typeName"] = typeof(ScriptableObjectContractDefinition).FullName
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(AssetDatabase.IsValidFolder(folder));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(folder + "/Definition.asset"));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [TestCase("duplicate")]
+        [TestCase("move")]
+        public void AssetTransfer_CreatesNestedFoldersWithoutImportingUnrelatedPendingFile(string action)
+        {
+            string source = assetRoot + "/Source.txt";
+            File.WriteAllText(FullPath(source), "source payload");
+            AssetDatabase.ImportAsset(source, ImportAssetOptions.ForceSynchronousImport);
+            string sourceGuid = AssetDatabase.AssetPathToGUID(source);
+            string destination = assetRoot + "/Transferred/Nested/Copy.txt";
+            string pending = CreatePendingUnrelatedFile();
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = action, ["path"] = source, ["destination"] = destination
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("source payload", File.ReadAllText(FullPath(destination)));
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<TextAsset>(destination));
+            if (action == "move") Assert.AreEqual(sourceGuid, AssetDatabase.AssetPathToGUID(destination));
+            else Assert.AreEqual(sourceGuid, AssetDatabase.AssetPathToGUID(source));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [Test]
+        public void GameObjectPrefabWrite_CreatesNestedFoldersWithoutImportingUnrelatedPendingFile()
+        {
+            string destination = assetRoot + "/GameObjects/Nested/Created.prefab";
+            string pending = CreatePendingUnrelatedFile();
+            var response = JObject.FromObject(GameObjectCreate.Handle(new JObject
+            {
+                ["name"] = "NestedPrefab", ["saveAsPrefab"] = true, ["prefabPath"] = destination
+            }));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(destination));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [Test]
+        public void PrefabWrite_PersistsRuntimeMaterialInNestedFolderWithoutImportingUnrelatedPendingFile()
+        {
+            Shader shader = RenderPipelineUtility.ResolveShader("Standard");
+            if (shader == null) Assert.Ignore("Requires an available project-compatible shader.");
+            var source = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            source.name = "MaterialScope_" + Guid.NewGuid().ToString("N");
+            var runtimeMaterial = new Material(shader);
+            source.GetComponent<Renderer>().sharedMaterial = runtimeMaterial;
+            string destination = assetRoot + "/MaterialPrefabs/Nested/Created.prefab";
+            string pending = CreatePendingUnrelatedFile();
+            try
+            {
+                var response = JObject.FromObject(ManagePrefabs.HandleCommand(new JObject
+                {
+                    ["action"] = "create_from_gameobject", ["target"] = source.name, ["prefabPath"] = destination
+                }));
+
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(1, response["data"].Value<int>("materialsPersisted"));
+                var saved = AssetDatabase.LoadAssetAtPath<GameObject>(destination);
+                Assert.IsNotNull(saved);
+                var persisted = saved.GetComponent<Renderer>().sharedMaterial;
+                Assert.IsTrue(EditorUtility.IsPersistent(persisted));
+                StringAssert.StartsWith(assetRoot + "/MaterialPrefabs/Nested/Materials/", AssetDatabase.GetAssetPath(persisted));
+                Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(runtimeMaterial);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FailedMaterialCreate_RemovesOnlyRequestOwnedEmptyFolders(bool preexistingParent)
+        {
+            if (RenderPipelineUtility.ResolveShader("Standard") == null)
+                Assert.Ignore("Requires an available project-compatible shader.");
+            string parent = assetRoot + "/Failure";
+            if (preexistingParent) Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Failure"));
+            string parentGuid = AssetDatabase.AssetPathToGUID(parent);
+            string pending = CreatePendingUnrelatedFile();
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject
+            {
+                ["action"] = "create", ["path"] = parent + "/Nested/Rejected.mat", ["assetType"] = "Material",
+                ["properties"] = new JObject
+                {
+                    ["shader"] = "Standard",
+                    ["texture"] = new JObject { ["name"] = "_MainTex", ["path"] = assetRoot + "/Missing.png" }
+                }
+            }));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(Directory.Exists(FullPath(parent + "/Nested")));
+            Assert.IsFalse(AssetDatabase.IsValidFolder(parent + "/Nested"));
+            Assert.AreEqual(preexistingParent, Directory.Exists(FullPath(parent)));
+            Assert.AreEqual(parentGuid, AssetDatabase.AssetPathToGUID(parent));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [Test]
+        public void AbortedFolderScope_PreservesNonemptyOwnedFolderAndPreexistingParent()
+        {
+            string parent = assetRoot + "/Existing";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Existing"));
+            string parentGuid = AssetDatabase.AssetPathToGUID(parent);
+            string populated = parent + "/Populated";
+            string populatedGuid = null;
+            string pending = CreatePendingUnrelatedFile();
+
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                using var folders = new AssetFolderScope();
+                folders.EnsureFolder(populated);
+                populatedGuid = AssetDatabase.AssetPathToGUID(populated);
+                File.WriteAllText(FullPath(populated + "/Retained.txt"), "keep this content");
+                folders.EnsureFolder(parent + "/Empty/Nested");
+                throw new InvalidOperationException("Abort after preparing output folders.");
+            });
+
+            Assert.AreEqual(parentGuid, AssetDatabase.AssetPathToGUID(parent));
+            Assert.AreEqual(populatedGuid, AssetDatabase.AssetPathToGUID(populated));
+            Assert.AreEqual("keep this content", File.ReadAllText(FullPath(populated + "/Retained.txt")));
+            Assert.IsFalse(Directory.Exists(FullPath(parent + "/Empty")));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        [Test]
+        public void AbortedFolderScope_PreservesPreexistingUnregisteredFolder()
+        {
+            string pending = CreatePendingUnrelatedFile();
+            string existing = assetRoot + "/PhysicalOnly";
+            Directory.CreateDirectory(FullPath(existing));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(existing));
+            using (var folders = new AssetFolderScope())
+            {
+                folders.EnsureFolder(existing + "/Owned/Nested");
+                Assert.IsTrue(AssetDatabase.IsValidFolder(existing));
+            }
+
+            Assert.IsTrue(Directory.Exists(FullPath(existing)));
+            Assert.IsTrue(AssetDatabase.IsValidFolder(existing));
+            Assert.IsFalse(Directory.Exists(FullPath(existing + "/Owned")));
+            Assert.IsEmpty(AssetDatabase.AssetPathToGUID(pending));
+        }
+
+        private JObject ShaderWrite(string action, string name, string contents, string directory = null) =>
             JObject.FromObject(ManageShader.HandleCommand(new JObject
             {
-                ["action"] = action, ["name"] = name, ["path"] = assetRoot, ["contents"] = contents
+                ["action"] = action, ["name"] = name, ["path"] = directory ?? assetRoot, ["contents"] = contents
             }));
 
         private static string ValidShader(string name) =>

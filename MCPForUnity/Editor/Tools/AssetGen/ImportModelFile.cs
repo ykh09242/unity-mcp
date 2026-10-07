@@ -46,7 +46,6 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     baseName = Path.GetFileNameWithoutExtension(srcAbs);
 
                 string destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
-                AssetDatabase.Refresh();
 
                 var job = new AssetGenJob
                 {
@@ -93,8 +92,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 root = AssetGenPrefs.DefaultOutputRoot + "/Imported";
             }
 
-            string absRoot = AssetGenPaths.ToAbsolute(root);
-            Directory.CreateDirectory(absRoot);
+            using var folders = new AssetFolderScope();
+            folders.EnsureFolder(root);
 
             string safe = SanitizeName(baseName);
             string fileName = safe + ext;
@@ -107,6 +106,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             }
 
             File.Copy(AssetGenPaths.ToAbsolute(srcAbs), AssetGenPaths.ToAbsolute(abs));
+            folders.Complete();
             return (root.TrimEnd('/') + "/" + fileName).Replace('\\', '/');
         }
 

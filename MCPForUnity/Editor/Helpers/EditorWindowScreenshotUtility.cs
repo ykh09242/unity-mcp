@@ -74,7 +74,7 @@ namespace MCPForUnity.Editor.Helpers
 
                 var result = PrepareCaptureResult(fileName, effectiveSuperSize, ensureUniqueFileName, folderOverride);
                 byte[] png = captured.EncodeToPNG();
-                ScreenshotUtility.WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
+                ScreenshotFileUtility.WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
 
                 if (includeImage)
                 {
@@ -326,8 +326,6 @@ namespace MCPForUnity.Editor.Helpers
             int size = Mathf.Max(1, superSize);
             string resolvedName = BuildFileName(fileName);
             string folder = ScreenshotUtility.ResolveFolderAbsolute(folderOverride);
-            Directory.CreateDirectory(folder);
-
             string fullPath = SafePathUtility.ResolveWithinRoot(folder, resolvedName);
             if (ensureUniqueFileName)
             {
