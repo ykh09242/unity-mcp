@@ -7,8 +7,9 @@ by waiting for the plugin to reconnect instead of failing immediately.
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from datetime import datetime
+from types import SimpleNamespace
 
 from .test_helpers import DummyContext
 
@@ -70,38 +71,41 @@ async def test_plugin_hub_waits_for_reconnection_during_reload():
 
 
 @pytest.mark.asyncio
-async def test_plugin_hub_fails_after_timeout():
-    """Test that PluginHub._resolve_session_id eventually times out if plugin never reconnects."""
-    from transport.plugin_hub import PluginHub
+async def test_plugin_hub_fails_after_timeout(monkeypatch):
+    """The full reconnect budget expires without a session, using a controlled clock."""
+    from transport import plugin_hub
     from transport.plugin_registry import PluginRegistry
 
-    # Create a mock registry that never returns sessions
+    # Given: no plugin reconnects during the unchanged default 20-second budget.
     mock_registry = AsyncMock(spec=PluginRegistry)
+    mock_registry.list_sessions.return_value = {}
+    changed = asyncio.Event()
+    mock_registry.change_event = changed
+    clock = SimpleNamespace(now=100.0)
 
-    async def mock_list_sessions(**kwargs):
-        return {}  # Never returns sessions
+    async def wait_to_deadline(change_event: asyncio.Event, timeout: float) -> bool:
+        assert change_event is changed
+        clock.now += timeout
+        return False
 
-    mock_registry.list_sessions = mock_list_sessions
+    mock_registry.wait_for_change.side_effect = wait_to_deadline
+    monkeypatch.delenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", raising=False)
+    monkeypatch.setattr(plugin_hub.config, "http_remote_hosted", False)
+    monkeypatch.setattr(plugin_hub.PluginHub, "_registry", mock_registry)
+    monkeypatch.setattr(plugin_hub.PluginHub, "_lock", asyncio.Lock())
+    # Replace only this module's clock binding, preserving asyncio's real event-loop clock.
+    monkeypatch.setattr(plugin_hub, "time", SimpleNamespace(monotonic=lambda: clock.now))
 
-    # Configure PluginHub with our mock while preserving the original state
-    original_registry = PluginHub._registry
-    original_lock = PluginHub._lock
-    PluginHub._registry = mock_registry
-    PluginHub._lock = asyncio.Lock()
+    # When: the registry reports that waiting consumed the entire requested budget.
+    with pytest.raises(
+        plugin_hub.NoUnitySessionError, match="No Unity plugins are currently connected"
+    ):
+        await plugin_hub.PluginHub._resolve_session_id(unity_instance=None)
 
-    # Temporarily override config for a short timeout
-    with patch("transport.plugin_hub.config") as mock_config:
-        mock_config.reload_max_retries = 3  # Only 3 retries
-        mock_config.reload_retry_ms = 10  # 10ms between retries
-
-        try:
-            # Should raise RuntimeError after timeout
-            with pytest.raises(RuntimeError, match="No Unity plugins are currently connected"):
-                await PluginHub._resolve_session_id(unity_instance=None)
-        finally:
-            # Clean up: restore original PluginHub state
-            PluginHub._registry = original_registry
-            PluginHub._lock = original_lock
+    # Then: resolution refuses the missing session without polling beyond its deadline.
+    mock_registry.list_sessions.assert_awaited_once_with(user_id=None)
+    mock_registry.wait_for_change.assert_awaited_once_with(changed, 20.0)
+    assert clock.now == 120.0
 
 
 @pytest.mark.asyncio
