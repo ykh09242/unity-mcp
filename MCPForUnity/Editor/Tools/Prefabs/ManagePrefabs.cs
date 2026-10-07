@@ -153,6 +153,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 finalPath = AssetDatabase.GenerateUniqueAssetPath(finalPath);
                 McpLog.Info($"[ManagePrefabs] Generated unique path: {finalPath}");
             }
+            if (Directory.Exists(AssetPathUtility.GetFullAssetPath(finalPath)))
+                return new ErrorResponse($"Cannot save prefab to '{finalPath}': a directory occupies the destination.");
+            try
+            {
+                ValidateRuntimeMaterialPaths(sourceObject, finalPath);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                return new ErrorResponse($"Cannot persist runtime materials: {ex.Message}");
+            }
 
             // 5. Ensure directory exists
             using var folders = new AssetFolderScope();
@@ -360,10 +370,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         continue;
 
                     // Derive a candidate path; same-name renderers and earlier prefab saves may already use it.
-                    string goName = renderer.gameObject.name.Replace(" ", "_");
-                    string suffix = slot > 0 ? $"_slot{slot}" : "";
-                    string matPath = $"{materialsFolder}/{goName}{suffix}_mat.mat";
-                    matPath = AssetPathUtility.GetContainedAssetPath(matPath);
+                    string matPath = GetRuntimeMaterialPath(renderer, slot, materialsFolder);
                     if (matPath == null)
                     {
                         McpLog.Warn($"[ManagePrefabs] Could not build safe material path for '{renderer.gameObject.name}', skipping.");
@@ -410,6 +417,44 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             return (persistedPaths.Count, persistedPaths);
+        }
+
+        private static string GetRuntimeMaterialPath(Renderer renderer, int slot, string materialsFolder)
+        {
+            string goName = renderer.gameObject.name.Replace(" ", "_");
+            if (goName.IndexOfAny(new[] { '/', '\\' }) >= 0)
+                throw new ArgumentException($"Renderer name '{renderer.gameObject.name}' must be a single material file name.");
+            string suffix = slot > 0 ? $"_slot{slot}" : "";
+            return AssetPathUtility.GetContainedAssetPath($"{materialsFolder}/{goName}{suffix}_mat.mat");
+        }
+
+        private static void ValidateRuntimeMaterialPaths(GameObject root, string prefabPath)
+        {
+            string materialsFolder = Path.GetDirectoryName(prefabPath).Replace('\\', '/') + "/Materials";
+            string assetsRoot = Path.GetFullPath(Application.dataPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+            {
+                Material[] materials = renderer.sharedMaterials;
+                for (int slot = 0; slot < materials.Length; slot++)
+                {
+                    Material material = materials[slot];
+                    if (material != null ? !EditorUtility.IsPersistent(material) : HasPropertyBlockColors(renderer, slot))
+                    {
+                        string path = GetRuntimeMaterialPath(renderer, slot, materialsFolder);
+                        string fullPath = AssetPathUtility.GetFullAssetPath(path);
+                        string parent = Path.GetDirectoryName(fullPath);
+                        while (!string.IsNullOrEmpty(parent) && !string.Equals(parent, assetsRoot, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (File.Exists(parent))
+                                throw new InvalidOperationException($"A file occupies the material output folder '{parent}'.");
+                            parent = Path.GetDirectoryName(parent);
+                        }
+                        string uniquePath = AssetDatabase.GenerateUniqueAssetPath(path);
+                        if (Directory.Exists(AssetPathUtility.GetFullAssetPath(uniquePath)))
+                            throw new InvalidOperationException($"A directory occupies the material destination '{uniquePath}'.");
+                    }
+                }
+            }
         }
 
         private static bool HasPropertyBlockColors(Renderer renderer, int slot)
@@ -771,6 +816,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string editingPrefabPath
         )
         {
+            string shapeError = ValidateModificationParameterShapes(@params);
+            if (shapeError != null)
+                return (false, new ErrorResponse(shapeError));
             bool modified = false;
 
             // Name change
@@ -1017,6 +1065,77 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             return (modified, null);
+        }
+
+        private static string ValidateModificationParameterShapes(JObject parameters, bool child = false)
+        {
+            foreach (string field in new[] { "position", "rotation", "scale" })
+            {
+                JToken token = parameters[field];
+                if (token == null || token.Type == JTokenType.Null)
+                    continue;
+                JToken[] components;
+                if (token is JArray vector && vector.Count == 3)
+                    components = vector.ToArray();
+                else if (token is JObject obj && obj.ContainsKey("x") && obj.ContainsKey("y") && obj.ContainsKey("z"))
+                    components = new[] { obj["x"], obj["y"], obj["z"] };
+                else
+                    return $"{field} must be a three-component array or an object with x, y and z.";
+                foreach (JToken component in components)
+                {
+                    if (component == null || component.Type == JTokenType.Null)
+                        return $"{field} components must be finite numbers.";
+                    try
+                    {
+                        component.ReadScalar<float>();
+                    }
+                    catch (ArgumentException)
+                    {
+                        return $"{field} components must be finite numbers or numeric strings.";
+                    }
+                }
+            }
+
+            foreach (string field in child ? new[] { "componentsToAdd", "components_to_add" } : new[] { "componentsToAdd", "componentsToRemove" })
+            {
+                JToken token = parameters[field];
+                if (token == null || token.Type == JTokenType.Null)
+                    continue;
+                if (token is not JArray components)
+                    return $"{field} must be an array.";
+                foreach (JToken component in components)
+                {
+                    JToken typeName = component;
+                    if (field != "componentsToRemove" && component is JObject obj)
+                        typeName = obj["typeName"];
+                    if (typeName?.Type != JTokenType.String || string.IsNullOrEmpty(typeName.Value<string>()))
+                        return $"{field} entries must be nonempty component type strings{(field == "componentsToRemove" ? "." : " or objects with typeName.")}";
+                }
+            }
+            if (child)
+                return null;
+
+            foreach (string field in new[] { "componentProperties", "component_properties" })
+            {
+                JToken token = parameters[field];
+                if (token == null || token.Type == JTokenType.Null)
+                    continue;
+                if (token is not JObject properties || properties.Properties().Any(property => property.Value is not JObject))
+                    return $"{field} must be an object whose component entries are property objects.";
+            }
+            JToken children = parameters["createChild"] ?? parameters["create_child"];
+            if (children != null)
+            {
+                foreach (JToken entry in children is JArray array ? array : new JArray(children.DeepClone()))
+                {
+                    if (entry is not JObject childParameters)
+                        return "'create_child' must be an object or array of objects with child properties.";
+                    string error = ValidateModificationParameterShapes(childParameters, true);
+                    if (error != null)
+                        return $"create_child: {error}";
+                }
+            }
+            return null;
         }
 
         /// <summary>

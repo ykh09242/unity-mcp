@@ -329,6 +329,216 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(previewScenes, EditorSceneManager.previewSceneCount);
         }
 
+        [TestCase("position", "[1,2]", false)]
+        [TestCase("rotation", "[1,2,3,4]", false)]
+        [TestCase("scale", "{\"x\":1,\"y\":2}", false)]
+        [TestCase("position", "true", false)]
+        [TestCase("position", "[true,2,3]", false)]
+        [TestCase("position", "[\"NaN\",2,3]", false)]
+        [TestCase("position", "[1,null,3]", false)]
+        [TestCase("position", "[1,2]", true)]
+        [TestCase("rotation", "[1,2,3,4]", true)]
+        [TestCase("scale", "{\"x\":1,\"y\":2}", true)]
+        [TestCase("position", "[true,2,3]", true)]
+        [TestCase("position", "[\"Infinity\",2,3]", true)]
+        public void MalformedHeadlessVectorDoesNotPersistAndUnloadsContents(string field, string json, bool child)
+        {
+            var changes = new JObject { [field] = JToken.Parse(json) };
+            if (child)
+                changes["name"] = "Temporary";
+            AssertHeadlessRejectedWithoutSaving(child ? new JObject { ["createChild"] = changes } : changes);
+        }
+
+        [TestCase("componentsToAdd", "{}", false)]
+        [TestCase("componentsToAdd", "[{}]", false)]
+        [TestCase("componentsToAdd", "[123]", false)]
+        [TestCase("componentsToRemove", "{}", false)]
+        [TestCase("componentsToRemove", "[{}]", false)]
+        [TestCase("componentProperties", "[]", false)]
+        [TestCase("componentProperties", "{\"Transform\":[]}", false)]
+        [TestCase("componentsToAdd", "{}", true)]
+        [TestCase("components_to_add", "{}", true)]
+        public void MalformedHeadlessCollectionDoesNotPersistAndUnloadsContents(string field, string json, bool child)
+        {
+            var changes = new JObject { [field] = JToken.Parse(json) };
+            if (child)
+                changes["name"] = "Temporary";
+            AssertHeadlessRejectedWithoutSaving(child ? new JObject { ["createChild"] = changes } : changes);
+        }
+
+        private void AssertHeadlessRejectedWithoutSaving(JObject changes)
+        {
+            string path = Seed(Source(), "Malformed");
+            byte[] original = Bytes(path);
+            int previewScenes = EditorSceneManager.previewSceneCount;
+            changes["prefabPath"] = path;
+            changes["name"] = "Changed";
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                Failure(Send("modify_contents", changes));
+                CollectionAssert.AreEqual(original, Bytes(path));
+                Assert.AreEqual(previewScenes, EditorSceneManager.previewSceneCount);
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HeadlessOptionalNullVectorsAndCollectionsRemainNoOps(bool child)
+        {
+            string path = Seed(Source(), "OptionalNull");
+            var optional = new JObject
+            {
+                ["position"] = JValue.CreateNull(),
+                ["rotation"] = JValue.CreateNull(),
+                ["scale"] = JValue.CreateNull(),
+                ["componentsToAdd"] = JValue.CreateNull(),
+            };
+            var changes = child ? new JObject { ["createChild"] = optional } : optional;
+            if (child)
+                optional["name"] = "NullChild";
+            changes["prefabPath"] = path;
+            Success(Send("modify_contents", changes));
+            var saved = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Transform target = child ? saved.transform.Find("NullChild") : saved.transform;
+            Assert.IsNotNull(target);
+            Assert.AreEqual(Vector3.zero, target.localPosition);
+            Assert.AreEqual(Vector3.one, target.localScale);
+        }
+
+        [Test]
+        public void OccupiedPrefabDirectoryIsRejectedBeforeUnlinkOrMaterialPersistence()
+        {
+            GameObject source = Source();
+            string originalPath = Seed(source, "OriginalConnection");
+            var renderer = source.AddComponent<MeshRenderer>();
+            var runtimeMaterial = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            renderer.sharedMaterial = runtimeMaterial;
+            string destination = PathFor("Occupied");
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Occupied.prefab"));
+            string sentinel = Path.Combine(Application.dataPath, destination.Substring("Assets/".Length), "Retained.txt");
+            File.WriteAllText(sentinel, "retained");
+            string folderGuid = AssetDatabase.AssetPathToGUID(destination);
+            byte[] original = Bytes(originalPath);
+            Selection.activeGameObject = source;
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                Failure(Create(source, destination, new JObject { ["allowOverwrite"] = true, ["unlinkIfInstance"] = true }));
+                Assert.AreEqual(originalPath, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
+                Assert.AreSame(runtimeMaterial, renderer.sharedMaterial);
+                Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/Materials"));
+                Assert.AreEqual(folderGuid, AssetDatabase.AssetPathToGUID(destination));
+                Assert.AreEqual("retained", File.ReadAllText(sentinel));
+                CollectionAssert.AreEqual(original, Bytes(originalPath));
+                Assert.AreSame(source, Selection.activeGameObject);
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+                Object.DestroyImmediate(runtimeMaterial);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HeadlessVectorObjectsAndNumericStringsRemainSupported(bool child)
+        {
+            string path = Seed(Source(), "VectorObject");
+            var transform = new JObject
+            {
+                ["position"] = new JObject
+                {
+                    ["x"] = "0",
+                    ["y"] = "2",
+                    ["z"] = 3,
+                },
+                ["rotation"] = new JArray(0, 90, 0),
+                ["scale"] = new JArray("1", "2", "3"),
+            };
+            var changes = child ? new JObject { ["createChild"] = transform } : transform;
+            if (child)
+                transform["name"] = "VectorChild";
+            changes["prefabPath"] = path;
+            Success(Send("modify_contents", changes));
+            var saved = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Transform target = child ? saved.transform.Find("VectorChild") : saved.transform;
+            Assert.IsNotNull(target);
+            Assert.AreEqual(new Vector3(0, 2, 3), target.localPosition);
+            Assert.AreEqual(new Vector3(1, 2, 3), target.localScale);
+            Assert.Less(Quaternion.Angle(Quaternion.Euler(0, 90, 0), target.localRotation), 0.01f);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void InvalidGeneratedMaterialPathIsRejectedBeforeUnlinkOrMaterialPersistence(bool laterRenderer)
+        {
+            GameObject source = Source();
+            string originalPath = Seed(source, "OriginalMaterialConnection");
+            var renderer = source.AddComponent<MeshRenderer>();
+            var runtimeMaterial = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            renderer.sharedMaterial = runtimeMaterial;
+            if (laterRenderer)
+            {
+                var child = new GameObject("Bad?Renderer", typeof(MeshRenderer));
+                child.transform.SetParent(source.transform, false);
+                child.GetComponent<MeshRenderer>().sharedMaterial = runtimeMaterial;
+            }
+            else
+                source.name = "Bad?Renderer";
+            string destination = assetRoot + "/New/Nested/Created.prefab";
+            byte[] original = Bytes(originalPath);
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                Failure(Create(source, destination, new JObject { ["unlinkIfInstance"] = true }));
+                Assert.AreEqual(originalPath, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
+                Assert.AreSame(runtimeMaterial, renderer.sharedMaterial);
+                Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/New"));
+                CollectionAssert.AreEqual(original, Bytes(originalPath));
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+                Object.DestroyImmediate(runtimeMaterial);
+            }
+        }
+
+        [Test]
+        public void MaterialFolderOccupiedByFileIsRejectedBeforeUnlinkOrMaterialPersistence()
+        {
+            GameObject source = Source();
+            string originalPath = Seed(source, "OriginalFolderConnection");
+            var renderer = source.AddComponent<MeshRenderer>();
+            var runtimeMaterial = new Material(Shader.Find("Hidden/InternalErrorShader"));
+            renderer.sharedMaterial = runtimeMaterial;
+            string destination = PathFor("RejectedMaterialFolder");
+            string occupiedPath = Path.Combine(Application.dataPath, assetRoot.Substring("Assets/".Length), "Materials");
+            File.WriteAllText(occupiedPath, "retained");
+            byte[] original = Bytes(originalPath);
+            try
+            {
+                Failure(Create(source, destination, new JObject { ["unlinkIfInstance"] = true }));
+                Assert.AreEqual(originalPath, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
+                Assert.AreSame(runtimeMaterial, renderer.sharedMaterial);
+                Assert.AreEqual("retained", File.ReadAllText(occupiedPath));
+                Assert.IsFalse(Directory.Exists(occupiedPath));
+                Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(destination));
+                CollectionAssert.AreEqual(original, Bytes(originalPath));
+            }
+            finally
+            {
+                Object.DestroyImmediate(runtimeMaterial);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void OwnedStageCloseVerifiesMainStageAndOptionalSave(bool save)
