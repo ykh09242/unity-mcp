@@ -188,6 +188,10 @@ namespace MCPForUnity.Editor.Tools.Animation
             {
                 return new ErrorResponse(e.Message);
             }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
             catch (Exception e)
             {
                 McpLog.Error($"[ManageAnimation] Action '{action}' failed: {e}");

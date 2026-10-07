@@ -217,6 +217,53 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(99, _asset.intValue);
         }
 
+        [TestCase("inSlope", "inTangent", "Infinity")]
+        [TestCase("outSlope", "outTangent", "-Infinity")]
+        public void CurveTangent_NullSlopeFallsBackToInfiniteAlias(string slope, string alias, string value)
+        {
+            // Given a null primary slope and an explicitly infinite alias.
+            var key = new JObject
+            {
+                ["time"] = 0,
+                ["value"] = 1,
+                [slope] = JValue.CreateNull(),
+                [alias] = value,
+            };
+            var patch = new JObject { ["path"] = "curveValue", ["value"] = new JArray(key) };
+            // When the patch crosses the actual ScriptableObject modification boundary.
+            var response = Modify(patch);
+            // Then the alias is preserved, rather than becoming zero or rejecting a stepped tangent.
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            float tangent = slope == "inSlope" ? _asset.curveValue.keys[0].inTangent : _asset.curveValue.keys[0].outTangent;
+            Assert.AreEqual(value == "Infinity" ? float.PositiveInfinity : float.NegativeInfinity, tangent);
+        }
+
+        [TestCase("inSlope", "Infinity")]
+        [TestCase("outTangent", "-Infinity")]
+        public void CurveTangent_DryRunAcceptsInfiniteTangentWithoutWrite(string field, string value)
+        {
+            // Given a valid infinite tangent and an existing serialized curve.
+            var patch = new JObject
+            {
+                ["path"] = "curveValue",
+                ["value"] = new JArray(
+                    new JObject
+                    {
+                        ["time"] = 0,
+                        ["value"] = 1,
+                        [field] = value,
+                    }
+                ),
+            };
+            // When checking the patch without applying it.
+            var response = Modify(patch, true);
+            // Then validation accepts stepped tangents while preserving the existing curve.
+            Assert.IsTrue((bool)response["data"]["valid"], response.ToString());
+            Assert.AreEqual(2, _asset.curveValue.length);
+            Assert.AreEqual(7, _asset.curveValue.keys[0].value);
+            Assert.AreEqual(8, _asset.curveValue.keys[1].value);
+        }
+
         [TestCase("9223372036854775808")]
         [TestCase("-9223372036854775809")]
         public void LongOverflow_IsRejectedWithoutWrite(string number)

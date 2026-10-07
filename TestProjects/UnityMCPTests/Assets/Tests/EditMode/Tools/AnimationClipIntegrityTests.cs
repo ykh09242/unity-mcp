@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Animation;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -145,8 +144,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var request = CreateRequest();
             request[setting] = "bad";
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageAnimation\\] Action 'clip_create' failed:"));
             var result = Call(request);
+            LogAssert.NoUnexpectedReceived();
             ownsAssetRoot = AssetDatabase.IsValidFolder(assetRoot); // Retain cleanup ownership if this regression returns.
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsFalse(ownsAssetRoot);
@@ -407,7 +406,10 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void InfiniteStepTangentRemainsSupported()
+        public void InfiniteStepTangentRemainsSupported(
+            [Values("in_tangent", "out_tangent")] string side,
+            [Values("Infinity", "-Infinity", double.PositiveInfinity, double.NegativeInfinity, float.PositiveInfinity, float.NegativeInfinity)] object tangent
+        )
         {
             var clip = CreateClip();
             var result = Call(
@@ -421,7 +423,7 @@ namespace MCPForUnityTests.Editor.Tools
                         {
                             ["time"] = 0,
                             ["value"] = 1,
-                            ["out_tangent"] = "Infinity",
+                            [side] = JToken.FromObject(tangent),
                         },
                         new JObject { ["time"] = 1, ["value"] = 2 }
                     ),
@@ -429,7 +431,42 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var actual = AnimationUtility.GetEditorCurve(clip, EditorCurveBinding.FloatCurve("", typeof(Transform), "localPosition.x")).keys[0];
-            Assert.IsTrue(float.IsPositiveInfinity(actual.outTangent));
+            float expected = tangent is string text ? (text.StartsWith("-") ? float.NegativeInfinity : float.PositiveInfinity) : Convert.ToSingle(tangent);
+            Assert.AreEqual(expected, side == "in_tangent" ? actual.inTangent : actual.outTangent);
+        }
+
+        [Test]
+        public void InvalidLateTangentPreservesWholeClip(
+            [Values("clip_set_curve", "clip_add_curve")] string action,
+            [Values("in_tangent", "out_tangent")] string side,
+            [Values("NaN", true, 1e100, "1e100")] object bad
+        )
+        {
+            // Given an existing clip with curves, events and settings.
+            var clip = CreateClip();
+            var before = Snapshot(clip);
+            // When an otherwise valid request contains a malformed tangent on a late key.
+            var result = Call(
+                new JObject
+                {
+                    ["action"] = action,
+                    ["clip_path"] = AssetDatabase.GetAssetPath(clip),
+                    ["property_path"] = "localPosition.x",
+                    ["keys"] = new JArray(
+                        new JObject { ["time"] = 0, ["value"] = 1 },
+                        new JObject
+                        {
+                            ["time"] = 1,
+                            ["value"] = 2,
+                            [side] = JToken.FromObject(bad),
+                        }
+                    ),
+                }
+            );
+            // Then validation fails without changing the clip or reporting an internal error.
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot(clip)));
+            LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
@@ -481,7 +518,6 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var clip = CreateClip();
             var before = Snapshot(clip);
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageAnimation\\] Action 'clip_set_vector_curve' failed:"));
             var result = Call(
                 new JObject
                 {
@@ -496,6 +532,7 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot(clip)));
+            LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
@@ -503,7 +540,6 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var clip = CreateClip();
             var before = Snapshot(clip);
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageAnimation\\] Action 'clip_add_event' failed:"));
             var result = Call(
                 new JObject
                 {
@@ -516,6 +552,7 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot(clip)));
+            LogAssert.NoUnexpectedReceived();
         }
 
         [TestCase("bounce")]
@@ -547,6 +584,30 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(clip.legacy);
             Assert.IsFalse(AnimationUtility.GetAnimationClipSettings(clip).loopTime);
             Assert.Greater(AnimationUtility.GetCurveBindings(clip).Length, 0);
+        }
+
+        [TestCase("rotate", 0.25f, 90f, true)]
+        [TestCase("spin", 0.25f, 90f, false)]
+        [TestCase("sway", 0.25f, 1f, false)]
+        [TestCase("wiggle", 0f, 1f, false)]
+        public void RotationPresetAnimatesTransform(string preset, float sampleTime, float expectedAngle, bool yAxis)
+        {
+            // Given a preset clip and an owned Transform in its initial rotation.
+            EnsureOwnedRoot();
+            var request = CreateRequest(true);
+            request["preset"] = preset;
+            request["duration"] = 1;
+            request["amplitude"] = 1;
+            var result = Call(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetRoot + "/Fixture.anim");
+            var target = new GameObject("RotationSample");
+            ownedObjects.Add(target);
+            // When Unity samples the generated clip onto the Transform.
+            clip.SampleAnimation(target, sampleTime);
+            // Then the selected axis reaches the intended angle through a real animation binding.
+            var expected = Quaternion.Euler(yAxis ? new Vector3(0, expectedAngle, 0) : new Vector3(0, 0, expectedAngle));
+            Assert.That(Quaternion.Angle(expected, target.transform.localRotation), Is.LessThan(0.1f));
         }
     }
 }

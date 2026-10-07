@@ -153,10 +153,48 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 Assert.IsTrue(ParamCoercion.ValidateNumericField(new JObject { [name] = double.PositiveInfinity }, name, out _));
                 Assert.IsTrue(ParamCoercion.ValidateNumericField(new JObject { [name] = double.NegativeInfinity }, name, out _));
+                Assert.IsTrue(ParamCoercion.ValidateNumericField(new JObject { [name] = "Infinity" }, name, out _));
+                Assert.IsTrue(ParamCoercion.ValidateNumericField(new JObject { [name] = "-Infinity" }, name, out _));
                 Assert.IsFalse(ParamCoercion.ValidateNumericField(new JObject { [name] = double.NaN }, name, out _));
                 Assert.IsFalse(ParamCoercion.ValidateNumericField(new JObject { [name] = 1e100 }, name, out _));
                 Assert.IsFalse(ParamCoercion.ValidateNumericField(new JObject { [name] = true }, name, out _));
             }
+        }
+
+        [TestCase(float.PositiveInfinity, float.PositiveInfinity)]
+        [TestCase(float.NegativeInfinity, float.NegativeInfinity)]
+        [TestCase(double.PositiveInfinity, float.PositiveInfinity)]
+        [TestCase(double.NegativeInfinity, float.NegativeInfinity)]
+        [TestCase("Infinity", float.PositiveInfinity)]
+        [TestCase("+Infinity", float.PositiveInfinity)]
+        [TestCase("-Infinity", float.NegativeInfinity)]
+        [TestCase(" Infinity ", float.PositiveInfinity)]
+        [TestCase(" -Infinity ", float.NegativeInfinity)]
+        [TestCase(0, 0f)]
+        [TestCase("-2.5", -2.5f)]
+        public void CurveTangentReader_PreservesExplicitInfinityAndFiniteValues(object input, float expected)
+        {
+            Assert.AreEqual(expected, JToken.FromObject(input).ReadCurveTangent());
+        }
+
+        [TestCase(double.NaN)]
+        [TestCase("NaN")]
+        [TestCase(true)]
+        [TestCase(false)]
+        [TestCase(1e100)]
+        [TestCase("1e100")]
+        [TestCase("infinity")]
+        [TestCase("-infinity")]
+        public void CurveTangentReader_RejectsInvalidScalars(object input)
+        {
+            Assert.Throws<ArgumentException>(() => JToken.FromObject(input).ReadCurveTangent());
+        }
+
+        [Test]
+        public void CurveTangentReader_PreservesNullableDefaults()
+        {
+            Assert.IsNull(((JToken)null).ReadCurveTangent());
+            Assert.IsNull(JValue.CreateNull().ReadCurveTangent());
         }
 
         [Test]

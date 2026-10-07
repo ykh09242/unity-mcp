@@ -480,9 +480,9 @@ namespace MCPForUnity.Editor.Tools.Animation
 
                         var kf = new Keyframe(time, value);
                         if (obj["inTangent"] != null)
-                            kf.inTangent = obj["inTangent"].ReadScalar<float>();
+                            kf.inTangent = obj["inTangent"].ReadCurveTangent() ?? 0f;
                         if (obj["outTangent"] != null)
-                            kf.outTangent = obj["outTangent"].ReadScalar<float>();
+                            kf.outTangent = obj["outTangent"].ReadCurveTangent() ?? 0f;
                         if (obj["inWeight"] != null)
                         {
                             kf.inWeight = obj["inWeight"].ReadScalar<float>();

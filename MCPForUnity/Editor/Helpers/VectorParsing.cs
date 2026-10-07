@@ -740,23 +740,6 @@ namespace MCPForUnity.Editor.Helpers
 
         // Infinite tangents are Unity's deliberate stepped/constant-key notation.
         // Other curve numbers remain finite; Boolean, NaN and overflow strings fail.
-        internal static float ReadCurveTangent(JToken token)
-        {
-            if (token?.Type == JTokenType.Float)
-            {
-                double number = token.Value<double>();
-                if (double.IsInfinity(number))
-                    return (float)number;
-            }
-            else if (token?.Type == JTokenType.String)
-            {
-                string text = token.Value<string>().Trim();
-                if (text == "Infinity" || text == "+Infinity")
-                    return float.PositiveInfinity;
-                if (text == "-Infinity")
-                    return float.NegativeInfinity;
-            }
-            return token.ReadScalar<float>();
-        }
+        internal static float ReadCurveTangent(JToken token) => token.ReadCurveTangent() ?? 0f;
     }
 }

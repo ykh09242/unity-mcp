@@ -382,6 +382,9 @@ namespace MCPForUnity.Editor.Tools.Animation
         /// </summary>
         private static void SetTransformCurve(AnimationClip clip, string propertyName, AnimationCurve curve)
         {
+            // Editor clips store Euler curves under the raw Euler binding, not the Transform getter.
+            if (propertyName.StartsWith("localEulerAngles.", StringComparison.Ordinal))
+                propertyName = "localEulerAnglesRaw." + propertyName.Substring("localEulerAngles.".Length);
             var binding = EditorCurveBinding.FloatCurve("", typeof(Transform), propertyName);
             AnimationUtility.SetEditorCurve(clip, binding, curve);
         }

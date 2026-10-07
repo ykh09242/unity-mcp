@@ -1991,8 +1991,8 @@ namespace MCPForUnity.Editor.Tools
 
                     float time = keyObj["time"]?.ReadScalar<float?>() ?? 0f;
                     float value = keyObj["value"]?.ReadScalar<float?>() ?? 0f;
-                    float inSlope = keyObj["inSlope"]?.ReadScalar<float?>() ?? keyObj["inTangent"]?.ReadScalar<float?>() ?? 0f;
-                    float outSlope = keyObj["outSlope"]?.ReadScalar<float?>() ?? keyObj["outTangent"]?.ReadScalar<float?>() ?? 0f;
+                    float inSlope = keyObj["inSlope"]?.ReadCurveTangent() ?? keyObj["inTangent"]?.ReadCurveTangent() ?? 0f;
+                    float outSlope = keyObj["outSlope"]?.ReadCurveTangent() ?? keyObj["outTangent"]?.ReadCurveTangent() ?? 0f;
 
                     var keyframe = new Keyframe(time, value, inSlope, outSlope);
 

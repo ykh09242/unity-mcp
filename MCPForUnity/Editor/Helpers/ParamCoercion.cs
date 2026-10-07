@@ -61,6 +61,36 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>Reads a nullable finite float; explicit invalid values are rejected.</summary>
         public static float? CoerceFloatNullable(JToken token) => token.ReadScalar<float?>();
 
+        /// <summary>Reads a nullable curve tangent, allowing explicit signed infinity for stepped segments.</summary>
+        public static float? ReadCurveTangent(this JToken token)
+        {
+            return TryReadInfiniteCurveTangent(token, out float tangent) ? tangent : token.ReadScalar<float?>();
+        }
+
+        private static bool TryReadInfiniteCurveTangent(JToken token, out float tangent)
+        {
+            tangent = 0f;
+            if (token is not JValue value)
+                return false;
+            switch (value.Value)
+            {
+                case float single when float.IsInfinity(single):
+                    tangent = single;
+                    return true;
+                case double number when double.IsInfinity(number):
+                    tangent = (float)number;
+                    return true;
+                case string text when text.Trim() == "Infinity" || text.Trim() == "+Infinity":
+                    tangent = float.PositiveInfinity;
+                    return true;
+                case string negative when negative.Trim() == "-Infinity":
+                    tangent = float.NegativeInfinity;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         /// <summary>
         /// Coerces a JToken to a string value, with null handling.
         /// </summary>
@@ -129,11 +159,7 @@ namespace MCPForUnity.Editor.Helpers
             // Unity uses explicit infinite tangents to encode stepped curve segments.
             // Restrict this exception to slope/tangent fields; all other numeric fields are finite.
             bool curveTangent = fieldName == "inTangent" || fieldName == "outTangent" || fieldName == "inSlope" || fieldName == "outSlope";
-            bool explicitInfiniteTangent =
-                curveTangent
-                && token.Type == JTokenType.Float
-                && token is JValue tangent
-                && (tangent.Value is double d && double.IsInfinity(d) || tangent.Value is float f && float.IsInfinity(f));
+            bool explicitInfiniteTangent = curveTangent && TryReadInfiniteCurveTangent(token, out _);
             if (!explicitInfiniteTangent && !IsNumericToken(token))
             {
                 error = $"must be a finite representable number, got {token.Type}";
