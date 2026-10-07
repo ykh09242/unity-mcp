@@ -74,10 +74,11 @@ checks count ASCII characters directly and encode non-ASCII chunks as needed.
 Encoded-size, retained-memory, depth and node limits still apply independently.
 
 The response-size visitor checks each value's exact builtin type once before
-the compatibility path. Subclasses, Pydantic models, URL objects and custom
-serialization hooks retain their existing behavior and per-visit accounting.
-This removes repeated type checks in dense object trees; a large single string
-still incurs its encoded-size work.
+the compatibility path. Native Pydantic models and URL objects use bounded
+storage and wire inspection. Arbitrary serialization hooks are refused before
+invocation; see the model compatibility restrictions below. Exact builtin
+graphs avoid repeated type checks; a large single string still incurs its
+encoded-size work.
 
 ## `editor_state_v1`
 
@@ -715,6 +716,120 @@ project workflows. No external-host idle guarantee is made. Final code CI passed
 both Python 3.11 and 3.14 full suites, three OS bootstrap checks and seven Unity
 compile versions. Earlier local failures and the initial slower sizing design
 remain recorded separately from these final outcomes.
+
+### Response lifetime, I/O deadlines and model compatibility
+
+The follow-up review at product commit `ac84088e` corrected eight defects.
+Streamable HTTP GET disconnection no longer releases a separate blocked POST's
+response reservation; session-wide teardown requires a positively identified
+legacy SSE endpoint. WebSocket dispatch clears its raw and decoded last-frame
+locals after processing. Explicit text stdout clears its response and encoded
+text only after write/flush settlement, including native task cancellation.
+
+Python greeting and authentication enforce the absolute deadline after the
+final read and require the terminating newline. Unity stdio retains its timeout
+source through awaited I/O. Installed Unity Mono socket methods only precheck
+the token, so read and write deadlines also abort the captured stream, await
+actual settlement, and reject success reported after cancellation. Closing an
+old stream does not close its replacement. External read cancellation preserves
+the caller's token.
+
+Unity WebSocket reconnect and same-client forced restart now wait for the
+previous handler's actual completion, including cooperative cleanup, before a
+following mutation executes. `ForceStop` and `Dispose` remain synchronous and
+nonblocking. A legacy handler that never settles can still prevent subsequent
+mutations; cancelling a response does not establish that its side effects ended.
+
+Raw MCP model admission now bounds both original storage and the native emitted
+projection, including aliases, extras, private and excluded fields. Admitted
+`CallToolResult` subclasses are detached into the standard SDK schema before
+later serialization, preserving JSON extras and metadata. Field/model
+serializers, custom dump/core-schema hooks, computed fields, exclusion callbacks,
+opaque private values and custom URL conversion hooks are refused before
+invocation, even for small results, with the existing `response_payload_limit`
+error. Return ordinary JSON-compatible values or native SDK models without these
+hooks. Arbitrary extension code cannot provide a bounded-allocation guarantee;
+this is an intentional compatibility restriction. Default size/depth/node caps
+are unchanged, but model retention now charges storage and wire projections.
+
+Two targeted optimizations accompany these fixes. The empty stdio queue exits
+before constructing the cancellation LINQ sequence. A complete-source Mono
+fixture measured **112 → 0 allocated bytes per empty update** through a direct
+delegate. Reflection added the same 16 bytes on either revision. The eight
+serial A/A, A/B/B/A, A/A captures retained 160 rows; ten samples per comparison
+variant each executed 100,000 updates. Median component time was 11.6599 →
+2.3051 ms, with baseline pre/post control medians 11.5088/11.76365 ms. This does
+not measure Editor frame rate, live handlers or network throughput.
+
+Prepared WebSocket JSON also reuses its exact UTF-8 count. An internal readonly
+struct avoids the first class candidate's extra 16 bytes per call; the final
+allocation delta is **zero in all six cases**. Extracted production result/writer
+code ran on Unity Mono with immediate no-I/O sends, three A/B/B/A rounds and an
+A/A comparison. Six samples per variant and all 144 raw samples were retained.
+
+| Payload | Before → final median ms/call | Same-source A/A median change |
+| --- | ---: | ---: |
+| Small ASCII | 0.002661 → 0.002632 | -3.09% |
+| Small Unicode | 0.002805 → 0.002702 | -1.37% |
+| 1 MiB ASCII | 2.1168 → 2.0048 | -16.67% |
+| 1 MiB Unicode | 2.6943 → 2.3155 | -0.98% |
+| 4 MiB ASCII | 8.5917 → 8.0770 | +2.20% |
+| 4 MiB Unicode | 9.7913 → 8.2429 | -19.13% |
+
+Same-source timing variation is substantial, so these observations do not
+establish a stable latency gain. Slower candidate samples and the 17.4085 ms
+control outlier were retained. Source/runtime and twelve byte-equivalence checks
+passed. No unrelated-host idle guarantee is made.
+
+The model correctness fix also has a measured cost. Seven baseline samples
+followed by seven current samples per case used the same caps on each Python
+runtime; separate traced-memory passes excluded preallocated inputs. All cases
+were admitted. Fixed order, no A/A controls and uncontrolled external load limit
+these results to observed component costs, not overall MCP performance.
+
+| Response inspection | Python 3.14.6, before → after ms | Python 3.11.15, before → after ms |
+| --- | ---: | ---: |
+| Small exact dictionary | 0.0380 → 0.0371 | 0.0746 → 0.0752 |
+| 4 MiB exact dictionary | 2.6142 → 2.6155 | 2.5861 → 2.6187 |
+| Small standard tool wire graph | 0.0281 → 0.0642 | 0.0276 → 0.0734 |
+| 1 MiB standard tool wire graph | 5.1779 → 5.2694 | 5.2537 → 5.2162 |
+| Small raw MCP model | 0.0295 → 0.2992 | 0.0277 → 0.2949 |
+| 1 MiB raw MCP model | 2.6060 → 2.8774 | 2.6234 → 2.8612 |
+| Raw MCP model, 50,000 nested items | 35.3720 → 63.3200 | 35.2303 → 58.0021 |
+
+Small raw-model inspection adds approximately 0.27 ms. The nested case adds
+22.77–27.95 ms, charges approximately 20.16 MB instead of 10.16 MB, and raises
+the traced temporary peak from roughly 7 KB to 407 KB. Exact dictionary charges
+are unchanged. These additional model checks remain enabled; model-heavy
+workloads warrant profiling before introducing caches or alternative serializers.
+
+Local verification passed 4,080 server tests with six skips on Python 3.14.6,
+536-source correctness lint, 328 targeted checks on 3.11.15, and 62 source-pin
+checks. The standalone source-linked
+[stdio fixture](../../tools/tests/fixtures/phase12_stdio/README.md) passed 25
+checks against Unity Mono's byte-array I/O path; the
+[WebSocket fixture](../../tools/tests/fixtures/phase12_websocket/README.md)
+passed nine plus nine observations in the existing architecture scenario.
+These are manual fixture runs, not licensed Editor CI tests. The modern Memory
+I/O branch and real Editor workflows were not executed for this review.
+
+Two current-only official SDK smoke captures, one per Python runtime, exercised
+the actual server over stdio and HTTP using owned synthetic Unity peers. Both
+passed small/state/4 MiB/job output and schema parity, cancellation, reconnection
+and partial-response cleanup. Their total command durations of 9.68/9.65 seconds
+include startup and lifecycle checks; five samples per workload are functional
+evidence and are not a before/after or cross-runtime latency comparison. Moving
+serialization off the Editor thread remains deferred because JToken values are
+not guaranteed immutable and `ConfigureAwait(false)` cannot force a completed
+task to yield. No dependencies, transport format or package version changed.
+
+At code SHA `24fa5c3c`, [Python CI](https://github.com/ykh09242/unity-mcp/actions/runs/37554609013)
+passed on 3.11.17 and 3.14.8: each ran 4,070 server tests with 16 skips and 957
+tool tests with five skips and 246 passing subtests. The tool runs include ten
+native POSIX credential cases each. Three OS bootstrap checks and the
+[seven-version Unity compile matrix](https://github.com/ykh09242/unity-mcp/actions/runs/37554608539)
+also passed. Licensed Editor tests and upstream-only publication jobs were
+policy-skipped; they are not additional passing runtime checks.
 
 ### Earlier cross-protocol measurements
 
