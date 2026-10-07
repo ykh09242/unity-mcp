@@ -48,10 +48,45 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string folderPath = @params["folderPath"]?.ToString() ?? "Assets/VFX";
             string template = @params["template"]?.ToString() ?? "empty";
 
-            if (string.IsNullOrEmpty(assetName))
+            if (string.IsNullOrWhiteSpace(assetName))
             {
                 return new { success = false, message = "assetName is required" };
             }
+            if (assetName.Contains("/") || assetName.Contains("\\"))
+                return new { success = false, message = "assetName must not contain path separators" };
+
+            bool overwrite;
+            try
+            {
+                overwrite = @params["overwrite"]?.ReadScalar<bool?>() ?? false;
+            }
+            catch (ArgumentException ex)
+            {
+                return new { success = false, message = $"Invalid overwrite: {ex.Message}" };
+            }
+
+            string assetPath;
+            string fullPath;
+            try
+            {
+                folderPath = AssetPathUtility.GetContainedAssetPath(folderPath);
+                assetPath = AssetPathUtility.GetContainedAssetPath($"{folderPath}/{assetName}.vfx");
+                fullPath = AssetPathUtility.GetFullAssetPath(assetPath);
+            }
+            catch (Exception ex)
+            {
+                return new { success = false, message = $"Invalid folderPath or assetName: {ex.Message}" };
+            }
+
+            var existing = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            if (
+                existing != null && existing is not VisualEffectAsset
+                || System.IO.Directory.Exists(fullPath)
+                || existing == null && (System.IO.File.Exists(fullPath) || System.IO.File.Exists(fullPath + ".meta"))
+            )
+                return new { success = false, message = $"An unrelated asset already exists at {assetPath}" };
+            if (existing != null && !overwrite)
+                return new { success = false, message = $"Asset already exists at {assetPath}. Set overwrite=true to replace." };
 
             string versionError = ValidateVfxGraphVersion();
             if (!string.IsNullOrEmpty(versionError))
@@ -68,27 +103,86 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             using var folders = new AssetFolderScope();
             folders.EnsureFolder(folderPath);
-
-            string assetPath = $"{folderPath}/{assetName}.vfx";
-
-            // Check if asset already exists
-            if (AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath) != null)
+            string stagedPath = null;
+            string stagedGuid = null;
+            Exception operationFailure = null;
+            VisualEffectAsset newAsset;
+            try
             {
-                bool overwrite = @params["overwrite"]?.ReadScalar<bool?>() ?? false;
-                if (!overwrite)
+                // Selecting the destination itself as template is already the requested content.
+                var pathComparison = System.IO.Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                if (existing == null || !string.Equals(templateAssetPath, assetPath, pathComparison))
                 {
-                    return new { success = false, message = $"Asset already exists at {assetPath}. Set overwrite=true to replace." };
+                    string copyPath = assetPath;
+                    if (existing != null)
+                    {
+                        copyPath = AssetPathUtility.GetContainedAssetPath($"{folderPath}/__McpVfxOverwrite_{Guid.NewGuid():N}.vfx");
+                        string candidateFullPath = AssetPathUtility.GetFullAssetPath(copyPath);
+                        if (
+                            System.IO.File.Exists(candidateFullPath)
+                            || System.IO.Directory.Exists(candidateFullPath)
+                            || System.IO.File.Exists(candidateFullPath + ".meta")
+                            || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(copyPath, AssetPathToGUIDOptions.OnlyExistingAssets))
+                        )
+                            return new { success = false, message = "VFX overwrite staging path is already occupied" };
+                        stagedPath = copyPath;
+                    }
+
+                    templateAssetPath = AssetPathUtility.GetAssetReferencePath(templateAssetPath, allowPackages: true);
+                    AssetPathUtility.GetFullAssetPath(copyPath);
+                    bool copied = AssetDatabase.CopyAsset(templateAssetPath, copyPath);
+                    if (stagedPath != null)
+                        stagedGuid = AssetDatabase.AssetPathToGUID(stagedPath, AssetPathToGUIDOptions.OnlyExistingAssets);
+                    if (!copied || AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(copyPath) == null)
+                    {
+                        operationFailure = new System.IO.IOException($"Failed to copy VFX template from {templateAssetPath}");
+                        return new { success = false, message = operationFailure.Message };
+                    }
+                    if (stagedPath != null)
+                    {
+                        // Keep destination bytes and GUID until a complete, loadable copy exists.
+                        System.IO.File.Replace(AssetPathUtility.GetFullAssetPath(stagedPath), AssetPathUtility.GetFullAssetPath(assetPath), null);
+                        AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                    }
                 }
-                AssetDatabase.DeleteAsset(assetPath);
+                newAsset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
             }
-
-            // Find template asset and copy it
-            if (!AssetDatabase.CopyAsset(templateAssetPath, assetPath))
+            catch (Exception ex)
             {
-                return new { success = false, message = $"Failed to copy VFX template from {templateAssetPath}" };
+                operationFailure = ex;
+                throw;
             }
-
-            var newAsset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
+            finally
+            {
+                try
+                {
+                    if (stagedPath != null)
+                    {
+                        string stagedFullPath = AssetPathUtility.GetFullAssetPath(stagedPath);
+                        string currentGuid = AssetDatabase.AssetPathToGUID(stagedPath, AssetPathToGUIDOptions.OnlyExistingAssets);
+                        if (
+                            System.IO.Directory.Exists(stagedFullPath)
+                            || !string.IsNullOrEmpty(stagedGuid)
+                                && (
+                                    !string.IsNullOrEmpty(currentGuid)
+                                        ? !string.Equals(stagedGuid, currentGuid, StringComparison.Ordinal)
+                                        : System.IO.File.Exists(stagedFullPath)
+                                )
+                        )
+                            throw new System.IO.IOException("VFX staging asset ownership changed; cleanup refused.");
+                        if (!AssetDatabase.DeleteAsset(stagedPath))
+                        {
+                            // A failed native copy may leave an unregistered partial file at the exact owned path.
+                            System.IO.File.Delete(stagedFullPath);
+                            System.IO.File.Delete(stagedFullPath + ".meta");
+                        }
+                    }
+                }
+                catch (Exception cleanupFailure) when (operationFailure != null)
+                {
+                    throw new AggregateException("VFX creation failed and its staging asset could not be cleaned up.", operationFailure, cleanupFailure);
+                }
+            }
             if (newAsset == null)
             {
                 return new { success = false, message = "Failed to create VFX asset. Try using a template from list_templates." };
@@ -113,6 +207,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         /// </summary>
         private static string FindTemplate(string templateName)
         {
+            if (string.IsNullOrWhiteSpace(templateName) || templateName.Contains("/") || templateName.Contains("\\"))
+                return null;
             // Get the actual filesystem path for the VFX Graph package using PackageManager API
             var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath("Packages/com.unity.visualeffectgraph");
 
@@ -145,7 +241,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 foreach (string pattern in templatePatterns)
                 {
-                    string[] files = System.IO.Directory.GetFiles(searchRoot, pattern, System.IO.SearchOption.AllDirectories);
+                    string[] files = FindContainedTemplateFiles(searchRoot, pattern);
                     if (files.Length > 0)
                     {
                         return files[0];
@@ -155,7 +251,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 // Also search by partial match
                 try
                 {
-                    string[] allVfxFiles = System.IO.Directory.GetFiles(searchRoot, "*.vfx", System.IO.SearchOption.AllDirectories);
+                    string[] allVfxFiles = FindContainedTemplateFiles(searchRoot, "*.vfx");
                     foreach (string file in allVfxFiles)
                     {
                         if (System.IO.Path.GetFileNameWithoutExtension(file).ToLower().Contains(templateName.ToLower()))
@@ -193,6 +289,32 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             return null;
+        }
+
+        private static string[] FindContainedTemplateFiles(string root, string pattern)
+        {
+            var files = new List<string>();
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0)
+            {
+                string directory = pending.Pop();
+                if (string.IsNullOrEmpty(TryGetAssetPathFromFileSystem(directory)))
+                    continue;
+                foreach (string file in System.IO.Directory.GetFiles(directory, pattern, System.IO.SearchOption.TopDirectoryOnly))
+                {
+                    if ((System.IO.File.GetAttributes(file) & System.IO.FileAttributes.ReparsePoint) != 0)
+                        continue;
+                    if (!string.IsNullOrEmpty(TryGetAssetPathFromFileSystem(file)))
+                        files.Add(file);
+                }
+                foreach (string child in System.IO.Directory.GetDirectories(directory))
+                {
+                    if ((System.IO.File.GetAttributes(child) & System.IO.FileAttributes.ReparsePoint) == 0)
+                        pending.Push(child);
+                }
+            }
+            return files.ToArray();
         }
 
         /// <summary>
@@ -484,8 +606,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             string normalized = templatePath.Replace("\\", "/");
             string assetsRoot = Application.dataPath.Replace("\\", "/");
+            var comparison = System.IO.Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-            if (normalized.StartsWith(assetsRoot + "/"))
+            if (normalized.StartsWith(assetsRoot + "/", comparison))
             {
                 return AssetPathUtility.GetAssetReferencePath("Assets/" + normalized.Substring(assetsRoot.Length + 1));
             }
@@ -494,7 +617,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (packageInfo != null)
             {
                 string packageRoot = packageInfo.resolvedPath.Replace("\\", "/");
-                if (normalized.StartsWith(packageRoot + "/"))
+                if (normalized.StartsWith(packageRoot + "/", comparison))
                 {
                     return AssetPathUtility.GetAssetReferencePath(
                         "Packages/" + packageInfo.name + "/" + normalized.Substring(packageRoot.Length + 1),

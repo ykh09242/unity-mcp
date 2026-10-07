@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Vfx;
 using MCPForUnity.Runtime.Helpers;
@@ -120,6 +123,312 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 
+        [TestCase("name-forward")]
+        [TestCase("name-backslash")]
+        [TestCase("folder-traversal")]
+        [TestCase("overwrite-string")]
+        [TestCase("overwrite-number")]
+        public void InvalidCreateInputRejectsBeforeTemplateLookupOrFolderCreation(string scenario)
+        {
+            RequireEnabledGraph();
+            string root = "Assets/VfxInvalidCreate_" + Guid.NewGuid().ToString("N");
+            string absoluteRoot = Path.Combine(Application.dataPath, Path.GetFileName(root));
+            var request = new JObject
+            {
+                ["action"] = "vfx_create_asset",
+                ["assetName"] = "New",
+                ["folderPath"] = root + "/Nested",
+                ["template"] = "Missing_" + Guid.NewGuid().ToString("N"),
+            };
+            string expected;
+            if (scenario.StartsWith("name-", StringComparison.Ordinal))
+            {
+                request["assetName"] = scenario == "name-forward" ? "../Escaped" : "..\\Escaped";
+                expected = "assetName";
+            }
+            else if (scenario == "folder-traversal")
+            {
+                request["folderPath"] = root + "/../../Escaped";
+                expected = "folderPath";
+            }
+            else
+            {
+                request["overwrite"] = scenario == "overwrite-string" ? (JToken)new JValue("bad") : new JValue(1);
+                expected = "overwrite";
+            }
+
+            JObject response = JObject.FromObject(ManageVFX.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(expected, response.Value<string>("message"), "invalid input must be rejected before template discovery");
+            Assert.IsFalse(Directory.Exists(absoluteRoot));
+            Assert.IsFalse(File.Exists(absoluteRoot + ".meta"));
+            Assert.IsFalse(UnityEditor.AssetDatabase.IsValidFolder(root));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ExistingUnrelatedTargetIsPreservedBeforeTemplateLookup(bool directory)
+        {
+            RequireEnabledGraph();
+            string root = "Assets/VfxCollision_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, Path.GetFileName(root))));
+            Assert.IsEmpty(UnityEditor.AssetDatabase.AssetPathToGUID(root, UnityEditor.AssetPathToGUIDOptions.OnlyExistingAssets));
+            string guid = UnityEditor.AssetDatabase.CreateFolder("Assets", Path.GetFileName(root));
+            Assert.IsNotEmpty(guid);
+            try
+            {
+                string target = root + "/Target.vfx";
+                string absolute = AssetPathUtility.GetFullAssetPath(target);
+                if (directory)
+                    Directory.CreateDirectory(absolute);
+                else
+                    File.WriteAllText(absolute, "unrelated bytes");
+                JObject response = OverwriteVfx(root, target, "Missing_" + Guid.NewGuid().ToString("N"));
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("unrelated asset", response.Value<string>("message"));
+                if (directory)
+                    Assert.IsTrue(Directory.Exists(absolute));
+                else
+                    Assert.AreEqual("unrelated bytes", File.ReadAllText(absolute));
+                UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                Assert.AreEqual(root, UnityEditor.AssetDatabase.GUIDToAssetPath(guid));
+                Assert.IsTrue(UnityEditor.AssetDatabase.DeleteAsset(root));
+            }
+        }
+
+        private static void WithExpectedMissingRenderPipelineWarning(Action createAssets)
+        {
+            const string warning =
+                "The Visual Effect Graph is supported in the High Definition Render Pipeline (HDRP) and the Universal Render Pipeline (URP). Please assign your chosen Render Pipeline Asset in the Graphics Settings to use it.";
+            Application.LogCallback expectWarning = (message, stack, kind) =>
+            {
+                if (kind == LogType.Warning && message == warning && UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline == null)
+                    // Register only warnings actually emitted: cached templates can produce none.
+                    UnityEngine.TestTools.LogAssert.Expect(LogType.Warning, warning);
+            };
+            Application.logMessageReceived += expectWarning;
+            try
+            {
+                createAssets();
+            }
+            finally
+            {
+                Application.logMessageReceived -= expectWarning;
+            }
+        }
+
+        private void WithOwnedVfxAssets(Action<string, string, string> check)
+        {
+            RequireEnabledGraph();
+            string templatePath = null;
+            WithExpectedMissingRenderPipelineWarning(() =>
+            {
+                var listed = JObject.FromObject(ManageVFX.HandleCommand(new JObject { ["action"] = "vfx_list_templates" }));
+                templatePath = ((JArray)listed["data"]?["templates"])
+                    ?.OfType<JObject>()
+                    .Select(entry => entry.Value<string>("path"))
+                    .FirstOrDefault(path => UnityEditor.AssetDatabase.LoadMainAssetAtPath(path)?.GetType().Name == "VisualEffectAsset");
+            });
+            if (templatePath == null)
+                Assert.Ignore("A loadable existing VFX Graph template is required; the fixture does not install optional packages or templates.");
+
+            string suffix = Guid.NewGuid().ToString("N");
+            string root = "Assets/VfxOverwrite_" + suffix;
+            Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, Path.GetFileName(root))));
+            Assert.IsEmpty(UnityEditor.AssetDatabase.AssetPathToGUID(root, UnityEditor.AssetPathToGUIDOptions.OnlyExistingAssets));
+            string guid = UnityEditor.AssetDatabase.CreateFolder("Assets", Path.GetFileName(root));
+            Assert.IsNotEmpty(guid);
+            try
+            {
+                string source = root + "/Source_" + suffix + ".vfx";
+                string target = root + "/Target_" + suffix + ".vfx";
+                WithExpectedMissingRenderPipelineWarning(() =>
+                {
+                    Assert.IsTrue(UnityEditor.AssetDatabase.CopyAsset(templatePath, source));
+                    Assert.IsTrue(UnityEditor.AssetDatabase.CopyAsset(templatePath, target));
+                });
+                check(root, source, target);
+            }
+            finally
+            {
+                Assert.AreEqual(root, UnityEditor.AssetDatabase.GUIDToAssetPath(guid));
+                Assert.IsTrue(UnityEditor.AssetDatabase.DeleteAsset(root), "Delete only the exact owned VFX fixture root.");
+            }
+        }
+
+        private static JObject OverwriteVfx(string root, string target, string template) =>
+            JObject.FromObject(
+                ManageVFX.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "vfx_create_asset",
+                        ["folderPath"] = root,
+                        ["assetName"] = Path.GetFileNameWithoutExtension(target),
+                        ["template"] = Path.GetFileNameWithoutExtension(template),
+                        ["overwrite"] = true,
+                    }
+                )
+            );
+
+        [Test]
+        public void DestinationAsItsOwnTemplatePreservesContentsAndGuid()
+        {
+            WithOwnedVfxAssets(
+                (root, source, target) =>
+                {
+                    string absolute = AssetPathUtility.GetFullAssetPath(target);
+                    byte[] before = File.ReadAllBytes(absolute);
+                    byte[] metadata = File.ReadAllBytes(absolute + ".meta");
+                    string guid = UnityEditor.AssetDatabase.AssetPathToGUID(target);
+                    JObject response = OverwriteVfx(root, target, target);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    CollectionAssert.AreEqual(before, File.ReadAllBytes(absolute));
+                    CollectionAssert.AreEqual(metadata, File.ReadAllBytes(absolute + ".meta"));
+                    Assert.AreEqual(guid, UnityEditor.AssetDatabase.AssetPathToGUID(target));
+                    UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+                }
+            );
+        }
+
+        [Test]
+        public void CaseDistinctTemplateOverwritesDestinationOnCaseSensitiveFilesystems()
+        {
+            if (Path.DirectorySeparatorChar == '\\')
+                Assert.Ignore("Windows path policy treats case-only names as the same file.");
+            WithOwnedVfxAssets(
+                (root, source, originalTarget) =>
+                {
+                    string target = root + "/" + Path.GetFileName(source).ToLowerInvariant();
+                    string moveError = UnityEditor.AssetDatabase.MoveAsset(originalTarget, target);
+                    if (!string.IsNullOrEmpty(moveError))
+                        Assert.Ignore("The current AssetDatabase cannot represent case-distinct VFX assets: " + moveError);
+                    string sourceGuid = UnityEditor.AssetDatabase.AssetPathToGUID(source);
+                    string targetGuid = UnityEditor.AssetDatabase.AssetPathToGUID(target);
+                    if (sourceGuid == targetGuid)
+                        Assert.Ignore("The current AssetDatabase resolves case-only names to the same asset.");
+
+                    string absoluteSource = AssetPathUtility.GetFullAssetPath(source);
+                    string absoluteTarget = AssetPathUtility.GetFullAssetPath(target);
+                    string sourceText = File.ReadAllText(absoluteSource);
+                    if (!sourceText.StartsWith("%YAML", StringComparison.Ordinal))
+                        Assert.Ignore("The case-distinct fixture requires an existing text YAML VFX template.");
+                    var findTemplate = typeof(ManageVFX)
+                        .Assembly.GetType("MCPForUnity.Editor.Tools.Vfx.VfxGraphAssets")
+                        .GetMethod("FindTemplate", BindingFlags.NonPublic | BindingFlags.Static);
+                    Assert.IsNotNull(findTemplate);
+                    string selected = (string)findTemplate.Invoke(null, new object[] { Path.GetFileNameWithoutExtension(source) });
+                    if (string.IsNullOrEmpty(selected) || !string.Equals(Path.GetFullPath(selected), absoluteSource, StringComparison.Ordinal))
+                        Assert.Ignore("The current AssetDatabase template search did not select the distinct source spelling.");
+
+                    File.AppendAllText(absoluteSource, "\n# case-distinct template " + Guid.NewGuid().ToString("N") + "\n");
+                    UnityEditor.AssetDatabase.ImportAsset(source, UnityEditor.ImportAssetOptions.ForceSynchronousImport);
+                    byte[] expected = File.ReadAllBytes(absoluteSource);
+                    Assert.IsFalse(expected.SequenceEqual(File.ReadAllBytes(absoluteTarget)), "The template bytes must distinguish a real copy from a no-op.");
+                    JObject response = OverwriteVfx(root, target, source);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    CollectionAssert.AreEqual(expected, File.ReadAllBytes(absoluteTarget));
+                    Assert.AreEqual(targetGuid, UnityEditor.AssetDatabase.AssetPathToGUID(target));
+                    Assert.IsEmpty(Directory.GetFiles(AssetPathUtility.GetFullAssetPath(root), "__McpVfxOverwrite_*"));
+                    UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+                }
+            );
+        }
+
+        [Test]
+        [Platform("Win")]
+        public void FailedTemplateCopyPreservesDestinationAndCleansStaging()
+        {
+            WithOwnedVfxAssets(
+                (root, source, target) =>
+                {
+                    string absoluteTarget = AssetPathUtility.GetFullAssetPath(target);
+                    byte[] before = File.ReadAllBytes(absoluteTarget);
+                    byte[] metadata = File.ReadAllBytes(absoluteTarget + ".meta");
+                    string guid = UnityEditor.AssetDatabase.AssetPathToGUID(target);
+                    var errors = new List<string>();
+                    Application.LogCallback capture = (message, stack, kind) =>
+                    {
+                        if (kind == LogType.Error || kind == LogType.Exception || kind == LogType.Assert)
+                            errors.Add(message);
+                    };
+                    bool previousIgnore = UnityEngine.TestTools.LogAssert.ignoreFailingMessages;
+                    JObject response;
+                    try
+                    {
+                        Application.logMessageReceived += capture;
+                        // The native copy reports an expected sharing-violation error; inspect every captured error below.
+                        UnityEngine.TestTools.LogAssert.ignoreFailingMessages = true;
+                        using (var locked = new FileStream(AssetPathUtility.GetFullAssetPath(source), FileMode.Open, FileAccess.Read, FileShare.None))
+                            response = OverwriteVfx(root, target, source);
+                    }
+                    finally
+                    {
+                        UnityEngine.TestTools.LogAssert.ignoreFailingMessages = previousIgnore;
+                        Application.logMessageReceived -= capture;
+                    }
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    foreach (string error in errors)
+                        Assert.IsTrue(
+                            error.Contains(Path.GetFileName(source)) || error.Contains("__McpVfxOverwrite_"),
+                            "Only errors identifying the owned source or staging copy are expected: " + error
+                        );
+                    CollectionAssert.AreEqual(before, File.ReadAllBytes(absoluteTarget));
+                    CollectionAssert.AreEqual(metadata, File.ReadAllBytes(absoluteTarget + ".meta"));
+                    Assert.AreEqual(guid, UnityEditor.AssetDatabase.AssetPathToGUID(target));
+                    Assert.IsEmpty(Directory.GetFiles(AssetPathUtility.GetFullAssetPath(root), "__McpVfxOverwrite_*"));
+                }
+            );
+        }
+
+        [Test]
+        [Platform("Win")]
+        public void FailedOverwritePreservesDestinationAndCleansStaging()
+        {
+            WithOwnedVfxAssets(
+                (root, source, target) =>
+                {
+                    string absolute = AssetPathUtility.GetFullAssetPath(target);
+                    byte[] before = File.ReadAllBytes(absolute);
+                    byte[] metadata = File.ReadAllBytes(absolute + ".meta");
+                    string guid = UnityEditor.AssetDatabase.AssetPathToGUID(target);
+                    JObject response;
+                    using (var locked = new FileStream(absolute, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        response = OverwriteVfx(root, target, source);
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    CollectionAssert.AreEqual(before, File.ReadAllBytes(absolute));
+                    CollectionAssert.AreEqual(metadata, File.ReadAllBytes(absolute + ".meta"));
+                    Assert.AreEqual(guid, UnityEditor.AssetDatabase.AssetPathToGUID(target));
+                    Assert.IsEmpty(
+                        Directory.GetFiles(AssetPathUtility.GetFullAssetPath(root), "__McpVfxOverwrite_*"),
+                        "failed overwrite must remove its owned staging bytes and metadata"
+                    );
+                    UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+                }
+            );
+        }
+
+        [Test]
+        public void SuccessfulOverwritePreservesDestinationGuidAndCleansStaging()
+        {
+            WithOwnedVfxAssets(
+                (root, source, target) =>
+                {
+                    string guid = UnityEditor.AssetDatabase.AssetPathToGUID(target);
+                    byte[] expected = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(source));
+                    JObject response = OverwriteVfx(root, target, source);
+                    Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                    CollectionAssert.AreEqual(expected, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(target)));
+                    Assert.AreEqual(guid, UnityEditor.AssetDatabase.AssetPathToGUID(target));
+                    Assert.IsEmpty(Directory.GetFiles(AssetPathUtility.GetFullAssetPath(root), "__McpVfxOverwrite_*"));
+                    UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+                }
+            );
+        }
+
         [TestCase("float")]
         [TestCase("int")]
         [TestCase("bool")]
@@ -155,7 +464,8 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("Infinity")]
         [TestCase("-Infinity")]
         [TestCase("1e100")]
-        public void NonfinitePlaybackRatePreservesNativeState(string token)
+        [TestCase("true")]
+        public void InvalidPlaybackRatePreservesNativeState(string token)
         {
             RequireEnabledGraph();
             float original = GetProperty<float>("playRate");
@@ -167,7 +477,6 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("{}", 1f)]
         [TestCase("{play_rate:0}", 0f)]
         [TestCase("{play_rate:'2.5'}", 2.5f)]
-        [TestCase("{play_rate:true}", 1f)]
         public void PlaybackDefaultZeroAndExistingConversionsRemainAccepted(string json, float expected)
         {
             RequireEnabledGraph();
