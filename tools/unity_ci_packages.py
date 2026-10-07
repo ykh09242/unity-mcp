@@ -28,6 +28,11 @@ PROFILES = Path(__file__).with_name("unity-ci-packages.json")
 PACKAGE_NAME = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+\Z")
 PACKAGE_VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?\Z")
 UNITY_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)([abfp])(\d+)\Z")
+TMP_REQUIRED_ASSETS = (
+    "Assets/TextMesh Pro/Resources/TMP Settings.asset",
+    "Assets/TextMesh Pro/Fonts/LiberationSans.ttf",
+    "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset",
+)
 
 
 class PackageSpec(TypedDict, total=False):
@@ -39,6 +44,9 @@ class ProfileSpec(TypedDict, total=False):
     unityFamilies: list[str]
     unityMajors: list[int]
     packages: dict[str, PackageSpec]
+    testables: list[str]
+    activeInputHandler: int
+    essentialResources: list[str]
 
 
 class JsonDocument(TypedDict, total=False):
@@ -50,6 +58,12 @@ class JsonDocument(TypedDict, total=False):
     schemaVersion: int
     requiredModules: list[str]
     profiles: dict[str, ProfileSpec]
+    optionalProfiles: dict[str, ProfileSpec]
+
+
+class MatrixRow(TypedDict):
+    version: str
+    channel: str
 
 
 class PreparationError(RuntimeError):
@@ -342,6 +356,199 @@ def nunit_reference_path(unity_version: str, package: ResolvedPackage, root: Pat
     return relative
 
 
+def optional_matches(config: JsonDocument, unity_version: str) -> list[tuple[str, ProfileSpec]]:
+    """Select reviewed optional integrations by exact Unity family, never by major alone."""
+    major, minor, _ = unity_numbers(unity_version)
+    return [
+        (name, profile)
+        for name, profile in config.get("optionalProfiles", {}).items()
+        if f"{major}.{minor}" in profile.get("unityFamilies", [])
+    ]
+
+
+def optional_matrix(manifest: Path, *, profiles_path: Path = PROFILES) -> list[MatrixRow]:
+    """Filter the existing validated Unity matrix without introducing separate version pins."""
+    config = read_json(profiles_path)
+    if config.get("schemaVersion") != 1:
+        raise PreparationError("Unsupported CI package profile schema")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(Path(__file__).with_name("unity_ci.py")),
+            "matrix",
+            "--manifest",
+            str(manifest),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rows: list[MatrixRow] = json.loads(result.stdout)
+    selected = []
+    for row in rows:
+        matching = optional_matches(config, row["version"])
+        if len(matching) > 1:
+            raise PreparationError(
+                f"Exactly one optional package profile required for Unity {row['version']}"
+            )
+        if matching:
+            selected.append(row)
+    if not selected:
+        raise PreparationError("No compatible Unity rows for optional package profiles")
+    return selected
+
+
+def apply_optional_settings(project: Path, profile: ProfileSpec) -> None:
+    """Enable both input backends only in the generated isolated project."""
+    if type(profile.get("activeInputHandler")) is not int or profile["activeInputHandler"] != 2:
+        raise PreparationError("Optional integrations require activeInputHandler: 2")
+    settings = project / "ProjectSettings/ProjectSettings.asset"
+    content = (
+        settings.read_text(encoding="utf-8")
+        if settings.is_file()
+        else ("%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!129 &1\nPlayerSettings:\n")
+    )
+    pattern = r"(?m)^([ \t]+activeInputHandler:)[^\r\n]*$"
+    count = len(re.findall(pattern, content))
+    if count > 1:
+        raise PreparationError("Ambiguous activeInputHandler setting in isolated project")
+    if count:
+        content = re.sub(pattern, r"\g<1> 2", content)
+    else:
+        player_settings = r"(?m)^PlayerSettings:[ \t]*$"
+        if len(re.findall(player_settings, content)) != 1:
+            raise PreparationError("Missing or ambiguous PlayerSettings in isolated project")
+        content = re.sub(player_settings, "PlayerSettings:\n  activeInputHandler: 2", content)
+    settings.write_text(content, encoding="utf-8")
+
+
+def tmp_resource_path(value: str) -> PurePosixPath:
+    """Validate Unity pathname records independently of the host path syntax."""
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or path.parts[:2] != ("Assets", "TextMesh Pro")
+        or any(character in value for character in '\\:<>"|?*')
+        or any(ord(character) < 32 for character in value)
+        or any(part.endswith((".", " ")) for part in path.parts)
+        or any(
+            re.fullmatch(r"(?i)(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", part)
+            for part in path.parts
+        )
+        or "/resources/gamedata/" in "/" + value.casefold() + "/"
+    ):
+        raise PreparationError(f"Unsafe TMP resource pathname: {value!r}")
+    return path
+
+
+def stage_tmp_essential_resources(project: Path, packages_root: Path) -> None:
+    """Stage the official uGUI TMP essentials only after validating the complete archive."""
+    archive_path = (
+        packages_root / "com.unity.ugui/Package Resources/TMP Essential Resources.unitypackage"
+    )
+    if not archive_path.is_file() or archive_path.is_symlink():
+        raise PreparationError(
+            "Required official TMP Essential Resources archive missing or linked"
+        )
+    if not project.is_dir() or project.is_symlink():
+        raise PreparationError("TMP resources require an existing isolated project directory")
+    groups: dict[str, dict[str, tarfile.TarInfo]] = {}
+    with tarfile.open(archive_path, "r:gz") as archive:
+        seen: set[str] = set()
+        for member in archive.getmembers():
+            path = PurePosixPath(member.name)
+            if (
+                path.is_absolute()
+                or ".." in path.parts
+                or "\\" in member.name
+                or ":" in member.name
+                or not (member.isdir() or member.isfile())
+                or (path.parts and not re.fullmatch(r"[0-9a-f]{32}", path.parts[0]))
+                or (member.isdir() and len(path.parts) > 1)
+                or (
+                    member.isfile()
+                    and (
+                        len(path.parts) != 2
+                        or path.name
+                        not in {"pathname", "asset", "asset.meta", "preview.png", "._asset"}
+                    )
+                )
+                or path.as_posix() in seen
+            ):
+                raise PreparationError(f"Unsafe TMP archive member: {member.name}")
+            seen.add(path.as_posix())
+            if path.parts:
+                group = groups.setdefault(path.parts[0], {})
+                if member.isfile():
+                    group[path.name] = member
+        planned: dict[str, tuple[PurePosixPath, bytes | None]] = {}
+        for guid, members in groups.items():
+            if not {"pathname", "asset.meta"} <= members.keys():
+                raise PreparationError(f"TMP resource requires pathname and asset.meta: {guid}")
+            payload = {}
+            for name, member in members.items():
+                if name in {"preview.png", "._asset"}:
+                    continue
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise PreparationError(f"TMP resource content missing: {guid}/{name}")
+                with stream:
+                    payload[name] = stream.read()
+            try:
+                path = tmp_resource_path(payload["pathname"].decode("utf-8"))
+                metadata = payload["asset.meta"].decode("utf-8")
+            except UnicodeError as error:
+                raise PreparationError(f"Invalid TMP resource metadata: {guid}") from error
+            if not re.search(rf"(?m)^guid: {guid}\r?$", metadata):
+                raise PreparationError(f"TMP resource GUID mismatch: {guid}")
+            directory = re.search(r"(?m)^folderAsset: yes\r?$", metadata) is not None
+            if directory == ("asset" in payload) or (not directory and not payload.get("asset")):
+                raise PreparationError(f"TMP resource asset is missing or empty: {path}")
+            for target, content in (
+                (path, None if directory else payload["asset"]),
+                (PurePosixPath(f"{path}.meta"), payload["asset.meta"]),
+            ):
+                key = target.as_posix().casefold()
+                if key in planned:
+                    raise PreparationError(f"Duplicate TMP resource pathname: {target}")
+                planned[key] = target, content
+        for required in TMP_REQUIRED_ASSETS:
+            resource = planned.get(required.casefold())
+            if resource is None or not resource[1]:
+                raise PreparationError(f"Required TMP resource missing or empty: {required}")
+        # Reject all file/folder collisions and linked ancestors before creating any output.
+        for path, content in planned.values():
+            destination = project.joinpath(*path.parts)
+            current = destination
+            while current != project.parent:
+                junction = getattr(current, "is_junction", lambda: False)()
+                if current.is_symlink() or junction:
+                    raise PreparationError(f"Linked TMP resource destination: {current}")
+                if (
+                    current.exists()
+                    and (current != destination or content is None)
+                    and not current.is_dir()
+                ):
+                    raise PreparationError(f"TMP resource ancestor is a file: {current}")
+                current = current.parent
+            if content is not None and destination.exists():
+                raise PreparationError(f"TMP resources cannot overwrite project files: {path}")
+            for parent in path.parents:
+                ancestor = planned.get(parent.as_posix().casefold())
+                if ancestor is not None and ancestor[1] is not None:
+                    raise PreparationError(f"TMP resource file/folder conflict: {parent}")
+        for path, content in planned.values():
+            destination = project.joinpath(*path.parts)
+            if content is None:
+                destination.mkdir(parents=True, exist_ok=True)
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("xb") as output:
+                    output.write(content)
+
+
 def prepare(
     unity_version: str,
     unity_data: Path,
@@ -350,6 +557,7 @@ def prepare(
     repo: Path = ROOT,
     profiles_path: Path = PROFILES,
     registry_cache: Path | None = None,
+    include_optional: bool = False,
 ) -> Preparation:
     major, minor, _ = unity_numbers(unity_version)
     config = read_json(profiles_path)
@@ -364,6 +572,22 @@ def prepare(
     if len(matching) != 1:
         raise PreparationError(f"Exactly one package profile required for Unity {unity_version}")
     profile_name, profile = matching[0]
+    optional_name, optional_profile = None, None
+    essential_resources: list[str] = []
+    if include_optional:
+        optional = optional_matches(config, unity_version)
+        if len(optional) != 1:
+            raise PreparationError(
+                f"Exactly one optional package profile required for Unity {unity_version}"
+            )
+        optional_name, optional_profile = optional[0]
+        essential_resources = optional_profile.get("essentialResources", [])
+        if (
+            not isinstance(essential_resources, list)
+            or any(resource != "textmeshpro" for resource in essential_resources)
+            or len(essential_resources) != len(set(essential_resources))
+        ):
+            raise PreparationError("Invalid or duplicate optional essential resource selector")
     repo, output = repo.resolve(), output.resolve()
     package_root = repo / "MCPForUnity"
     project_root = repo / "TestProjects" / "UnityMCPTests"
@@ -381,6 +605,8 @@ def prepare(
         raise PreparationError("Output path must not contain line breaks")
     original_package = read_json(package_root / "package.json")
     specs = dict(profile["packages"])
+    if optional_profile is not None:
+        specs.update(optional_profile["packages"])
     for name in config["requiredModules"]:
         specs[name] = {"source": "editor"}
     for name in original_package.get("dependencies", {}):
@@ -502,8 +728,19 @@ def prepare(
             for name, package in resolved.items()
         }
         dependencies[original_package["name"]] = "file:../../package"
+        manifest = {"dependencies": dependencies}
+        if optional_profile is not None:
+            testables = optional_profile.get("testables", [])
+            if not isinstance(testables, list) or any(
+                not isinstance(name, str) or name not in resolved for name in testables
+            ):
+                raise PreparationError("Optional testables must name resolved packages")
+            manifest["testables"] = testables
+            apply_optional_settings(project, optional_profile)
+            if "textmeshpro" in essential_resources:
+                stage_tmp_essential_resources(project, scratch / "packages")
         (project / "Packages" / "manifest.json").write_text(
-            json.dumps({"dependencies": dependencies}, indent=2) + "\n", encoding="utf-8"
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
         report = {
             "unityVersion": unity_version,
@@ -525,6 +762,8 @@ def prepare(
                 for package in sorted(resolved.values(), key=lambda item: item.name)
             ],
         }
+        if optional_name is not None:
+            report["optionalProfile"] = optional_name
         (scratch / "resolved-packages.json").write_text(
             json.dumps(report, indent=2) + "\n", encoding="utf-8"
         )
@@ -576,22 +815,40 @@ def copy_image_packages(image: str, destination: Path, *, unity_version: str | N
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare"])
-    parser.add_argument("--unity-version", required=True)
-    source = parser.add_mutually_exclusive_group(required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    preparation = commands.add_parser("prepare", help="Prepare an isolated Unity project")
+    preparation.add_argument("--unity-version", required=True)
+    source = preparation.add_mutually_exclusive_group(required=True)
     source.add_argument("--image")
     source.add_argument("--unity-data", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--registry-cache", type=Path)
-    parser.add_argument("--github-output", type=Path, default=os.environ.get("GITHUB_OUTPUT"))
+    preparation.add_argument("--output", type=Path, required=True)
+    preparation.add_argument("--registry-cache", type=Path)
+    preparation.add_argument("--github-output", type=Path, default=os.environ.get("GITHUB_OUTPUT"))
+    preparation.add_argument("--profiles", type=Path, default=PROFILES)
+    preparation.add_argument("--include-optional", action="store_true")
+    matrix = commands.add_parser(
+        "optional-matrix", help="Emit compatible optional integration rows"
+    )
+    matrix.add_argument(
+        "--manifest", type=Path, default=Path(__file__).with_name("unity-versions.json")
+    )
+    matrix.add_argument("--profiles", type=Path, default=PROFILES)
     args = parser.parse_args()
     try:
+        if args.command == "optional-matrix":
+            print(json.dumps(optional_matrix(args.manifest, profiles_path=args.profiles)))
+            return 0
         with tempfile.TemporaryDirectory(prefix="unity-ci-editor-") as temporary:
             data = args.unity_data or copy_image_packages(
                 args.image, Path(temporary), unity_version=args.unity_version
             )
             result = prepare(
-                args.unity_version, data, args.output, registry_cache=args.registry_cache
+                args.unity_version,
+                data,
+                args.output,
+                registry_cache=args.registry_cache,
+                profiles_path=args.profiles,
+                include_optional=args.include_optional,
             )
         if args.github_output:
             with args.github_output.open("a", encoding="utf-8") as output:

@@ -145,7 +145,10 @@ def environment(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
 
 
 def prepare(
-    environment: tuple[Path, Path, Path, Path], version: str = "6000.0.69f1"
+    environment: tuple[Path, Path, Path, Path],
+    version: str = "6000.0.69f1",
+    *,
+    include_optional: bool = False,
 ) -> packages.Preparation:
     repo, data, cache, profiles = environment
     return packages.prepare(
@@ -155,7 +158,475 @@ def prepare(
         repo=repo,
         profiles_path=profiles,
         registry_cache=cache,
+        include_optional=include_optional,
     )
+
+
+def add_optional_profile(environment: tuple[Path, Path, Path, Path]) -> None:
+    """Provide reviewed optional packages without relying on live registry/editor state."""
+    _, data, cache, profiles = environment
+    builtin = data / "Resources/PackageManager/BuiltInPackages"
+    make_package(
+        builtin, "com.unity.inputsystem", "1.14.0", {"com.unity.modules.jsonserialize": "1.0.0"}
+    )
+    make_package(builtin, "com.unity.modules.jsonserialize", "1.0.0")
+    navigation = make_package(cache, "com.unity.ai.navigation@2.0.9", "2.0.9", unity="6000.0")
+    metadata = json.loads((navigation / "package.json").read_text(encoding="utf-8"))
+    metadata["name"] = "com.unity.ai.navigation"
+    (navigation / "package.json").write_text(json.dumps(metadata), encoding="utf-8")
+    config = json.loads(profiles.read_text(encoding="utf-8"))
+    config["optionalProfiles"] = {
+        "unity-six-lts": {
+            "unityFamilies": ["6000.0"],
+            "packages": {
+                "com.unity.inputsystem": {"source": "editor"},
+                "com.unity.ai.navigation": {"source": "registry", "version": "2.0.9"},
+            },
+            "testables": ["com.unity.inputsystem"],
+            "activeInputHandler": 2,
+        }
+    }
+    profiles.write_text(json.dumps(config), encoding="utf-8")
+
+
+TMP_ASSETS = (
+    "Assets/TextMesh Pro/Resources/TMP Settings.asset",
+    "Assets/TextMesh Pro/Fonts/LiberationSans.ttf",
+    "Assets/TextMesh Pro/Resources/Fonts & Materials/LiberationSans SDF.asset",
+)
+
+
+def make_tmp_archive(
+    packages_root: Path,
+    paths: tuple[str, ...] = TMP_ASSETS,
+    *,
+    empty: bool = False,
+    extra: tuple[str, bytes] | None = None,
+    omit_meta: bool = False,
+    folder: bool = False,
+) -> Path:
+    archive_path = (
+        packages_root / "com.unity.ugui/Package Resources/TMP Essential Resources.unitypackage"
+    )
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, "w:gz") as archive:
+        for index, path in enumerate((*paths, "Assets/TextMesh Pro") if folder else paths):
+            guid = f"{index + 1:032x}"
+            directory = folder and index == len(paths)
+            entries = {
+                "pathname": path.encode(),
+            }
+            if not directory:
+                entries["asset"] = b"" if empty else f"resource-{index}".encode()
+            if not omit_meta:
+                entries["asset.meta"] = (
+                    f"fileFormatVersion: 2\nguid: {guid}\n"
+                    + ("folderAsset: yes\n" if directory else "")
+                ).encode()
+            for name, content in entries.items():
+                member = tarfile.TarInfo(f"./{guid}/{name}")
+                member.size = len(content)
+                archive.addfile(member, io.BytesIO(content))
+        if extra is not None:
+            member = tarfile.TarInfo(extra[0])
+            member.type = extra[1]
+            archive.addfile(member)
+    return archive_path
+
+
+def test_optional_tmp_essentials_stage_only_generated_assets_and_preserve_guids(
+    environment: tuple[Path, Path, Path, Path],
+) -> None:
+    repo, data, _, profiles = environment
+    add_optional_profile(environment)
+    make_tmp_archive(data / "Resources/PackageManager/BuiltInPackages", folder=True)
+    config = json.loads(profiles.read_text(encoding="utf-8"))
+    config["optionalProfiles"]["unity-six-lts"]["essentialResources"] = ["textmeshpro"]
+    profiles.write_text(json.dumps(config), encoding="utf-8")
+    source = repo / "TestProjects/UnityMCPTests"
+    originals = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+    result = prepare(environment, include_optional=True)
+    project = repo / result.project_path
+    for index, path in enumerate(TMP_ASSETS):
+        assert (project / path).read_bytes() == f"resource-{index}".encode()
+        assert f"guid: {index + 1:032x}" in (project / f"{path}.meta").read_text()
+        assert not (source / path).exists()
+    assert not (project / "Assets/TextMesh Pro/Examples & Extras").exists()
+    assert (
+        "guid: 00000000000000000000000000000004"
+        in (project / "Assets/TextMesh Pro.meta").read_text()
+    )
+    for path, content in originals.items():
+        assert path.read_bytes() == content
+
+
+@pytest.mark.parametrize("selector", [["unknown"], ["textmeshpro", "textmeshpro"], "textmeshpro"])
+def test_optional_essential_selectors_rejected_before_copying(
+    environment: tuple[Path, Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    selector,
+) -> None:
+    _, _, _, profiles = environment
+    add_optional_profile(environment)
+    config = json.loads(profiles.read_text(encoding="utf-8"))
+    config["optionalProfiles"]["unity-six-lts"]["essentialResources"] = selector
+    profiles.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(packages, "copy_source", lambda *args: pytest.fail("unexpected copy"))
+    with pytest.raises(packages.PreparationError, match="resource"):
+        prepare(environment, include_optional=True)
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "../escape",
+        "/Assets/escape",
+        "C:/escape",
+        "C:\\escape",
+        "\\\\server\\escape",
+        "Assets/TextMesh Pro/../escape",
+        "Assets/TextMesh Pro/Resources/GameData/escape",
+        "Assets/TextMesh Pro/CON.asset",
+        "Assets/TextMesh Pro/Fonts/unsafe. ",
+    ],
+)
+def test_tmp_essential_pathnames_preflight_all_entries_before_writing(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    project = tmp_path / "project"
+    (project / "Assets").mkdir(parents=True)
+    package_root = tmp_path / "packages"
+    make_tmp_archive(package_root, (*TMP_ASSETS, unsafe))
+    with pytest.raises(packages.PreparationError):
+        packages.stage_tmp_essential_resources(project, package_root)
+    assert list((project / "Assets").iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "name,kind",
+    [
+        ("../escape", tarfile.REGTYPE),
+        ("/absolute", tarfile.REGTYPE),
+        ("C:\\escape", tarfile.REGTYPE),
+        ("./" + "f" * 32 + "/asset", tarfile.SYMTYPE),
+        ("./" + "f" * 32 + "/asset", tarfile.LNKTYPE),
+    ],
+)
+def test_tmp_essential_archive_rejects_unsafe_members(
+    tmp_path: Path,
+    name: str,
+    kind: bytes,
+) -> None:
+    project = tmp_path / "project"
+    (project / "Assets").mkdir(parents=True)
+    make_tmp_archive(tmp_path / "packages", extra=(name, kind))
+    with pytest.raises(packages.PreparationError):
+        packages.stage_tmp_essential_resources(project, tmp_path / "packages")
+    assert list((project / "Assets").iterdir()) == []
+
+
+def test_tmp_essential_ignores_official_appledouble_metadata(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    (project / "Assets").mkdir(parents=True)
+    make_tmp_archive(
+        tmp_path / "packages", extra=("./" + f"{1:032x}" + "/._asset", tarfile.REGTYPE)
+    )
+    packages.stage_tmp_essential_resources(project, tmp_path / "packages")
+    assert (project / TMP_ASSETS[0]).read_bytes() == b"resource-0"
+    assert not list(project.rglob("._asset"))
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing-archive",
+        "empty-archive",
+        "empty",
+        "missing-required",
+        "missing-meta",
+        "overwrite",
+        "meta-overwrite",
+        "ancestor-file",
+        "duplicate",
+    ],
+)
+def test_tmp_essential_missing_or_conflicting_inputs_leave_project_unchanged(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    project = tmp_path / "project"
+    (project / "Assets").mkdir(parents=True)
+    package_root = tmp_path / "packages"
+    if failure != "missing-archive":
+        paths = TMP_ASSETS[:2] if failure == "missing-required" else TMP_ASSETS
+        if failure == "empty-archive":
+            paths = ()
+        if failure == "duplicate":
+            paths = (*paths, paths[0])
+        make_tmp_archive(
+            package_root, paths, empty=failure == "empty", omit_meta=failure == "missing-meta"
+        )
+    if failure == "overwrite":
+        target = project / TMP_ASSETS[0]
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"source-project-content")
+    if failure == "meta-overwrite":
+        target = project / f"{TMP_ASSETS[0]}.meta"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"source-project-guid")
+    if failure == "ancestor-file":
+        (project / "Assets/TextMesh Pro").write_bytes(b"source-project-file")
+    originals = {path: path.read_bytes() for path in project.rglob("*") if path.is_file()}
+    with pytest.raises(packages.PreparationError):
+        packages.stage_tmp_essential_resources(project, package_root)
+    assert {path: path.read_bytes() for path in project.rglob("*") if path.is_file()} == originals
+
+
+def test_tmp_essential_rejects_linked_destination_before_any_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    (project / "Assets").mkdir(parents=True)
+    make_tmp_archive(tmp_path / "packages")
+    original = Path.is_symlink
+    linked = project / "Assets/TextMesh Pro/Fonts"
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == linked or original(path))
+    with pytest.raises(packages.PreparationError, match="Linked"):
+        packages.stage_tmp_essential_resources(project, tmp_path / "packages")
+    assert list((project / "Assets").iterdir()) == []
+
+
+@pytest.mark.parametrize("existing_setting", ["absent", "present", "missing-key"])
+def test_optional_profile_materializes_dependencies_and_changes_only_isolated_settings(
+    environment: tuple[Path, Path, Path, Path], existing_setting: str
+) -> None:
+    repo, _, _, _ = environment
+    add_optional_profile(environment)
+    source = repo / "TestProjects/UnityMCPTests"
+    settings = source / "ProjectSettings/ProjectSettings.asset"
+    if existing_setting != "absent":
+        input_handler = "  activeInputHandler: 0\n" if existing_setting == "present" else ""
+        settings.write_text(
+            f"%YAML 1.1\n--- !u!129 &1\nPlayerSettings:\n{input_handler}  companyName: Keep\n",
+            encoding="utf-8",
+        )
+    originals = {
+        path: path.read_bytes()
+        for path in (
+            source / "Packages/manifest.json",
+            source / "Packages/packages-lock.json",
+            source / "ProjectSettings/ProjectVersion.txt",
+        )
+    }
+    if existing_setting != "absent":
+        originals[settings] = settings.read_bytes()
+    result = prepare(environment, include_optional=True)
+    project = repo / result.project_path
+    manifest = json.loads((project / "Packages/manifest.json").read_text(encoding="utf-8"))
+    assert manifest["testables"] == ["com.unity.inputsystem"]
+    assert {
+        "com.unity.inputsystem",
+        "com.unity.ai.navigation",
+        "com.unity.modules.jsonserialize",
+    } <= manifest["dependencies"].keys()
+    generated = (project / "ProjectSettings/ProjectSettings.asset").read_text(encoding="utf-8")
+    assert generated.count("activeInputHandler: 2") == 1
+    if existing_setting != "absent":
+        assert "companyName: Keep" in generated
+    else:
+        assert "PlayerSettings:" in generated
+        assert not settings.exists()
+    report = json.loads((repo / result.resolution_report).read_text(encoding="utf-8"))
+    assert report["optionalProfile"] == "unity-six-lts"
+    for path, content in originals.items():
+        assert path.read_bytes() == content
+
+
+def test_optional_profile_is_opt_in_and_base_output_is_unchanged(
+    environment: tuple[Path, Path, Path, Path],
+) -> None:
+    repo, _, _, _ = environment
+    add_optional_profile(environment)
+    settings = repo / "TestProjects/UnityMCPTests/ProjectSettings/ProjectSettings.asset"
+    original = b"%YAML 1.1\n--- !u!129 &1\nPlayerSettings:\n  activeInputHandler: 0\n"
+    settings.write_bytes(original)
+    result = prepare(environment)
+    project = repo / result.project_path
+    manifest = json.loads((project / "Packages/manifest.json").read_text(encoding="utf-8"))
+    assert "testables" not in manifest
+    assert "com.unity.inputsystem" not in manifest["dependencies"]
+    assert "com.unity.ai.navigation" not in manifest["dependencies"]
+    assert (project / "ProjectSettings/ProjectSettings.asset").read_bytes() == original
+    assert settings.read_bytes() == original
+    report = json.loads((repo / result.resolution_report).read_text(encoding="utf-8"))
+    assert "optionalProfile" not in report
+
+
+def test_optional_overlay_replaces_base_package_spec_before_dependency_resolution(
+    environment: tuple[Path, Path, Path, Path],
+) -> None:
+    repo, _, _, profiles = environment
+    add_optional_profile(environment)
+    config = json.loads(profiles.read_text(encoding="utf-8"))
+    config["profiles"]["modern"]["packages"]["com.unity.inputsystem"] = {
+        "source": "registry",
+        "version": "99.0.0",
+    }
+    profiles.write_text(json.dumps(config), encoding="utf-8")
+    result = prepare(environment, include_optional=True)
+    report = json.loads((repo / result.resolution_report).read_text(encoding="utf-8"))
+    resolved = {item["name"]: item for item in report["packages"]}
+    assert resolved["com.unity.inputsystem"]["source"] == "editor"
+    assert resolved["com.unity.inputsystem"]["version"] == "1.14.0"
+    assert "com.unity.modules.jsonserialize" in resolved
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_optional_profile_requires_exactly_one_family_match_before_output_creation(
+    environment: tuple[Path, Path, Path, Path], ambiguous: bool
+) -> None:
+    repo, _, _, profiles = environment
+    add_optional_profile(environment)
+    config = json.loads(profiles.read_text(encoding="utf-8"))
+    profile = config["optionalProfiles"]["unity-six-lts"]
+    if ambiguous:
+        config["optionalProfiles"]["duplicate"] = profile
+    else:
+        profile["unityFamilies"] = ["6000.3"]
+    profiles.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(packages.PreparationError, match="Exactly one optional package profile"):
+        prepare(environment, include_optional=True)
+    assert not (repo / ".unity-ci/6000.0.69f1").exists()
+
+
+def test_optional_matrix_selects_existing_compatible_version_rows(
+    environment: tuple[Path, Path, Path, Path],
+) -> None:
+    _, _, _, profiles = environment
+    add_optional_profile(environment)
+    rows = packages.optional_matrix(ROOT / "tools/unity-versions.json", profiles_path=profiles)
+    manifest = json.loads((ROOT / "tools/unity-versions.json").read_text(encoding="utf-8"))
+    expected = [
+        {"version": row["id"], "channel": row["channel"]}
+        for row in manifest["versions"]
+        if row["id"].startswith("6000.0.")
+    ]
+    assert rows == expected
+    assert rows
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_optional_matrix_rejects_missing_or_ambiguous_compatible_profiles(
+    environment: tuple[Path, Path, Path, Path], ambiguous: bool
+) -> None:
+    _, _, _, profiles = environment
+    add_optional_profile(environment)
+    config = json.loads(profiles.read_text(encoding="utf-8"))
+    profile = config["optionalProfiles"]["unity-six-lts"]
+    if ambiguous:
+        config["optionalProfiles"]["duplicate"] = profile
+    else:
+        profile["unityFamilies"] = ["9999.0"]
+    profiles.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(packages.PreparationError, match="optional"):
+        packages.optional_matrix(ROOT / "tools/unity-versions.json", profiles_path=profiles)
+
+
+def test_optional_matrix_cli_emits_rows_without_preparing_editor(
+    environment: tuple[Path, Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, _, _, profiles = environment
+    add_optional_profile(environment)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "unity_ci_packages.py",
+            "optional-matrix",
+            "--profiles",
+            str(profiles),
+        ],
+    )
+    monkeypatch.setattr(
+        packages,
+        "copy_image_packages",
+        lambda *args, **kwargs: pytest.fail("unexpected Docker operation"),
+    )
+    monkeypatch.setattr(
+        packages, "prepare", lambda *args, **kwargs: pytest.fail("unexpected project preparation")
+    )
+    assert packages.main() == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows
+    assert all(row["version"].startswith("6000.0.") for row in rows)
+    assert all(set(row) == {"version", "channel"} for row in rows)
+
+
+def test_prepare_cli_forwards_optional_opt_in(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    profiles = tmp_path / "profiles.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "unity_ci_packages.py",
+            "prepare",
+            "--unity-version",
+            "6000.0.84f1",
+            "--unity-data",
+            str(tmp_path),
+            "--output",
+            ".unity-ci/optional",
+            "--profiles",
+            str(profiles),
+            "--include-optional",
+        ],
+    )
+    calls = []
+
+    def record(*args, **kwargs):
+        calls.append((args, kwargs))
+        return packages.Preparation("refs", "framework", "project", "receipt", "coroutines")
+
+    monkeypatch.setattr(packages, "prepare", record)
+    assert packages.main() == 0
+    assert len(calls) == 1
+    assert calls[0][1]["include_optional"] is True
+    assert calls[0][1]["profiles_path"] == profiles
+
+
+@pytest.mark.parametrize("missing", ["--unity-version", "--unity-data", "--output"])
+def test_prepare_cli_still_requires_existing_arguments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    arguments = {
+        "--unity-version": "6000.0.84f1",
+        "--unity-data": str(tmp_path),
+        "--output": ".unity-ci/optional",
+    }
+    del arguments[missing]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "unity_ci_packages.py",
+            "prepare",
+            "--include-optional",
+            *(part for pair in arguments.items() for part in pair),
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        packages.main()
+    assert error.value.code == 2
 
 
 def test_modern_profile_uses_editor_framework_and_preserves_originals(
