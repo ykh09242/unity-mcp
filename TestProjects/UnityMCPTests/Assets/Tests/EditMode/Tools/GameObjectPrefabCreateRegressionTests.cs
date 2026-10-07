@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -14,50 +15,69 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class GameObjectPrefabCreateRegressionTests
     {
-        private Scene originalScene;
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene ownedScene;
         private Object[] originalSelection;
         private Object originalActiveObject;
         private string assetRoot;
+        private string assetRootGuid;
+
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
-            originalScene = SceneManager.GetActiveScene();
             originalSelection = Selection.objects;
             originalActiveObject = Selection.activeObject;
             ownedScene = default;
             assetRoot = null;
-            if (Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).Any(scene => scene.isLoaded && string.IsNullOrEmpty(scene.path)))
-                Assert.Ignore("Requires saved open scenes so an isolated additive test scene can be created without saving user scenes.");
+            assetRootGuid = null;
+            var anchor = sceneFixture.Create("McpPrefabCreateAnchor_", Guid.NewGuid().ToString("N"));
+            assetRoot = "Assets/PrefabCreateRegression_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
+            assetRootGuid = AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length));
+            Assert.IsNotEmpty(assetRootGuid);
+            // A saved owned anchor allows the instance scene to close and reopen without touching user scenes.
+            Assert.IsTrue(EditorSceneManager.SaveScene(anchor, assetRoot + "/" + anchor.name + ".unity"));
             ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             SceneManager.SetActiveScene(ownedScene);
-            assetRoot = "Assets/PrefabCreateRegression_" + Guid.NewGuid().ToString("N");
-            Assert.IsNotEmpty(AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length)));
         }
 
         [TearDown]
         public void TearDown()
         {
-            if (ownedScene.IsValid() && ownedScene.isLoaded)
+            try
             {
-                foreach (var root in ownedScene.GetRootGameObjects())
+                if (ownedScene.IsValid() && ownedScene.isLoaded)
                 {
-                    foreach (var transform in root.GetComponentsInChildren<Transform>(true))
+                    foreach (var root in ownedScene.GetRootGameObjects())
                     {
-                        Undo.ClearUndo(transform.gameObject);
-                        Undo.ClearUndo(transform);
+                        foreach (var transform in root.GetComponentsInChildren<Transform>(true))
+                        {
+                            Undo.ClearUndo(transform.gameObject);
+                            Undo.ClearUndo(transform);
+                        }
+                        Object.DestroyImmediate(root);
                     }
-                    Object.DestroyImmediate(root);
+                    Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
                 }
-                EditorSceneManager.CloseScene(ownedScene, true);
+                sceneFixture.Close();
+                if (!string.IsNullOrEmpty(assetRootGuid))
+                {
+                    StringAssert.StartsWith("Assets/PrefabCreateRegression_", assetRoot);
+                    Assert.AreEqual(assetRootGuid, AssetDatabase.AssetPathToGUID(assetRoot));
+                    Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
+                }
             }
-            if (originalScene.IsValid() && originalScene.isLoaded)
-                SceneManager.SetActiveScene(originalScene);
-            Selection.objects = originalSelection;
-            Selection.activeObject = originalActiveObject;
-            if (!string.IsNullOrEmpty(assetRoot) && AssetDatabase.IsValidFolder(assetRoot))
-                AssetDatabase.DeleteAsset(assetRoot);
+            finally
+            {
+                Selection.objects = originalSelection;
+                Selection.activeObject = originalActiveObject;
+            }
         }
 
         [TestCase(false)]
