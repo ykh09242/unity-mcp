@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.ProBuilder;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -22,6 +23,7 @@ namespace MCPForUnityTests.Editor.Tools
         private readonly HashSet<GameObject> ownedObjects = new();
         private readonly HashSet<Mesh> ownedMeshes = new();
         private readonly HashSet<Material> ownedMaterials = new();
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene originalScene;
         private Scene ownedScene;
         private UnityEngine.Object[] originalSelection;
@@ -29,6 +31,12 @@ namespace MCPForUnityTests.Editor.Tools
         private bool captured;
         private Type realMeshType;
         private const BindingFlags Fields = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -60,8 +68,7 @@ namespace MCPForUnityTests.Editor.Tools
             Set("_pivotLocationType", PackageType("UnityEngine.ProBuilder.PivotLocation"));
             Set("_appendElementsType", PackageType("UnityEngine.ProBuilder.MeshOperations.AppendElements"));
             Set("_meshImporterType", PackageType("UnityEngine.ProBuilder.MeshOperations.MeshImporter"));
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            ownedScene = sceneFixture.Create("McpProBuilderCreation_", Guid.NewGuid().ToString("N"));
             ProBuilderCreationFaultMesh.ThrowRefresh = false;
             ProBuilderCreationFaultPolygon.Throw = false;
             ProBuilderCreationFaultPolygon.Status = "Success";
@@ -93,7 +100,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (ownedScene.IsValid() && ownedScene.isLoaded)
                 {
                     Assert.AreEqual(0, ownedScene.rootCount, "Unexpected roots retained for diagnosis.");
-                    Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
+                    sceneFixture.Close();
                 }
             }
             finally

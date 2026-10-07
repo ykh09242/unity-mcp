@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -17,6 +18,7 @@ namespace MCPForUnityTests.Editor.Tools
     public class CameraConfigurationIntegrityTests
     {
         private readonly List<GameObject> objects = new List<GameObject>();
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene originalScene;
         private Scene ownedScene;
         private Object originalSelection;
@@ -31,6 +33,12 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static FieldInfo OverrideId => typeof(CameraControl).GetField("_overrideId", BindingFlags.NonPublic | BindingFlags.Static);
         private static FieldInfo OverrideBrain => typeof(CameraControl).GetField("_overrideBrain", BindingFlags.NonPublic | BindingFlags.Static);
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -54,8 +62,7 @@ namespace MCPForUnityTests.Editor.Tools
             originalSelection = Selection.activeObject;
             originalSelections = Selection.objects;
             capturedState = true;
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            ownedScene = sceneFixture.Create("McpCameraConfiguration_", Guid.NewGuid().ToString("N"));
             target = Owned("Camera");
             camera = target.AddComponent(CameraHelpers.CinemachineCameraType);
             if (camera is Behaviour behaviour)
@@ -158,7 +165,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (originalScene.IsValid() && originalScene.isLoaded)
                     SceneManager.SetActiveScene(originalScene);
                 if (ownedScene.IsValid() && ownedScene.isLoaded)
-                    EditorSceneManager.CloseScene(ownedScene, true);
+                    sceneFixture.Close();
                 capturedState = false;
             }
         }
