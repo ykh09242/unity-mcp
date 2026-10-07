@@ -251,8 +251,8 @@ async def main():
                     content = await client.read_resource('mcpforunity://menu-items')
                     decoded = json.loads(content[0].text)
                     sent = requests[before:]
-                    check(sent == [('Project@fixture', 'get_menu_items', {'refresh': True, 'search': ''})],
-                          'resource exact fixed request')
+                    check(sent == [('Project@fixture', 'get_menu_items', {'refresh': False, 'search': ''})],
+                          'ordinary resource reads reuse the editor menu cache')
                     check(decoded == model_response(response), 'registered typed resource/error serialization')
                     print('SDK_WIRE', json.dumps({'mode': mode, 'resource': 'mcpforunity://menu-items',
                                                  'wires': sent, 'response': decoded}))
