@@ -200,16 +200,17 @@ namespace MCPForUnity.Editor.Helpers
             error = null;
             rejectedValue = false;
 
-            // Skip reflection for UnityEngine.Object types with JObject values
-            // so SerializedProperty can resolve guid/spriteName/fileID forms.
-            bool isJObjectValue = value != null && value.Type == JTokenType.Object;
+            // Resolve integer IDs through the same typed SerializedProperty path as object forms.
+            // The shared JSON converter accepts object-form IDs but cannot read bare integers.
+            bool isObjectReferenceValue = value != null &&
+                (value.Type == JTokenType.Object || value.Type == JTokenType.Integer);
 
             // Try property first
             PropertyInfo propInfo = type.GetProperty(propertyName, flags)
                                  ?? type.GetProperty(normalizedName, flags);
             if (propInfo != null && propInfo.CanWrite)
             {
-                if (isJObjectValue && typeof(UnityEngine.Object).IsAssignableFrom(propInfo.PropertyType))
+                if (isObjectReferenceValue && typeof(UnityEngine.Object).IsAssignableFrom(propInfo.PropertyType))
                 {
                     // Let SerializedProperty path handle complex object references.
                     return false;
@@ -240,7 +241,7 @@ namespace MCPForUnity.Editor.Helpers
                                ?? type.GetField(normalizedName, flags);
             if (fieldInfo != null && !fieldInfo.IsInitOnly)
             {
-                if (isJObjectValue && typeof(UnityEngine.Object).IsAssignableFrom(fieldInfo.FieldType))
+                if (isObjectReferenceValue && typeof(UnityEngine.Object).IsAssignableFrom(fieldInfo.FieldType))
                 {
                     // Let SerializedProperty path handle complex object references.
                     return false;
@@ -271,7 +272,7 @@ namespace MCPForUnity.Editor.Helpers
                      ?? FindSerializedFieldInHierarchy(type, normalizedName);
             if (fieldInfo != null)
             {
-                if (isJObjectValue && typeof(UnityEngine.Object).IsAssignableFrom(fieldInfo.FieldType))
+                if (isObjectReferenceValue && typeof(UnityEngine.Object).IsAssignableFrom(fieldInfo.FieldType))
                 {
                     // Let SerializedProperty path handle complex object references.
                     return false;
