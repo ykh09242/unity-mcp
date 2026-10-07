@@ -101,7 +101,7 @@ Static-header clients still need **Configure** and reconnect after server token 
 
 ### Stdio
 
-Unity package 1.2.1 uses the unchanged Python server 1.2.0 at the following immutable source. Other releases keep their own source pins; use the installed package's `mcpServerSource`:
+This beta checkout uses the following immutable server source. Unity and Python package version numbers are independent. Published stable releases keep their own source pins; use the installed package's `mcpServerSource`:
 
 ```json
 {
@@ -112,7 +112,7 @@ Unity package 1.2.1 uses the unchanged Python server 1.2.0 at the following immu
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/e22e0b16b922b01e7efc0be66506d9e738d2cb4f.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/aa74c10ee221e11997ba03e19ffa0c8f7ff0d983.zip#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
@@ -124,7 +124,7 @@ Unity package 1.2.1 uses the unchanged Python server 1.2.0 at the following immu
 
 If `uvx` is not on the client's PATH, use its verified absolute path. For another package revision, use **that installed package's** `mcpServerSource`; do not retain this example's pin accidentally. Stdio does not use the local HTTP token header.
 
-After updating the Editor package, regenerate the stdio client configuration and restart the Editor and client connection. The internal loopback bridge authenticates with automatically supplied per-launch credentials. Servers from before 1.2.0 cannot connect to this bridge; package 1.2.1 retains the compatible 1.2.0 server.
+After updating the Editor package, restart the client's MCP connection to load its selected server. Use **Configure** when intentionally changing the generated source; preserve deliberate manual pins. The internal loopback bridge authenticates with automatically supplied per-launch credentials. Select the server source from the installed package rather than inferring compatibility from its version label.
 
 ## Confirm the connection and target
 
