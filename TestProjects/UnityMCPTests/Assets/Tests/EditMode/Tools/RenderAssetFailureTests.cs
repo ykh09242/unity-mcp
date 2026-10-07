@@ -98,7 +98,7 @@ namespace MCPForUnityTests.Editor.Tools
             JObject response = SetRendererColor(mode, slot);
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
-            Assert.AreSame(_material, renderer.sharedMaterial);
+            Assert.AreEqual(_material.GetInstanceIDCompat(), renderer.sharedMaterial.GetInstanceIDCompat());
             Assert.AreEqual(originalColor, _material.GetColor(property));
             Assert.IsFalse(File.Exists(AbsolutePath(_generatedMaterialPath)));
         }

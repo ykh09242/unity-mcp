@@ -264,7 +264,8 @@ namespace MCPForUnityTests.Editor.Tools
             bool ok = ComponentOps.SetProperty(comp, "onSimpleEvent", invalid, out string error);
 
             Assert.IsFalse(ok);
-            StringAssert.Contains("Expected boolean value", error);
+            StringAssert.Contains("m_BoolArgument", error);
+            StringAssert.Contains("expected Boolean", error);
             using var so = new SerializedObject(comp);
             Assert.IsTrue(
                 so.FindProperty("onSimpleEvent.m_PersistentCalls.m_Calls")
