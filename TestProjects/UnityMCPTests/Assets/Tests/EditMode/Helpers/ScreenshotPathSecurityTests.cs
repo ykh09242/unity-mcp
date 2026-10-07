@@ -3,14 +3,84 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
     public class ScreenshotPathSecurityTests
     {
+        private readonly PrefabTestSceneFixture _batchSceneFixture = new PrefabTestSceneFixture();
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => _batchSceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => _batchSceneFixture.RestoreRunnerBootstrap();
+
+        [TestCase("surround", "__MCP_MultiAngle_Temp_Camera__", 6)]
+        [TestCase("orbit", "__MCP_OrbitCapture_Temp_Camera__", 1)]
+        public void InvalidBatchFolderIsRejectedBeforeAnyCameraRender(string batch, string temporaryCameraName, int expectedShots)
+        {
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+                Assert.Ignore("Render-event regression requires a real graphics device.");
+            Assert.IsNull(GameObject.Find(temporaryCameraName), "An unowned capture camera is already present.");
+            string folder = "Temp/McpBatchPreflight-" + Guid.NewGuid().ToString("N");
+            string absoluteFolder = Path.Combine(Path.GetDirectoryName(Application.dataPath), folder);
+            int renderEvents = 0;
+            Camera.CameraCallback onRender = camera =>
+            {
+                if (camera != null && camera.gameObject.name == temporaryCameraName)
+                    renderEvents++;
+            };
+            Action<ScriptableRenderContext, Camera> onPipelineRender = (context, camera) => onRender(camera);
+            var originalActive = RenderTexture.active;
+            Camera.onPreRender += onRender;
+            RenderPipelineManager.beginCameraRendering += onPipelineRender;
+            try
+            {
+                _batchSceneFixture.Create("McpBatchPreflight_", Guid.NewGuid().ToString("N"));
+                var request = new JObject
+                {
+                    ["action"] = "screenshot",
+                    ["batch"] = batch,
+                    ["viewTarget"] = new JArray(0, 0, 0),
+                    ["maxResolution"] = 32,
+                    ["orbitAngles"] = 1,
+                    ["orbitElevations"] = new JArray(0),
+                    ["outputFolder"] = folder,
+                };
+                var valid = JObject.FromObject(ManageScene.HandleCommand(request));
+                Assert.IsTrue(valid.Value<bool>("success"), valid.ToString());
+                Assert.GreaterOrEqual(renderEvents, expectedShots, "The callback must observe real public batch renders before testing their absence.");
+                Assert.AreEqual(expectedShots, ((JArray)valid["data"]["shots"]).Count);
+                Assert.IsFalse(Directory.Exists(absoluteFolder), "Inline contact sheets must not create output folders.");
+                Assert.IsNull(GameObject.Find(temporaryCameraName));
+                Assert.AreSame(originalActive, RenderTexture.active);
+
+                renderEvents = 0;
+                request["outputFolder"] = "../McpBatchEscape-" + Guid.NewGuid().ToString("N");
+                var invalid = JObject.FromObject(ManageScene.HandleCommand(request));
+
+                Assert.IsFalse(invalid.Value<bool>("success"), invalid.ToString());
+                StringAssert.Contains("Screenshot folder", invalid.ToString());
+                Assert.AreEqual(0, renderEvents, "Invalid output paths must be rejected before rendering any capture tile.");
+                Assert.IsFalse(Directory.Exists(absoluteFolder));
+                Assert.IsNull(GameObject.Find(temporaryCameraName));
+                Assert.AreSame(originalActive, RenderTexture.active);
+            }
+            finally
+            {
+                Camera.onPreRender -= onRender;
+                RenderPipelineManager.beginCameraRendering -= onPipelineRender;
+                _batchSceneFixture.Close();
+            }
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool CreateSymbolicLinkW(string link, string target, int flags);

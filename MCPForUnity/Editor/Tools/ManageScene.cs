@@ -1050,6 +1050,8 @@ namespace MCPForUnity.Editor.Tools
                     ("bird_eye", new Vector3(center.x + radius * 0.7f, center.y + radius * 0.7f, center.z - radius * 0.7f)),
                 };
 
+                string outputFolder = ResolveAbsoluteOutputFolder(cmd.outputFolder);
+
                 // Create a temporary camera
                 var tempGo = new GameObject("__MCP_MultiAngle_Temp_Camera__");
                 Camera tempCam = tempGo.AddComponent<Camera>();
@@ -1082,7 +1084,6 @@ namespace MCPForUnity.Editor.Tools
 
                     var (compositeB64, compW, compH) = ScreenshotUtility.ComposeContactSheet(tiles, tileLabels);
 
-                    string outputFolder = ResolveAbsoluteOutputFolder(cmd.outputFolder);
                     return new SuccessResponse(
                         $"Captured {shotMeta.Count} multi-angle screenshots as contact sheet ({compW}x{compH}). Scene bounds center: ({center.x:F1}, {center.y:F1}, {center.z:F1}), radius: {radius:F1}.",
                         new
@@ -1191,6 +1192,8 @@ namespace MCPForUnity.Editor.Tools
                     radius = cmd.orbitDistance ?? Mathf.Max(bounds.extents.magnitude * 2.0f, 3f);
                 }
 
+                string outputFolder = ResolveAbsoluteOutputFolder(cmd.outputFolder);
+
                 // Create a temporary camera
                 var tempGo = new GameObject("__MCP_OrbitCapture_Temp_Camera__");
                 Camera tempCam = tempGo.AddComponent<Camera>();
@@ -1255,7 +1258,6 @@ namespace MCPForUnity.Editor.Tools
                     // Compose all tiles into a single contact-sheet grid image
                     var (compositeB64, compW, compH) = ScreenshotUtility.ComposeContactSheet(tiles, tileLabels);
 
-                    string outputFolder = ResolveAbsoluteOutputFolder(cmd.outputFolder);
                     return new SuccessResponse(
                         $"Captured {shotMeta.Count} orbit screenshots as contact sheet ({compW}x{compH}, {azimuthCount} azimuths x {elevations.Length} elevations). Center: ({center.x:F1}, {center.y:F1}, {center.z:F1}), radius: {radius:F1}.",
                         new
