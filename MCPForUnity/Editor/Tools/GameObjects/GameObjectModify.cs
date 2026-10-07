@@ -64,7 +64,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
                 rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
                 scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
-                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true);
+                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true, componentSource: targetGo);
             }
             catch (ArgumentException e)
             {

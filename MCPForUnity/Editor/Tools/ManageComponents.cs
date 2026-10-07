@@ -288,6 +288,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var errors = new List<string>();
+            bool anyPropertySet = false;
 
             try
             {
@@ -301,6 +302,10 @@ namespace MCPForUnity.Editor.Tools
                     {
                         errors.Add(error);
                     }
+                    else
+                    {
+                        anyPropertySet = true;
+                    }
                 }
 
                 if (properties != null && properties.HasValues)
@@ -313,11 +318,18 @@ namespace MCPForUnity.Editor.Tools
                         {
                             errors.Add(error);
                         }
+                        else
+                        {
+                            anyPropertySet = true;
+                        }
                     }
                 }
 
-                EditorUtility.SetDirty(component);
-                MarkOwningSceneDirty(targetGo);
+                if (anyPropertySet)
+                {
+                    EditorUtility.SetDirty(component);
+                    MarkOwningSceneDirty(targetGo);
+                }
 
                 if (errors.Count > 0)
                 {

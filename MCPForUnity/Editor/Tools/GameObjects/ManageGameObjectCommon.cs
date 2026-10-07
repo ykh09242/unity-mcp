@@ -23,8 +23,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return value;
         }
 
-        internal static void ValidateComponentParameters(JObject parameters, bool validateRemovals)
+        internal static void ValidateComponentParameters(JObject parameters, bool validateRemovals, GameObject componentSource = null)
         {
+            var additionDefinitions = new List<KeyValuePair<Type, JObject>>();
+            Type transformType =
+                componentSource != null ? componentSource.transform.GetType()
+                : string.IsNullOrEmpty(parameters["prefabPath"]?.ToString()) ? typeof(Transform)
+                : null;
             JToken additions = parameters["componentsToAdd"];
             if (additions != null && additions.Type != JTokenType.Null)
             {
@@ -35,6 +40,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     JToken typeName = component is JObject entry ? entry["typeName"] : component;
                     if (typeName?.Type != JTokenType.String || string.IsNullOrWhiteSpace(typeName.ToString()))
                         throw new ArgumentException("Each 'componentsToAdd' entry must contain a nonempty component type name.");
+                    string typeError = GameObjectComponentHelpers.ValidateComponentType(typeName.ToString(), false, out Type componentType);
+                    if (typeError != null)
+                        throw new ArgumentException(typeError);
                     if (
                         component is JObject definition
                         && definition["properties"] is JToken properties
@@ -42,17 +50,53 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         && !(properties is JObject)
                     )
                         throw new ArgumentException("Component 'properties' must be an object.");
+                    additionDefinitions.Add(new KeyValuePair<Type, JObject>(componentType, (component as JObject)?["properties"] as JObject));
                 }
             }
 
+            var presentTypes =
+                componentSource != null
+                    ? componentSource.GetComponents<Component>().Where(component => component != null).Select(component => component.GetType()).ToList()
+                    : new List<Type> { typeof(Transform) };
             JToken removals = parameters["componentsToRemove"];
             if (validateRemovals && removals != null && removals.Type != JTokenType.Null)
             {
                 if (!(removals is JArray components))
                     throw new ArgumentException("'componentsToRemove' must be an array.");
                 foreach (JToken component in components)
+                {
                     if (component.Type != JTokenType.String || string.IsNullOrWhiteSpace(component.ToString()))
                         throw new ArgumentException("Each 'componentsToRemove' entry must be a nonempty component type name.");
+                    string typeError = GameObjectComponentHelpers.ValidateComponentType(component.ToString(), true, out Type removalType);
+                    if (typeError != null)
+                        throw new ArgumentException(typeError);
+                    if (componentSource != null)
+                    {
+                        int index = presentTypes.FindIndex(removalType.IsAssignableFrom);
+                        if (index < 0)
+                            throw new ArgumentException($"Component '{component}' not found on '{componentSource.name}' to remove.");
+                        presentTypes.RemoveAt(index);
+                    }
+                }
+            }
+            string finalName = parameters["name"]?.ToString() ?? parameters["new_name"]?.ToString() ?? parameters["newName"]?.ToString();
+            if (string.IsNullOrEmpty(finalName))
+                finalName = componentSource != null ? componentSource.name : null;
+            foreach (var addition in additionDefinitions)
+            {
+                string planError = GameObjectComponentHelpers.ValidateAdditionPlan(presentTypes, new[] { addition.Key });
+                if (planError != null)
+                    throw new ArgumentException(planError);
+                string propertyError = GameObjectComponentHelpers.ValidateAdditionProperties(
+                    addition.Key,
+                    addition.Value,
+                    transformType,
+                    out _,
+                    (type, value) => GameObjectComponentHelpers.IsPlannedTargetReference(type, value, finalName, componentSource, presentTypes),
+                    componentSource
+                );
+                if (propertyError != null)
+                    throw new ArgumentException(propertyError);
             }
 
             JToken componentProperties = parameters["componentProperties"];

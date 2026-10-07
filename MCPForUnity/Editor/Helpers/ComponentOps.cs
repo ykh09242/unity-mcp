@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -193,6 +194,501 @@ namespace MCPForUnity.Editor.Helpers
             if (reflectionError != null && !reflectionError.Contains("not found"))
                 error = reflectionError;
 
+            return false;
+        }
+
+        /// <summary>Prepares a reflected write from type metadata without constructing a component or evaluating getters.</summary>
+        internal static bool TryPrepareProperty(Type componentType, string propertyName, JToken value, out Action<Component> apply, out string error)
+        {
+            apply = null;
+            error = null;
+            if (componentType == null || string.IsNullOrEmpty(propertyName))
+            {
+                error = "Invalid component type or property name.";
+                return false;
+            }
+            if (propertyName.Contains('.'))
+                return TryPrepareNestedWrite(componentType, propertyName, value, out apply, out error);
+            var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
+            string normalized = ParamCoercion.NormalizePropertyName(propertyName);
+            PropertyInfo property = componentType.GetProperty(propertyName, flags) ?? componentType.GetProperty(normalized, flags);
+            if (property == null && propertyName.StartsWith("m_", StringComparison.OrdinalIgnoreCase))
+                property = componentType.GetProperty(propertyName.Substring(2), flags);
+            if (property != null && property.CanWrite && property.GetIndexParameters().Length == 0)
+            {
+                if (typeof(UnityEventBase).IsAssignableFrom(property.PropertyType))
+                    return TryPrepareUnityEvent(property.PropertyType, propertyName, value, out apply, out error);
+                if (!TryPreparePropertyValue(property.PropertyType, value, out object converted, out error))
+                    return false;
+                apply = component => property.SetValue(component, converted);
+                return true;
+            }
+            FieldInfo field =
+                componentType.GetField(propertyName, flags)
+                ?? componentType.GetField(normalized, flags)
+                ?? FindSerializedFieldInHierarchy(componentType, propertyName)
+                ?? FindSerializedFieldInHierarchy(componentType, normalized);
+            if (field != null && !field.IsInitOnly)
+            {
+                if (typeof(UnityEventBase).IsAssignableFrom(field.FieldType))
+                    return TryPrepareUnityEvent(field.FieldType, propertyName, value, out apply, out error);
+                if (!TryPreparePropertyValue(field.FieldType, value, out object converted, out error))
+                    return false;
+                apply = component => field.SetValue(component, converted);
+                return true;
+            }
+            error = $"Writable property or field '{propertyName}' not found on '{componentType.Name}'.";
+            return false;
+        }
+
+        private static bool TryPrepareUnityEvent(Type eventType, string propertyName, JToken value, out Action<Component> apply, out string error)
+        {
+            apply = null;
+            if (!(value is JObject))
+            {
+                error = "UnityEvent properties require an object containing serialized event fields.";
+                return false;
+            }
+            if (!TryPrepareSerializedValue(eventType, value, out error))
+                return false;
+            JToken prepared = value.DeepClone();
+            apply = component =>
+            {
+                if (!SetProperty(component, propertyName, prepared, out string writeError))
+                    throw new ArgumentException(writeError);
+            };
+            return true;
+        }
+
+        private static bool TryPrepareSerializedValue(Type type, JToken value, out string error)
+        {
+            error = null;
+            if (value is JArray array)
+            {
+                Type element =
+                    type.IsArray ? type.GetElementType()
+                    : type.IsGenericType && typeof(System.Collections.IList).IsAssignableFrom(type) ? type.GetGenericArguments()[0]
+                    : null;
+                if (element == null)
+                {
+                    error = $"'{type.Name}' is not a serialized array or list.";
+                    return false;
+                }
+                foreach (JToken item in array)
+                    if (!TryPrepareSerializedValue(element, item, out error))
+                        return false;
+                return true;
+            }
+            if (value is JObject fields && !typeof(UnityEngine.Object).IsAssignableFrom(type))
+            {
+                foreach (JProperty entry in fields.Properties())
+                {
+                    FieldInfo field = null;
+                    for (Type current = type; current != null && field == null; current = current.BaseType)
+                    {
+                        foreach (
+                            FieldInfo candidate in current.GetFields(
+                                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly
+                            )
+                        )
+                        {
+                            if (
+                                (candidate.IsPublic || candidate.GetCustomAttribute<SerializeField>() != null)
+                                && string.Equals(candidate.Name.Replace("_", ""), entry.Name.Replace("_", ""), StringComparison.OrdinalIgnoreCase)
+                            )
+                            {
+                                field = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    if (field == null)
+                    {
+                        error = $"Serialized field '{entry.Name}' not found on '{type.Name}'.";
+                        return false;
+                    }
+                    if (!TryPrepareSerializedValue(field.FieldType, entry.Value, out error))
+                        return false;
+                }
+                return true;
+            }
+            return TryPreparePropertyValue(type, value, out _, out error);
+        }
+
+        internal static bool TryValidatePropertyOwners(
+            Type componentType,
+            Component existing,
+            JObject properties,
+            out string error,
+            GameObject targetContext = null,
+            Func<Type, JToken, bool> canResolveAfterAddition = null
+        )
+        {
+            error = null;
+            var shadow = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                JProperty[] inputs = properties.Properties().ToArray();
+                for (int inputIndex = 0; inputIndex < inputs.Length; inputIndex++)
+                {
+                    JProperty input = inputs[inputIndex];
+                    Type type = componentType;
+                    object owner = existing;
+                    string prefix = "";
+                    string[] parts = SplitPropertyPath(input.Name);
+                    for (int i = 0; i < parts.Length; i++)
+                    {
+                        ParsePreparedPathPart(parts[i], out string memberName, out int? index);
+                        MemberInfo member = FindPreparedMember(type, memberName);
+                        if (member == null)
+                        {
+                            error = $"Property or field '{parts[i]}' not found on '{type.Name}'.";
+                            return false;
+                        }
+                        Type memberType = member is PropertyInfo property ? property.PropertyType : ((FieldInfo)member).FieldType;
+                        prefix = prefix.Length == 0 ? member.Name : prefix + "." + member.Name;
+                        if (i == parts.Length - 1)
+                        {
+                            // The prepared setters already validate events using serialized fields.
+                            bool needsShadow = inputs.Skip(inputIndex + 1).Any(future => IsPreparedAncestor(componentType, prefix, future.Name));
+                            if (needsShadow && !typeof(UnityEventBase).IsAssignableFrom(memberType))
+                            {
+                                if (!TryPreparePropertyValue(memberType, input.Value, out object converted, out error))
+                                {
+                                    if (canResolveAfterAddition == null || !canResolveAfterAddition(memberType, input.Value))
+                                        return false;
+                                    converted = memberType; // A declared planned reference exists after addition, without allocating it now.
+                                    error = null;
+                                }
+                                foreach (string descendant in shadow.Keys.Where(key => IsPathDescendant(prefix, key)).ToArray())
+                                    shadow.Remove(descendant);
+                                shadow[prefix] = converted;
+                            }
+                            break;
+                        }
+                        bool guaranteedOwner = false;
+                        if (!shadow.TryGetValue(prefix, out object next))
+                        {
+                            if (owner != null)
+                            {
+                                if (!TryReadBorrowedMember(owner, member, out next))
+                                {
+                                    if (!memberType.IsValueType)
+                                    {
+                                        error = $"Cannot validate owner '{prefix}' before applying '{input.Name}'.";
+                                        return false;
+                                    }
+                                    next = null;
+                                }
+                            }
+                            else if (
+                                member is PropertyInfo self
+                                && (
+                                    (typeof(Component).IsAssignableFrom(self.DeclaringType) && (self.Name == "gameObject" || self.Name == "transform"))
+                                    || typeof(GameObject).IsAssignableFrom(self.DeclaringType) && self.Name == "transform"
+                                )
+                            )
+                            {
+                                next =
+                                    targetContext == null ? null
+                                    : self.Name == "gameObject" ? (object)targetContext
+                                    : targetContext.transform;
+                                guaranteedOwner = true;
+                            }
+                            else
+                                next = null;
+                        }
+                        if (index.HasValue)
+                        {
+                            Type elementType =
+                                memberType.IsArray ? memberType.GetElementType()
+                                : memberType.IsGenericType && typeof(System.Collections.IList).IsAssignableFrom(memberType)
+                                    ? memberType.GetGenericArguments()[0]
+                                : null;
+                            if (elementType == null || !(next is System.Collections.IList list) || index.Value < 0 || index.Value >= list.Count)
+                            {
+                                error = $"Index {index.Value} is out of range or unavailable in path '{input.Name}'.";
+                                return false;
+                            }
+                            next = list[index.Value];
+                            memberType = elementType;
+                            prefix += "[" + index.Value + "]";
+                        }
+                        if (next is Type plannedReference && typeof(UnityEngine.Object).IsAssignableFrom(memberType))
+                        {
+                            memberType = plannedReference;
+                            next = null;
+                            guaranteedOwner = true;
+                        }
+                        if (!guaranteedOwner && !memberType.IsValueType && (next == null || next is UnityEngine.Object unityObject && unityObject == null))
+                        {
+                            error = $"Nested owner '{prefix}' is null or unavailable before applying '{input.Name}'.";
+                            return false;
+                        }
+                        owner = next;
+                        type = next?.GetType() ?? memberType;
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = $"Cannot validate nested property owners: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool IsPreparedAncestor(Type type, string prefix, string path)
+        {
+            string canonical = "";
+            foreach (string part in SplitPropertyPath(path))
+            {
+                ParsePreparedPathPart(part, out string name, out int? index);
+                MemberInfo member = FindPreparedMember(type, name);
+                if (member == null)
+                    return false;
+                canonical = canonical.Length == 0 ? member.Name : canonical + "." + member.Name;
+                type = member is PropertyInfo property ? property.PropertyType : ((FieldInfo)member).FieldType;
+                if (index.HasValue)
+                {
+                    canonical += "[" + index.Value + "]";
+                    type =
+                        type.IsArray ? type.GetElementType()
+                        : type.IsGenericType && typeof(System.Collections.IList).IsAssignableFrom(type) ? type.GetGenericArguments()[0]
+                        : null;
+                    if (type == null)
+                        return false;
+                }
+                if (IsPathDescendant(prefix, canonical))
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool IsPathDescendant(string prefix, string path) =>
+            path.StartsWith(prefix + ".", StringComparison.OrdinalIgnoreCase) || path.StartsWith(prefix + "[", StringComparison.OrdinalIgnoreCase);
+
+        private static void ParsePreparedPathPart(string part, out string name, out int? index)
+        {
+            name = part;
+            index = null;
+            int bracket = part.IndexOf('[');
+            if (bracket > 0 && part.EndsWith("]") && int.TryParse(part.Substring(bracket + 1, part.Length - bracket - 2), out int parsed))
+            {
+                name = part.Substring(0, bracket);
+                index = parsed;
+            }
+        }
+
+        internal static string[] SplitPropertyPath(string path)
+        {
+            var parts = new List<string>();
+            int startIndex = 0;
+            bool inBrackets = false;
+            for (int i = 0; i < path.Length; i++)
+            {
+                if (path[i] == '[')
+                    inBrackets = true;
+                else if (path[i] == ']')
+                    inBrackets = false;
+                else if (path[i] == '.' && !inBrackets)
+                {
+                    parts.Add(path.Substring(startIndex, i - startIndex));
+                    startIndex = i + 1;
+                }
+            }
+            if (startIndex < path.Length)
+                parts.Add(path.Substring(startIndex));
+            return parts.ToArray();
+        }
+
+        private static MemberInfo FindPreparedMember(Type type, string name)
+        {
+            var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
+            string normalized = ParamCoercion.NormalizePropertyName(name);
+            PropertyInfo property = type.GetProperty(name, flags) ?? type.GetProperty(normalized, flags);
+            if (property == null && name.StartsWith("m_", StringComparison.OrdinalIgnoreCase))
+                property = type.GetProperty(name.Substring(2), flags);
+            return (MemberInfo)property
+                ?? type.GetField(name, flags)
+                ?? type.GetField(normalized, flags)
+                ?? FindSerializedFieldInHierarchy(type, name)
+                ?? FindSerializedFieldInHierarchy(type, normalized);
+        }
+
+        // Read known borrowed native references without invoking Unity's instantiating getters.
+        internal static bool TryReadBorrowedMember(object owner, MemberInfo member, out object value)
+        {
+            value = null;
+            if (member is FieldInfo field)
+            {
+                value = field.GetValue(owner);
+                return true;
+            }
+            var property = (PropertyInfo)member;
+            if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                return false;
+            if (owner is Renderer renderer)
+            {
+                if (string.Equals(property.Name, "material", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = renderer.sharedMaterial;
+                    return true;
+                }
+                if (string.Equals(property.Name, "materials", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = renderer.sharedMaterials;
+                    return true;
+                }
+            }
+            if (owner is MeshFilter filter && string.Equals(property.Name, "mesh", StringComparison.OrdinalIgnoreCase))
+            {
+                value = filter.sharedMesh;
+                return true;
+            }
+            if (owner is Collider collider && string.Equals(property.Name, "material", StringComparison.OrdinalIgnoreCase))
+            {
+                value = collider.sharedMaterial;
+                return true;
+            }
+            string assemblyName = property.DeclaringType.Assembly.GetName().Name;
+            if (!owner.GetType().IsValueType && assemblyName != "UnityEngine" && !assemblyName.StartsWith("UnityEngine.", StringComparison.Ordinal))
+                return false;
+            value = property.GetValue(owner);
+            return true;
+        }
+
+        private static bool TryPrepareNestedWrite(Type type, string path, JToken value, out Action<Component> apply, out string error)
+        {
+            apply = null;
+            error = null;
+            var members = new List<MemberInfo>();
+            var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
+            foreach (string part in path.Split('.'))
+            {
+                PropertyInfo property = type.GetProperty(part, flags) ?? type.GetProperty(ParamCoercion.NormalizePropertyName(part), flags);
+                FieldInfo field = property == null ? type.GetField(part, flags) ?? FindSerializedFieldInHierarchy(type, part) : null;
+                if (property == null && field == null)
+                {
+                    error = $"Property or field '{part}' not found on '{type.Name}' in '{path}'.";
+                    return false;
+                }
+                Type nextType = property?.PropertyType ?? field.FieldType;
+                if (
+                    (property != null && (property.GetIndexParameters().Length != 0 || !property.CanRead))
+                    || (property != null && nextType.IsValueType && !property.CanWrite)
+                    || (field != null && nextType.IsValueType && field.IsInitOnly)
+                )
+                {
+                    error = $"Property '{part}' cannot be updated in nested path '{path}'.";
+                    return false;
+                }
+                members.Add((MemberInfo)property ?? field);
+                type = nextType;
+            }
+            MemberInfo last = members[members.Count - 1];
+            if (last is PropertyInfo leaf && !leaf.CanWrite)
+            {
+                error = $"Property '{leaf.Name}' is not writable.";
+                return false;
+            }
+            if (last is FieldInfo leafField && leafField.IsInitOnly)
+            {
+                error = $"Field '{leafField.Name}' is not writable.";
+                return false;
+            }
+            if (!TryPreparePropertyValue(type, value, out object converted, out error))
+                return false;
+            apply = component =>
+            {
+                var owners = new object[members.Count];
+                owners[0] = component;
+                for (int i = 0; i < members.Count - 1; i++)
+                    owners[i + 1] = members[i] is PropertyInfo property ? property.GetValue(owners[i]) : ((FieldInfo)members[i]).GetValue(owners[i]);
+                void Set(int i, object writeValue)
+                {
+                    if (members[i] is PropertyInfo property)
+                        property.SetValue(owners[i], writeValue);
+                    else
+                        ((FieldInfo)members[i]).SetValue(owners[i], writeValue);
+                }
+                Set(members.Count - 1, converted);
+                for (int i = members.Count - 2; i >= 0; i--)
+                    if (owners[i + 1].GetType().IsValueType)
+                        Set(i, owners[i + 1]);
+            };
+            return true;
+        }
+
+        internal static bool TryPreparePropertyValue(Type expectedType, JToken value, out object converted, out string error)
+        {
+            converted = null;
+            error = null;
+            try
+            {
+                if (typeof(UnityEngine.Object).IsAssignableFrom(expectedType))
+                {
+                    UnityEngine.Object prepared = null;
+                    bool Assign(UnityEngine.Object resolved, string filter, out string assignmentError)
+                    {
+                        if (resolved == null && (value == null || value.Type == JTokenType.Null))
+                        {
+                            assignmentError = null;
+                            return true;
+                        }
+                        return TryMatchObjectReference(expectedType, resolved, filter, out prepared, out assignmentError);
+                    }
+                    bool AssignExact(UnityEngine.Object resolved, string filter, out string assignmentError)
+                    {
+                        assignmentError = null;
+                        if (resolved != null && expectedType.IsInstanceOfType(resolved))
+                        {
+                            prepared = resolved;
+                            return true;
+                        }
+                        assignmentError = $"Explicit object reference is not compatible with '{expectedType.Name}'.";
+                        return false;
+                    }
+                    if (!ResolveObjectReference(value, Assign, out error, AssignExact))
+                        return false;
+                    converted = prepared;
+                    return true;
+                }
+                if (value is JArray array && expectedType.IsArray)
+                {
+                    Type elementType = expectedType.GetElementType();
+                    Array prepared = Array.CreateInstance(elementType, array.Count);
+                    for (int i = 0; i < array.Count; i++)
+                    {
+                        if (!TryPreparePropertyValue(elementType, array[i], out object element, out error))
+                            return false;
+                        prepared.SetValue(element, i);
+                    }
+                    converted = prepared;
+                    return true;
+                }
+                if (value is JArray list && expectedType.IsGenericType && expectedType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    Type elementType = expectedType.GetGenericArguments()[0];
+                    var prepared = (System.Collections.IList)Activator.CreateInstance(expectedType);
+                    foreach (JToken token in list)
+                    {
+                        if (!TryPreparePropertyValue(elementType, token, out object element, out error))
+                            return false;
+                        prepared.Add(element);
+                    }
+                    converted = prepared;
+                    return true;
+                }
+                converted = PropertyConversion.ConvertToType(value, expectedType);
+                if (converted != null || value == null || value.Type == JTokenType.Null)
+                    return true;
+                error = $"Failed to convert value to '{expectedType.Name}'.";
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
             return false;
         }
 
@@ -439,11 +935,13 @@ namespace MCPForUnity.Editor.Helpers
 
         // --- UnityEvent SerializedProperty support ---
 
-        private static Type ResolveMemberType(Type componentType, string propertyName, string normalizedName)
+        internal static Type ResolveMemberType(Type componentType, string propertyName, string normalizedName)
         {
             BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
 
             PropertyInfo propInfo = componentType.GetProperty(propertyName, flags) ?? componentType.GetProperty(normalizedName, flags);
+            if (propInfo == null && propertyName.StartsWith("m_", StringComparison.OrdinalIgnoreCase))
+                propInfo = componentType.GetProperty(propertyName.Substring(2), flags);
             if (propInfo != null)
                 return propInfo.PropertyType;
 
@@ -607,12 +1105,50 @@ namespace MCPForUnity.Editor.Helpers
 
         internal static bool SetObjectReference(SerializedProperty prop, JToken value, out string error)
         {
+            bool Assign(UnityEngine.Object resolved, string filter, out string assignmentError)
+            {
+                if (resolved == null && (value == null || value.Type == JTokenType.Null))
+                {
+                    prop.objectReferenceValue = null;
+                    assignmentError = null;
+                    return true;
+                }
+                var original = prop.objectReferenceValue;
+                bool assigned = AssignObjectReference(prop, resolved, filter, out assignmentError);
+                if (!assigned)
+                    prop.objectReferenceValue = original;
+                return assigned;
+            }
+            bool AssignExact(UnityEngine.Object resolved, string filter, out string assignmentError)
+            {
+                var original = prop.objectReferenceValue;
+                prop.objectReferenceValue = resolved;
+                if (prop.objectReferenceValue != null)
+                {
+                    assignmentError = null;
+                    return true;
+                }
+                prop.objectReferenceValue = original;
+                assignmentError = "Explicit object reference is not compatible with the property type.";
+                return false;
+            }
+            return ResolveObjectReference(value, Assign, out error, AssignExact);
+        }
+
+        private delegate bool ObjectReferenceAssignment(UnityEngine.Object resolved, string componentFilter, out string error);
+
+        private static bool ResolveObjectReference(
+            JToken value,
+            ObjectReferenceAssignment assign,
+            out string error,
+            ObjectReferenceAssignment assignExact = null
+        )
+        {
             error = null;
 
             if (value == null || value.Type == JTokenType.Null)
             {
-                prop.objectReferenceValue = null;
-                return true;
+                return assign(null, null, out error);
             }
 
             if (value.Type == JTokenType.Integer)
@@ -624,7 +1160,7 @@ namespace MCPForUnity.Editor.Helpers
                     error = $"No object found with instanceID {id}.";
                     return false;
                 }
-                return AssignObjectReference(prop, resolved, null, out error);
+                return assign(resolved, null, out error);
             }
 
             if (value is JObject jObj)
@@ -642,7 +1178,7 @@ namespace MCPForUnity.Editor.Helpers
                         error = $"No object found with instanceID {id}.";
                         return false;
                     }
-                    return AssignObjectReference(prop, resolved, componentFilter, out error);
+                    return assign(resolved, componentFilter, out error);
                 }
 
                 var guidToken = jObj["guid"];
@@ -660,18 +1196,11 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         string spriteName = spriteNameToken.ToString();
                         var allAssets = AssetDatabase.LoadAllAssetsAtPath(path);
-                        var originalRef = prop.objectReferenceValue;
                         foreach (var asset in allAssets)
                         {
                             if (asset is Sprite sprite && sprite.name == spriteName)
                             {
-                                prop.objectReferenceValue = sprite;
-                                if (prop.objectReferenceValue != null)
-                                    return true;
-                                // Unity rejected the type — restore and report
-                                prop.objectReferenceValue = originalRef;
-                                error = $"Sprite '{spriteName}' found but is not compatible with the property type.";
-                                return false;
+                                return (assignExact ?? assign)(sprite, null, out error);
                             }
                         }
 
@@ -686,7 +1215,6 @@ namespace MCPForUnity.Editor.Helpers
                         if (targetFileId != 0)
                         {
                             var allAssets = AssetDatabase.LoadAllAssetsAtPath(path);
-                            var originalRef = prop.objectReferenceValue;
                             foreach (var asset in allAssets)
                             {
                                 if (asset is Sprite sprite)
@@ -694,12 +1222,7 @@ namespace MCPForUnity.Editor.Helpers
                                     long spriteFileId = GetSpriteFileId(sprite);
                                     if (spriteFileId == targetFileId)
                                     {
-                                        prop.objectReferenceValue = sprite;
-                                        if (prop.objectReferenceValue != null)
-                                            return true;
-                                        prop.objectReferenceValue = originalRef;
-                                        error = $"Sprite with fileID '{targetFileId}' found but is not compatible with the property type.";
-                                        return false;
+                                        return (assignExact ?? assign)(sprite, null, out error);
                                     }
                                 }
                             }
@@ -710,7 +1233,7 @@ namespace MCPForUnity.Editor.Helpers
                     }
 
                     var loaded = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
-                    return AssignObjectReference(prop, loaded, componentFilter, out error);
+                    return assign(loaded, componentFilter, out error);
                 }
 
                 var pathToken = jObj["path"];
@@ -723,13 +1246,13 @@ namespace MCPForUnity.Editor.Helpers
                         error = $"No asset found at path '{pathToken}'.";
                         return false;
                     }
-                    return AssignObjectReference(prop, resolved, componentFilter, out error);
+                    return assign(resolved, componentFilter, out error);
                 }
 
                 var nameToken = jObj["name"];
                 if (nameToken != null)
                 {
-                    return ResolveSceneObjectByName(prop, nameToken.ToString(), componentFilter, out error);
+                    return ResolveSceneObjectByName(assign, nameToken.ToString(), componentFilter, out error);
                 }
 
                 error = "Object reference must contain 'instanceID', 'guid', 'path', or 'name'.";
@@ -745,7 +1268,7 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     var resolved = GameObjectLookup.ResolveInstanceID(parsedId);
                     if (resolved != null)
-                        return AssignObjectReference(prop, resolved, null, out error);
+                        return assign(resolved, null, out error);
                     // Not a valid instanceID — fall through to path/name resolution
                 }
 
@@ -758,7 +1281,7 @@ namespace MCPForUnity.Editor.Helpers
                         error = $"No asset found at path '{strVal}'.";
                         return false;
                     }
-                    return AssignObjectReference(prop, resolved, null, out error);
+                    return assign(resolved, null, out error);
                 }
 
                 // Try as asset GUID (32-char hex string)
@@ -769,15 +1292,84 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         var resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
                         if (resolved != null)
-                            return AssignObjectReference(prop, resolved, null, out error);
+                            return assign(resolved, null, out error);
                     }
                 }
 
                 // Fall back to scene hierarchy lookup by name.
-                return ResolveSceneObjectByName(prop, strVal, null, out error);
+                return ResolveSceneObjectByName(assign, strVal, null, out error);
             }
 
             error = $"Unsupported object reference format: {value.Type}.";
+            return false;
+        }
+
+        private static bool TryMatchObjectReference(
+            Type expectedType,
+            UnityEngine.Object resolved,
+            string filter,
+            out UnityEngine.Object matched,
+            out string error
+        )
+        {
+            matched = null;
+            error = null;
+            if (resolved == null)
+            {
+                error = "Resolved object is null.";
+                return false;
+            }
+            string path = AssetDatabase.GetAssetPath(resolved);
+            if (!string.IsNullOrEmpty(path))
+                path = AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true);
+
+            if (resolved is GameObject filtered && !string.IsNullOrEmpty(filter))
+            {
+                foreach (Component component in filtered.GetComponents<Component>())
+                    if (
+                        component != null
+                        && expectedType.IsInstanceOfType(component)
+                        && (
+                            string.Equals(component.GetType().Name, filter, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(component.GetType().FullName, filter, StringComparison.OrdinalIgnoreCase)
+                        )
+                    )
+                    {
+                        matched = component;
+                        return true;
+                    }
+                error = $"Compatible component '{filter}' not found on '{filtered.name}'.";
+                return false;
+            }
+            if (expectedType.IsInstanceOfType(resolved))
+            {
+                matched = resolved;
+                return true;
+            }
+            if (!string.IsNullOrEmpty(path))
+            {
+                foreach (UnityEngine.Object sub in AssetDatabase.LoadAllAssetsAtPath(path))
+                {
+                    if (sub == null || sub == resolved || !expectedType.IsInstanceOfType(sub))
+                        continue;
+                    if (matched != null)
+                    {
+                        matched = null;
+                        error = $"Multiple compatible sub-assets found in '{path}'. Specify spriteName or fileID.";
+                        return false;
+                    }
+                    matched = sub;
+                }
+                if (matched != null)
+                    return true;
+            }
+            if (resolved is GameObject go && typeof(Component).IsAssignableFrom(expectedType))
+            {
+                matched = go.GetComponent(expectedType);
+                if (matched != null)
+                    return true;
+            }
+            error = $"Object '{resolved.name}' is not compatible with '{expectedType.Name}'.";
             return false;
         }
 
@@ -895,7 +1487,7 @@ namespace MCPForUnity.Editor.Helpers
         /// to a SerializedProperty. Uses GameObjectLookup for robust search
         /// including inactive objects and prefab stage support.
         /// </summary>
-        private static bool ResolveSceneObjectByName(SerializedProperty prop, string name, string componentFilter, out string error)
+        private static bool ResolveSceneObjectByName(ObjectReferenceAssignment assign, string name, string componentFilter, out string error)
         {
             error = null;
             if (string.IsNullOrWhiteSpace(name))
@@ -919,7 +1511,7 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
-            return AssignObjectReference(prop, go, componentFilter, out error);
+            return assign(go, componentFilter, out error);
         }
 
         /// <summary>

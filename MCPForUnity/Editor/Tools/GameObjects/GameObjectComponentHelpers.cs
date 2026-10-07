@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -15,22 +16,25 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 {
     internal static class GameObjectComponentHelpers
     {
+        internal static string ValidateComponentType(string typeName, bool removal, out Type componentType)
+        {
+            componentType = FindType(typeName);
+            if (componentType == null)
+                return removal ? $"Component type '{typeName}' not found for removal." : $"Component type '{typeName}' not found or is not a valid Component.";
+            if (!typeof(Component).IsAssignableFrom(componentType))
+                return $"Type '{typeName}' is not a Component.";
+            if (!removal && (componentType.IsAbstract || componentType.ContainsGenericParameters))
+                return $"Component type '{typeName}' must be concrete and have no unbound generic parameters.";
+            if (componentType == typeof(Transform))
+                return removal ? "Cannot remove the Transform component." : "Cannot add another Transform component.";
+            return null;
+        }
+
         internal static object AddComponentInternal(GameObject targetGo, string typeName, JObject properties)
         {
-            Type componentType = FindType(typeName);
-            if (componentType == null)
-            {
-                return new ErrorResponse($"Component type '{typeName}' not found or is not a valid Component.");
-            }
-            if (!typeof(Component).IsAssignableFrom(componentType))
-            {
-                return new ErrorResponse($"Type '{typeName}' is not a Component.");
-            }
-
-            if (componentType == typeof(Transform))
-            {
-                return new ErrorResponse("Cannot add another Transform component.");
-            }
+            string typeError = ValidateComponentType(typeName, false, out Type componentType);
+            if (typeError != null)
+                return new ErrorResponse(typeError);
 
             bool isAdding2DPhysics = typeof(Rigidbody2D).IsAssignableFrom(componentType) || typeof(Collider2D).IsAssignableFrom(componentType);
             bool isAdding3DPhysics = typeof(Rigidbody).IsAssignableFrom(componentType) || typeof(Collider).IsAssignableFrom(componentType);
@@ -60,6 +64,25 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Component '{typeName}' already exists on '{targetGo.name}' and this type does not allow multiple instances.");
             }
 
+            var plannedTypes = targetGo.GetComponents<Component>().Where(component => component != null).Select(component => component.GetType()).ToList();
+            string planError = ValidateAdditionPlan(plannedTypes, new[] { componentType });
+            if (planError != null)
+                return new ErrorResponse(planError);
+            string propertyError = ValidateAdditionProperties(
+                componentType,
+                properties,
+                targetGo.transform.GetType(),
+                out bool needsRuntimeValidation,
+                (type, value) => IsPlannedTargetReference(type, value, targetGo.name, targetGo, plannedTypes),
+                targetGo
+            );
+            if (propertyError != null)
+                return new ErrorResponse(propertyError);
+
+            var originalComponents = targetGo.GetComponents<Component>();
+            var originalBindings = targetGo.GetComponents<MeshFilter>().ToDictionary(filter => filter, filter => filter.sharedMesh);
+            var originalMeshes = needsRuntimeValidation ? new HashSet<Mesh>(UnityEngine.Resources.FindObjectsOfTypeAll<Mesh>()) : null;
+            bool completed = false;
             try
             {
                 Component newComponent = Undo.AddComponent(targetGo, componentType);
@@ -87,17 +110,223 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     var setResult = SetComponentPropertiesInternal(targetGo, typeName, properties, newComponent);
                     if (setResult != null)
                     {
-                        Undo.DestroyObjectImmediate(newComponent);
                         return setResult;
                     }
                 }
 
+                completed = true;
                 return null;
             }
             catch (Exception e)
             {
                 return new ErrorResponse($"Error adding component '{typeName}' to '{targetGo.name}': {e.Message}");
             }
+            finally
+            {
+                if (!completed)
+                {
+                    var newMeshes = new HashSet<Mesh>();
+                    foreach (MeshFilter filter in targetGo.GetComponents<MeshFilter>())
+                    {
+                        Mesh mesh = filter.sharedMesh;
+                        if (mesh != null && originalMeshes != null && !originalMeshes.Contains(mesh) && !AssetDatabase.Contains(mesh))
+                            newMeshes.Add(mesh);
+                        // Keep borrowed inputs alive if a component's OnDestroy deletes its binding.
+                        filter.sharedMesh = null;
+                    }
+                    foreach (Component component in targetGo.GetComponents<Component>().Reverse())
+                        if (component != null && !originalComponents.Contains(component) && !(component is Transform))
+                            Undo.DestroyObjectImmediate(component);
+                    foreach (var binding in originalBindings)
+                        if (binding.Key != null)
+                            binding.Key.sharedMesh = binding.Value;
+                    foreach (Mesh mesh in newMeshes)
+                        if (mesh != null)
+                            UnityEngine.Object.DestroyImmediate(mesh);
+                }
+            }
+        }
+
+        // Shared by request preflight and Add: no component getters or allocation are needed.
+        internal static string ValidateAdditionProperties(
+            Type componentType,
+            JObject properties,
+            Type targetTransformType,
+            out bool needsRuntimeValidation,
+            Func<Type, JToken, bool> canResolveAfterAddition = null,
+            GameObject targetContext = null
+        )
+        {
+            needsRuntimeValidation = false;
+            if (properties != null)
+            {
+                foreach (JProperty property in properties.Properties())
+                {
+                    string error;
+                    if (property.Name.Contains('.') || property.Name.Contains('['))
+                    {
+                        // A prefab's Transform subtype is known once its asset is resolved.
+                        if (targetTransformType == null && property.Name.StartsWith("transform.", StringComparison.OrdinalIgnoreCase))
+                        {
+                            needsRuntimeValidation = true;
+                            continue;
+                        }
+                        if (
+                            !TryPrepareNestedProperty(
+                                componentType,
+                                property.Name,
+                                property.Value,
+                                out _,
+                                out bool nestedPrepared,
+                                out error,
+                                typeof(Transform).IsAssignableFrom(componentType) ? componentType : targetTransformType
+                            )
+                        )
+                            return error;
+                        if (!nestedPrepared && RequiresTransformReplacement(componentType))
+                            return $"Cannot validate '{property.Name}' before replacing the target Transform.";
+                        needsRuntimeValidation |= !nestedPrepared;
+                    }
+                    else if (!ComponentOps.TryPrepareProperty(componentType, property.Name, property.Value, out _, out error))
+                    {
+                        Type memberType = ComponentOps.ResolveMemberType(componentType, property.Name, ParamCoercion.NormalizePropertyName(property.Name));
+                        if (
+                            canResolveAfterAddition != null
+                            && memberType != null
+                            && ValidateDeferredReferenceValue(memberType, property.Value, canResolveAfterAddition)
+                            && ComponentOps.TryPrepareProperty(componentType, property.Name, JValue.CreateNull(), out _, out _)
+                        )
+                        {
+                            needsRuntimeValidation = true;
+                            continue;
+                        }
+                        bool unprovenNativeField =
+                            property.Name.StartsWith("m_", StringComparison.OrdinalIgnoreCase)
+                            && ComponentOps.ResolveMemberType(componentType, property.Name, ParamCoercion.NormalizePropertyName(property.Name)) == null;
+                        // Native-only schema cannot be inspected without creating a component and its dependencies.
+                        // Keep addition preflight free of those side effects; existing-component serialized editing remains supported.
+                        return unprovenNativeField
+                            ? $"Cannot validate native-only serialized property '{property.Name}' before adding '{componentType.Name}'. Add the component explicitly, then edit this property on the existing component."
+                            : error;
+                    }
+                }
+            }
+
+            if (
+                properties != null
+                && !ComponentOps.TryValidatePropertyOwners(componentType, null, properties, out string ownerError, targetContext, canResolveAfterAddition)
+            )
+                return ownerError;
+            return null;
+        }
+
+        private static bool ValidateDeferredReferenceValue(Type type, JToken value, Func<Type, JToken, bool> canResolveAfterAddition)
+        {
+            if (typeof(UnityEngine.Object).IsAssignableFrom(type))
+                return ComponentOps.TryPreparePropertyValue(type, value, out _, out _) || canResolveAfterAddition(type, value);
+            Type elementType =
+                type.IsArray ? type.GetElementType()
+                : type.IsGenericType && typeof(System.Collections.IList).IsAssignableFrom(type) ? type.GetGenericArguments()[0]
+                : null;
+            if (elementType == null || !(value is JArray array))
+                return false;
+            foreach (JToken item in array)
+                if (
+                    !ComponentOps.TryPreparePropertyValue(elementType, item, out _, out _)
+                    && !ValidateDeferredReferenceValue(elementType, item, canResolveAfterAddition)
+                )
+                    return false;
+            return true;
+        }
+
+        internal static bool IsPlannedTargetReference(Type expectedType, JToken value, string finalName, GameObject target, IEnumerable<Type> plannedTypes)
+        {
+            if (!typeof(UnityEngine.Object).IsAssignableFrom(expectedType) || value == null)
+                return false;
+            string name = value.Type == JTokenType.String ? value.ToString() : (value as JObject)?["name"]?.ToString();
+            JToken id = value.Type == JTokenType.Integer ? value : (value as JObject)?["instanceID"];
+            if (value is JObject reference && (reference["path"] != null || reference["guid"] != null))
+                return false;
+            bool matches =
+                id != null
+                    ? target != null && int.TryParse(id.ToString(), out int instanceId) && instanceId == target.GetInstanceIDCompat()
+                    : !string.IsNullOrEmpty(finalName) && name == finalName;
+            if (!matches && target != null && value.Type == JTokenType.String && int.TryParse(name, out int stringId))
+                matches = stringId == target.GetInstanceIDCompat();
+            if (!matches)
+                return false;
+            string filter = (value as JObject)?["component"]?.ToString();
+            if (!string.IsNullOrEmpty(filter))
+                return plannedTypes.Any(type =>
+                    (
+                        string.Equals(type.Name, filter, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(type.FullName, filter, StringComparison.OrdinalIgnoreCase)
+                    ) && expectedType.IsAssignableFrom(type)
+                );
+            return expectedType.IsAssignableFrom(typeof(GameObject)) || plannedTypes.Any(expectedType.IsAssignableFrom);
+        }
+
+        private static bool RequiresTransformReplacement(Type componentType)
+        {
+            return RequiresTransformReplacement(componentType, new HashSet<Type>());
+        }
+
+        internal static string ValidateAdditionPlan(List<Type> presentTypes, IEnumerable<Type> additions)
+        {
+            foreach (Type addition in additions)
+            {
+                string error = ValidatePlannedType(presentTypes, addition, false, new HashSet<Type>());
+                if (error != null)
+                    return error;
+            }
+            return null;
+        }
+
+        private static string ValidatePlannedType(List<Type> presentTypes, Type type, bool dependency, HashSet<Type> visiting)
+        {
+            if (type == null || (dependency && presentTypes.Any(type.IsAssignableFrom)) || !visiting.Add(type))
+                return null;
+            Type disallowedRoot = null;
+            for (Type current = type; current != null && typeof(Component).IsAssignableFrom(current); current = current.BaseType)
+                if (Attribute.IsDefined(current, typeof(DisallowMultipleComponent), inherit: false))
+                    disallowedRoot = current;
+            if (disallowedRoot != null && presentTypes.Any(disallowedRoot.IsAssignableFrom))
+                return $"Component '{type.Name}' already exists or is already planned and this type does not allow multiple instances.";
+
+            bool is2D = typeof(Rigidbody2D).IsAssignableFrom(type) || typeof(Collider2D).IsAssignableFrom(type);
+            bool is3D = typeof(Rigidbody).IsAssignableFrom(type) || typeof(Collider).IsAssignableFrom(type);
+            if (
+                (is2D && presentTypes.Any(t => typeof(Rigidbody).IsAssignableFrom(t) || typeof(Collider).IsAssignableFrom(t)))
+                || (is3D && presentTypes.Any(t => typeof(Rigidbody2D).IsAssignableFrom(t) || typeof(Collider2D).IsAssignableFrom(t)))
+            )
+                return $"Cannot add physics component '{type.Name}' because the current or planned components mix 2D and 3D physics.";
+
+            foreach (RequireComponent requirement in type.GetCustomAttributes(typeof(RequireComponent), true))
+            foreach (Type required in new[] { requirement.m_Type0, requirement.m_Type1, requirement.m_Type2 })
+            {
+                string error = ValidatePlannedType(presentTypes, required, true, visiting);
+                if (error != null)
+                    return error;
+            }
+            presentTypes.Add(type);
+            visiting.Remove(type);
+            return null;
+        }
+
+        private static bool RequiresTransformReplacement(Type componentType, HashSet<Type> visited)
+        {
+            if (componentType == null || !visited.Add(componentType))
+                return false;
+            if (typeof(Transform).IsAssignableFrom(componentType) && componentType != typeof(Transform))
+                return true;
+            foreach (RequireComponent requirement in componentType.GetCustomAttributes(typeof(RequireComponent), true))
+                if (
+                    RequiresTransformReplacement(requirement.m_Type0, visited)
+                    || RequiresTransformReplacement(requirement.m_Type1, visited)
+                    || RequiresTransformReplacement(requirement.m_Type2, visited)
+                )
+                    return true;
+            return false;
         }
 
         private static bool AllowsMultiple(Type componentType)
@@ -117,16 +346,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse("Target GameObject is null.");
             }
 
-            Type componentType = FindType(typeName);
-            if (componentType == null)
-            {
-                return new ErrorResponse($"Component type '{typeName}' not found for removal.");
-            }
-
-            if (componentType == typeof(Transform))
-            {
-                return new ErrorResponse("Cannot remove the Transform component.");
-            }
+            string typeError = ValidateComponentType(typeName, true, out Type componentType);
+            if (typeError != null)
+                return new ErrorResponse(typeError);
 
             Component componentToRemove = targetGo.GetComponent(componentType);
             if (componentToRemove == null)
@@ -246,6 +468,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Undo.RecordObject(targetComponent, "Set Component Properties");
 
             var failures = new List<string>();
+            bool anyPropertySet = false;
             foreach (var prop in properties.Properties())
             {
                 string propName = prop.Name;
@@ -282,6 +505,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         McpLog.Warn($"[ManageGameObject] {msg}");
                         failures.Add(msg);
                     }
+                    else
+                    {
+                        anyPropertySet = true;
+                    }
                 }
                 catch (Exception e)
                 {
@@ -290,17 +517,133 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
             }
 
-            EditorUtility.SetDirty(targetComponent);
+            if (anyPropertySet)
+                EditorUtility.SetDirty(targetComponent);
             return failures.Count == 0 ? null : new ErrorResponse($"One or more properties failed on '{componentTypeName}'.", new { errors = failures });
         }
 
         private static JsonSerializer InputSerializer => UnityJsonSerializer.Instance;
+
+        private static bool TryPrepareNestedProperty(
+            Type type,
+            string path,
+            JToken value,
+            out object converted,
+            out bool prepared,
+            out string error,
+            Type transformType = null,
+            object runtimeTarget = null
+        )
+        {
+            converted = null;
+            prepared = false;
+            error = null;
+            string[] parts = SplitPropertyPath(path);
+            BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
+            object runtimeOwner = runtimeTarget;
+            bool materialGetter = false;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string name = parts[i];
+                bool indexed = false;
+                int arrayIndex = -1;
+                int bracket = name.IndexOf('[');
+                if (bracket > 0 && name.EndsWith("]") && int.TryParse(name.Substring(bracket + 1, name.Length - bracket - 2), out arrayIndex))
+                {
+                    indexed = true;
+                    name = name.Substring(0, bracket);
+                }
+                if (i == parts.Length - 1 && typeof(Material).IsAssignableFrom(type) && name.StartsWith("_", StringComparison.Ordinal))
+                    return true; // The shader determines this member; retain the existing shader-property path.
+                var property = type.GetProperty(name, flags);
+                var field = property == null ? type.GetField(name, flags) ?? ComponentOps.FindSerializedFieldInHierarchy(type, name) : null;
+                Type memberType = property?.PropertyType ?? field?.FieldType;
+                if (
+                    memberType != null
+                    && transformType != null
+                    && typeof(Component).IsAssignableFrom(type)
+                    && string.Equals(name, "transform", StringComparison.OrdinalIgnoreCase)
+                )
+                    memberType = transformType;
+                if (memberType == null)
+                {
+                    // A declared base type may hide a runtime member (for example Transform -> RectTransform).
+                    // Material getters instantiate native resources, so their known type must be checked first.
+                    if (!materialGetter && !typeof(UnityEngine.Object).IsAssignableFrom(type) && !type.IsValueType && !type.IsSealed)
+                        return true;
+                    error = $"Property or field '{name}' not found on type '{type.Name}' in path '{path}'.";
+                    return false;
+                }
+                if (i == parts.Length - 1)
+                {
+                    if ((property != null && !property.CanWrite) || indexed)
+                    {
+                        error = $"Property '{name}' is not writable in path '{path}'.";
+                        return false;
+                    }
+                    prepared = ComponentOps.TryPreparePropertyValue(memberType, value, out converted, out error);
+                    return prepared;
+                }
+                materialGetter |=
+                    typeof(Renderer).IsAssignableFrom(type)
+                    && (
+                        string.Equals(name, "material", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(name, "materials", StringComparison.OrdinalIgnoreCase)
+                    );
+                type = memberType;
+                if (runtimeOwner != null)
+                {
+                    if (runtimeOwner is Mesh source && memberType.IsArray && !source.isReadable)
+                    {
+                        error = $"Mesh '{source.name}' must be readable to access '{name}'.";
+                        return false;
+                    }
+                    runtimeOwner = ComponentOps.TryReadBorrowedMember(runtimeOwner, (MemberInfo)property ?? field, out object borrowed) ? borrowed : null;
+                }
+                if (indexed)
+                {
+                    if (type.IsArray)
+                        type = type.GetElementType();
+                    else if (type.IsGenericType && typeof(System.Collections.IList).IsAssignableFrom(type))
+                        type = type.GetGenericArguments()[0];
+                    else
+                        return true;
+                    if (runtimeOwner is System.Collections.IList list)
+                    {
+                        if (arrayIndex < 0 || arrayIndex >= list.Count)
+                        {
+                            error = $"Index {arrayIndex} is out of range in path '{path}'.";
+                            return false;
+                        }
+                        runtimeOwner = list[arrayIndex];
+                    }
+                    else
+                        runtimeOwner = null;
+                }
+                if (runtimeOwner != null)
+                    type = runtimeOwner.GetType();
+            }
+            return true;
+        }
 
         private static bool SetNestedProperty(object target, string path, JToken value, JsonSerializer inputSerializer, out string error)
         {
             error = null;
             try
             {
+                if (
+                    !TryPrepareNestedProperty(
+                        target.GetType(),
+                        path,
+                        value,
+                        out object preparedValue,
+                        out bool prepared,
+                        out error,
+                        (target as Component)?.transform.GetType(),
+                        target
+                    )
+                )
+                    return false;
                 string[] pathParts = SplitPropertyPath(path);
                 if (pathParts.Length == 0)
                 {
@@ -343,6 +686,51 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                             error = $"Could not find property or field '{part}' on type '{currentType.Name}' in path '{path}'.";
                             return false;
                         }
+                    }
+
+                    if (
+                        currentObject is Renderer renderer
+                        && (
+                            string.Equals(part, "material", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(part, "materials", StringComparison.OrdinalIgnoreCase)
+                        )
+                    )
+                    {
+                        Material borrowed = null;
+                        if (string.Equals(part, "material", StringComparison.OrdinalIgnoreCase))
+                            borrowed = renderer.sharedMaterial;
+                        else if (string.Equals(part, "materials", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Material[] materials = renderer.sharedMaterials;
+                            if (isArray && arrayIndex >= 0 && arrayIndex < materials.Length)
+                                borrowed = materials[arrayIndex];
+                        }
+                        if (borrowed == null)
+                        {
+                            error = $"Material or material index is unavailable in path '{path}'.";
+                            return false;
+                        }
+                        if (
+                            i == pathParts.Length - 2
+                            && pathParts[pathParts.Length - 1].StartsWith("_", StringComparison.Ordinal)
+                            && !MaterialOps.TryPrepareShaderProperty(borrowed, pathParts[pathParts.Length - 1], value, inputSerializer, out _)
+                        )
+                        {
+                            error = $"Invalid shader property or value '{pathParts[pathParts.Length - 1]}' in path '{path}'.";
+                            return false;
+                        }
+                    }
+
+                    if (currentObject is MeshFilter meshFilter && string.Equals(part, "mesh", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Mesh borrowed = meshFilter.sharedMesh;
+                        if (borrowed == null)
+                        {
+                            error = $"Shared mesh is unavailable in path '{path}'.";
+                            return false;
+                        }
+                        if (!ValidateBorrowedMeshIndices(borrowed, pathParts, i + 1, out error))
+                            return false;
                     }
 
                     currentObject = propInfo != null ? propInfo.GetValue(currentObject) : fieldInfo.GetValue(currentObject);
@@ -409,7 +797,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 PropertyInfo finalPropInfo = currentType.GetProperty(finalPart, flags);
                 if (finalPropInfo != null && finalPropInfo.CanWrite)
                 {
-                    object convertedValue = ConvertJTokenToType(value, finalPropInfo.PropertyType, inputSerializer);
+                    object convertedValue = prepared ? preparedValue : ConvertJTokenToType(value, finalPropInfo.PropertyType, inputSerializer);
                     if (convertedValue != null || value.Type == JTokenType.Null)
                     {
                         finalPropInfo.SetValue(currentObject, convertedValue);
@@ -422,7 +810,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 FieldInfo finalFieldInfo = currentType.GetField(finalPart, flags);
                 if (finalFieldInfo != null)
                 {
-                    object convertedValue = ConvertJTokenToType(value, finalFieldInfo.FieldType, inputSerializer);
+                    object convertedValue = prepared ? preparedValue : ConvertJTokenToType(value, finalFieldInfo.FieldType, inputSerializer);
                     if (convertedValue != null || value.Type == JTokenType.Null)
                     {
                         finalFieldInfo.SetValue(currentObject, convertedValue);
@@ -436,7 +824,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 FieldInfo serializedField = ComponentOps.FindSerializedFieldInHierarchy(currentType, finalPart);
                 if (serializedField != null)
                 {
-                    object convertedValue = ConvertJTokenToType(value, serializedField.FieldType, inputSerializer);
+                    object convertedValue = prepared ? preparedValue : ConvertJTokenToType(value, serializedField.FieldType, inputSerializer);
                     if (convertedValue != null || value.Type == JTokenType.Null)
                     {
                         serializedField.SetValue(currentObject, convertedValue);
@@ -456,36 +844,38 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return false;
         }
 
-        private static string[] SplitPropertyPath(string path)
+        private static bool ValidateBorrowedMeshIndices(Mesh mesh, string[] parts, int start, out string error)
         {
-            List<string> parts = new List<string>();
-            int startIndex = 0;
-            bool inBrackets = false;
-
-            for (int i = 0; i < path.Length; i++)
+            error = null;
+            object current = mesh;
+            var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
+            for (int i = start; i < parts.Length - 1; i++)
             {
-                char c = path[i];
-
-                if (c == '[')
+                string name = parts[i];
+                int bracket = name.IndexOf('[');
+                if (bracket <= 0 || !name.EndsWith("]") || !int.TryParse(name.Substring(bracket + 1, name.Length - bracket - 2), out int index))
+                    return true;
+                // Only native Mesh arrays are inspected; arbitrary component getters are not evaluated.
+                if (!(current is Mesh source))
+                    return true;
+                if (!source.isReadable)
                 {
-                    inBrackets = true;
+                    error = $"Mesh '{source.name}' must be readable to access '{name}'.";
+                    return false;
                 }
-                else if (c == ']')
+                string member = name.Substring(0, bracket);
+                var array = typeof(Mesh).GetProperty(member, flags)?.GetValue(source) as System.Collections.IList;
+                if (array == null || index < 0 || index >= array.Count)
                 {
-                    inBrackets = false;
+                    error = $"Mesh array index {index} is out of range in '{name}'.";
+                    return false;
                 }
-                else if (c == '.' && !inBrackets)
-                {
-                    parts.Add(path.Substring(startIndex, i - startIndex));
-                    startIndex = i + 1;
-                }
+                current = array[index];
             }
-            if (startIndex < path.Length)
-            {
-                parts.Add(path.Substring(startIndex));
-            }
-            return parts.ToArray();
+            return true;
         }
+
+        private static string[] SplitPropertyPath(string path) => ComponentOps.SplitPropertyPath(path);
 
         private static object ConvertJTokenToType(JToken token, Type targetType, JsonSerializer inputSerializer)
         {

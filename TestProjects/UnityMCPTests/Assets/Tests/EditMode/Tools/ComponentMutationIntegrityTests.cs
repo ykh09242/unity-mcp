@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
@@ -10,6 +11,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -121,6 +123,53 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(new[] { first, second }, target.GetComponents<BoxCollider>());
             Assert.IsTrue(first.isTrigger && second.isTrigger);
             Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void InvalidOnlyPropertyWrites_PreserveComponentAndCleanScene(bool bulk, bool conversion)
+        {
+            int dirty = EditorUtility.GetDirtyCount(first);
+            var request = Request("set_property");
+            string property = conversion ? "isTrigger" : "NoSuchProperty_ValidationAudit";
+            JToken value = conversion ? new JValue("invalid_bool") : new JValue(1);
+            if (bulk)
+            {
+                request.Remove("property");
+                request.Remove("value");
+                request["properties"] = new JObject { [property] = value };
+            }
+            else
+            {
+                request["property"] = property;
+                request["value"] = value;
+            }
+
+            if (conversion)
+                LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Boolean"));
+            var result = Call(request);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Unchanged();
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(first));
+        }
+
+        [Test]
+        public void MixedPropertyWrites_KeepSuccessfulChangesAndMarkSceneDirty()
+        {
+            var request = Request("set_property");
+            request.Remove("property");
+            request.Remove("value");
+            request["properties"] = new JObject { ["isTrigger"] = false, ["NoSuchProperty_ValidationAudit"] = 1 };
+
+            var result = Call(request);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.IsFalse(first.isTrigger);
+            Assert.IsTrue(second.isTrigger);
+            Assert.IsTrue(ownedScene.isDirty);
         }
 
         [TestCase("set_property", "string")]

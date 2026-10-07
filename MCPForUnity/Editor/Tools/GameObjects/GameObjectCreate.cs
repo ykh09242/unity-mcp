@@ -143,6 +143,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 {
                     try
                     {
+                        ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: false, componentSource: prefabAsset);
                         newGo = PrefabUtility.InstantiatePrefab(prefabAsset) as GameObject;
 
                         if (newGo == null)
@@ -221,6 +222,17 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (newGo == null)
             {
                 return new ErrorResponse("Failed to create or instantiate the GameObject.");
+            }
+
+            try
+            {
+                // Validate against the primitive's native components before applying fields or allocating tags.
+                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: false, componentSource: newGo);
+            }
+            catch (ArgumentException e)
+            {
+                UnityEngine.Object.DestroyImmediate(newGo);
+                return new ErrorResponse(e.Message);
             }
 
             Undo.RecordObject(newGo.transform, "Set GameObject Transform");

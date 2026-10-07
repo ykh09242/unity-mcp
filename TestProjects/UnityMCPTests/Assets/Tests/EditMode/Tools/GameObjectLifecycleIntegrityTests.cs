@@ -10,6 +10,12 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
+#if UNITY_6000_0_OR_NEWER
+using Material3D = UnityEngine.PhysicsMaterial;
+#else
+using Material3D = UnityEngine.PhysicMaterial;
+#endif
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -276,6 +282,13 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("componentsToRemove", "true")]
         [TestCase("componentsToRemove", "[\"BoxCollider\",{}]")]
         [TestCase("componentsToRemove", "[\"BoxCollider\",\"\"]")]
+        [TestCase("componentsToAdd", "[\"NoSuchComponent_ValidationAudit\"]")]
+        [TestCase("componentsToAdd", "[\"BoxCollider\",\"NoSuchComponent_ValidationAudit\"]")]
+        [TestCase("componentsToAdd", "[\"Transform\"]")]
+        [TestCase("componentsToAdd", "[\"MCPForUnityTests.Editor.Tools.LifecycleAbstractComponent\"]")]
+        [TestCase("componentsToRemove", "[\"Transform\"]")]
+        [TestCase("componentsToRemove", "[\"BoxCollider\",\"Transform\"]")]
+        [TestCase("componentsToRemove", "[\"NoSuchComponent_ValidationAudit\"]")]
         public void InvalidModifyMutationInput_PreservesEarlierFields(string field, string json)
         {
             var target = Owned("Target");
@@ -310,6 +323,639 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(goDirty, EditorUtility.GetDirtyCount(target));
             Assert.AreEqual(transformDirty, EditorUtility.GetDirtyCount(target.transform));
             Assert.AreSame(parent, Selection.activeGameObject);
+        }
+
+        [TestCase("material.NoSuchField_ValidationAudit", "1")]
+        [TestCase("material._NoSuchShaderProperty_ValidationAudit", "1")]
+        [TestCase("material._Color", "\"invalid_color\"")]
+        [TestCase("materials[0]._NoSuchShaderProperty_ValidationAudit", "1")]
+        [TestCase("materials[0]._Color", "\"invalid_color\"")]
+        [TestCase("materials[99].color", "{\"r\":1,\"g\":0,\"b\":0,\"a\":1}")]
+        public void InvalidNestedMaterialProperty_DoesNotInstantiateMaterial(string property, string json)
+        {
+            var target = Owned("MaterialTarget");
+            var renderer = target.AddComponent<MeshRenderer>();
+            var source = new Material(Shader.Find("Sprites/Default"));
+            renderer.sharedMaterial = source;
+            try
+            {
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentProperties"] = new JObject { ["MeshRenderer"] = new JObject { [property] = JToken.Parse(json) } },
+                    }
+                );
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreSame(source, renderer.sharedMaterial);
+            }
+            finally
+            {
+                if (renderer.sharedMaterial != source && renderer.sharedMaterial != null)
+                    UnityEngine.Object.DestroyImmediate(renderer.sharedMaterial);
+                renderer.sharedMaterial = null;
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
+        [TestCase("NoSuchProperty_ValidationAudit")]
+        [TestCase("m_NoSuchProperty_ValidationAudit")]
+        [TestCase("transform.NoSuchProperty_ValidationAudit")]
+        public void InvalidAddedComponentProperty_DoesNotLeaveRequiredDependencies(string property)
+        {
+            var target = Owned("DependencyTarget");
+            var before = target.GetComponents<Component>();
+
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["componentsToAdd"] = new JArray(
+                        new JObject
+                        {
+                            ["typeName"] = "HingeJoint",
+                            ["properties"] = new JObject { [property] = 1 },
+                        }
+                    ),
+                }
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, target.GetComponents<Component>());
+        }
+
+        [TestCase("mesh.NoSuchProperty_ValidationAudit", "1")]
+        [TestCase("mesh.vertices", "[[1,2]]")]
+        [TestCase("mesh.vertices[999].x", "1")]
+        public void InvalidNestedMeshProperty_DoesNotInstantiateMesh(string property, string json)
+        {
+            var target = Owned("BorrowedMesh");
+            var filter = target.AddComponent<MeshFilter>();
+            var source = new Mesh { vertices = new[] { Vector3.zero, Vector3.right, Vector3.up }, triangles = new[] { 0, 1, 2 } };
+            filter.sharedMesh = source;
+            Mesh[] before = UnityEngine.Resources.FindObjectsOfTypeAll<Mesh>();
+            bool ignoreLogs = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentProperties"] = new JObject { ["MeshFilter"] = new JObject { [property] = JToken.Parse(json) } },
+                    }
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(source, filter.sharedMesh);
+                CollectionAssert.AreEquivalent(before, UnityEngine.Resources.FindObjectsOfTypeAll<Mesh>());
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = ignoreLogs;
+                if (filter.sharedMesh != null && filter.sharedMesh != source)
+                    UnityEngine.Object.DestroyImmediate(filter.sharedMesh);
+                filter.sharedMesh = null;
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
+        [Test]
+        public void ValidNestedMeshEditStillCreatesOwnedInstance()
+        {
+            var target = Owned("EditableMesh");
+            var filter = target.AddComponent<MeshFilter>();
+            var source = new Mesh { vertices = new[] { Vector3.zero, Vector3.right, Vector3.up }, triangles = new[] { 0, 1, 2 } };
+            filter.sharedMesh = source;
+            try
+            {
+                LogAssert.Expect(
+                    LogType.Error,
+                    "Instantiating mesh due to calling MeshFilter.mesh during edit mode. This will leak meshes. Please use MeshFilter.sharedMesh instead."
+                );
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentProperties"] = new JObject
+                        {
+                            ["MeshFilter"] = new JObject { ["mesh.vertices"] = new JArray(new JArray(1, 0, 0), new JArray(0, 1, 0), new JArray(0, 0, 1)) },
+                        },
+                    }
+                );
+                Succeeded(response);
+                Assert.AreNotEqual(source, filter.sharedMesh);
+                Assert.AreEqual(Vector3.right, filter.sharedMesh.vertices[0]);
+                Assert.AreEqual(Vector3.zero, source.vertices[0]);
+            }
+            finally
+            {
+                if (filter.sharedMesh != null && filter.sharedMesh != source)
+                    UnityEngine.Object.DestroyImmediate(filter.sharedMesh);
+                filter.sharedMesh = null;
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
+        [TestCase("create")]
+        [TestCase("modify")]
+        public void NewComponentReference_CanTargetEarlierPlannedComponent(string action)
+        {
+            var target = action == "modify" ? Owned("SelfReference") : null;
+            string name = prefix + "SelfReference";
+            var request =
+                action == "create"
+                    ? Create(name)
+                    : new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                    };
+            request["componentsToAdd"] = new JArray(
+                "Rigidbody",
+                new JObject
+                {
+                    ["typeName"] = typeof(LifecycleReferenceComponent).FullName,
+                    ["properties"] = new JObject
+                    {
+                        ["Body"] = new JObject { ["name"] = name, ["component"] = "Rigidbody" },
+                    },
+                }
+            );
+            var response = Call(request);
+            Succeeded(response);
+            if (action == "create")
+                target = ResponseObject(response);
+            Assert.AreEqual(target.GetComponent<Rigidbody>(), target.GetComponent<LifecycleReferenceComponent>().Body);
+        }
+
+        [TestCase("modify")]
+        [TestCase("create")]
+        public void InvalidNewComponentValue_PreservesEarlierFieldsAndTags(string action)
+        {
+            var target = Owned("BeforeRejectedAddition");
+            string originalName = target.name;
+            Component[] components = target.GetComponents<Component>();
+            string[] tags = UnityEditorInternal.InternalEditorUtility.tags;
+            string newTag = prefix + "RejectedTag";
+            var request =
+                action == "create"
+                    ? Create()
+                    : new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["name"] = prefix + "Renamed",
+                        ["position"] = new JArray(4, 5, 6),
+                    };
+            request["tag"] = newTag;
+            request["componentsToAdd"] = new JArray(
+                new JObject
+                {
+                    ["typeName"] = "HingeJoint",
+                    ["properties"] = new JObject { ["breakForce"] = "invalid_float" },
+                }
+            );
+            bool ignoreLogs = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                var response = Call(request);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(originalName, target.name);
+                Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+                CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+                CollectionAssert.AreEqual(new[] { target }, Objects());
+                CollectionAssert.AreEqual(tags, UnityEditorInternal.InternalEditorUtility.tags);
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = ignoreLogs;
+                if (UnityEditorInternal.InternalEditorUtility.tags.Contains(newTag))
+                    UnityEditorInternal.InternalEditorUtility.RemoveTag(newTag);
+            }
+        }
+
+        [TestCase("existing_physics")]
+        [TestCase("planned_physics")]
+        [TestCase("required_physics")]
+        [TestCase("existing_disallowed")]
+        [TestCase("planned_disallowed")]
+        public void RejectedAdditionPlan_PreservesEarlierFieldsAndComponents(string kind)
+        {
+            var target = Owned("AdditionPlan");
+            string originalName = target.name;
+            if (kind == "existing_physics" || kind == "required_physics")
+                target.AddComponent<Rigidbody2D>();
+            if (kind == "existing_disallowed")
+                target.AddComponent<LifecycleSingleComponent>();
+            var additions =
+                kind == "planned_physics" ? new JArray("Rigidbody2D", "BoxCollider")
+                : kind == "required_physics" ? new JArray("HingeJoint")
+                : kind == "existing_physics" ? new JArray("BoxCollider")
+                : kind == "planned_disallowed" ? new JArray(typeof(LifecycleSingleComponent).FullName, typeof(LifecycleSingleComponent).FullName)
+                : new JArray(typeof(LifecycleSingleComponent).FullName);
+            var components = target.GetComponents<Component>();
+            var request = new JObject
+            {
+                ["action"] = "modify",
+                ["target"] = target.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                ["name"] = prefix + "Renamed",
+                ["position"] = new JArray(4, 5, 6),
+                ["componentsToAdd"] = additions,
+            };
+            bool ignoreLogs = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                Assert.IsFalse(Call(request).Value<bool>("success"));
+                Assert.AreEqual(originalName, target.name);
+                Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+                CollectionAssert.AreEqual(components, target.GetComponents<Component>());
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = ignoreLogs;
+            }
+        }
+
+        [Test]
+        public void InvalidNativeAliasValue_DoesNotLeaveRequiredDependencies()
+        {
+            var target = Owned("NativeAliasTarget");
+            var before = target.GetComponents<Component>();
+            bool ignoreLogs = LogAssert.ignoreFailingMessages;
+            JObject response;
+            try
+            {
+                // Reflection conversion and native SerializedProperty validation log differently.
+                // The contract here is the rejected value and exact component inventory.
+                LogAssert.ignoreFailingMessages = true;
+                response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentsToAdd"] = new JArray(
+                            new JObject
+                            {
+                                ["typeName"] = "HingeJoint",
+                                ["properties"] = new JObject { ["m_BreakForce"] = "invalid_float" },
+                            }
+                        ),
+                    }
+                );
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = ignoreLogs;
+            }
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, target.GetComponents<Component>());
+        }
+
+        [Test]
+        public void InvalidDeferredNativeProperty_DoesNotWriteEarlierBorrowedTransform()
+        {
+            var target = Owned("DeferredNativeProperty");
+            CreateAssetRoot();
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+            Assert.IsFalse(ownedScene.isDirty);
+            var before = target.GetComponents<Component>();
+            var position = target.transform.position;
+            int undoGroup = Undo.GetCurrentGroup();
+            string originalName = target.name;
+            string[] tags = UnityEditorInternal.InternalEditorUtility.tags;
+            string newTag = prefix + "RejectedOpaqueFieldTag";
+            int targetDirty = EditorUtility.GetDirtyCount(target);
+            int transformDirty = EditorUtility.GetDirtyCount(target.transform);
+            try
+            {
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["name"] = prefix + "RejectedRename",
+                        ["tag"] = newTag,
+                        ["componentsToAdd"] = new JArray(
+                            new JObject
+                            {
+                                ["typeName"] = "HingeJoint",
+                                ["properties"] = new JObject { ["transform.position"] = new JArray(9, 8, 7), ["m_NoSuchProperty_ValidationAudit"] = 1 },
+                            }
+                        ),
+                    }
+                );
+                TestContext.WriteLine(
+                    $"Opaque native schema rejection: sceneDirty={ownedScene.isDirty}, undoGroupBefore={undoGroup}, undoGroupAfter={Undo.GetCurrentGroup()}."
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(originalName, target.name);
+                Assert.AreEqual(position, target.transform.position);
+                CollectionAssert.AreEqual(before, target.GetComponents<Component>());
+                CollectionAssert.AreEqual(tags, UnityEditorInternal.InternalEditorUtility.tags);
+                Assert.IsFalse(ownedScene.isDirty);
+                Assert.AreEqual(targetDirty, EditorUtility.GetDirtyCount(target));
+                Assert.AreEqual(transformDirty, EditorUtility.GetDirtyCount(target.transform));
+                Assert.AreEqual(undoGroup, Undo.GetCurrentGroup());
+            }
+            finally
+            {
+                if (UnityEditorInternal.InternalEditorUtility.tags.Contains(newTag))
+                    UnityEditorInternal.InternalEditorUtility.RemoveTag(newTag);
+            }
+        }
+
+        [Test]
+        public void BorrowedNativeReference_UsesActualTransformSubtype()
+        {
+            var target = Owned("BorrowedProbeAnchor");
+            var renderer = target.AddComponent<MeshRenderer>();
+            var anchor = new GameObject(prefix + "RectAnchor", typeof(RectTransform)).GetComponent<RectTransform>();
+            renderer.probeAnchor = anchor;
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["componentProperties"] = new JObject
+                    {
+                        ["MeshRenderer"] = new JObject
+                        {
+                            ["probeAnchor.anchoredPosition"] = new JObject { ["x"] = 12, ["y"] = 34 },
+                        },
+                    },
+                }
+            );
+            Succeeded(response);
+            Assert.AreEqual(new Vector2(12, 34), anchor.anchoredPosition);
+            Assert.AreEqual(anchor, renderer.probeAnchor);
+        }
+
+        [Test]
+        public void InvalidNestedColliderMaterial_PreservesSharedBindingAndInventory()
+        {
+            var target = Owned("BorrowedPhysicsMaterial");
+            var first = target.AddComponent<BoxCollider>();
+            var second = Owned("OtherPhysicsMaterialOwner").AddComponent<BoxCollider>();
+            var source = new Material3D(prefix + "PhysicsMaterial");
+            first.sharedMaterial = second.sharedMaterial = source;
+            var before = UnityEngine.Resources.FindObjectsOfTypeAll<Material3D>();
+            try
+            {
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentProperties"] = new JObject { ["BoxCollider"] = new JObject { ["material.NoSuchField_ValidationAudit"] = 1 } },
+                    }
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(source, first.sharedMaterial);
+                Assert.AreEqual(source, second.sharedMaterial);
+                CollectionAssert.AreEquivalent(before, UnityEngine.Resources.FindObjectsOfTypeAll<Material3D>());
+            }
+            finally
+            {
+                if (first.sharedMaterial != null && first.sharedMaterial != source)
+                    UnityEngine.Object.DestroyImmediate(first.sharedMaterial);
+                first.sharedMaterial = second.sharedMaterial = null;
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
+        [Test]
+        public void ValidNestedColliderMaterialEdit_RetainsOwnedCloneBehavior()
+        {
+            var target = Owned("EditablePhysicsMaterial");
+            var first = target.AddComponent<BoxCollider>();
+            var second = Owned("SharedPhysicsMaterialOwner").AddComponent<BoxCollider>();
+            var source = new Material3D(prefix + "PhysicsMaterial") { dynamicFriction = 0.6f };
+            first.sharedMaterial = second.sharedMaterial = source;
+            try
+            {
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["componentProperties"] = new JObject { ["BoxCollider"] = new JObject { ["material.dynamicFriction"] = 0.25f } },
+                    }
+                );
+                Succeeded(response);
+                Assert.AreNotEqual(source, first.sharedMaterial);
+                Assert.AreEqual(0.25f, first.sharedMaterial.dynamicFriction);
+                Assert.AreEqual(0.6f, source.dynamicFriction);
+                Assert.AreEqual(source, second.sharedMaterial);
+            }
+            finally
+            {
+                if (first.sharedMaterial != null && first.sharedMaterial != source)
+                    UnityEngine.Object.DestroyImmediate(first.sharedMaterial);
+                first.sharedMaterial = second.sharedMaterial = null;
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
+        [Test]
+        public void InvalidAddedComponentNestedOwner_PreservesEarlierFieldsAndCleanScene()
+        {
+            var target = Owned("NullAddedOwner");
+            string originalName = target.name;
+            CreateAssetRoot();
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+            var before = target.GetComponents<Component>();
+            int group = Undo.GetCurrentGroup();
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["name"] = prefix + "RejectedOwnerRename",
+                    ["componentsToAdd"] = new JArray(
+                        new JObject
+                        {
+                            ["typeName"] = "MeshRenderer",
+                            ["properties"] = new JObject { ["transform.position"] = new JArray(9, 8, 7), ["probeAnchor.name"] = "RejectedAnchorName" },
+                        }
+                    ),
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(originalName, target.name);
+            Assert.AreEqual(Vector3.zero, target.transform.position);
+            CollectionAssert.AreEqual(before, target.GetComponents<Component>());
+            Assert.IsFalse(ownedScene.isDirty);
+            Assert.AreEqual(group, Undo.GetCurrentGroup());
+        }
+
+        [Test]
+        public void AddedComponentNestedOwner_UsesEarlierResolvedReference()
+        {
+            var target = Owned("ResolvedAddedOwner");
+            var anchor = Owned("AssignedProbeAnchor").transform;
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["componentsToAdd"] = new JArray(
+                        new JObject
+                        {
+                            ["typeName"] = "MeshRenderer",
+                            ["properties"] = new JObject
+                            {
+                                ["probeAnchor"] = new JObject { ["instanceID"] = anchor.GetInstanceIDCompat() },
+                                ["probeAnchor.name"] = prefix + "AcceptedAnchorName",
+                            },
+                        }
+                    ),
+                }
+            );
+            Succeeded(response);
+            Assert.AreEqual(anchor, target.GetComponent<MeshRenderer>().probeAnchor);
+            Assert.AreEqual(prefix + "AcceptedAnchorName", anchor.name);
+        }
+
+        [Test]
+        public void AddedComponentIndexedOwner_UsesEarlierArrayAssignment()
+        {
+            AssertAddedComponentIndexedOwner(0, true);
+        }
+
+        [Test]
+        public void InvalidAddedComponentIndexedOwner_PreservesEarlierFieldsAndCleanScene()
+        {
+            AssertAddedComponentIndexedOwner(1, false);
+        }
+
+        private void AssertAddedComponentIndexedOwner(int index, bool accepted)
+        {
+            var target = Owned("IndexedAddedOwner");
+            var material = new Material(Shader.Find("Sprites/Default")) { name = prefix + "OriginalMaterial" };
+            try
+            {
+                string originalName = target.name;
+                CreateAssetRoot();
+                Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+                var before = target.GetComponents<Component>();
+                var materialsBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Material>();
+                int group = Undo.GetCurrentGroup();
+                var response = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["name"] = prefix + "IndexedOwnerRename",
+                        ["componentsToAdd"] = new JArray(
+                            new JObject
+                            {
+                                ["typeName"] = "MeshRenderer",
+                                ["properties"] = new JObject
+                                {
+                                    ["transform.position"] = new JArray(9, 8, 7),
+                                    ["sharedMaterials"] = new JArray(new JObject { ["instanceID"] = material.GetInstanceIDCompat() }),
+                                    [$"sharedMaterials[{index}].name"] = prefix + "AcceptedMaterialName",
+                                },
+                            }
+                        ),
+                    }
+                );
+                Assert.AreEqual(accepted, response.Value<bool>("success"), response.ToString());
+                CollectionAssert.AreEquivalent(materialsBefore, UnityEngine.Resources.FindObjectsOfTypeAll<Material>());
+                if (accepted)
+                {
+                    Assert.AreEqual(material, target.GetComponent<MeshRenderer>().sharedMaterials[0]);
+                    Assert.AreEqual(prefix + "AcceptedMaterialName", material.name);
+                    Assert.AreEqual(new Vector3(9, 8, 7), target.transform.position);
+                }
+                else
+                {
+                    Assert.AreEqual(originalName, target.name);
+                    Assert.AreEqual(Vector3.zero, target.transform.position);
+                    Assert.AreEqual(prefix + "OriginalMaterial", material.name);
+                    CollectionAssert.AreEqual(before, target.GetComponents<Component>());
+                    Assert.IsFalse(ownedScene.isDirty);
+                    Assert.AreEqual(group, Undo.GetCurrentGroup());
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(material);
+            }
+        }
+
+        [Test]
+        public void ValidNativeAliasValue_RemainsSupportedOnAddedComponent()
+        {
+            var target = Owned("ValidAliasTarget");
+
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["componentsToAdd"] = new JArray(
+                        new JObject
+                        {
+                            ["typeName"] = "HingeJoint",
+                            ["properties"] = new JObject { ["m_BreakForce"] = 12.5 },
+                        }
+                    ),
+                }
+            );
+
+            Succeeded(response);
+            Assert.AreEqual(12.5f, target.GetComponent<HingeJoint>().breakForce);
+            Assert.IsNotNull(target.GetComponent<Rigidbody>());
+        }
+
+        [Test]
+        public void UnprovenNativeField_DoesNotReplaceExistingTransform()
+        {
+            var target = Owned("TransformIdentityTarget");
+            var before = target.transform;
+
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["componentsToAdd"] = new JArray(
+                        new JObject
+                        {
+                            ["typeName"] = "RectTransform",
+                            ["properties"] = new JObject { ["m_NoSuchProperty_ValidationAudit"] = 1 },
+                        }
+                    ),
+                }
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreSame(before, target.transform);
         }
 
         [Test]
@@ -583,4 +1229,14 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(new[] { idObject }, Objects());
         }
     }
+
+    [DisallowMultipleComponent]
+    public class LifecycleSingleComponent : MonoBehaviour { }
+
+    public class LifecycleReferenceComponent : MonoBehaviour
+    {
+        public Rigidbody Body;
+    }
+
+    public abstract class LifecycleAbstractComponent : MonoBehaviour { }
 }
