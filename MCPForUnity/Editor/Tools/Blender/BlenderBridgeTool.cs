@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Blender;
 using MCPForUnity.Editor.Tools.AssetGen;
 using MCPForUnity.Runtime.Helpers;
@@ -27,7 +28,7 @@ namespace MCPForUnity.Editor.Tools.Blender
     /// Socket and git work runs on the thread pool; Unity API calls happen after the await, back on
     /// the editor thread (the bridge awaits handlers on Unity's synchronization context).
     /// </summary>
-    [McpForUnityTool("blender_bridge", AutoRegister = false, Group = "asset_gen",
+    [McpForUnityTool("blender_bridge", AutoRegister = false, RequiresExplicitConsent = true, Group = "asset_gen",
         Description = "Bridge to a running Blender with the BlenderMCP addon: status, scene/object info, viewport " +
                       "screenshot, run Python in Blender, import a model (export → import → place → normalize), " +
                       "check the blender-mcp checkout for updates, and sync its addon into Blender.")]
@@ -44,6 +45,13 @@ namespace MCPForUnity.Editor.Tools.Blender
         public static async Task<object> HandleCommand(JObject @params)
         {
             if (@params == null) return new ErrorResponse("Parameters cannot be null.");
+            // Panel/menu callers and direct registry dispatch must enforce the same grant.
+            if (!EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge"), false)
+                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("blender_bridge"))
+                return new ErrorResponse("blender_consent_required",
+                    "Enable blender_bridge explicitly in the Unity Editor before using Blender bridge operations, " +
+                    "including Python execution and addon synchronization.");
+
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? "status").Trim().ToLowerInvariant();
             int timeout = Math.Max(5, Math.Min(3600, p.GetInt("timeout_seconds", 180) ?? 180));

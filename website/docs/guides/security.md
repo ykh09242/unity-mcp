@@ -24,7 +24,9 @@ Requests with `Origin` or `Sec-Fetch-Site` are rejected even with a token. Use n
 
 ## Grant narrow Editor consent
 
-Explicit consent is required for `execute_code`, `manage_script`, `execute_menu_item`, `manage_packages`, `manage_build`, and `batch_execute`. Enabling a tool/group does not grant consent. Compiler-affecting asset/folder/metadata changes also require script consent.
+Explicit consent is required for `execute_code`, `manage_script`, `execute_menu_item`, `manage_packages`, `manage_build`, `batch_execute`, and `blender_bridge`. Activating a tool group does not grant consent. Compiler-affecting asset/folder/metadata changes also require script consent.
+
+The Blender Bridge uses one consent grant for all its operations, including inspection, Python execution, model import, and addon synchronization. Enable `blender_bridge` explicitly in the Editor's tool controls before using the bridge through MCP, CLI, or the Editor panel/menu. Older automatically enabled settings do not count as consent. Disabling the tool revokes the grant for subsequent calls, including existing sessions and batches.
 
 Review the Editor's tool controls and operation-specific consent prompt. Do not enable all high-impact tools to fix a missing-tool error. A batch cannot bypass nested operations' consent or disabled-tool checks. Asset writes stay inside their permitted roots; link/junction rejection is a containment safeguard.
 

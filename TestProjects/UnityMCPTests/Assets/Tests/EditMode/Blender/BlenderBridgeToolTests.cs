@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -18,6 +20,28 @@ namespace MCPForUnityTests.Editor.Blender
     /// </summary>
     public class BlenderBridgeToolTests
     {
+        private bool? savedEnabled;
+        private bool? savedConsent;
+        private const string EnabledKey = EditorPrefKeys.ToolEnabledPrefix + "blender_bridge";
+        private static string ConsentKey => ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge");
+
+        [SetUp]
+        public void GrantConsent()
+        {
+            savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
+            savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
+            MCPServiceLocator.ToolDiscovery.SetToolEnabled("blender_bridge", true);
+        }
+
+        [TearDown]
+        public void RestoreConsent()
+        {
+            if (savedEnabled.HasValue) EditorPrefs.SetBool(EnabledKey, savedEnabled.Value);
+            else EditorPrefs.DeleteKey(EnabledKey);
+            if (savedConsent.HasValue) EditorPrefs.SetBool(ConsentKey, savedConsent.Value);
+            else EditorPrefs.DeleteKey(ConsentKey);
+        }
+
         private static JObject Call(JObject p)
             => JObject.Parse(JsonConvert.SerializeObject(BlenderBridgeTool.HandleCommand(p).GetAwaiter().GetResult()));
 

@@ -5,6 +5,7 @@ using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -13,7 +14,7 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class ToolConsentSecurityTests
     {
-        private static readonly string[] Names = { "execute_code", "manage_packages", "execute_menu_item", "manage_build", "batch_execute", "manage_script" };
+        private static readonly string[] Names = { "execute_code", "manage_packages", "execute_menu_item", "manage_build", "batch_execute", "manage_script", "blender_bridge" };
         private readonly Dictionary<string, bool?> saved = new();
 
         [SetUp]
@@ -48,6 +49,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("execute_menu_item")]
         [TestCase("manage_build")]
         [TestCase("manage_script")]
+        [TestCase("blender_bridge")]
         public async Task BatchRejectsToolsWithoutConsent(string name)
         {
             var result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject
@@ -72,6 +74,79 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(new ToolDiscoveryService().IsToolEnabled(name));
             service.SetToolEnabled(name, false);
             Assert.IsFalse(new ToolDiscoveryService().IsToolEnabled(name));
+        }
+
+        [TestCase("run_python")]
+        [TestCase(" RUN_PYTHON ")]
+        [TestCase("object_info")]
+        [TestCase("sync_addon")]
+        public async Task DirectBlenderCallsRejectLegacyEnablement(string action)
+        {
+            // An unconfigured checkout keeps sync_addon inert if the consent guard regresses.
+            string forkKey = EditorPrefKeys.BlenderForkPath;
+            string savedFork = EditorPrefs.HasKey(forkKey) ? EditorPrefs.GetString(forkKey) : null;
+            EditorPrefs.DeleteKey(forkKey);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.ToolEnabledPrefix + "blender_bridge", true);
+                var response = JObject.FromObject(await BlenderBridgeTool.HandleCommand(new JObject
+                {
+                    ["action"] = action
+                }));
+                Assert.IsFalse(response.Value<bool>("success"));
+                Assert.AreEqual("blender_consent_required", (string)response["code"]);
+            }
+            finally
+            {
+                if (savedFork != null) EditorPrefs.SetString(forkKey, savedFork);
+                else EditorPrefs.DeleteKey(forkKey);
+            }
+        }
+
+        [TestCase("direct")]
+        [TestCase("registry")]
+        [TestCase("dispatcher")]
+        [TestCase("batch")]
+        public async Task BlenderConsentRevocationBlocksExistingDispatchPaths(string route)
+        {
+            var service = MCPServiceLocator.ToolDiscovery;
+            service.SetToolEnabled("batch_execute", true);
+            service.SetToolEnabled("blender_bridge", true);
+            var allowed = await InvokeBlender(route);
+            StringAssert.Contains("'code' is required", allowed.ToString(),
+                "An explicit grant must reach normal parameter validation without contacting Blender.");
+
+            service.SetToolEnabled("blender_bridge", false);
+            var denied = await InvokeBlender(route);
+            Assert.IsFalse(denied.Value<bool>("success"));
+            if (route == "direct" || route == "registry")
+                Assert.AreEqual("blender_consent_required", (string)denied["code"]);
+            else
+                StringAssert.Contains("disabled", denied.ToString().ToLowerInvariant());
+        }
+
+        private static async Task<JObject> InvokeBlender(string route)
+        {
+            var parameters = new JObject { ["action"] = "run_python" };
+            switch (route)
+            {
+                case "direct":
+                    return JObject.FromObject(await BlenderBridgeTool.HandleCommand(parameters));
+                case "registry":
+                    return JObject.FromObject(await CommandRegistry.InvokeCommandAsync("blender_bridge", parameters));
+                case "dispatcher":
+                    return JObject.Parse(await TransportCommandDispatcher.ExecuteCommandJsonAsync(
+                        new JObject { ["type"] = "blender_bridge", ["params"] = parameters }.ToString(),
+                        CancellationToken.None));
+                default:
+                    return JObject.FromObject(await BatchExecute.HandleCommand(new JObject
+                    {
+                        ["commands"] = new JArray(new JObject
+                        {
+                            ["tool"] = "blender_bridge", ["params"] = parameters
+                        })
+                    }));
+            }
         }
 
         [TestCase("create")]
