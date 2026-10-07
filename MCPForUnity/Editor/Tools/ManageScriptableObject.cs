@@ -818,7 +818,7 @@ namespace MCPForUnity.Editor.Tools
         private static List<object> ValidatePatches(UnityEngine.Object target, JArray patches)
         {
             var results = new List<object>(patches.Count);
-            var so = new SerializedObject(target);
+            using var so = new SerializedObject(target);
             so.Update();
 
             for (int i = 0; i < patches.Count; i++)
@@ -1107,7 +1107,7 @@ namespace MCPForUnity.Editor.Tools
             var results = new List<object>(patches.Count);
             bool anyChanged = false;
 
-            var so = new SerializedObject(target);
+            using var so = new SerializedObject(target);
             so.Update();
 
             for (int i = 0; i < patches.Count; i++)
@@ -1151,19 +1151,19 @@ namespace MCPForUnity.Editor.Tools
                 anyChanged |= changed;
                 results.Add(patchResult);
 
-                // Array resize should be applied immediately so later paths resolve.
-                if (string.Equals(op, "array_resize", StringComparison.OrdinalIgnoreCase) && changed)
+                // Keep capacity and conversion changes staged until this patch succeeds.
+                if (changed)
                 {
                     AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
                     so.ApplyModifiedProperties();
-                    so.Update();
                 }
+                // Failed patches may have staged growth before resolving their leaf/value.
+                so.Update();
             }
 
             if (anyChanged)
             {
                 AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
-                so.ApplyModifiedProperties();
                 EditorUtility.SetDirty(target);
                 AssetDatabase.SaveAssets();
             }
@@ -1276,9 +1276,6 @@ namespace MCPForUnity.Editor.Tools
                     int newSize = checked(targetIndex + 1);
                     CheckArraySizeChange(arrayProp.arraySize, newSize);
                     arrayProp.arraySize = newSize;
-                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
-                    so.ApplyModifiedProperties();
-                    so.Update();
                     resized = true;
                 }
             }
@@ -1440,7 +1437,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Phase 1.2: Auto-resize arrays if targeting an index beyond current bounds
-            if (!EnsureArrayCapacity(so, propertyPath, out bool arrayResized))
+            if (!EnsureArrayCapacity(so, propertyPath, out _))
             {
                 // Could not resolve the array path - try to find the property anyway for a better error message
                 var checkProp = so.FindProperty(propertyPath);
@@ -1493,12 +1490,6 @@ namespace MCPForUnity.Editor.Tools
                     ok = false,
                     message = $"Property not found: {propertyPath}",
                 };
-            }
-
-            // Track if we resized - this counts as a change
-            if (arrayResized)
-            {
-                changed = true;
             }
 
             if (prop.propertyType == SerializedPropertyType.ObjectReference)
@@ -1584,6 +1575,28 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="depth">Current recursion depth (for safety limits)</param>
         private static bool TrySetValueRecursive(SerializedProperty prop, JToken valueToken, out string message, int depth)
         {
+            // Container mappings retain valid children, but an entirely rejected child must
+            // restore its staged subtree, including array capacity, before its siblings run.
+            bool isContainer =
+                prop.isArray && prop.propertyType != SerializedPropertyType.String && valueToken is JArray
+                || prop.propertyType == SerializedPropertyType.Generic && !prop.isArray && valueToken is JObject;
+            if (!isContainer)
+                return TrySetValueRecursiveCore(prop, valueToken, out message, depth);
+
+            var so = prop.serializedObject;
+            string path = prop.propertyPath;
+            string rootPath = path.Split('.')[0];
+            using var checkpoint = new SerializedObject(so.targetObjects);
+            // Copy pending ancestors too, so newly grown elements exist in the checkpoint.
+            checkpoint.CopyFromSerializedProperty(so.FindProperty(rootPath));
+            bool ok = TrySetValueRecursiveCore(prop, valueToken, out message, depth);
+            if (!ok)
+                so.CopyFromSerializedProperty(checkpoint.FindProperty(path));
+            return ok;
+        }
+
+        private static bool TrySetValueRecursiveCore(SerializedProperty prop, JToken valueToken, out string message, int depth)
+        {
             message = null;
             const int MaxRecursionDepth = 20;
 
@@ -1614,12 +1627,6 @@ namespace MCPForUnity.Editor.Tools
                     CheckArraySizeChange(prop.arraySize, jArray.Count);
                     prop.arraySize = jArray.Count;
 
-                    // Get the SerializedObject and apply so we can access elements
-                    var so = prop.serializedObject;
-                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
-                    so.ApplyModifiedProperties();
-                    so.Update();
-
                     int successCount = 0;
                     var errors = new List<string>();
 
@@ -1641,9 +1648,6 @@ namespace MCPForUnity.Editor.Tools
                             errors.Add($"[{i}]: {elemMessage}");
                         }
                     }
-
-                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
-                    so.ApplyModifiedProperties();
 
                     if (errors.Count > 0)
                     {
@@ -1682,9 +1686,6 @@ namespace MCPForUnity.Editor.Tools
                             errors.Add($"{kvp.Key}: {childMessage}");
                         }
                     }
-
-                    AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(so.targetObject));
-                    so.ApplyModifiedProperties();
 
                     if (errors.Count > 0)
                     {

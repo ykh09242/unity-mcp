@@ -31,6 +31,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
+            if (_asset != null)
+                Undo.ClearUndo(_asset);
             if (!string.IsNullOrEmpty(_root) && AssetDatabase.IsValidFolder(_root))
                 AssetDatabase.DeleteAsset(_root);
         }
@@ -201,6 +203,125 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
             Assert.AreEqual(4, _asset.items.Length);
             Assert.AreEqual(0, _asset.items[3]);
+        }
+
+        [TestCase("items[3]")]
+        [TestCase("groups[2].numbers[3]")]
+        [TestCase("groups[2].missing")]
+        public void InvalidIndexedSet_DoesNotGrowAnyArray(string path)
+        {
+            var patch = new JObject { ["path"] = path, ["value"] = "not-a-number" };
+            int dirty = EditorUtility.GetDirtyCount(_asset);
+            var response = Modify(patch);
+            Assert.IsFalse((bool)response["data"]["results"][0]["ok"], response.ToString());
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            Assert.AreEqual(1, _asset.groups.Length);
+            CollectionAssert.AreEqual(new[] { 1, 2 }, _asset.groups[0].numbers);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(_asset));
+        }
+
+        [Test]
+        public void AllInvalidBulkElements_DoNotResizeOrWrite()
+        {
+            int dirty = EditorUtility.GetDirtyCount(_asset);
+            var response = Modify(new JObject { ["path"] = "items", ["value"] = new JArray("bad", "bad", "bad", "bad") });
+            Assert.IsFalse((bool)response["data"]["results"][0]["ok"], response.ToString());
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(_asset));
+        }
+
+        [Test]
+        public void InvalidIndexedObjectReference_DoesNotGrowArrayOrWriteSibling()
+        {
+            int dirty = EditorUtility.GetDirtyCount(_asset);
+            var response = Modify(
+                new JObject
+                {
+                    ["path"] = "materials[3]",
+                    ["ref"] = new JObject { ["path"] = _root + "/Missing.mat" },
+                }
+            );
+            Assert.IsFalse((bool)response["data"]["results"][0]["ok"], response.ToString());
+            Assert.AreEqual(2, _asset.materials.Length);
+            Assert.IsNull(_asset.materials[0]);
+            Assert.IsNull(_asset.materials[1]);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(_asset));
+        }
+
+        [Test]
+        public void InvalidNestedBulkChild_PreservesItsArrayAndAppliesValidSibling()
+        {
+            var response = Modify(
+                new JObject
+                {
+                    ["path"] = "nested",
+                    ["value"] = new JObject { ["numbers"] = new JArray("bad", "bad", "bad"), ["text"] = "accepted" },
+                }
+            );
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            CollectionAssert.AreEqual(new[] { 1, 2 }, _asset.nested.numbers);
+            Assert.AreEqual("accepted", _asset.nested.text);
+        }
+
+        [Test]
+        public void FailedIndexedPatch_DoesNotDiscardValidNeighborPatches()
+        {
+            var response = ModifyMany(
+                new JArray(
+                    new JObject { ["path"] = "intValue", ["value"] = 42 },
+                    new JObject { ["path"] = "items[3]", ["value"] = "bad" },
+                    new JObject { ["path"] = "textValue", ["value"] = "accepted" }
+                )
+            );
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            Assert.IsFalse((bool)response["data"]["results"][1]["ok"], response.ToString());
+            Assert.IsTrue((bool)response["data"]["results"][2]["ok"], response.ToString());
+            Assert.AreEqual(42, _asset.intValue);
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            Assert.AreEqual("accepted", _asset.textValue);
+        }
+
+        [Test]
+        public void PartiallyValidBulkElements_KeepValidWritesAndRejectedValues()
+        {
+            var response = Modify(new JObject { ["path"] = "items", ["value"] = new JArray(42, "bad", 99) });
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            CollectionAssert.AreEqual(new[] { 42, 8, 99 }, _asset.items);
+        }
+
+        [Test]
+        public void DryRunIndexedGrowth_DoesNotWriteArrayOrDirtyAsset()
+        {
+            int dirty = EditorUtility.GetDirtyCount(_asset);
+            var response = Modify(new JObject { ["path"] = "items[3]", ["value"] = 42 }, true);
+            Assert.IsTrue((bool)response["data"]["valid"], response.ToString());
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(_asset));
+        }
+
+        [Test]
+        public void AcceptedPatchesRemainUndoableWithRejectedGrowthBetweenThem()
+        {
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            var response = ModifyMany(
+                new JArray(
+                    new JObject { ["path"] = "intValue", ["value"] = 42 },
+                    new JObject { ["path"] = "items[3]", ["value"] = "bad" },
+                    new JObject { ["path"] = "textValue", ["value"] = "accepted" }
+                )
+            );
+            Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
+            Assert.IsTrue((bool)response["data"]["results"][2]["ok"], response.ToString());
+            Assert.AreEqual(42, _asset.intValue);
+            Assert.AreEqual("accepted", _asset.textValue);
+            Undo.FlushUndoRecordObjects();
+            Undo.CollapseUndoOperations(group);
+            Undo.PerformUndo();
+            Assert.AreEqual(99, _asset.intValue);
+            Assert.AreEqual("fixture", _asset.textValue);
+            CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            Undo.IncrementCurrentGroup();
         }
 
         [TestCase("2147483648")]

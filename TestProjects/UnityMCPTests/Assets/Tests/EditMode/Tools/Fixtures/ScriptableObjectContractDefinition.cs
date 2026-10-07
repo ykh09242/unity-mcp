@@ -24,6 +24,7 @@ namespace MCPForUnityTests.Editor.Tools.Fixtures
         public float floatValue = 7;
         public AnimationCurve curveValue = AnimationCurve.Linear(0, 7, 1, 8);
         public int[] items = { 7, 8 };
+        public Material[] materials = new Material[2];
         public bool enabledValue = true;
         public string textValue = "fixture";
         public ScriptableObjectContractNested nested = new() { numbers = new[] { 1, 2 }, text = "nested" };
