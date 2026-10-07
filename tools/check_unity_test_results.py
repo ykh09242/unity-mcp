@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -15,10 +16,20 @@ def escape_property(value: str) -> str:
     return escape_data(value).replace(":", "%3A").replace(",", "%2C")
 
 
-def check_results(path: Path, runner_outcome: str) -> int:
+def check_results(
+    path: Path, runner_outcome: str, required_tests: Sequence[str] | None = None
+) -> int:
     runner_failed = runner_outcome != "success"
     if runner_failed:
         print(f"::error::Unity test runner did not succeed: {escape_data(runner_outcome)}")
+    for required in required_tests or ():
+        if (
+            not isinstance(required, str)
+            or "." not in required
+            or not all(part.isidentifier() for part in required.split("."))
+        ):
+            print(f"::error::Invalid required test method: {escape_data(str(required))}")
+            return 1
     try:
         root = ET.parse(path).getroot()
         if root.tag != "test-run":
@@ -39,6 +50,23 @@ def check_results(path: Path, runner_outcome: str) -> int:
     print(
         f"Results: {passed} passed, {failed} failed, {inconclusive} inconclusive, {skipped} skipped (total: {total})"
     )
+    requirements_failed = False
+    for required in required_tests or ():
+        matching = [
+            case
+            for case in root.iter("test-case")
+            if case.get("fullname", "") == required
+            or case.get("fullname", "").startswith(required + "(")
+        ]
+        if not matching:
+            print(f"::error::Required test was not recorded: {escape_data(required)}")
+            requirements_failed = True
+        for case in matching:
+            if case.get("result") != "Passed":
+                name = escape_property(case.get("fullname", ""))
+                result = escape_data(case.get("result", "<missing>"))
+                print(f"::error title=Required test did not pass: {name}::{result}")
+                requirements_failed = True
     # Unity's command-line runner exits 2 (failed) for any Inconclusive test (Assert.Inconclusive,
     # Assume.That), so the runner outcome already fails such a run. Name each one so the log says why.
     inconclusive_cases = [
@@ -85,15 +113,22 @@ def check_results(path: Path, runner_outcome: str) -> int:
             f"::error::NUnit declares {passed} passing tests but contains {recorded_passes} passing test-case records"
         )
         return 1
-    return 1 if runner_failed else 0
+    return 1 if runner_failed or requirements_failed else 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path)
     parser.add_argument("--runner-outcome", required=True)
+    parser.add_argument(
+        "--require-test",
+        action="append",
+        default=[],
+        metavar="FULLY_QUALIFIED_METHOD",
+        help="Require this exact method and every recorded parameterized case to pass (repeatable).",
+    )
     args = parser.parse_args()
-    return check_results(args.results, args.runner_outcome)
+    return check_results(args.results, args.runner_outcome, args.require_test)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -28,12 +29,15 @@ UNITY_INCONCLUSIVE_RUN = """<test-run id="2" testcasecount="1166" result="Skippe
   </test-case></test-run>"""
 
 
-def run_gate(tmp_path, xml, outcome="success"):
+def run_gate(tmp_path, xml, outcome="success", required_tests=()):
     results = tmp_path / "editmode-results.xml"
     if xml is not None:
         results.write_text(xml, encoding="utf-8")
+    command = [sys.executable, str(GATE), str(results), "--runner-outcome", outcome]
+    for required in required_tests:
+        command.extend(("--require-test", required))
     return subprocess.run(
-        [sys.executable, str(GATE), str(results), "--runner-outcome", outcome],
+        command,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -157,3 +161,149 @@ def test_failure_details_cannot_inject_workflow_commands(tmp_path):
     assert "\n::warning::injected" not in result.stdout
     assert "\n::error::injected" not in result.stdout
     assert "%0A::warning::injected" in result.stdout
+
+
+REQUIRED_METHOD = "MCPForUnityTests.OptionalPackageTests.PackageFeature_Works"
+
+
+def required_result_xml(cases):
+    # An unrelated pass must never hide required cases that did not execute.
+    records = [("OtherSuite.OtherTest", "Passed"), *cases]
+    passed = sum(result == "Passed" for _, result in records)
+    failed = sum(result == "Failed" for _, result in records)
+    root = ET.Element(
+        "test-run",
+        result="Failed" if failed else "Skipped:Ignored",
+        total=str(len(records)),
+        passed=str(passed),
+        failed=str(failed),
+        inconclusive="0",
+        skipped=str(len(records) - passed - failed),
+    )
+    for fullname, result in records:
+        ET.SubElement(root, "test-case", fullname=fullname, result=result)
+    return ET.tostring(root, encoding="unicode")
+
+
+@pytest.mark.parametrize("state", ["Skipped", "Explicit", "NotRunnable", "", "Passed:Ignored"])
+def test_required_method_must_actually_pass(tmp_path, state):
+    xml = required_result_xml([(REQUIRED_METHOD, state)])
+    assert run_gate(tmp_path, xml).returncode == 0
+
+    result = run_gate(tmp_path, xml, required_tests=[REQUIRED_METHOD])
+
+    assert result.returncode == 1
+    assert "Required test did not pass" in result.stdout
+    assert REQUIRED_METHOD in result.stdout
+
+
+@pytest.mark.parametrize("other_name", ["OtherSuite.OtherTest", REQUIRED_METHOD + "Extra"])
+def test_required_method_cannot_be_missing_or_match_longer_method_names(tmp_path, other_name):
+    result = run_gate(
+        tmp_path,
+        required_result_xml([(other_name, "Passed")]),
+        required_tests=[REQUIRED_METHOD],
+    )
+
+    assert result.returncode == 1
+    assert "Required test was not recorded" in result.stdout
+
+
+@pytest.mark.parametrize("record", ["suite", "name-only"])
+def test_required_method_needs_fullname_on_an_actual_test_case(tmp_path, record):
+    root = ET.fromstring(required_result_xml([]))
+    if record == "suite":
+        ET.SubElement(root, "test-suite", fullname=REQUIRED_METHOD, result="Passed")
+    else:
+        root.find("test-case").set("name", REQUIRED_METHOD)
+    result = run_gate(
+        tmp_path, ET.tostring(root, encoding="unicode"), required_tests=[REQUIRED_METHOD]
+    )
+
+    assert result.returncode == 1
+    assert "Required test was not recorded" in result.stdout
+
+
+def test_failed_required_method_is_named_even_when_suite_already_failed(tmp_path):
+    result = run_gate(
+        tmp_path,
+        required_result_xml([(REQUIRED_METHOD, "Failed")]),
+        required_tests=[REQUIRED_METHOD],
+    )
+
+    assert result.returncode == 1
+    assert "Required test did not pass" in result.stdout
+
+
+@pytest.mark.parametrize("states", [["Skipped", "Explicit"], ["Passed", "Skipped"]])
+def test_every_parameterized_required_case_must_pass(tmp_path, states):
+    result = run_gate(
+        tmp_path,
+        required_result_xml(
+            [(f"{REQUIRED_METHOD}({index})", state) for index, state in enumerate(states)]
+        ),
+        required_tests=[REQUIRED_METHOD],
+    )
+
+    assert result.returncode == 1
+    assert "Required test did not pass" in result.stdout
+
+
+def test_repeated_requirements_accept_exact_and_all_parameterized_passes(tmp_path):
+    second_method = "Suite.SecondFixture.SecondMethod"
+    result = run_gate(
+        tmp_path,
+        required_result_xml(
+            [
+                (REQUIRED_METHOD + "(1)", "Passed"),
+                (REQUIRED_METHOD + "(2)", "Passed"),
+                (second_method, "Passed"),
+            ]
+        ),
+        required_tests=[REQUIRED_METHOD, second_method],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_repeated_requirements_cannot_drop_an_earlier_missing_method(tmp_path):
+    result = run_gate(
+        tmp_path,
+        required_result_xml([]),
+        required_tests=[REQUIRED_METHOD, "OtherSuite.OtherTest"],
+    )
+
+    assert result.returncode == 1
+    assert "Required test was not recorded" in result.stdout
+
+
+@pytest.mark.parametrize("name", ["", " ", "Method", "Suite..Method", "Suite.Method()", "Suite.*"])
+def test_invalid_required_method_name_fails(tmp_path, name):
+    result = run_gate(tmp_path, PASSING, required_tests=[name])
+
+    assert result.returncode == 1
+    assert "Invalid required test method" in result.stdout
+
+
+def test_required_case_diagnostics_escape_test_controlled_names_and_results(tmp_path):
+    malicious_name = REQUIRED_METHOD + "(Suite:Name,Percent%\n::error::injected)"
+    malicious_result = "Skipped%\n::warning::injected"
+    result = run_gate(
+        tmp_path,
+        required_result_xml([(malicious_name, malicious_result)]),
+        required_tests=[REQUIRED_METHOD],
+    )
+
+    assert result.returncode == 1
+    assert "Suite%3AName%2CPercent%25%0A%3A%3Aerror%3A%3Ainjected" in result.stdout
+    assert "Skipped%25%0A::warning::injected" in result.stdout
+    assert "\n::error::injected" not in result.stdout
+    assert "\n::warning::injected" not in result.stdout
+
+
+def test_invalid_required_name_diagnostic_cannot_inject_workflow_command(tmp_path):
+    result = run_gate(tmp_path, PASSING, required_tests=["Suite.Bad%\n::warning::injected"])
+
+    assert result.returncode == 1
+    assert "Bad%25%0A::warning::injected" in result.stdout
+    assert "\n::warning::injected" not in result.stdout
