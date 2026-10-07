@@ -20,12 +20,15 @@ Real socket checks cover receiver responsiveness during an asynchronous command,
 handler invocation, capacity/duplicate rejection, deadline measurement from receipt, expiration
 before execution, FIFO preservation after response cancellation, stale sender ownership,
 negotiated binary transfer with control-message interleaving, opaque legacy IDs and teardown
-while an existing handler remains active. The benchmark compares the previous JSON text
+that retains the actual handler settlement barrier after disconnect. The benchmark compares the previous JSON text
 round trip to the structured production projection using a 256KiB Unicode result and exact
 output equality. Timing and allocation values are local measurements, not latency guarantees.
 
 The real Unity test runner is still needed for host-specific Editor synchronization, actual
 state observation and package assembly loading. Existing asynchronous Unity tools do not take
 a cancellation token: response deadlines cancel the response, while FIFO waits for their actual
-settlement; disconnect cancels transport-owned waits and prevents stale sends. This fixture
+settlement; disconnect cancels response delivery and prevents stale sends, while asynchronous
+teardown/reconnection still awaits actual handler settlement. ForceStop and Dispose cancel and
+close synchronously without blocking Editor cleanup; a later same-client restart awaits the
+retained settlement barrier. This fixture
 cannot prove those existing tools abort their Unity side effects after disconnect.

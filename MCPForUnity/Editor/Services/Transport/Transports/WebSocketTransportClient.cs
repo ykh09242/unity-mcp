@@ -49,6 +49,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private Task _keepAliveTask;
         private Task _registrationTask;
         private ConnectionCommandWork _commandWork;
+        private Task _forcedCommandSettlement = Task.CompletedTask;
         private IDisposable _statePublisher;
         private bool _largeResultNegotiated;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -257,10 +258,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             CancellationTokenSource lifecycleCts;
             ConnectionLoops loops;
             ClientWebSocket socket;
+            Task previousSettlement = null;
+            TaskCompletionSource<bool> settlement = null;
             lock (_ownershipLock)
             {
                 lifecycleCts = _lifecycleCts;
                 loops = CaptureConnectionLoops();
+                if (loops.Commands != null)
+                {
+                    previousSettlement = _forcedCommandSettlement;
+                    settlement = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    // Publish before cancellation callbacks can attempt a restart.
+                    _forcedCommandSettlement = settlement.Task;
+                }
                 socket = _socket;
                 _lifecycleCts = null;
                 _connectionCts = null;
@@ -277,11 +287,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             try { lifecycleCts?.Cancel(); } catch { }
             try { loops.Cts?.Cancel(); } catch { }
+            if (settlement != null) _ = SettleForcedCommandsAsync(previousSettlement, loops.Commands, settlement);
             loops.Publisher?.Dispose();
             try { socket?.Abort(); } catch { }
             try { socket?.Dispose(); } catch { }
             try { loops.Cts?.Dispose(); } catch { }
             try { lifecycleCts?.Dispose(); } catch { }
+        }
+
+        private async Task SettleForcedCommandsAsync(Task previous, ConnectionCommandWork commands,
+            TaskCompletionSource<bool> settlement)
+        {
+            try
+            {
+                await previous.ConfigureAwait(false);
+                // Cancellation has sealed the old queue; capture all accepted work now.
+                await commands.DrainAsync().ConfigureAwait(false);
+                lock (_ownershipLock)
+                    if (ReferenceEquals(_forcedCommandSettlement, settlement.Task))
+                        _forcedCommandSettlement = Task.CompletedTask;
+                settlement.TrySetResult(true);
+            }
+            catch (Exception ex) { settlement.TrySetException(ex); }
         }
 
         public async Task<bool> VerifyAsync()
@@ -326,8 +353,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             try
             {
-                // Ensure background loops are stopped before disposing shared resources
-                StopAsync().GetAwaiter().GetResult();
+                // Handler cleanup can require the Editor main thread; never block it here.
+                ForceStop();
             }
             catch (Exception ex)
             {
@@ -343,6 +370,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private async Task<bool> EstablishConnectionAsync(CancellationToken token)
         {
             ConnectionLoops loops;
+            Task forcedSettlement;
             CancellationTokenSource lifecycleCts;
             lock (_ownershipLock)
             {
@@ -351,8 +379,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 try { if (lifecycleCts.Token != token) return false; }
                 catch (ObjectDisposedException) { return false; }
                 loops = CaptureConnectionLoops();
+                forcedSettlement = _forcedCommandSettlement;
             }
             await StopCapturedConnectionLoopsAsync(loops).ConfigureAwait(false);
+            // A manual restart may have no current loops after ForceStop, but its old handlers still own mutations.
+            await ConnectionCommandWork.WaitAsync(forcedSettlement, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
             CancellationToken connectionToken = connectionCts.Token;
@@ -955,9 +986,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 try
                 {
-                    // A response timeout never lets the following mutation overtake an active handler.
-                    await ConnectionCommandWork.WaitAsync(previous, token).ConfigureAwait(false);
-                    if (operation != null) await ConnectionCommandWork.WaitAsync(operation.Completion, token).ConfigureAwait(false);
+                    // Response delivery may be canceled; mutation settlement must remain truthful.
+                    await previous.ConfigureAwait(false);
+                    if (operation != null) await operation.Completion.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
                 request.Deadline.Dispose();

@@ -211,13 +211,18 @@ internal static class TransportArchitectureHarness
         PumpUntil(() => disconnectStarted, "active operation before disconnect");
         var shutdown = Invoke(client, "StopCapturedConnectionLoopsAsync",
             typeof(WebSocketTransportClient).GetMethod("CaptureConnectionLoops", PrivateInstance).Invoke(client, null), true);
-        PumpUntil(() => shutdown.IsCompleted, "deterministic teardown"); shutdown.GetAwaiter().GetResult();
+        try
+        {
+            PumpUntil(() => EditorStatePublisher.Disposals == 1, "publisher disposed before handler settlement");
+            Assert.IsFalse(shutdown.IsCompleted, "Teardown must retain the active handler's settlement barrier.");
+            Assert.IsFalse(commands.DrainAsync().IsCompleted, "Disconnect cannot report a drain while legacy work can still mutate.");
+            Assert.IsFalse(disconnectActive.Task.IsCompleted);
+        }
+        finally { disconnectActive.TrySetResult(new { completed = true }); }
+        PumpUntil(() => shutdown.IsCompleted, "deterministic teardown after handler settlement");
+        shutdown.GetAwaiter().GetResult();
         Assert.IsTrue(commands.DrainAsync().IsCompleted);
-        Assert.IsFalse(disconnectActive.Task.IsCompleted, "Teardown cannot depend on uncancelable existing Unity handlers finishing.");
-        Assert.AreEqual(1, EditorStatePublisher.Disposals);
-        disconnectActive.SetResult(new { completed = true });
-        Context.Drain();
-        Pass("Connection teardown drains owned commands and disposes publisher while legacy handler remains active");
+        Pass("Connection teardown disposes publisher promptly and drains only after legacy handler settlement");
         client.ForceStop();
     }
 
