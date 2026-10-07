@@ -9,7 +9,7 @@ import click
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
-from cli.utils.connection import run_command, handle_unity_errors
+from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
 from cli.utils.parsers import parse_json_list_or_exit
 from cli.utils.confirmation import confirm_destructive_action
 
@@ -199,11 +199,22 @@ def edit(path: str, edits: str):
     edits_list = parse_json_list_or_exit(edits, "edits")
     name, directory = _split_script_path(path)
 
+    # Unity refuses an edit that does not name the version of the file it changes.
+    sha_result = run_command("manage_script", {"action": "get_sha", "name": name, "path": directory}, config)
+    data = sha_result.get("data")
+    sha = data.get("sha256") if isinstance(data, dict) else None
+    if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdefABCDEF" for c in sha):
+        raise UnityCommandError({
+            "success": False,
+            "error": "SHA lookup did not return a valid SHA-256; no edits were applied.",
+        })
+
     params: dict[str, Any] = {
         "action": "apply_text_edits",
         "name": name,
         "path": directory,
         "edits": edits_list,
+        "precondition_sha256": sha,
     }
 
     result = run_command("manage_script", params, config)

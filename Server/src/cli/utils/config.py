@@ -21,6 +21,7 @@ class CLIConfig:
     timeout: int = 30
     format: str = "text"  # text, json, table
     unity_instance: Optional[str] = None
+    verbose: bool = False
 
     @classmethod
     def from_env(cls) -> "CLIConfig":

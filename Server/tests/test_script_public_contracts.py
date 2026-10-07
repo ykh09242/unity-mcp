@@ -41,6 +41,9 @@ client_type = httpx.AsyncClient
 
 def respond(request):
     requests.append(json.loads(request.content))
+    if requests[-1]['params'].get('action') == 'get_sha':
+        return httpx.Response(200, json={'status': 'success', 'result': {
+            'success': True, 'data': {'sha256': 'a' * 64}}})
     return httpx.Response(200, json=copy.deepcopy(raw))
 
 connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
@@ -75,6 +78,7 @@ cases = [
     (['edit', 'Assets/Fixture.cs', '--edits',
       '[{"startLine":1,"startCol":1,"endLine":1,"endCol":1,"newText":""}]'],
      {'action': 'apply_text_edits', 'name': 'Fixture', 'path': 'Assets',
+      'precondition_sha256': 'a' * 64,
       'edits': [{'startLine': 1, 'startCol': 1, 'endLine': 1, 'endCol': 1, 'newText': ''}]}),
     (['validate', 'Assets/Fixture.cs', '--level', 'standard'],
      {'action': 'validate', 'name': 'Fixture', 'path': 'Assets', 'level': 'standard'}),
@@ -94,7 +98,10 @@ for args, wire in cases:
                 cli, ['--format', 'json', '--instance', 'Project@fixture', 'script', *args]
             )
             label = repr((args, failed, wrapped))
-            check(len(requests) == before + 1, 'single HTTP dispatch ' + label)
+            check(len(requests) == before + (2 if args[0] == 'edit' else 1), 'HTTP dispatch count ' + label)
+            if args[0] == 'edit':
+                check(requests[-2]['params'] == {'action': 'get_sha', 'name': wire['name'], 'path': wire['path']},
+                      'SHA precondition lookup ' + label)
             check(requests[-1]['params'] == wire, 'literal payload ' + label)
             check(requests[-1]['type'] == 'manage_script', 'native action ' + label)
             check(result.exit_code == (1 if failed else 0), 'exit ' + label)

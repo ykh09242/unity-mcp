@@ -13,6 +13,7 @@ script_cli = importlib.import_module("cli.commands.script")
 @pytest.fixture
 def command_sender(monkeypatch):
     monkeypatch.setattr(script_cli, "get_config", lambda: CLIConfig(format="json"))
+    monkeypatch.setattr("cli.utils.connection.get_config", lambda: CLIConfig(format="json"))
     sender = Mock(return_value={"success": True, "data": {"contents": "first\nsecond\nthird\n"}})
     monkeypatch.setattr(script_cli, "run_command", sender)
     return sender
@@ -34,13 +35,42 @@ def test_windows_script_path_routes_to_requested_file(command_sender, command, e
 def test_edit_uses_unity_manage_script_action(command_sender):
     # Given: the documented CLI text edit payload.
     edits = [{"startLine": 1, "startCol": 1, "endLine": 1, "endCol": 2, "newText": "X"}]
+    command_sender.side_effect = [
+        {"success": True, "data": {"sha256": "a" * 64}},
+        {"success": True, "data": {"editsApplied": 1}},
+    ]
     # When: the CLI executes an edit.
     result = CliRunner().invoke(script_cli.script, ["edit", "Assets/Scripts/Foo.cs", "--edits", json.dumps(edits)])
     # Then: it calls the real Unity command, not the Python-only MCP wrapper name.
     assert result.exit_code == 0, result.output
     assert command_sender.call_args.args[:2] == (
-        "manage_script", {"action": "apply_text_edits", "name": "Foo", "path": "Assets/Scripts", "edits": edits},
+        "manage_script", {"action": "apply_text_edits", "name": "Foo", "path": "Assets/Scripts", "edits": edits, "precondition_sha256": "a" * 64},
     )
+    assert command_sender.call_count == 2
+    assert command_sender.call_args_list[0].args[:2] == (
+        "manage_script", {"action": "get_sha", "name": "Foo", "path": "Assets/Scripts"},
+    )
+
+
+@pytest.mark.parametrize("data", [None, "unexpected", {}, {"sha256": False}, {"sha256": "not-a-hash"}])
+def test_edit_rejects_missing_or_invalid_sha_without_mutating(command_sender, data):
+    command_sender.return_value = {"success": True, "data": data}
+    result = CliRunner().invoke(script_cli.script, ["edit", "Assets/Foo.cs", "--edits", "[]"])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["success"] is False
+    assert "SHA-256" in result.output
+    assert command_sender.call_count == 1
+
+
+def test_edit_keeps_failed_sha_lookup_and_does_not_mutate(command_sender):
+    from cli.utils.connection import UnityCommandError
+
+    failure = {"success": False, "message": "Script not found"}
+    command_sender.side_effect = UnityCommandError(failure)
+    result = CliRunner().invoke(script_cli.script, ["edit", "Assets/Foo.cs", "--edits", "[]"])
+    assert result.exit_code == 1
+    assert json.loads(result.output) == failure
+    assert command_sender.call_count == 1
 
 
 def test_validate_uses_unity_manage_script_action(command_sender):

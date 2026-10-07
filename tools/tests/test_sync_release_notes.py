@@ -213,7 +213,10 @@ def test_urllib_fallback_uses_official_latest_endpoint(
     assert json.loads(outputs[2].read_text(encoding="utf-8")) == METADATA
 
 
-@pytest.mark.parametrize("body", ["Normal notes.", "Keep literal ][ inside release notes."])
+@pytest.mark.parametrize("body", [
+    "Normal notes.", "Keep literal ][ inside release notes.",
+    "See [the guide][1] and [notes][2].",
+])
 @pytest.mark.parametrize("page_count", [1, 2])
 def test_gh_pagination_parses_structured_pages_without_mutating_release_body(
     monkeypatch: pytest.MonkeyPatch, body: str, page_count: int,

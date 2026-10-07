@@ -38,6 +38,7 @@ Replace the example ID with a discovered one. Global options go **before** subco
 | `--timeout` | `UNITY_MCP_TIMEOUT` | Positive seconds; default 30. |
 | `--format` | `UNITY_MCP_FORMAT` | `text`, `json`, or `table`. |
 | `--instance` | `UNITY_MCP_INSTANCE` | Target Editor ID. |
+| `--verbose` | - | Write command requests and raw responses to stderr; use only with data safe to log. |
 
 Explicit options override corresponding environment settings. The CLI loads the current local token for loopback requests. Non-loopback connections need explicit credentials and trusted transport; see [authentication](./security.md#local-http-authentication).
 

@@ -119,7 +119,7 @@ def test_valid_settings_resolve_and_reach_transport(monkeypatch, config_transpor
 def test_from_env_preserves_valid_boundaries(monkeypatch, port, timeout, output_format):
     for name, value in zip(ENV_NAMES, ("localhost", str(port), str(timeout), output_format, "Project@fixture")):
         monkeypatch.setenv(name, value)
-    assert asdict(CLIConfig.from_env()) == {"host": "localhost", "port": port, "timeout": timeout, "format": output_format, "unity_instance": "Project@fixture"}
+    assert asdict(CLIConfig.from_env()) == {"host": "localhost", "port": port, "timeout": timeout, "format": output_format, "unity_instance": "Project@fixture", "verbose": False}
 
 
 def test_explicit_options_override_even_invalid_unused_environment(monkeypatch, config_transport):

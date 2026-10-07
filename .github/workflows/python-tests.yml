@@ -15,6 +15,9 @@ on:
       - .github/workflows/**
       - .github/actions/**
       - .github/actionlint.yaml
+      - manifest.json
+      - unity-mcp-skill/**
+      - .claude/skills/**
   pull_request:
     branches: [main, beta]
     paths:
@@ -25,6 +28,9 @@ on:
       - .github/workflows/**
       - .github/actions/**
       - .github/actionlint.yaml
+      - manifest.json
+      - unity-mcp-skill/**
+      - .claude/skills/**
   workflow_dispatch: {}
   workflow_call:
     inputs:
@@ -151,6 +157,8 @@ jobs:
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         # Forks retain coverage artifacts without requiring Codecov credentials.
         if: always() && github.repository == 'CoplayDev/unity-mcp'
+        # Upload/download outages must not fail the successful test gate.
+        continue-on-error: true
         with:
           files: ./Server/coverage.xml
           flags: python

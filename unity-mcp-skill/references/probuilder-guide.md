@@ -26,6 +26,8 @@ A top-face extrusion, after replacing index 0 with the actual selected face:
 
 Re-query after topology changes: indices are not stable across extrude/subdivide/delete. For a doorway or roof, inspect the resulting geometry at each dependent step rather than reusing a hardcoded house recipe. `subdivide` uses ProBuilder's connecting operation; do not assume conventional quad subdivision.
 
+`move_vertices` affects only the supplied indices. Coincident corners can belong to different faces; moving just one face's vertices can open gaps. For a separate roof, a correctly positioned Prism can preserve the existing wall topology.
+
 Per-face material assignment:
 
 ```json

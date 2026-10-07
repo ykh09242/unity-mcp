@@ -34,7 +34,7 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
             return {"success": True, "data": {"assets": {"external_changes_dirty": True}, "compilation": {"is_compiling": compiling}}}
         async def refresh(ctx, **kwargs):
             counts["refresh"] += 1
-            assert kwargs == {"mode": "if_dirty", "scope": "all", "compile": "request", "wait_for_ready": True}
+            assert kwargs == {"mode": "if_dirty", "scope": "all", "compile": "none", "wait_for_ready": True}
             return {"success": True}
         async def preflight(ctx, **kwargs):
             counts["preflight"] += 1

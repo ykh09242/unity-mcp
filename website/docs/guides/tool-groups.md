@@ -18,6 +18,8 @@ Groups include `core`, `animation`, `ui`, `vfx`, `scripting_ext`, `testing`, `pr
 
 The `ui` group contains [`manage_ui`](../reference/tools/ui/manage_ui.md) for UI Toolkit and [`manage_ugui`](../reference/tools/ui/manage_ugui.md) for Canvas-based UI. The [uGUI guide](./ugui.md) covers creation, layout editing and screen-size diagnostics.
 
+The `animation` group includes [`manage_animation`](../reference/tools/animation/manage_animation.md) and [`manage_sprite`](../reference/tools/animation/manage_sprite.md). The latter handles sprite-sheet inspection, slicing, clips and controller setup when both the Editor and server expose the new tool.
+
 ## Local sessionless clients
 
 Use the Editor's tool controls to enable the needed tools. Local clients can request `manage_tools(action="sync")` to refresh defaults from the selected Unity transport; include the intended `unity_instance` when necessary. Refresh/reconnect the MCP client if it does not process tool-list notifications.

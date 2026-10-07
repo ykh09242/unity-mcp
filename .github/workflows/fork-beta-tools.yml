@@ -10,6 +10,9 @@ on:
       - Server/**
       - MCPForUnity/**
       - tools/**
+      - manifest.json
+      - unity-mcp-skill/**
+      - .claude/skills/**
       - mcp_source.py
       - .github/scripts/**
       - .github/workflows/**

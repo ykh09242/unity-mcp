@@ -14,7 +14,8 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | Match the installed render pipeline and shader-declared property types |
 | Cameras/graphics/lighting | `manage_camera`, `manage_graphics`, `manage_components` | Inspect lighting components and optional Cinemachine/URP/HDRP capabilities; do not assume availability |
 | Animation/physics/VFX | `manage_animation`, `manage_physics`, `manage_vfx` | Query identity/state before native mutations; inspect action-specific parameters |
-| UI | `manage_ui`, `manage_gameobject`, `manage_components` | UI Toolkit and uGUI use different asset/component workflows |
+| 2D sprite animation | `manage_sprite` | Inspect sheet dimensions and slices before reslicing; see the staged workflow below |
+| UI | `manage_ui`, `manage_ugui`, `manage_gameobject`, `manage_components` | UI Toolkit and uGUI use different asset/component workflows |
 | Tests | `run_tests`, `get_test_job` | Async job acknowledgement is not a passing test result |
 | Build/package jobs | `manage_build`, `manage_packages` | Poll returned identity; consent and optional installation scope still apply |
 | ProBuilder | `manage_probuilder` | Installed package required; [topology guide](probuilder-guide.md) |
@@ -22,6 +23,16 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Editor/code | `manage_editor`, `execute_menu_item`, `execute_code` | Exact action/schema plus explicit consent where enforced |
 | API inspection/docs | `unity_reflect`, `unity_docs` | Live APIs and installed assets are contextual; docs may describe another version |
 | Bulk commands | `batch_execute` | Nontransactional native handler dispatch, not a tool visibility bypass |
+| Asset generation/import | `generate_image`, `generate_model`, `generate_audio`, `import_model`, `import_model_file`, `blender_bridge` | Confirm provider/model capabilities and consent; poll returned jobs and preserve source/destination assets |
+| Profiling/data assets | `manage_profiler`, `manage_scriptable_object` | Inspect optional dependencies and serialized fields; collect only requested data |
+
+## Sprite Sheets
+
+The `animation` group can expose `manage_sprite` when both Editor and server support it. Follow [connection.md](connection.md) for visibility; sessionless HTTP cannot persist group activation.
+
+Start with `get_info` and inspect dimensions, import settings, slice pagination and any returned image. Image inclusion is conditional and bounded; metadata alone does not prove the grid is correct. `slice_sheet` replaces existing slices and may invalidate references when frames disappear. Choose `cols`/`rows` or frame dimensions, and `filter_mode` deliberately.
+
+Use `setup_clips` then `setup_controller` for staged control, or `full_setup` only for the requested combined workflow. Inspect skipped entries and each stage's results: earlier stages can remain applied after a later failure. `overwrite` controls existing clips/controllers, not permission to discard arbitrary assets. Clip names influence controller defaults, locomotion and trigger states; verify the resulting controller. Scene assignment is optional, not a prerequisite for creating assets.
 
 ## Common Shapes
 

@@ -34,9 +34,10 @@ def test_write_permissions_are_limited_to_jobs_that_need_them() -> None:
         ("beta-release.yml", "publish_pypi_prerelease"): {"id-token"},
         ("release.yml", "bump"): {"contents", "pull-requests"},
         ("release.yml", "sync_beta"): {"contents", "pull-requests"},
+        ("release.yml", "sync_release_notes"): {"actions"},
         ("release.yml", "publish_pypi"): {"id-token"},
         ("release.yml", "publish_mcpb"): {"contents"},
-        ("sync-releases.yml", "sync"): {"contents"},
+        ("sync-releases.yml", "sync"): {"contents", "pull-requests"},
         ("claude-nl-suite.yml", "nl-suite"): {"checks", "id-token"},
         ("docs-deploy.yml", "deploy"): {"pages", "id-token"},
     }
@@ -47,6 +48,11 @@ def test_write_permissions_are_limited_to_jobs_that_need_them() -> None:
             if writes:
                 actual[path.name, name] = writes
     assert actual == expected
+
+
+def test_upstream_release_note_writers_remain_disabled_in_forks() -> None:
+    for name, job in (("sync-releases.yml", "sync"), ("release.yml", "sync_release_notes")):
+        assert workflow(name)["jobs"][job]["if"] == "github.repository == 'CoplayDev/unity-mcp'"
 
 
 def test_checkout_persists_credentials_only_for_git_push_jobs() -> None:

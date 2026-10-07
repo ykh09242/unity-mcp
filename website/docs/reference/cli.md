@@ -28,7 +28,7 @@ They are **not aliases for one another**. Both are installed from the matching i
 | `--timeout` | `30` | Positive timeout in seconds. |
 | `--instance` | auto-select one local Editor | Explicit discovered Editor ID; no persistent session selection. |
 | `--format` | `text` | `text`, `json`, or `table`. |
-| `--verbose` | off | Enable CLI verbose mode; not a promise of full payload logging. |
+| `--verbose` | off | Print command requests and raw responses to stderr; these may contain private project data. |
 | `--version` | - | Installed fork distribution version. |
 | `--help` | - | Options and command help. |
 
@@ -36,7 +36,7 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-Registered groups include `instance`, `scene`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `prefab`, `material`, `lighting`, `animation`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `physics`, `profiler`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
+Registered groups include `instance`, `scene`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `physics`, `profiler`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 
@@ -47,6 +47,8 @@ unity-mcp scene load --help
 ```
 
 Root commands also include `status`, `instances`, and `raw`. Raw parameters must be a JSON object. Tool discovery, request targeting, consent and budgets still apply. `instance set` deliberately cannot persist a target; `batch` is not a universal atomic transaction or rollback mechanism.
+
+The `sprite` group uses [`manage_sprite`](./tools/animation/manage_sprite.md) for sheet inspection, slicing, clip creation and controller setup. The beta checkout includes this group; use matching Editor/server revisions and inspect `unity-mcp sprite --help` before changing assets. Published older server pins may not expose it.
 
 ## Output and failures
 

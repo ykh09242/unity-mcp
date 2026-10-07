@@ -9,7 +9,7 @@ from cli.utils.connection import run_list_instances, handle_unity_errors
 
 @click.group()
 def instance():
-    """Unity instance management - list, select, and view instances."""
+    """Unity instance management - list the connected instances and show the one in use."""
     pass
 
 
@@ -18,7 +18,7 @@ def instance():
 def list_instances():
     """List available Unity instances.
 
-    \\b
+    \b
     Examples:
         unity-mcp instance list
     """
@@ -83,7 +83,7 @@ def set_instance(instance_id: str):
 def current_instance():
     """Show the currently selected Unity instance.
 
-    \\b
+    \b
     Examples:
         unity-mcp instance current
     """
