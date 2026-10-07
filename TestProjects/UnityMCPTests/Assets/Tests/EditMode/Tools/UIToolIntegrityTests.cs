@@ -57,6 +57,57 @@ namespace MCPForUnityTests.Editor.Tools
             ownsRoot = false;
         }
 
+        private static Action<PanelSettings> PreparePanelProperties(JObject settings, List<string> changes)
+        {
+            var prepare = typeof(ManageUI).GetMethod("PreparePanelSettingsProperties", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(prepare);
+            Assert.AreEqual(2, prepare.GetParameters().Length, "Preparation must not require an allocated PanelSettings target.");
+            return (Action<PanelSettings>)prepare.Invoke(null, new object[] { settings, changes });
+        }
+
+        [TestCase("clearColor", "{}")]
+        [TestCase("referenceResolution", "{width:64,height:'bad'}")]
+        public void PanelPropertiesRejectMalformedInputsWithoutAllocatingTarget(string key, string json)
+        {
+            var prepare = typeof(ManageUI).GetMethod("PreparePanelSettingsProperties", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(prepare);
+            Assert.AreEqual(2, prepare.GetParameters().Length);
+            int count = UnityEngine.Resources.FindObjectsOfTypeAll<PanelSettings>().Length;
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                PreparePanelProperties(new JObject { ["sortingOrder"] = 3, [key] = JToken.Parse(json) }, new List<string>())
+            );
+            Assert.IsInstanceOf<ArgumentException>(error.InnerException);
+            Assert.AreEqual(count, UnityEngine.Resources.FindObjectsOfTypeAll<PanelSettings>().Length);
+        }
+
+        [Test]
+        public void PreparedPanelPropertiesReadEachTargetsDefaultsAndPreserveOrderedAliases()
+        {
+            var changes = new List<string>();
+            var apply = PreparePanelProperties(
+                new JObject
+                {
+                    ["referenceResolution"] = new JObject { ["width"] = 64 },
+                    ["reference_resolution"] = new JObject { ["height"] = JValue.CreateNull() },
+                    ["dynamicAtlasSettings"] = new JObject { ["minAtlasSize"] = 64 },
+                    ["dynamic_atlas_settings"] = new JObject { ["maxAtlasSize"] = 128 },
+                    ["futureUnknownKey"] = "ignored",
+                },
+                changes
+            );
+            foreach (int height in new[] { 32, 48 })
+            {
+                var panel = ScriptableObject.CreateInstance<PanelSettings>();
+                allocated.Add(panel);
+                panel.referenceResolution = new Vector2Int(1920, height);
+                apply(panel);
+                Assert.AreEqual(new Vector2Int(64, height), panel.referenceResolution);
+                Assert.AreEqual(64, panel.dynamicAtlasSettings.minAtlasSize);
+                Assert.AreEqual(128, panel.dynamicAtlasSettings.maxAtlasSize);
+            }
+            CollectionAssert.AreEqual(new[] { "referenceResolution", "referenceResolution", "dynamicAtlasSettings", "dynamicAtlasSettings" }, changes);
+        }
+
         [TestCase("referenceResolution")]
         [TestCase("colorClearValue")]
         public void CreateMalformedCompositeLeavesNoAssetOrNestedFolder(string property)
@@ -168,14 +219,18 @@ namespace MCPForUnityTests.Editor.Tools
                 AssetDatabase.SaveAssets();
             }
             Assert.IsTrue(AssetDatabase.Contains(occupied), "Collision setup must be persistent.");
-            Assert.AreSame(occupied, AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
+            var loadedBefore = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+            Assert.IsTrue(occupied == loadedBefore, "Collision setup must resolve the same native asset.");
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(loadedBefore));
             string guid = AssetDatabase.AssetPathToGUID(path);
             Assert.IsNotEmpty(guid);
 
             var response = Send("create_panel_settings", path, new JObject { ["sortingOrder"] = 3 });
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
-            Assert.AreSame(occupied, AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
+            var loadedAfter = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+            Assert.IsTrue(loadedBefore == loadedAfter, "Rejected creation must preserve the native asset.");
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(loadedAfter));
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
             Assert.IsTrue(AssetDatabase.Contains(occupied));
         }
@@ -347,7 +402,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase("style", "string")]
         [TestCase("inline_style", "object")]
-        [TestCase("inlineStyle", "null")]
+        [TestCase("inlineStyle", "array")]
         public void MalformedLateNumericStylePreservesEveryEarlierElementMutation(string alias, string badType)
         {
             var go = new GameObject("__McpUIElement_" + Guid.NewGuid().ToString("N"));
@@ -359,9 +414,10 @@ namespace MCPForUnityTests.Editor.Tools
             label.style.height = 13;
             label.AddToClassList("keep");
             document.rootVisualElement.Add(label);
+            var originalClasses = new List<string>(label.GetClasses());
             JToken invalid =
                 badType == "object" ? (JToken)new JObject { ["x"] = 1 }
-                : badType == "null" ? JValue.CreateNull()
+                : badType == "array" ? new JArray(1)
                 : new JValue("bad");
 
             var response = JObject.FromObject(
@@ -384,11 +440,38 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual("original", label.text);
-            CollectionAssert.AreEquivalent(new[] { "keep" }, label.GetClasses());
+            CollectionAssert.AreEquivalent(originalClasses, label.GetClasses());
             Assert.AreEqual(12f, label.style.width.value.value);
             Assert.AreEqual(13f, label.style.height.value.value);
             Assert.IsTrue(label.enabledSelf);
             Assert.AreEqual("before", label.tooltip);
+        }
+
+        [Test]
+        public void NullNumericStyleRetainsAcceptedZeroDefault()
+        {
+            var go = new GameObject("__McpUIElement_" + Guid.NewGuid().ToString("N"));
+            allocated.Add(go);
+            var document = go.AddComponent<UIDocument>();
+            var label = new Label("original") { name = "owned-label" };
+            label.style.height = 13;
+            document.rootVisualElement.Add(label);
+            var response = JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_visual_element",
+                        ["target"] = go.name,
+                        ["element_name"] = label.name,
+                        ["text"] = "changed",
+                        ["inlineStyle"] = new JObject { ["width"] = 64, ["height"] = JValue.CreateNull() },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("changed", label.text);
+            Assert.AreEqual(64f, label.style.width.value.value);
+            Assert.AreEqual(0f, label.style.height.value.value);
         }
 
         [Test]
