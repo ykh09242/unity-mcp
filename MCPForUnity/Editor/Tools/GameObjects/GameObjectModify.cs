@@ -249,7 +249,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             EditorUtility.SetDirty(targetGo);
 
-            EditorSceneManager.MarkSceneDirty(targetGo.scene);
+            // Runtime changes do not need scene-save bookkeeping, which is Edit Mode only.
+            if (!EditorApplication.isPlaying)
+                EditorSceneManager.MarkSceneDirty(targetGo.scene);
 
             return new SuccessResponse(
                 $"GameObject '{targetGo.name}' modified successfully.",

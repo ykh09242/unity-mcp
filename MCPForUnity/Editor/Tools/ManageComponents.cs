@@ -378,6 +378,9 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static void MarkOwningSceneDirty(GameObject targetGo)
         {
+            if (EditorApplication.isPlaying)
+                return;
+
             var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
             if (prefabStage != null)
             {
