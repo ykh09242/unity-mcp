@@ -287,8 +287,12 @@ async def manage_ugui(
     properties: Annotated[
         dict[str, JsonValue] | str | None,
         "Action-specific camelCase properties, as a dict or JSON object string. Rect: anchorMin, anchorMax, "
-        "pivot, anchoredPosition, sizeDelta, offsetMin, offsetMax. Layout: type plus component properties. "
-        "Text: text, fontSize, color, alignment, raycastTarget. Canvas: Canvas and CanvasScaler properties.",
+        "pivot, anchoredPosition, sizeDelta, offsetMin, offsetMax, localScale, localEulerAngles. "
+        "Create: all elements accept Rect properties; panel/image/button also accept color; text also accepts "
+        "Text properties. Image raycastTarget requires manage_components after creation. "
+        "Layout: type must be vertical, horizontal, grid, layout_element or content_size_fitter, plus that "
+        "component's properties. Text: text, fontSize, color, alignment, enableAutoSizing, fontSizeMin, "
+        "fontSizeMax, raycastTarget. Canvas: Canvas and CanvasScaler properties via set_canvas.",
     ] = None,
     include_inactive: Annotated[
         bool,
