@@ -46,3 +46,46 @@ async def test_console_invalid_mcp_policy_stops_before_routing(transport, value)
     # Then no Editor IO occurs.
     lookup.assert_not_awaited()
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value,expected", [(None, True), (True, True), (False, False), ("false", False)]
+)
+async def test_build_cleanup_defaults_to_preview_and_preserves_delete_intent(
+    transport, value, expected
+):
+    # Given an explicit build-output selection.
+    module, send, _ = transport("manage_build")
+    # When cleanup is requested.
+    await module.manage_build(
+        SimpleNamespace(), action="clean_output", output_path="Builds/Fixture", dry_run=value
+    )
+    # Then the same instance receives exactly the bounded action and chosen mode.
+    assert send.call_args.args[1:3] == ("Fixture@owned", "manage_build")
+    assert send.call_args.args[3] == {
+        "action": "clean_output",
+        "output_path": "Builds/Fixture",
+        "dry_run": expected,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"action": "clean_output"},
+        {"action": "clean_output", "output_path": " "},
+        {"action": "clean_output", "output_path": "Builds/Fixture", "dry_run": "yes"},
+        {"action": "build", "dry_run": False},
+    ],
+)
+async def test_invalid_cleanup_request_stops_before_routing(transport, arguments):
+    # Given missing selection or invalid cleanup intent.
+    module, send, lookup = transport("manage_build")
+    # When the wrapper validates the request.
+    response = await module.manage_build(SimpleNamespace(), **arguments)
+    # Then it fails locally, without running or cleaning a build.
+    assert response["success"] is False
+    lookup.assert_not_awaited()
+    send.assert_not_awaited()

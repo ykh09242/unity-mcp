@@ -116,7 +116,7 @@
     },
     {
       "name": "manage_build",
-      "description": "Manage player builds: trigger builds, switch platforms, configure settings, batch builds"
+      "description": "Manage player builds, platforms, settings and batch builds; inspect and clean restricted build output"
     },
     {
       "name": "manage_components",

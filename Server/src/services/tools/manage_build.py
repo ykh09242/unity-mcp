@@ -20,6 +20,7 @@ ALL_ACTIONS = [
     "profiles",
     "batch",
     "cancel",
+    "clean_output",
 ]
 
 
@@ -39,7 +40,9 @@ async def _send_build_command(
     description=(
         "Manage Unity player builds — trigger builds, switch platforms, configure settings, "
         "manage build scenes and profiles, run batch builds across platforms. "
-        "Actions: build, status, platform, settings, scenes, profiles, batch, cancel."
+        "Actions: build, status, platform, settings, scenes, profiles, batch, cancel, clean_output. "
+        "clean_output previews an explicit Builds/ descendant by default; dry_run=false deletes it. "
+        "Refuses links, active builds, project source paths, and scans over 5000 entries."
     ),
     annotations=ToolAnnotations(
         title="Manage Build",
@@ -50,7 +53,8 @@ async def _send_build_command(
 async def manage_build(
     ctx: Context,
     action: Annotated[
-        str, "Action: build, status, platform, settings, scenes, profiles, batch, cancel"
+        str,
+        "Action: build, status, platform, settings, scenes, profiles, batch, cancel, clean_output",
     ],
     target: Annotated[
         Optional[str],
@@ -80,6 +84,10 @@ async def manage_build(
     ] = None,
     output_dir: Annotated[Optional[str], "Base output directory for batch builds"] = None,
     job_id: Annotated[Optional[str], "Job ID for status/cancel"] = None,
+    dry_run: Annotated[
+        bool | str | None,
+        "clean_output only: preview by default; explicitly false deletes the selected Builds/ descendant. No links allowed.",
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:
@@ -89,6 +97,18 @@ async def manage_build(
         }
 
     params_dict: dict[str, Any] = {"action": action_lower}
+    if action_lower == "clean_output":
+        if not output_path or not output_path.strip():
+            return {
+                "success": False,
+                "message": "output_path is required for clean_output; choose an explicit descendant of Builds/.",
+            }
+        try:
+            params_dict["dry_run"] = coerce_bool(dry_run, default=True)
+        except ValueError as exc:
+            return {"success": False, "message": f"Invalid dry_run: {exc}"}
+    elif dry_run is not None:
+        return {"success": False, "message": "dry_run is supported only for clean_output."}
 
     coerced_development = coerce_bool(development, default=None)
     coerced_activate = coerce_bool(activate, default=None)

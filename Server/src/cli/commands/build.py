@@ -14,6 +14,30 @@ def build():
     pass
 
 
+@build.command("clean-output")
+@click.argument("output_path")
+@click.option(
+    "--delete",
+    "delete_output",
+    is_flag=True,
+    help="Delete the selected Builds/ descendant; omission previews only.",
+)
+@handle_unity_errors
+def clean_output(output_path: str, delete_output: bool):
+    """Preview or delete an explicit build output under Builds/."""
+    config = get_config()
+    result = run_command(
+        "manage_build",
+        {
+            "action": "clean_output",
+            "output_path": output_path,
+            "dry_run": not delete_output,
+        },
+        config,
+    )
+    click.echo(format_output(result, config.format))
+
+
 @build.command("run")
 @click.option("--target", "-t", help="Build target: windows64, osx, linux64, android, ios, webgl")
 @click.option("--output", "-o", "output_path", help="Output path")

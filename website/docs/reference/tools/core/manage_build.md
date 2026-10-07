@@ -12,13 +12,13 @@ description: "Manage Unity player builds — trigger builds, switch platforms, c
 
 ## Description
 
-Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms. Actions: build, status, platform, settings, scenes, profiles, batch, cancel.
+Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms. Actions: build, status, platform, settings, scenes, profiles, batch, cancel, clean_output. clean_output previews an explicit Builds/ descendant by default; dry_run=false deletes it. Refuses links, active builds, project source paths, and scans over 5000 entries.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `str` | yes | Action: build, status, platform, settings, scenes, profiles, batch, cancel |
+| `action` | `str` | yes | Action: build, status, platform, settings, scenes, profiles, batch, cancel, clean_output |
 | `target` | `str \| None` | — | Build target: windows64, osx, linux64, android, ios, webgl, uwp, tvos, visionos |
 | `output_path` | `str \| None` | — | Output path for the build |
 | `scenes` | `str \| None` | — | JSON array of scene paths, or comma-separated paths |
@@ -34,6 +34,7 @@ Manage Unity player builds — trigger builds, switch platforms, configure setti
 | `profiles` | `str \| None` | — | JSON array of profile paths for batch build (Unity 6+) |
 | `output_dir` | `str \| None` | — | Base output directory for batch builds |
 | `job_id` | `str \| None` | — | Job ID for status/cancel |
+| `dry_run` | `bool \| str \| None` | — | clean_output only: preview by default; explicitly false deletes the selected Builds/ descendant. No links allowed. |
 
 ## Returns
 

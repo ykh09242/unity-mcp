@@ -21,7 +21,7 @@ namespace MCPForUnity.Editor.Tools
     )]
     public static class ManageBuild
     {
-        private static readonly string[] ValidActions = { "build", "status", "platform", "settings", "scenes", "profiles", "batch", "cancel" };
+        private static readonly string[] ValidActions = { "build", "status", "platform", "settings", "scenes", "profiles", "batch", "cancel", "clean_output" };
 
         public static object HandleCommand(JObject @params)
         {
@@ -58,6 +58,16 @@ namespace MCPForUnity.Editor.Tools
                         return HandleBatch(p);
                     case "cancel":
                         return HandleCancel(p);
+                    case "clean_output":
+                        var dryRunToken = p.GetRaw("dry_run");
+                        if (dryRunToken != null && dryRunToken.Type != JTokenType.Null && dryRunToken.Type != JTokenType.Boolean)
+                            return new ErrorResponse("'dry_run' must be a boolean.");
+                        return BuildOutputCleaner.Clean(
+                            System.IO.Path.GetFullPath(System.IO.Path.Combine(UnityEngine.Application.dataPath, "..")),
+                            p.Get("output_path"),
+                            p.GetBool("dry_run", true),
+                            BuildPipeline.isBuildingPlayer || BuildJobStore.ActiveJobId != null
+                        );
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'");
                 }
