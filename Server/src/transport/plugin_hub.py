@@ -10,7 +10,7 @@ import sys
 import time
 import uuid
 import weakref
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
@@ -2144,11 +2144,13 @@ class PluginHub(WebSocketEndpoint):
     # Blocking helpers for synchronous tool code
     # ------------------------------------------------------------------
     @classmethod
-    def _run_coroutine_sync(cls, coro: "asyncio.Future[Any]") -> Any:
-        if cls._loop is None:
-            raise RuntimeError("PluginHub event loop not configured")
-        loop = cls._loop
-        if loop.is_running():
+    def _run_coroutine_sync(cls, coro: Coroutine[Any, Any, Any]) -> Any:
+        try:
+            loop = cls._loop
+            if loop is None:
+                raise RuntimeError("PluginHub event loop not configured")
+            if not loop.is_running():
+                raise RuntimeError("PluginHub event loop is not running")
             try:
                 running_loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -2158,7 +2160,11 @@ class PluginHub(WebSocketEndpoint):
                     raise RuntimeError(
                         "Cannot wait synchronously for PluginHub coroutine from within the event loop"
                     )
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+        except RuntimeError:
+            # Before submission succeeds, this adapter still owns the coroutine.
+            coro.close()
+            raise
         return future.result()
 
     @classmethod
