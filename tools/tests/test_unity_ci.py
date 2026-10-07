@@ -95,7 +95,7 @@ def test_real_matrix_cli_emits_every_row_in_manifest_order(tmp_path, metadata):
 
 @pytest.mark.parametrize("purpose", ["compile", "tests"])
 def test_unity7_alpha_prepares_verified_archive_and_native_modules(monkeypatch, purpose):
-    # Given the real matrix, preserve its seven previously supported Editor versions.
+    # Given the real matrix, cover current release channels alongside the support floor and LTS.
     manifest = unity_ci.load_manifest(Path(unity_ci.__file__).with_name("unity-versions.json"))
     expected = {
         "2021.3.45f2",
@@ -103,8 +103,7 @@ def test_unity7_alpha_prepares_verified_archive_and_native_modules(monkeypatch, 
         "6000.0.84f1",
         "6000.3.25f1",
         "6000.6.4f1",
-        "6000.7.0b2",
-        "6000.7.0a6",
+        "6000.7.0b3",
         "7000.0.0a7",
     }
     assert {row.id for row in manifest.versions} == expected
@@ -124,6 +123,42 @@ def test_unity7_alpha_prepares_verified_archive_and_native_modules(monkeypatch, 
     if modules:
         assert "IL2CPP_SIZE=65252880" in modules
         assert "SERVER_SIZE=261052704" in modules
+
+
+@pytest.mark.parametrize("purpose", ["compile", "tests"])
+def test_real_latest_beta_prepares_verified_b3_archives(monkeypatch, purpose):
+    # Given the October 5 official beta, retain the supported release and current Unity 7 alpha.
+    manifest = unity_ci.load_manifest(Path(unity_ci.__file__).with_name("unity-versions.json"))
+    versions = {row.id for row in manifest.versions}
+    assert {"6000.6.4f1", "6000.7.0b3", "7000.0.0a7"} <= versions
+    assert not {"6000.7.0b2", "6000.7.0a6"} & versions
+    commands = []
+    monkeypatch.setattr(
+        unity_ci.subprocess, "run", lambda command, **kwargs: commands.append(command)
+    )
+    # When preparing each CI purpose, its inputs must come from the same exact revision.
+    image = unity_ci.prepare(manifest, "6000.7.0b3", purpose=purpose)
+    assert image == "unity-mcp-editor:6000.7.0b3" + ("-tests" if purpose == "tests" else "")
+    arguments = commands[0]
+    prefix = "https://download.unity3d.com/download_unity/ad717268ad45/"
+    assert "EDITOR_URL=" + prefix + "LinuxEditorInstaller/Unity-6000.7.0b3.tar.xz" in arguments
+    assert "EDITOR_MD5=a0bf32c5c452c2cbc3725caef8023239" in arguments
+    assert "EDITOR_SIZE=4080561148" in arguments
+    modules = [arg for arg in arguments if arg.startswith(("IL2CPP_", "SERVER_"))]
+    # Then compile excludes modules; native testing verifies both publisher-provided archives.
+    assert len(modules) == (6 if purpose == "tests" else 0)
+    if modules:
+        for name, label, checksum, size in (
+            ("IL2CPP", "IL2CPP", "84997d1cdd113ef9bddfb31fe1410719", 64555500),
+            ("SERVER", "Server", "b0002878df5918d067763a4e67c7c651", 175723352),
+        ):
+            url = (
+                prefix
+                + f"LinuxEditorTargetInstaller/UnitySetup-Linux-{label}-Support-for-Editor-6000.7.0b3.tar.xz"
+            )
+            assert f"{name}_URL={url}" in modules
+            assert f"{name}_MD5={checksum}" in modules
+            assert f"{name}_SIZE={size}" in modules
 
 
 @pytest.mark.parametrize("problem", ["empty", "duplicate", "missing_default", "bad_base"])

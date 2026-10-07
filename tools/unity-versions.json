@@ -1,5 +1,5 @@
 {
-  "$comment": "Pinned Unity CI channels, verified 2026-10-04 against official release metadata and public GameCI tags; Unity 7 alpha metadata verified 2026-10-08. Both CI workflows use every row and validate test-capable Linux images. Stable images include immutable digests; previews use official archives with publisher integrity metadata and the pinned GameCI base. No local project or published package version is changed.",
+  "$comment": "Pinned Unity CI channels, stable images verified 2026-10-04 against official release metadata and public GameCI tags; Unity 6000.6/6000.7 streams and Unity 7 alpha metadata verified 2026-10-08. Both CI workflows use every row and validate test-capable Linux images. Stable images include immutable digests; previews use official archives with publisher integrity metadata and the pinned GameCI base. No local project or published package version is changed.",
   "$sources": [
     "https://services.api.unity.com/unity/editor/release/v1/releases",
     "https://unity.com/releases/editor/whats-new/2022.3.76f1",
@@ -52,58 +52,31 @@
       "notes": "Current supported non-LTS release; exercises EntityId and Unity 6000.5/6 compatibility paths."
     },
     {
-      "id": "6000.7.0b2",
+      "id": "6000.7.0b3",
       "role": "beta",
       "channel": "beta",
       "editorDownload": {
-        "url": "https://download.unity3d.com/download_unity/d6546dc2b3a9/LinuxEditorInstaller/Unity-6000.7.0b2.tar.xz",
-        "integrity": "md5-myMEkqj41IpM3/OuO3PDzQ==",
-        "size": 4076709268
+        "url": "https://download.unity3d.com/download_unity/ad717268ad45/LinuxEditorInstaller/Unity-6000.7.0b3.tar.xz",
+        "integrity": "md5-oL8yxcRSwsvDclyu+AIyOQ==",
+        "size": 4080561148
       },
       "testModules": [
         {
           "name": "linux-il2cpp",
-          "url": "https://download.unity3d.com/download_unity/d6546dc2b3a9/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0b2.tar.xz",
-          "integrity": "md5-Uz0k9an3hIYx+/w8w1weYQ==",
-          "size": 64521976,
+          "url": "https://download.unity3d.com/download_unity/ad717268ad45/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0b3.tar.xz",
+          "integrity": "md5-hJl9HN0RPvm937Mf4UEHGQ==",
+          "size": 64555500,
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         },
         {
           "name": "linux-server",
-          "url": "https://download.unity3d.com/download_unity/d6546dc2b3a9/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-6000.7.0b2.tar.xz",
-          "integrity": "md5-uWQ0d0nI3uPzI5tKEY440Q==",
-          "size": 175632308,
+          "url": "https://download.unity3d.com/download_unity/ad717268ad45/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-6000.7.0b3.tar.xz",
+          "integrity": "md5-sAAoeN9ZGNBndjpOZ8fGUQ==",
+          "size": 175723352,
           "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
         }
       ],
       "notes": "Latest verified beta. No public GameCI tag exists; CI builds a custom image from the official archive without starting the Editor."
-    },
-    {
-      "id": "6000.7.0a6",
-      "role": "alpha",
-      "channel": "alpha",
-      "editorDownload": {
-        "url": "https://download.unity3d.com/download_unity/b5c7d4d317b3/LinuxEditorInstaller/Unity-6000.7.0a6.tar.xz",
-        "integrity": "md5-atv1+QXZRoGjHx4avYC9Cw==",
-        "size": 4131512612
-      },
-      "testModules": [
-        {
-          "name": "linux-il2cpp",
-          "url": "https://download.unity3d.com/download_unity/b5c7d4d317b3/LinuxEditorTargetInstaller/UnitySetup-Linux-IL2CPP-Support-for-Editor-6000.7.0a6.tar.xz",
-          "integrity": "md5-9YSMXtf0hwZsdPP54J+umQ==",
-          "size": 63350876,
-          "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
-        },
-        {
-          "name": "linux-server",
-          "url": "https://download.unity3d.com/download_unity/b5c7d4d317b3/LinuxEditorTargetInstaller/UnitySetup-Linux-Server-Support-for-Editor-6000.7.0a6.tar.xz",
-          "integrity": "md5-YNnOGryZKfO00aT1WzGrYQ==",
-          "size": 164026624,
-          "destination": "Editor/Data/PlaybackEngines/LinuxStandaloneSupport"
-        }
-      ],
-      "notes": "Retained Unity 6.7 alpha-channel artifact. Test separately even though its branch also has a later beta."
     },
     {
       "id": "7000.0.0a7",

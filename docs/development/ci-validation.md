@@ -38,6 +38,8 @@ have different isolation requirements from independent CI jobs.
 
 [`unity-versions.json`](../../tools/unity-versions.json) is the authoritative matrix consumed by
 the compile and licensed-test workflows. Keep supported/LTS rows when adding a new preview.
+Track the current beta and alpha releases; retire superseded preview rows when advancing
+those channels instead of retaining every earlier alpha from the same release family.
 Stable rows pin GameCI images by digest; preview rows pin official Editor/module downloads by
 version, size and publisher integrity metadata. Updating CI does not migrate the local Unity
 test project or change the package's minimum supported Unity version.
