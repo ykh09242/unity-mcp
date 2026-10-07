@@ -4,16 +4,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -31,6 +30,13 @@ namespace MCPForUnityTests.Editor.Tools
         private bool ownsFolder;
         private readonly List<GameObject> ownedObjects = new();
         private readonly List<UnityEngine.Object> ownedTransients = new();
+        private readonly PrefabTestSceneFixture sceneFixture = new();
+
+        [OneTimeSetUp]
+        public void PrepareRunnerScene() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerScene() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -48,8 +54,7 @@ namespace MCPForUnityTests.Editor.Tools
             originalSelection = Selection.objects;
             originalActiveSelection = Selection.activeObject;
             captured = true;
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            ownedScene = sceneFixture.Create("McpVolumeProfileIntegrity_", Guid.NewGuid().ToString("N"));
             assetRoot = "Assets/__McpVolumeProfileIntegrity_" + Guid.NewGuid().ToString("N");
             Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
             Assert.IsFalse(Directory.Exists(FullPath(assetRoot)));
@@ -88,7 +93,7 @@ namespace MCPForUnityTests.Editor.Tools
                 if (ownedScene.IsValid() && ownedScene.isLoaded)
                 {
                     Assert.AreEqual(0, ownedScene.rootCount, "Unexpected objects retained for diagnosis.");
-                    Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
+                    sceneFixture.Close();
                 }
                 if (ownsFolder)
                 {
@@ -253,7 +258,6 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object component = AddNativeEffect(profile, effect);
             AssetDatabase.AddObjectToAsset(component, profile);
             string name = UniqueName();
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageGraphics\\] Action 'volume_create' failed:"));
             var response = Send(
                 "volume_create",
                 new JObject
@@ -268,6 +272,57 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(profile, AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
             Assert.AreSame(component, Components(profile)[0]);
             Assert.IsTrue(AssetDatabase.Contains(component));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DuplicateRequestedEffectsRejectBeforeProfileOrSceneMutation(bool existingProfile)
+        {
+            Type effect = GraphicsHelpers.GetAvailableEffectTypes().FirstOrDefault();
+            if (effect == null)
+                Assert.Ignore("No concrete Volume effect is installed.");
+            string path = assetRoot + "/Nested/Duplicate.asset";
+            UnityEngine.Object profile = null;
+            byte[] bytes = null;
+            string guid = null;
+            if (existingProfile)
+            {
+                AssetDatabase.CreateFolder(assetRoot, "Nested");
+                profile = NewProfile(path);
+                AssetDatabase.SaveAssets();
+                bytes = File.ReadAllBytes(FullPath(path));
+                guid = AssetDatabase.AssetPathToGUID(path);
+            }
+            int profileCount = UnityEngine.Resources.FindObjectsOfTypeAll(GraphicsHelpers.VolumeProfileType).Length;
+            var response = Send(
+                "volume_create",
+                new JObject
+                {
+                    ["name"] = UniqueName(),
+                    ["profile_path"] = path,
+                    ["effects"] = new JArray
+                    {
+                        new JObject { ["type"] = effect.Name },
+                        new JObject { ["type"] = effect.Name },
+                    },
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(0, ownedScene.rootCount);
+            Assert.AreEqual(profileCount, UnityEngine.Resources.FindObjectsOfTypeAll(GraphicsHelpers.VolumeProfileType).Length);
+            if (existingProfile)
+            {
+                Assert.AreEqual(0, Components(profile).Count, "A rejected list must not retain its earlier valid effect.");
+                Assert.IsFalse(EditorUtility.IsDirty(profile));
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(FullPath(path)));
+            }
+            else
+            {
+                Assert.IsFalse(File.Exists(FullPath(path)));
+                Assert.IsFalse(Directory.Exists(FullPath(assetRoot + "/Nested")));
+                Assert.IsTrue(string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path)));
+            }
         }
 
         [Test]
@@ -382,9 +437,9 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static Type RequireEffect()
         {
-            Type type = GraphicsHelpers.ResolveVolumeComponentType("Bloom");
+            Type type = GraphicsHelpers.ResolveVolumeComponentType("Bloom") ?? GraphicsHelpers.GetAvailableEffectTypes().FirstOrDefault();
             if (type == null)
-                Assert.Ignore("No installed Bloom effect type is available.");
+                Assert.Ignore("No concrete Volume effect is installed.");
             return type;
         }
 

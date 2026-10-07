@@ -204,6 +204,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     string propName = prop.Name;
                     JToken value = prop.Value;
+                    if (string.IsNullOrEmpty(propName))
+                    {
+                        failed.Add(propName);
+                        continue;
+                    }
 
                     // Try public property first
                     var publicProp = pipelineAsset.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
@@ -242,8 +247,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 so.ApplyModifiedProperties();
             }
 
-            EditorUtility.SetDirty(pipelineAsset);
-            AssetDatabase.SaveAssets();
+            if (changed.Count > 0)
+            {
+                EditorUtility.SetDirty(pipelineAsset);
+                AssetDatabase.SaveAssets();
+            }
 
             var msg = $"Updated {changed.Count} pipeline setting(s)";
             if (failed.Count > 0)

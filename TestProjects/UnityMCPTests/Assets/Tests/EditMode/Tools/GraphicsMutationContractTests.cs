@@ -4,6 +4,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
@@ -44,6 +45,70 @@ namespace MCPForUnityTests.Editor.Tools
                     Object.DestroyImmediate(_ownedSettings);
                 }
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PipelineEmptyKeyRetainsBestEffortChangedAndFailedContract(bool emptyFirst)
+        {
+            WithOwnedPipeline(asset =>
+            {
+                var settings = new JObject();
+                if (emptyFirst)
+                    settings.Add("", 1);
+                settings.Add("ContractSetting", 17);
+                if (!emptyFirst)
+                    settings.Add("", 1);
+                var response = JObject.FromObject(RenderPipelineOps.SetSettings(new JObject { ["settings"] = settings }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(17, asset.ContractSetting);
+                CollectionAssert.AreEqual(new[] { "ContractSetting" }, response["data"]["changed"].ToObject<string[]>());
+                CollectionAssert.AreEqual(new[] { "" }, response["data"]["failed"].ToObject<string[]>());
+            });
+        }
+
+        [TestCase("")]
+        [TestCase("NoSuchPipelineSetting")]
+        public void InvalidOnlyPipelineSettingsPreserveAssetAndDirtyState(string key)
+        {
+            WithOwnedPipeline(asset =>
+            {
+                int dirty = EditorUtility.GetDirtyCount(asset);
+                var response = JObject.FromObject(RenderPipelineOps.SetSettings(new JObject { ["settings"] = new JObject { [key] = 1 } }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.IsEmpty(response["data"]["changed"]);
+                CollectionAssert.AreEqual(new[] { key }, response["data"]["failed"].ToObject<string[]>());
+                Assert.AreEqual(3, asset.ContractSetting);
+                Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(asset));
+            });
+        }
+
+        private static void WithOwnedPipeline(System.Action<ContractPipelineAsset> action)
+        {
+            var originalDefault = GraphicsSettings.defaultRenderPipeline;
+            var originalQuality = QualitySettings.renderPipeline;
+            var asset = ScriptableObject.CreateInstance<ContractPipelineAsset>();
+            try
+            {
+                GraphicsSettings.defaultRenderPipeline = asset;
+                QualitySettings.renderPipeline = null;
+                Assert.AreSame(asset, GraphicsSettings.currentRenderPipeline);
+                action(asset);
+            }
+            finally
+            {
+                QualitySettings.renderPipeline = originalQuality;
+                GraphicsSettings.defaultRenderPipeline = originalDefault;
+                Undo.ClearUndo(asset);
+                Object.DestroyImmediate(asset);
+            }
+        }
+
+        private sealed class ContractPipelineAsset : RenderPipelineAsset
+        {
+            public int ContractSetting { get; set; } = 3;
+
+            protected override RenderPipeline CreatePipeline() => null;
         }
 
         [Test]

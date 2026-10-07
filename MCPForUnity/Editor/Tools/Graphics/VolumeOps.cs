@@ -53,6 +53,29 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     return new ErrorResponse($"A file already exists at '{profilePath}' and could not be loaded as a VolumeProfile.");
             }
 
+            var effectsToken = p.GetRaw("effects") as JArray;
+            var initialEffects = new List<(JObject definition, Type type, string name)>();
+            var effectTypes = new HashSet<Type>();
+            if (profile != null && GetProperty(profile, "components") is System.Collections.IList existingEffects)
+                foreach (var existingEffect in existingEffects)
+                    if (existingEffect != null)
+                        effectTypes.Add(existingEffect.GetType());
+            if (effectsToken != null)
+            {
+                foreach (var effectDefinition in effectsToken)
+                {
+                    if (effectDefinition is not JObject definition)
+                        continue;
+                    string effectName = ParamCoercion.CoerceString(definition["type"], null);
+                    var type = GraphicsHelpers.ResolveVolumeComponentType(effectName);
+                    if (type == null)
+                        continue;
+                    if (!effectTypes.Add(type))
+                        return new ErrorResponse($"VolumeProfile already contains effect '{effectName}' or the request lists it more than once.");
+                    initialEffects.Add((definition, type, effectName));
+                }
+            }
+
             using var folders = new AssetFolderScope();
             var go = new GameObject(name);
             UnityEngine.Object allocatedProfile = null;
@@ -101,48 +124,35 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 SetProperty(volumeComp, "sharedProfile", profile);
 
                 // Add initial effects if provided
-                var effectsToken = p.GetRaw("effects") as JArray;
                 var addedEffects = new List<string>();
                 if (effectsToken != null)
                 {
-                    foreach (var effectDef in effectsToken)
+                    var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) });
+                    foreach (var effect in initialEffects)
                     {
-                        if (effectDef is JObject effectObj)
+                        if (addMethod != null)
                         {
-                            string effectType = ParamCoercion.CoerceString(effectObj["type"], null);
-                            if (string.IsNullOrEmpty(effectType))
-                                continue;
-
-                            var type = GraphicsHelpers.ResolveVolumeComponentType(effectType);
-                            if (type == null)
-                                continue;
-
-                            // profile.Add(type, true)
-                            var addMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) });
-                            if (addMethod != null)
+                            var component = addMethod.Invoke(profile, new object[] { effect.type, true });
+                            if (component != null)
                             {
-                                var component = addMethod.Invoke(profile, new object[] { type, true });
-                                if (component != null)
+                                // Set parameters — support both nested {"parameters": {...}} and flat fields
+                                var paramObj = effect.definition["parameters"] as JObject;
+                                if (paramObj != null)
                                 {
-                                    // Set parameters — support both nested {"parameters": {...}} and flat fields
-                                    var paramObj = effectObj["parameters"] as JObject;
-                                    if (paramObj != null)
-                                    {
-                                        foreach (var pp in paramObj.Properties())
-                                            SetVolumeParameter(component, pp.Name, pp.Value);
-                                    }
-                                    else
-                                    {
-                                        foreach (var prop in effectObj.Properties())
-                                        {
-                                            if (prop.Name == "type")
-                                                continue;
-                                            SetVolumeParameter(component, prop.Name, prop.Value);
-                                        }
-                                    }
-                                    PersistAddedEffect(profile, component);
-                                    addedEffects.Add(effectType);
+                                    foreach (var pp in paramObj.Properties())
+                                        SetVolumeParameter(component, pp.Name, pp.Value);
                                 }
+                                else
+                                {
+                                    foreach (var prop in effect.definition.Properties())
+                                    {
+                                        if (prop.Name == "type")
+                                            continue;
+                                        SetVolumeParameter(component, prop.Name, prop.Value);
+                                    }
+                                }
+                                PersistAddedEffect(profile, component);
+                                addedEffects.Add(effect.name);
                             }
                         }
                     }
