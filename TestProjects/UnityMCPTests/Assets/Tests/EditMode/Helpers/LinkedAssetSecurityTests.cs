@@ -59,7 +59,13 @@ namespace MCPForUnityTests.Editor.Helpers
                 var serializer = JsonSerializer.Create();
                 serializer.Converters.Add(new UnityEngineObjectConverter());
                 var reference = new JObject { ["instanceID"] = texture.GetInstanceIDCompat() };
-                Assert.AreSame(texture, reference.ToObject<Texture>(serializer), "Ordinary persistent Assets IDs must remain usable.");
+                Texture resolvedTexture = reference.ToObject<Texture>(serializer);
+                Assert.That(resolvedTexture, Is.Not.Null);
+                Assert.AreEqual(
+                    texture.GetInstanceIDCompat(),
+                    resolvedTexture.GetInstanceIDCompat(),
+                    "Ordinary persistent Assets IDs must resolve to the same native object even if Unity returns another managed wrapper."
+                );
                 File.Move(fullPath, savedPath);
                 Link(fullPath, savedPath, false);
                 Assert.AreEqual(relativePath, AssetDatabase.GetAssetPath(texture));
@@ -81,6 +87,8 @@ namespace MCPForUnityTests.Editor.Helpers
                 if (File.Exists(savedPath))
                     File.Move(savedPath, fullPath);
                 AssetDatabase.DeleteAsset(relativePath);
+                // Unity can retain the owned metadata after replacing the file with a link.
+                File.Delete(fullPath + ".meta");
                 if (texture != null)
                     UnityEngine.Object.DestroyImmediate(texture);
                 UnityEngine.Object.DestroyImmediate(material);
@@ -284,6 +292,7 @@ namespace MCPForUnityTests.Editor.Helpers
         [TestCase("physics", false, true, false)]
         [TestCase("scriptable", true, false, false)]
         [TestCase("scriptable_modify", true, false, false)]
+        [TestCase("scriptable_dry_run", true, false, false)]
         [TestCase("import", true, false, false)]
         [TestCase("modify", true, false, false)]
         [TestCase("delete", true, false, false)]
@@ -309,7 +318,8 @@ namespace MCPForUnityTests.Editor.Helpers
             {
                 Link(link, directory ? outside : Path.Combine(outside, "Probe" + extension), directory);
                 string relative = "Assets/" + id;
-                bool existingTarget = consumer == "import" || consumer == "modify" || consumer == "delete" || consumer == "scriptable_modify";
+                bool existingTarget =
+                    consumer == "import" || consumer == "modify" || consumer == "delete" || consumer == "scriptable_modify" || consumer == "scriptable_dry_run";
                 string assetPath =
                     relative
                     + (
@@ -354,7 +364,7 @@ namespace MCPForUnityTests.Editor.Helpers
                     };
                     result = ManagePhysics.HandleCommand(request);
                 }
-                else if (consumer == "scriptable" || consumer == "scriptable_modify")
+                else if (consumer == "scriptable" || consumer == "scriptable_modify" || consumer == "scriptable_dry_run")
                 {
                     request =
                         consumer == "scriptable"
@@ -370,6 +380,7 @@ namespace MCPForUnityTests.Editor.Helpers
                                 ["action"] = "modify",
                                 ["target"] = new JObject { ["path"] = assetPath },
                                 ["patches"] = new JArray(),
+                                ["dryRun"] = consumer == "scriptable_dry_run",
                             };
                     result = ManageScriptableObject.HandleCommand(request);
                 }

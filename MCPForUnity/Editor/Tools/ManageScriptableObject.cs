@@ -1735,6 +1735,11 @@ namespace MCPForUnity.Editor.Tools
                         return true;
 
                     case SerializedPropertyType.Float:
+                        if (valueToken == null || valueToken.Type == JTokenType.Null)
+                        {
+                            message = "Expected floating-point value.";
+                            return false;
+                        }
                         if (prop.type == "double")
                         {
                             double doubleVal = valueToken.ReadScalar<double>();
@@ -2154,9 +2159,28 @@ namespace MCPForUnity.Editor.Tools
                 return false;
             }
 
-            string resolvedPath = !string.IsNullOrWhiteSpace(guid)
-                ? AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: !writable)
-                : AssetPathUtility.GetAssetReferencePath(path, allowPackages: !writable);
+            string resolvedPath;
+            try
+            {
+                resolvedPath = !string.IsNullOrWhiteSpace(guid)
+                    ? AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: !writable)
+                    : AssetPathUtility.GetAssetReferencePath(path, allowPackages: !writable);
+                if (writable && !string.IsNullOrWhiteSpace(resolvedPath))
+                    resolvedPath = AssetPathUtility.GetContainedAssetPath(resolvedPath);
+            }
+            catch (Exception ex)
+            {
+                error = new ErrorResponse(
+                    CodeInvalidParams,
+                    new
+                    {
+                        message = ex.Message,
+                        guid,
+                        path,
+                    }
+                );
+                return false;
+            }
 
             if (string.IsNullOrWhiteSpace(resolvedPath))
             {
@@ -2170,27 +2194,6 @@ namespace MCPForUnity.Editor.Tools
                     }
                 );
                 return false;
-            }
-
-            if (writable)
-            {
-                try
-                {
-                    resolvedPath = AssetPathUtility.GetContainedAssetPath(resolvedPath);
-                }
-                catch (Exception ex)
-                {
-                    error = new ErrorResponse(
-                        CodeInvalidParams,
-                        new
-                        {
-                            message = ex.Message,
-                            guid,
-                            path,
-                        }
-                    );
-                    return false;
-                }
             }
 
             var obj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(resolvedPath);

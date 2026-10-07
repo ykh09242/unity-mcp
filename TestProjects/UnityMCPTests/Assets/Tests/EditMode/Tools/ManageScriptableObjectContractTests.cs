@@ -241,16 +241,31 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void SupportedScalarControls_RetainNumericStringFloatFalseAndNull()
+        public void SupportedScalarControls_RetainIntegerStringFalseAndStringNull()
         {
             Assert.IsTrue((bool)Modify(new JObject { ["path"] = "intValue", ["value"] = "42" })["data"]["results"][0]["ok"]);
             Assert.AreEqual(42, _asset.intValue);
-            Assert.IsTrue((bool)Modify(new JObject { ["path"] = "intValue", ["value"] = -2.75 })["data"]["results"][0]["ok"]);
-            Assert.AreEqual(-2, _asset.intValue);
             Assert.IsTrue((bool)Modify(new JObject { ["path"] = "enabledValue", ["value"] = false })["data"]["results"][0]["ok"]);
             Assert.IsFalse(_asset.enabledValue);
             Assert.IsTrue((bool)Modify(new JObject { ["path"] = "textValue", ["value"] = JValue.CreateNull() })["data"]["results"][0]["ok"]);
             Assert.IsTrue(string.IsNullOrEmpty(_asset.textValue));
+        }
+
+        [TestCase("-2.75")]
+        [TestCase("2.0")]
+        [TestCase("\"4.75\"")]
+        [TestCase("\"4e0\"")]
+        public void FractionalOrExponentIntegerInputs_AreRejectedWithoutWrite(string encoded)
+        {
+            var patch = new JObject { ["path"] = "intValue", ["value"] = JToken.Parse(encoded) };
+            JObject response = Modify(patch);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response["data"]["results"][0].Value<bool>("ok"), response.ToString());
+            Assert.AreEqual(99, _asset.intValue);
+            JObject dryRun = Modify(patch, true);
+            Assert.IsTrue(dryRun.Value<bool>("success"), dryRun.ToString());
+            Assert.IsFalse(dryRun["data"].Value<bool>("valid"), dryRun.ToString());
+            Assert.AreEqual(99, _asset.intValue);
         }
 
         [TestCase("1.2345678901234567", false)]
@@ -314,10 +329,9 @@ namespace MCPForUnityTests.Editor.Tools
                 )
             );
 
-        [TestCase("4.75")]
-        [TestCase("4e0")]
+        [TestCase("4")]
         [TestCase(" +4 ")]
-        public void SupportedNumericStringResize_UsesCheckedLegacyTruncation(string value)
+        public void SupportedIntegerStringResize_PreservesExactSize(string value)
         {
             var response = Modify(
                 new JObject
@@ -327,8 +341,32 @@ namespace MCPForUnityTests.Editor.Tools
                     ["value"] = value,
                 }
             );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.IsTrue((bool)response["data"]["results"][0]["ok"], response.ToString());
             Assert.AreEqual(4, _asset.items.Length);
+        }
+
+        [TestCase("4.75")]
+        [TestCase("4e0")]
+        public void DecimalOrExponentStringResize_RejectsWholeRequestWithoutWrite(string value)
+        {
+            var patches = new JArray(
+                new JObject { ["path"] = "intValue", ["value"] = 0 },
+                new JObject
+                {
+                    ["path"] = "items",
+                    ["op"] = "array_resize",
+                    ["value"] = value,
+                }
+            );
+            foreach (bool dryRun in new[] { false, true })
+            {
+                JObject response = ModifyMany(patches, dryRun);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("invalid_params", response.Value<string>("error"));
+                Assert.AreEqual(99, _asset.intValue);
+                CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
+            }
         }
 
         [TestCase("items", "array_resize", "1048577")]
