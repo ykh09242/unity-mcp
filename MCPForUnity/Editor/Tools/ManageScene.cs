@@ -299,6 +299,8 @@ namespace MCPForUnity.Editor.Tools
                         && cmd.template != "2d_basic"
                     )
                         return new ErrorResponse($"Unknown template: '{cmd.template}'. Valid: empty, default, 3d_basic, 2d_basic.");
+                    if (Directory.Exists(fullPath))
+                        return new ErrorResponse($"Cannot create scene at '{relativePath}': a directory occupies the destination.");
                     if (File.Exists(fullPath))
                         return new ErrorResponse(
                             string.IsNullOrEmpty(cmd.template)

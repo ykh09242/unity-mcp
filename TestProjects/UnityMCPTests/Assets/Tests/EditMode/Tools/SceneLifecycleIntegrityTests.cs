@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -36,6 +37,13 @@ namespace MCPForUnityTests.Editor.Tools
         private string secondPath;
         private bool ownsAssetRoot;
         private bool capturedState;
+        private readonly PrefabTestSceneFixture testScene = new PrefabTestSceneFixture();
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => testScene.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => testScene.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -62,7 +70,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Second"));
             firstPath = assetRoot + "/First/" + sceneName + ".unity";
             secondPath = assetRoot + "/Second/" + sceneName + ".unity";
-            first = NewOwnedScene();
+            first = testScene.Create("SceneIntegrity_", Guid.NewGuid().ToString("N"));
             Assert.IsTrue(EditorSceneManager.SaveScene(first, firstPath));
             second = NewOwnedScene();
             Assert.IsTrue(EditorSceneManager.SaveScene(second, secondPath));
@@ -93,6 +101,18 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                     Assert.IsTrue(EditorSceneManager.CloseScene(scene, true), "Only a captured owned additive scene is closed.");
                 }
+                if (first.IsValid())
+                {
+                    Assert.IsTrue(
+                        first.path.StartsWith(assetRoot + "/", StringComparison.Ordinal),
+                        "The captured first scene must remain inside its owned folder."
+                    );
+                    if (first.isLoaded && SceneManager.sceneCount == 1)
+                        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                    else
+                        Assert.IsTrue(EditorSceneManager.CloseScene(first, true), "Only the captured first fixture scene is closed, including after Save As.");
+                }
+                testScene.Close();
                 if (ownsAssetRoot)
                 {
                     Assert.IsTrue(assetRoot.StartsWith("Assets/__McpSceneLifecycleIntegrity_", StringComparison.Ordinal));
@@ -411,6 +431,57 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(firstPath));
         }
 
+        [TestCase(null)]
+        [TestCase("empty")]
+        public void OccupiedSceneDirectoryIsRejectedBeforeReplacingSavedScenes(string template)
+        {
+            if (!Application.isBatchMode)
+                Assert.Ignore("Scene replacement failure is exercised only in an isolated batch test Editor.");
+            Scene[] before = LoadedScenes();
+            if (before.Any(scene => string.IsNullOrEmpty(scene.path) || scene.isDirty))
+                Assert.Ignore("This regression requires saved clean scenes so the replacement guard does not hide the destination failure.");
+            SceneSetup[] setup = EditorSceneManager.GetSceneManagerSetup();
+            string originalActivePath = originalActive.path;
+            string destination = assetRoot + "/Occupied.unity";
+            Assert.IsNotEmpty(AssetDatabase.CreateFolder(assetRoot, "Occupied.unity"));
+            string guid = AssetDatabase.AssetPathToGUID(destination);
+            string sentinel = SystemPath(destination + "/Retained.txt");
+            File.WriteAllText(sentinel, "retained");
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                JObject response = Call(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["name"] = "Occupied",
+                        ["path"] = assetRoot,
+                        ["template"] = template,
+                    }
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                CollectionAssert.AreEqual(before, LoadedScenes());
+                Assert.AreEqual(first, SceneManager.GetActiveScene());
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
+                Assert.AreEqual("retained", File.ReadAllText(sentinel));
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+                if (!before.SequenceEqual(LoadedScenes()))
+                {
+                    SceneSetup[] preserved = setup.Where(scene => scene.path != firstPath && scene.path != secondPath).ToArray();
+                    if (preserved.Length == 0)
+                        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                    else
+                        EditorSceneManager.RestoreSceneManagerSetup(preserved);
+                    ownedScenes.Clear();
+                    originalActive = SceneManager.GetSceneByPath(originalActivePath);
+                }
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void FullFileSavePath_RoutesToRequestedDestination(bool backslashes)
@@ -450,7 +521,9 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Scene untitled = NewOwnedScene();
             Assert.IsEmpty(untitled.path);
-            Assert.IsTrue(SceneManager.SetActiveScene(untitled));
+            if (SceneManager.GetActiveScene() != untitled)
+                Assert.IsTrue(SceneManager.SetActiveScene(untitled));
+            Assert.AreEqual(untitled, SceneManager.GetActiveScene());
             string destination = assetRoot + "/UntitledSaved.unity";
             Success(Call(new JObject { ["action"] = "save", ["path"] = destination }));
             Assert.AreEqual(destination, untitled.path);
