@@ -256,30 +256,10 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
 
-            // Measure only once imported as a sprite sheet: a Default-type import rescales a
-            // non-power-of-two sheet (96px to 128px) and the trailing frames then land outside
-            // the real texture, where Unity drops them silently - measured on 6000.4.4f1, a
-            // 96x16 sheet asked for 6 columns gave 4 sprites of 21px. Later refusals restore
-            // the snapshot: a refused request must not leave a modified importer behind.
             var snapshot = new ImporterSnapshot(importer);
             try
             {
-                // npotScale as well as the type: Unity refuses sprite generation outright on a
-                // non-power-of-two texture that carries NPOT scaling ("Sprites can not be
-                // generated from textures with NPOT scaling"), and the refusal is a console
-                // message, not an exception - measured on 2021.3.45f2, a sheet already typed
-                // Sprite skipped this block entirely, wrote its metadata, and reported six
-                // frames with nothing on the asset. Sprite-mode textures cannot use NPOT
-                // scaling at all, so clearing it takes nothing away.
-                if (importer.textureType != TextureImporterType.Sprite
-                    || importer.npotScale != TextureImporterNPOTScale.None)
-                {
-                    importer.textureType = TextureImporterType.Sprite;
-                    importer.npotScale = TextureImporterNPOTScale.None;
-                    EditorUtility.SetDirty(importer);
-                    importer.SaveAndReimport();
-                }
-                return SliceConverted(@params, diagnostics, path, importer, snapshot, cols, rows, frameW, frameH, filterMode);
+                return SliceTexture(@params, diagnostics, path, importer, snapshot, cols, rows, frameW, frameH, filterMode);
             }
             catch
             {
@@ -290,17 +270,10 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             }
         }
 
-        private static object SliceConverted(JObject @params, SpriteDiagnosticBuilder diagnostics, string path,
-                                             TextureImporter importer, ImporterSnapshot snapshot,
-                                             int cols, int rows, int frameW, int frameH, FilterMode filterMode)
+        private static object SliceTexture(JObject @params, SpriteDiagnosticBuilder diagnostics, string path,
+                                           TextureImporter importer, ImporterSnapshot snapshot,
+                                           int cols, int rows, int frameW, int frameH, FilterMode filterMode)
         {
-            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
-            if (texture == null)
-            {
-                snapshot.Restore(importer);
-                return diagnostics.Fail("NOT_FOUND", $"Could not load texture at '{path}'.");
-            }
-
             // Sprite rects are in source pixels; texture.width/height is the imported size,
             // which Max Size shrinks. Measured on 6000.6.4f1: a 4096x256 sheet at the default
             // Max Size of 2048 imported at 2048x128, and an 8-column grid cut from that size
@@ -320,7 +293,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (frameW <= 0 || frameH <= 0
                 || (long)cols * frameW > texW || (long)rows * frameH > texH)
             {
-                snapshot.Restore(importer);
                 return diagnostics.Fail("SLICE_OUT_OF_BOUNDS",
                     $"A {cols}x{rows} grid of {frameW}x{frameH} frames does not fit inside the {texW}x{texH} texture, so some frames would fall outside it.",
                     "Reduce frame_width/frame_height, or cols/rows", "Confirm the texture dimensions with get_info");
@@ -344,7 +316,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             long totalFrames = (long)cols * rows;
             if (totalFrames > MaxFrames)
             {
-                snapshot.Restore(importer);
                 return diagnostics.Fail("SLICE_TOO_MANY_FRAMES",
                     $"The grid works out to {totalFrames} frames, above the {MaxFrames}-frame limit.",
                     "Increase frame_width/frame_height", "Slice the sheet in smaller pieces");
@@ -352,7 +323,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             if (totalFrames == 0)
             {
-                snapshot.Restore(importer);
                 return diagnostics.Fail("SLICE_EMPTY",
                     $"A {cols}x{rows} grid works out to 0 frames - cols/rows or the frame size is wrong.",
                     "Check the cols and rows values", "Confirm the texture dimensions with get_info");
@@ -377,6 +347,10 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
 
+            // Source dimensions do not require conversion first. Apply the validated grid and
+            // disable NPOT scaling together so Unity only imports once and can emit all sprites.
+            importer.textureType      = TextureImporterType.Sprite;
+            importer.npotScale        = TextureImporterNPOTScale.None;
             importer.spriteImportMode = SpriteImportMode.Multiple;
             importer.spritesheet      = metas;
             importer.filterMode       = filterMode;

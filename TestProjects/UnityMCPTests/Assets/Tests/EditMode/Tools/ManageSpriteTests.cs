@@ -829,6 +829,42 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        public class CountSpriteImports : AssetPostprocessor
+        {
+            internal static string ArmedPath;
+            internal static int Count;
+
+            private void OnPreprocessTexture()
+            {
+                if (assetPath == ArmedPath) Count++;
+            }
+        }
+
+        [TestCase(false, 1)]
+        [TestCase(true, 0)]
+        public void SliceSheet_DefaultNpotTexture_ImportsOnlyAfterValidation(bool invalidGrid, int expectedImports)
+        {
+            string path = CreateSheet("import_count", 6, 1);
+            string before = ImportState(path);
+            var request = new JObject { ["action"] = "slice_sheet", ["path"] = path, ["cols"] = 6 };
+            if (invalidGrid) request["frame_width"] = 4096;
+
+            CountSpriteImports.ArmedPath = path;
+            CountSpriteImports.Count = 0;
+            try
+            {
+                var result = Run(request);
+                Assert.AreEqual(!invalidGrid, result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(expectedImports, CountSpriteImports.Count);
+                if (invalidGrid) Assert.AreEqual(before, ImportState(path));
+                else Assert.AreEqual(6, SpritesOf(path).Length);
+            }
+            finally
+            {
+                CountSpriteImports.ArmedPath = null;
+            }
+        }
+
         [Test]
         public void SliceSheet_SpritesNotGenerated_RollsTheImporterBack()
         {
@@ -937,6 +973,65 @@ namespace MCPForUnityTests.Editor.Tools
             var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
             Assert.AreEqual(0f, keys[0].time, 0.0001f);
             Assert.AreEqual(1f / 8f, keys[1].time, 0.0001f);
+        }
+
+        [TestCase(float.Epsilon)]
+        [TestCase(1e-38f)]
+        public void SetupClips_OverflowingDuration_IsSkippedWithoutCreatingTheOutputFolder(float fps)
+        {
+            string path = CreateSheet("duration_overflow", 4, 2);
+            Slice(path, 4, 2);
+            string outputDir = $"{TempRoot}/Unused/Nested";
+
+            var result = Run(new JObject
+            {
+                ["action"] = "setup_clips", ["path"] = path,
+                ["clips"] = OneClip("walk", 0, 7, fps), ["output_dir"] = outputDir,
+            });
+
+            Assert.AreEqual(0, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_FPS"));
+            Assert.IsFalse(AssetDatabase.IsValidFolder($"{TempRoot}/Unused"));
+            Assert.AreEqual(0, AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }).Length);
+        }
+
+        [Test]
+        public void SetupClips_SkippedExistingClip_DoesNotSaveUnrelatedDirtyAssets()
+        {
+            string path = CreateSheet("no_write", 4, 1);
+            Slice(path, 4, 1);
+            SetupClips(path, OneClip("walk", 0, 3));
+            var dirtyClip = new AnimationClip();
+            AssetDatabase.CreateAsset(dirtyClip, $"{TempRoot}/unrelated.anim");
+            EditorUtility.SetDirty(dirtyClip);
+
+            var result = SetupClips(path, OneClip("walk", 0, 3));
+
+            Assert.AreEqual(0, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_EXISTS"));
+            Assert.IsTrue(EditorUtility.IsDirty(dirtyClip), "A no-op request must not save unrelated edits.");
+        }
+
+        [Test]
+        public void SetupClips_SubrangeInNewNestedFolder_PreservesFrameOrderAndTiming()
+        {
+            string path = CreateSheet("subrange", 4, 2);
+            Slice(path, 4, 2);
+            string outputDir = $"{TempRoot}/Clips/Nested";
+            var result = Run(new JObject
+            {
+                ["action"] = "setup_clips", ["path"] = path,
+                ["clips"] = OneClip("walk", 2, 5, 8f), ["output_dir"] = outputDir,
+            });
+
+            Assert.AreEqual(1, result.Value<int>("clip_count"));
+            Assert.AreEqual(0.5f, result["clips"][0].Value<float>("duration"));
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{outputDir}/walk.anim");
+            var binding = AnimationUtility.GetObjectReferenceCurveBindings(clip).Single();
+            var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+            Assert.AreEqual(SpritesOf(path).Skip(2).Take(4).Select(s => s.name).ToArray(),
+                keys.Select(k => k.value.name).ToArray());
+            Assert.AreEqual(new[] { 0f, 0.125f, 0.25f, 0.375f }, keys.Select(k => k.time).ToArray());
         }
 
         [Test]

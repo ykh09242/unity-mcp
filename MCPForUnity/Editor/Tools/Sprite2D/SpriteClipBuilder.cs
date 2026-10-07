@@ -78,9 +78,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 diagnostics.AddError("BAD_PARAM", dirError);
                 return created;
             }
-            if (!AssetDatabase.IsValidFolder(outputDir))
-                CreateFolders(outputDir);
-
             foreach (JToken clipToken in clipsToken)
             {
                 // Measured: a non-object clips entry threw InvalidCastException on a typed cast.
@@ -140,6 +137,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     continue;
                 }
 
+                int frameCount = endFrame - startFrame + 1;
+                float duration = frameCount / fps;
+                // A finite positive rate can still overflow the key times and response duration.
+                if (float.IsInfinity(duration))
+                {
+                    diagnostics.AddWarning("CLIP_BAD_FPS", $"Clip '{clipName}': fps is too small for {frameCount} frames - skipped.", "Increase fps so the clip duration is finite.");
+                    continue;
+                }
+
                 var entry      = SpriteNamingDetector.Detect(clipName);
                 if (!SpriteParams.TryReadBool(clipDef, "loop", entry.Loop, out bool loop, out string loopError))
                 {
@@ -147,9 +153,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     continue;
                 }
 
-                var frameSprites = allSprites.Skip(startFrame).Take(endFrame - startFrame + 1).ToArray();
-                if (frameSprites.Length <= 2)
-                    diagnostics.AddWarning("LOW_FRAME_COUNT", $"Clip '{clipName}' has only {frameSprites.Length} frame(s) — animation may not be visible.");
+                if (frameCount <= 2)
+                    diagnostics.AddWarning("LOW_FRAME_COUNT", $"Clip '{clipName}' has only {frameCount} frame(s) — animation may not be visible.");
 
                 // Refusals come before the allocation: a `new AnimationClip` that never becomes
                 // an asset leaks.
@@ -159,6 +164,9 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     diagnostics.AddWarning("CLIP_BAD_NAME", $"Clip '{clipName}': the name cannot be used as a file name - skipped.", "Remove '..', path separators and characters like : * ? \" < > | from the clip name.");
                     continue;
                 }
+
+                if (!AssetDatabase.IsValidFolder(outputDir))
+                    CreateFolders(outputDir);
 
                 string fullClipPath = AssetPathUtility.GetFullAssetPath(clipPath);
                 if (Directory.Exists(fullClipPath))
@@ -177,54 +185,63 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     continue;
                 }
 
-                var clip = new AnimationClip { frameRate = fps };
-
-                var binding = new EditorCurveBinding
+                var clip = new AnimationClip();
+                try
                 {
-                    type         = typeof(SpriteRenderer),
-                    path         = "",
-                    propertyName = "m_Sprite",
-                };
+                    clip.frameRate = fps;
 
-                var keyframes = new ObjectReferenceKeyframe[frameSprites.Length];
-                for (int i = 0; i < frameSprites.Length; i++)
-                {
-                    keyframes[i] = new ObjectReferenceKeyframe
+                    var binding = new EditorCurveBinding
                     {
-                        time  = i / fps,
-                        value = frameSprites[i],
+                        type         = typeof(SpriteRenderer),
+                        path         = "",
+                        propertyName = "m_Sprite",
                     };
+
+                    var keyframes = new ObjectReferenceKeyframe[frameCount];
+                    for (int i = 0; i < frameCount; i++)
+                    {
+                        keyframes[i] = new ObjectReferenceKeyframe
+                        {
+                            time  = i / fps,
+                            value = allSprites[startFrame + i],
+                        };
+                    }
+
+                    AnimationUtility.SetObjectReferenceCurve(clip, binding, keyframes);
+
+                    var settings = AnimationUtility.GetAnimationClipSettings(clip);
+                    settings.loopTime = loop;
+                    AnimationUtility.SetAnimationClipSettings(clip, settings);
+
+                    // CreateAsset replaces an existing asset itself; deleting first left nothing at
+                    // the path when the replacement failed to be written. Reference equality, not a
+                    // null check: a failed replacement leaves the old asset loadable at the path.
+                    AssetDatabase.CreateAsset(clip, clipPath);
+                    if (AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath) != clip)
+                    {
+                        diagnostics.AddWarning("CLIP_WRITE_FAILED", $"Clip '{clipName}': Unity did not write '{clipPath}' - skipped.", "Check the Unity console for the AssetDatabase error.");
+                        continue;
+                    }
+
+                    created.Add(new SpriteClipInfo
+                    {
+                        name        = clipName,
+                        path        = clipPath,
+                        frame_count = frameCount,
+                        fps         = fps,
+                        loop        = loop,
+                        duration    = duration,
+                    });
                 }
-
-                AnimationUtility.SetObjectReferenceCurve(clip, binding, keyframes);
-
-                var settings = AnimationUtility.GetAnimationClipSettings(clip);
-                settings.loopTime = loop;
-                AnimationUtility.SetAnimationClipSettings(clip, settings);
-
-                // CreateAsset replaces an existing asset itself; deleting first left nothing at
-                // the path when the replacement failed to be written. Reference equality, not a
-                // null check: a failed replacement leaves the old asset loadable at the path.
-                AssetDatabase.CreateAsset(clip, clipPath);
-                if (AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath) != clip)
+                finally
                 {
-                    Object.DestroyImmediate(clip);
-                    diagnostics.AddWarning("CLIP_WRITE_FAILED", $"Clip '{clipName}': Unity did not write '{clipPath}' - skipped.", "Check the Unity console for the AssetDatabase error.");
-                    continue;
+                    if (clip != null && !AssetDatabase.Contains(clip))
+                        Object.DestroyImmediate(clip);
                 }
-
-                created.Add(new SpriteClipInfo
-                {
-                    name        = clipName,
-                    path        = clipPath,
-                    frame_count = frameSprites.Length,
-                    fps         = fps,
-                    loop        = loop,
-                    duration    = frameSprites.Length / fps,
-                });
             }
 
-            AssetDatabase.SaveAssets();
+            if (created.Count > 0)
+                AssetDatabase.SaveAssets();
             return created;
         }
 
