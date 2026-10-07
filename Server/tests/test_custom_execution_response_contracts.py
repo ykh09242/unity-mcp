@@ -66,7 +66,8 @@ async def main():
                     now[0] += delay
                     await asyncio.sleep(0)
                 module.time = SimpleNamespace(monotonic=lambda: now[0])
-                module.asyncio = SimpleNamespace(sleep=sleep, wait_for=asyncio.wait_for, TimeoutError=asyncio.TimeoutError)
+                module.asyncio = SimpleNamespace(**vars(asyncio))
+                module.asyncio.sleep = sleep
                 async def send(instance, command, params, **kwargs):
                     assert instance == "Selected@fixturehash" and command == target
                     requests.append({"instance": instance, "command": command, "params": copy.deepcopy(params), "user_id": kwargs.get("user_id")})
