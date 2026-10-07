@@ -317,6 +317,8 @@ namespace MCPForUnity.Editor.Tools
             UnityEngine.Object newAsset = null;
             try
             {
+                if (lowerAssetType == "material")
+                    MaterialOps.ValidateReferences(properties, UnityJsonSerializer.Instance);
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(fullPath);
 
@@ -491,6 +493,14 @@ namespace MCPForUnity.Editor.Tools
                 // Example: Modifying a Material
                 else if (asset is Material material)
                 {
+                    try
+                    {
+                        MaterialOps.ValidateReferences(properties, UnityJsonSerializer.Instance);
+                    }
+                    catch (ArgumentException e)
+                    {
+                        return new ErrorResponse($"Failed to modify asset '{fullPath}': {e.Message}");
+                    }
                     // Apply properties directly to the material. If this modifies, it sets modified=true.
                     // Use |= in case the asset was already marked modified by previous logic (though unlikely here)
                     modified |= MaterialOps.ApplyProperties(material, properties, UnityJsonSerializer.Instance);

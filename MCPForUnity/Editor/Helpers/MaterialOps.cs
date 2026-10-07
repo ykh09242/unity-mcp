@@ -11,22 +11,11 @@ namespace MCPForUnity.Editor.Helpers
 {
     public static class MaterialOps
     {
-        /// <summary>
-        /// Applies a set of properties (JObject) to a material, handling aliases and structured formats.
-        /// </summary>
-        public static bool ApplyProperties(Material mat, JObject properties, JsonSerializer serializer)
+        /// <summary>Rejects references that would throw before allocation or material setters run.</summary>
+        public static void ValidateReferences(JObject properties, JsonSerializer serializer)
         {
-            if (mat == null || properties == null)
-                return false;
-            bool modified = false;
-
-            // Helper for case-insensitive lookup
-            JToken GetValue(string key)
-            {
-                return properties.Properties().FirstOrDefault(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase))?.Value;
-            }
-
-            // Reject unsafe texture references before applying any material properties.
+            if (properties == null)
+                return;
             foreach (var property in properties.Properties())
             {
                 if (string.Equals(property.Name, "shader", StringComparison.OrdinalIgnoreCase))
@@ -47,6 +36,35 @@ namespace MCPForUnity.Editor.Helpers
                     if (reference["instanceID"] != null || reference["entityID"] != null)
                         reference.ToObject<UnityEngine.Object>(serializer);
                 }
+            }
+
+            var texture = properties.Properties().FirstOrDefault(p => string.Equals(p.Name, "texture", StringComparison.OrdinalIgnoreCase))?.Value;
+            if (texture is JObject textureProperties)
+            {
+                string path = (textureProperties["path"] ?? textureProperties["Path"])?.ToString();
+                if (!string.IsNullOrEmpty(path))
+                {
+                    string canonical = AssetPathUtility.GetAssetReferencePath(path, allowPackages: true, allowBuiltIn: true);
+                    if (AssetDatabase.LoadAssetAtPath<Texture>(canonical) == null)
+                        throw new ArgumentException($"Texture not found at path: {canonical}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Applies a set of properties (JObject) to a material, handling aliases and structured formats.
+        /// </summary>
+        public static bool ApplyProperties(Material mat, JObject properties, JsonSerializer serializer)
+        {
+            if (mat == null || properties == null)
+                return false;
+            ValidateReferences(properties, serializer);
+            bool modified = false;
+
+            // Helper for case-insensitive lookup
+            JToken GetValue(string key)
+            {
+                return properties.Properties().FirstOrDefault(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase))?.Value;
             }
 
             // --- Structured / Legacy Format Handling ---

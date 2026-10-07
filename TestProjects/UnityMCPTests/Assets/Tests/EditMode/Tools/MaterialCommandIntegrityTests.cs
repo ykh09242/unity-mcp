@@ -5,12 +5,14 @@ using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -19,7 +21,7 @@ namespace MCPForUnityTests.EditMode.Tools
         private string _root;
         private bool _ownsRoot;
         private Scene _scene;
-        private Scene _previousScene;
+        private readonly PrefabTestSceneFixture _sceneFixture = new PrefabTestSceneFixture();
         private UnityEngine.Object[] _selection;
         private UnityEngine.Object _activeSelection;
         private Shader _shader;
@@ -27,6 +29,14 @@ namespace MCPForUnityTests.EditMode.Tools
         private GameObject _target;
         private MeshRenderer _renderer;
         private readonly List<UnityEngine.Object> _transient = new List<UnityEngine.Object>();
+        private const string NativeInstanceLog =
+            "Instantiating material due to calling renderer.material during edit mode. This will leak materials into the scene. You most likely want to use renderer.sharedMaterial instead.";
+
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => _sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => _sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -38,7 +48,6 @@ namespace MCPForUnityTests.EditMode.Tools
             _transient.Clear();
             _selection = Selection.objects;
             _activeSelection = Selection.activeObject;
-            _previousScene = SceneManager.GetActiveScene();
             _root = "Assets/__McpMaterialCommandIntegrity_" + Guid.NewGuid().ToString("N");
             Assert.That(AssetDatabase.IsValidFolder(_root), Is.False);
             string guid = AssetDatabase.CreateFolder("Assets", Path.GetFileName(_root));
@@ -65,9 +74,8 @@ namespace MCPForUnityTests.EditMode.Tools
             _transient.Add(_material);
             AssetDatabase.CreateAsset(_material, _root + "/Fixture.mat");
             Assert.That(AssetDatabase.Contains(_material), Is.True);
-            _scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.That(EditorSceneManager.SaveScene(_scene, _root + "/Fixture.unity"), Is.True);
-            Assert.That(SceneManager.SetActiveScene(_scene), Is.True);
+            _scene = _sceneFixture.Create("McpMaterialCommandIntegrity_", Guid.NewGuid().ToString("N"));
+            Assert.That(EditorSceneManager.SaveScene(_scene, _root + "/McpMaterialCommandIntegrity_Fixture.unity"), Is.True);
             _target = new GameObject("Fixture");
             _renderer = _target.AddComponent<MeshRenderer>();
             _renderer.sharedMaterials = new[] { _material, _material };
@@ -87,8 +95,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 foreach (var item in _transient)
                     if (item != null && !EditorUtility.IsPersistent(item))
                         UnityEngine.Object.DestroyImmediate(item);
-                if (_scene.IsValid() && _scene.isLoaded)
-                    EditorSceneManager.CloseScene(_scene, true);
+                _sceneFixture.Close();
                 if (_ownsRoot)
                 {
                     Assert.That(_root.StartsWith("Assets/__McpMaterialCommandIntegrity_", StringComparison.Ordinal), Is.True);
@@ -97,8 +104,6 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             finally
             {
-                if (_previousScene.IsValid() && _previousScene.isLoaded)
-                    SceneManager.SetActiveScene(_previousScene);
                 Selection.objects = _selection;
                 Selection.activeObject = _activeSelection;
                 _ownsRoot = false;
@@ -111,6 +116,27 @@ namespace MCPForUnityTests.EditMode.Tools
         private void Succeeds(JObject request) => Assert.That(Call(request).Value<bool>("success"), Is.True);
 
         private void Fails(JObject request) => Assert.That(Call(request).Value<bool>("success"), Is.False);
+
+        private sealed class AssetIdentity
+        {
+            private readonly UnityEngine.Object _asset;
+            private readonly string _path;
+            private readonly string _guid;
+
+            public AssetIdentity(UnityEngine.Object asset)
+            {
+                _asset = asset;
+                _path = AssetDatabase.GetAssetPath(asset);
+                _guid = AssetDatabase.AssetPathToGUID(_path);
+            }
+
+            public void AssertUnchanged(UnityEngine.Object actual)
+            {
+                Assert.That(actual == _asset, Is.True, "The native Unity object must be retained across asset reimport.");
+                Assert.That(AssetDatabase.GetAssetPath(actual), Is.EqualTo(_path));
+                Assert.That(AssetDatabase.AssetPathToGUID(_path), Is.EqualTo(_guid));
+            }
+        }
 
         private JObject Create(string path = null) =>
             new JObject
@@ -145,27 +171,140 @@ namespace MCPForUnityTests.EditMode.Tools
             return material;
         }
 
-        [Test]
-        public void CreatePreservesUnrelatedAssetAtMaterialPath()
+        private Texture2D PersistOccupiedTexture(string path)
         {
             var texture = new Texture2D(1, 1);
             _transient.Add(texture);
+            var vendorStacks = new List<string>();
+            void CaptureFixtureLog(string condition, string stack, LogType type)
+            {
+                if (
+                    type == LogType.Exception
+                    && condition == "NullReferenceException: Object reference not set to an instance of an object"
+                    && stack.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets")
+                    && stack.Contains("MaterialPostprocessor.cs:77")
+                )
+                {
+                    vendorStacks.Add(stack);
+                    LogAssert.Expect(LogType.Exception, condition);
+                }
+            }
+
+            // The pinned ShaderGraph postprocessor assumes every .mat main asset is a
+            // Material. Capture only its known setup exception for this non-Material fixture.
+            Application.logMessageReceived += CaptureFixtureLog;
+            try
+            {
+                AssetDatabase.CreateAsset(texture, path);
+            }
+            finally
+            {
+                Application.logMessageReceived -= CaptureFixtureLog;
+            }
+            Assert.That(vendorStacks.Count, Is.LessThanOrEqualTo(1));
+            foreach (string stack in vendorStacks)
+            {
+                StringAssert.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets", stack);
+                StringAssert.Contains("MaterialPostprocessor.cs:77", stack);
+            }
+            Assert.That(AssetDatabase.Contains(texture), Is.True);
+            new AssetIdentity(texture).AssertUnchanged(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
+            LogAssert.NoUnexpectedReceived();
+            return texture;
+        }
+
+        [Test]
+        public void CreatePreservesUnrelatedAssetAtMaterialPath()
+        {
             string path = _root + "/Occupied.mat";
-            AssetDatabase.CreateAsset(texture, path);
+            var texture = PersistOccupiedTexture(path);
             Assert.That(AssetDatabase.Contains(texture), Is.True);
             string guid = AssetDatabase.AssetPathToGUID(path);
+            var identity = new AssetIdentity(texture);
             Fails(Create(path));
-            Assert.That(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path), Is.SameAs(texture));
+            identity.AssertUnchanged(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
             Assert.That(AssetDatabase.AssetPathToGUID(path), Is.EqualTo(guid));
+        }
+
+        private JObject MissingTextureProperties() =>
+            new JObject
+            {
+                ["shader"] = _shader.name,
+                ["color"] = new JArray(1, 0, 0, 1),
+                ["texture"] = new JObject { ["name"] = "_MainTex", ["path"] = _root + "/Missing.png" },
+            };
+
+        [Test]
+        public void AssetModifyMissingStructuredTexturePreservesEarlierProperties()
+        {
+            string before = EditorJsonUtility.ToJson(_material);
+            int dirty = EditorUtility.GetDirtyCount(_material);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Fixture.mat",
+                        ["properties"] = MissingTextureProperties(),
+                    }
+                )
+            );
+            Assert.That(response.Value<bool>("success"), Is.False, response.ToString());
+            Assert.That(EditorJsonUtility.ToJson(_material), Is.EqualTo(before));
+            Assert.That(EditorUtility.GetDirtyCount(_material), Is.EqualTo(dirty));
+        }
+
+        [Test]
+        public void AssetCreateMissingStructuredTextureDoesNotImportExistingFolder()
+        {
+            string folder = _root + "/Unimported";
+            string physical = AssetPathUtility.GetFullAssetPath(folder);
+            Directory.CreateDirectory(physical);
+            Assert.That(File.Exists(physical + ".meta"), Is.False);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create",
+                        ["assetType"] = "Material",
+                        ["path"] = folder + "/Rejected.mat",
+                        ["properties"] = MissingTextureProperties(),
+                    }
+                )
+            );
+            Assert.That(response.Value<bool>("success"), Is.False, response.ToString());
+            Assert.That(Directory.Exists(physical), Is.True);
+            Assert.That(File.Exists(physical + ".meta"), Is.False);
+            Assert.That(File.Exists(physical + "/Rejected.mat"), Is.False);
+            Assert.That(File.Exists(physical + "/Rejected.mat.meta"), Is.False);
+        }
+
+        [Test]
+        public void AssetModifyMissingDirectTextureStillAppliesValidColor()
+        {
+            var texture = _material.GetTexture("_MainTex");
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Fixture.mat",
+                        ["properties"] = new JObject { ["color"] = new JArray(1, 0, 0, 1), ["_MainTex"] = _root + "/Missing.png" },
+                    }
+                )
+            );
+            Assert.That(response.Value<bool>("success"), Is.True, response.ToString());
+            Assert.That(_material.GetColor("_Color"), Is.EqualTo(Color.red));
+            Assert.That(_material.GetTexture("_MainTex"), Is.SameAs(texture));
         }
 
         [TestCase("property_block")]
         [TestCase("shared")]
-        [TestCase("instance")]
         [TestCase("create_unique")]
         public void NonzeroColorDoesNotPopulateUnrelatedNullSlot(string mode)
         {
             _renderer.sharedMaterials = new Material[] { null, _material };
+            var identity = new AssetIdentity(_material);
             var untouched = new MaterialPropertyBlock();
             untouched.SetFloat("_Unrelated", 7);
             _renderer.SetPropertyBlock(untouched, 0);
@@ -174,7 +313,41 @@ namespace MCPForUnityTests.EditMode.Tools
             _renderer.GetPropertyBlock(untouched, 0);
             Assert.That(untouched.GetFloat("_Unrelated"), Is.EqualTo(7));
             if (mode == "shared" || mode == "property_block")
-                Assert.That(_renderer.sharedMaterials[1], Is.SameAs(_material));
+                identity.AssertUnchanged(_renderer.sharedMaterials[1]);
+        }
+
+        [Test]
+        public void InstanceColorRetainsNativeMaterializationBehaviorForOtherSlots()
+        {
+            var control = new GameObject("NativeMaterializationControl");
+            control.transform.SetParent(_target.transform);
+            var controlRenderer = control.AddComponent<MeshRenderer>();
+            controlRenderer.sharedMaterials = new Material[] { null, _material };
+            // The pinned Editor emits the native warning once for each of these two slots.
+            LogAssert.Expect(LogType.Error, NativeInstanceLog);
+            LogAssert.Expect(LogType.Error, NativeInstanceLog);
+            var nativeMaterials = controlRenderer.materials;
+            LogAssert.NoUnexpectedReceived();
+            foreach (var material in nativeMaterials)
+                if (material != null && !EditorUtility.IsPersistent(material))
+                    _transient.Add(material);
+            string original = EditorJsonUtility.ToJson(_material);
+            _renderer.sharedMaterials = new Material[] { null, _material };
+
+            LogAssert.Expect(LogType.Error, NativeInstanceLog);
+            LogAssert.Expect(LogType.Error, NativeInstanceLog);
+            Succeeds(ColorRequest("instance", 1));
+            LogAssert.NoUnexpectedReceived();
+
+            var actual = _renderer.sharedMaterials;
+            Assert.That(actual.Length, Is.EqualTo(nativeMaterials.Length));
+            Assert.That(actual[0] == null, Is.EqualTo(nativeMaterials[0] == null));
+            if (actual[0] != null)
+                Assert.That(EditorJsonUtility.ToJson(actual[0]), Is.EqualTo(EditorJsonUtility.ToJson(nativeMaterials[0])));
+            Assert.That(EditorUtility.IsPersistent(actual[1]), Is.False);
+            Assert.That(actual[1] != _material, Is.True);
+            Assert.That(actual[1].GetColor("_Color"), Is.EqualTo(new Color(0, 0, 0, 0)));
+            Assert.That(EditorJsonUtility.ToJson(_material), Is.EqualTo(original));
         }
 
         [TestCase("shared")]
@@ -182,9 +355,10 @@ namespace MCPForUnityTests.EditMode.Tools
         public void MissingSelectedSlotFailsWithoutMaterialInstantiation(string mode)
         {
             _renderer.sharedMaterials = new Material[] { _material, null };
+            var identity = new AssetIdentity(_material);
             int dirty = EditorUtility.GetDirtyCount(_renderer);
             Fails(ColorRequest(mode, 1));
-            Assert.That(_renderer.sharedMaterials[0], Is.SameAs(_material));
+            identity.AssertUnchanged(_renderer.sharedMaterials[0]);
             Assert.That(_renderer.sharedMaterials[1], Is.Null);
             Assert.That(EditorUtility.GetDirtyCount(_renderer), Is.EqualTo(dirty));
         }
@@ -227,12 +401,13 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             Succeeds(ColorRequest("create_unique", first));
             var original = _renderer.sharedMaterials[first];
+            var identity = new AssetIdentity(original);
             string before = EditorJsonUtility.ToJson(original);
             var request = ColorRequest("create_unique", second);
             request["color"] = new JArray(1, 0, 0, 1);
             Succeeds(request);
-            Assert.That(_renderer.sharedMaterials[first], Is.SameAs(original));
-            Assert.That(_renderer.sharedMaterials[second], Is.Not.SameAs(original));
+            identity.AssertUnchanged(_renderer.sharedMaterials[first]);
+            Assert.That(_renderer.sharedMaterials[second] != original, Is.True);
             Assert.That(EditorJsonUtility.ToJson(original), Is.EqualTo(before));
         }
 
@@ -240,14 +415,16 @@ namespace MCPForUnityTests.EditMode.Tools
         public void SharedLegacyRetryPreservesOtherSlotAndThenReusesSafeMaterial()
         {
             var legacy = Persist(UniquePath());
+            var legacyIdentity = new AssetIdentity(legacy);
             _renderer.sharedMaterials = new[] { legacy, legacy };
             string before = EditorJsonUtility.ToJson(legacy);
             Succeeds(ColorRequest("create_unique", 0));
             var selected = _renderer.sharedMaterials[0];
-            Assert.That(selected, Is.Not.SameAs(legacy));
+            Assert.That(selected != legacy, Is.True);
+            var selectedIdentity = new AssetIdentity(selected);
             Succeeds(ColorRequest("create_unique", 0));
-            Assert.That(_renderer.sharedMaterials[0], Is.SameAs(selected));
-            Assert.That(_renderer.sharedMaterials[1], Is.SameAs(legacy));
+            selectedIdentity.AssertUnchanged(_renderer.sharedMaterials[0]);
+            legacyIdentity.AssertUnchanged(_renderer.sharedMaterials[1]);
             Assert.That(EditorJsonUtility.ToJson(legacy), Is.EqualTo(before));
         }
 
@@ -255,9 +432,10 @@ namespace MCPForUnityTests.EditMode.Tools
         public void ValidLegacyRetryRetainsMaterialIdentityAndGuid()
         {
             var legacy = Persist(UniquePath());
+            var identity = new AssetIdentity(legacy);
             string guid = AssetDatabase.AssetPathToGUID(UniquePath());
             Succeeds(ColorRequest("create_unique", 0));
-            Assert.That(_renderer.sharedMaterials[0], Is.SameAs(legacy));
+            identity.AssertUnchanged(_renderer.sharedMaterials[0]);
             Assert.That(AssetDatabase.AssetPathToGUID(UniquePath()), Is.EqualTo(guid));
         }
 
@@ -265,16 +443,16 @@ namespace MCPForUnityTests.EditMode.Tools
         public void UniquePreservesUnrelatedOccupiedAsset()
         {
             Persist(_root + "/Materials/FolderControl.mat");
-            var texture = new Texture2D(1, 1);
-            _transient.Add(texture);
-            AssetDatabase.CreateAsset(texture, UniquePath());
+            var texture = PersistOccupiedTexture(UniquePath());
             Assert.That(AssetDatabase.Contains(texture), Is.True);
-            Assert.That(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(UniquePath()), Is.SameAs(texture));
+            var identity = new AssetIdentity(texture);
+            var materialIdentity = new AssetIdentity(_material);
+            identity.AssertUnchanged(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(UniquePath()));
             string guid = AssetDatabase.AssetPathToGUID(UniquePath());
             Fails(ColorRequest("create_unique", 0));
-            Assert.That(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(UniquePath()), Is.SameAs(texture));
+            identity.AssertUnchanged(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(UniquePath()));
             Assert.That(AssetDatabase.AssetPathToGUID(UniquePath()), Is.EqualTo(guid));
-            Assert.That(_renderer.sharedMaterials[0], Is.SameAs(_material));
+            materialIdentity.AssertUnchanged(_renderer.sharedMaterials[0]);
         }
 
         [TestCase(-1)]
@@ -391,9 +569,9 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(AssetDatabase.LoadAssetAtPath<Material>(_root + "/Created.mat").GetColor("_Color"), Is.EqualTo(new Color(0, 0, 0, 0)));
         }
 
-        [TestCase(true, 0)]
+        [TestCase(0, 0)]
         [TestCase(1, 1)]
-        public void NativeSlotTokenPreservesBooleanFallbackAndIntegerIdentity(object token, int expected)
+        public void NativeIntegerSlotTokenPreservesIntegerIdentity(object token, int expected)
         {
             if (expected == 0 && (!_shader.isSupported || RenderPipelineUtility.IsMaterialInvalidForActivePipeline(_material, out _)))
                 Assert.Ignore("The owned shader is not compatible with the active pipeline; do not create a cached fallback.");
@@ -406,6 +584,25 @@ namespace MCPForUnityTests.EditMode.Tools
             var other = new MaterialPropertyBlock();
             _renderer.GetPropertyBlock(other, 1 - expected);
             Assert.That(other.isEmpty, Is.True);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void BooleanSlotTokenIsRejectedBeforeRendererMutation(bool token)
+        {
+            var before = _renderer.sharedMaterials;
+            int dirty = EditorUtility.GetDirtyCount(_renderer);
+            var request = ColorRequest("property_block", 0);
+            request["slot"] = token;
+            Fails(request);
+            CollectionAssert.AreEqual(before, _renderer.sharedMaterials);
+            Assert.That(EditorUtility.GetDirtyCount(_renderer), Is.EqualTo(dirty));
+            var block = new MaterialPropertyBlock();
+            for (int slot = 0; slot < before.Length; slot++)
+            {
+                _renderer.GetPropertyBlock(block, slot);
+                Assert.That(block.isEmpty, Is.True);
+            }
         }
 
         [Test]
