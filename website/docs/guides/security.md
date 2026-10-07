@@ -16,7 +16,7 @@ Every local HTTP launch creates a fresh 256-bit token. MCP `/mcp`, REST `/api/*`
 
 The token is atomically written to `~/.unity-mcp/auth/token-<port>` (Windows: `%USERPROFILE%\.unity-mcp\auth\token-<port>`). POSIX permissions are owner-only; Windows inherits the directory ACL. It is not printed or served over HTTP. Clean shutdown removes only that launch's token.
 
-Start HTTP **before** configuring clients. Generated configs include the current token. After restart, reconfigure/reconnect HTTP MCP clients; Unity and native CLI look up the current token on new connections/requests. Keep token files and generated configs private; do not include their contents in Git, issues or screenshots.
+Start HTTP **before** configuring static-header clients. Their generated configs include the current token and need reconfiguration/reconnection after a server restart. Unity package **1.3.1** adds token-file helpers for verified Codex and Claude Code clients; after configuring once, reconnect if their automatic authentication recovery does not succeed. Unsupported CLIs should use stdio. Unity and native CLI already look up the current token on new connections/requests. See [client-specific behavior](../getting-started/clients.md). Keep token files and generated configs private; do not include their contents in Git, issues or screenshots.
 
 `UNITY_MCP_LOCAL_AUTH_TOKEN_FILE` selects an absolute private token path. The server generates a new token rather than trusting an existing file. Automatic lookup sends credentials only to loopback; non-loopback clients need an explicit token/file/header. Local HTTP is unencrypted: use a trusted tunnel across machines, not an open listener/firewall rule as a default workaround.
 

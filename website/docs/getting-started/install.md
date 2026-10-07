@@ -8,11 +8,11 @@ description: Install the stable fork, authenticate a client, and verify the Unit
 
 # Install And Connect
 
-Install stable **Unity MCP (ykh09242) 1.2.0**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
+Install stable **Unity MCP (ykh09242) 1.3.1**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
 ## Before you start
 
-- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.2.0).
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.3.1).
 - Git available to Unity Package Manager.
 - Python **3.11+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
@@ -24,13 +24,13 @@ Install stable **Unity MCP (ykh09242) 1.2.0**, then connect an MCP client to you
 In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.2.0
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.3.1
 ```
 
-This tag identifies stable `1.2.0`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
+This tag identifies stable `1.3.1`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#66493cf503283bcb0c0fb7a6ab49b915b5af826a
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#5b62cb6f749997286f32de671a71443b771fbeed
 ```
 
 `#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
@@ -58,12 +58,13 @@ resolved as a package dependency for UPM waits; server connections remain indepe
 of window lifetime.
 :::
 
-Version **1.2.0** retains the **Python 3.11+** requirement introduced in 1.1.4.
+Unity package **1.3.1** keeps the unchanged Python server **1.2.0** source and the
+**Python 3.11+** requirement introduced in 1.1.4.
 Install a supported interpreter with `uv python install 3.11`, clear unintended
 server source overrides, and regenerate existing stdio client configurations
 after updating. Custom commands selecting Python 3.10 must also be updated.
 
-:::important Upgrading to 1.2.0
+:::important Upgrading from before 1.2.0
 Update the Unity package and its pinned Python server together. The internal
 stdio TCP bridge now authenticates each connection; old unauthenticated clients
 cannot connect to the new Editor bridge. External MCP still uses standard stdio
@@ -83,7 +84,7 @@ see the release notes for exact startup, compile and runtime-evidence limits.
 
 Use the Editor window's client configuration section for the selected client, or configure the detected clients together. Review the result, then reconnect or restart the client if it has not reloaded its configuration.
 
-Local HTTP requires a fresh `X-Unity-MCP-Token` each server launch. Generated configurations include the current token. **After restarting HTTP, reconfigure and reconnect HTTP MCP clients.** Native CLI and Unity connections look up the current token automatically. Never commit token files or token-bearing client configurations.
+Local HTTP rotates `X-Unity-MCP-Token` each server launch. In **1.3.1**, verified Codex and Claude Code clients use generated token-file helpers: configure once after upgrading, then reconnect when necessary without copying a new token. Older or unverified CLIs should use stdio. Other clients still use static headers and need **Configure** plus reconnection after a server restart. Native CLI and Unity connections look up the current token automatically. Never commit token files or token-bearing client configurations.
 
 For unsupported clients, use [Manual Client Configuration](./clients.md#manual-client-configuration). For a manually launched Python server, see [Server README](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Hosted HTTPS/API-key deployment is a different mode: [Remote Server Auth](../guides/remote-server-auth.md).
 

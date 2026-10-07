@@ -52,16 +52,16 @@ At a high level:
   - Contract for all MCP client configurators.
   - Handles status detection, auto-configure, manual snippet, and installation steps.
 
-- **Base classes** (`MCPForUnity/Editor/Clients/McpClientConfiguratorBase.cs`)
+- **Base classes** (separate files under `MCPForUnity/Editor/Clients/`)
   - **`McpClientConfiguratorBase`**
-    - Common properties and helpers.
+    - Common properties and helpers in `McpClientConfiguratorBase.cs`, with no Codex- or Claude-specific implementation.
   - **`JsonFileMcpConfigurator`**
-    - For JSON-based config files (most clients).
+    - For JSON-based config files (most clients), in `JsonFileMcpConfigurator.cs`.
     - Implements `CheckStatus`, `Configure`, and `GetManualSnippet` using `ConfigJsonBuilder`.
   - **`CodexMcpConfigurator`**
-    - For Codex-style TOML config files.
+    - For Codex-style TOML config files, in `CodexMcpConfigurator.cs`.
   - **`ClaudeCliMcpConfigurator`**
-    - For CLI-driven clients like Claude Code (register/unregister via CLI, not JSON files).
+    - For Claude Code registration through its CLI, in `ClaudeCliMcpConfigurator.cs`.
 
 - **`McpClient` model** (`MCPForUnity/Editor/Models/McpClient.cs`)
   - Holds the per-client configuration:
@@ -145,16 +145,23 @@ Some clients cannot be handled by the generic JSON configurator alone.
   - Only needs to supply a `McpClient` with TOML config paths.
   - Inherits the Codex-specific status and configure behavior from `CodexMcpConfigurator`.
 
+The Codex button always performs an idempotent configuration write, including when already configured. OpenCode and OpenClaw also use Configure rather than an unsupported Unregister action. JSON-client toggle buttons offer removal only when their cached configured transport still matches the selected transport. Status checks compare transport, endpoint and managed authentication without logging credentials; a successful write is not a live connection test.
+
+New HTTP snippets do not set `features.rmcp_client`. Existing feature choices are preserved for older installations; compatibility is not inferred from an unverified version cutoff. See [Codex HTTP configuration](../getting-started/clients.md#codex-http) for the current format and legacy-version guidance.
+
+`CodexHttpAuth` probes the CLI with an isolated synthetic `CODEX_HOME`. It does not execute custom helpers. `LocalHttpAuth` builds the shared token-file reader used by Codex and Claude Code; it contains no client schema or version logic. Helpers are limited to loopback endpoints. Remote credentials remain static and separate.
+
 ### Claude Code (CLI-based)
 
 - Uses **`ClaudeCliMcpConfigurator`**.
-- Configuration is stored **internally by the Claude CLI**, not in a JSON file.
-- `CheckStatus` and `Configure` are implemented in the base class using `claude mcp ...` commands:
-  - `CheckStatus` calls `claude mcp list` to detect if `UnityMCP` is registered.
-  - `Configure` toggles register/unregister via `claude mcp add/remove UnityMCP`.
+- Registration is managed through the Claude CLI; status reads configuration files without running a connection-producing `mcp list` health check.
+- `ClaudeHttpAuth` verifies the selected CLI with an isolated `--version` probe. The minimum automatic-refresh baseline is 2.1.193; unknown or older versions get stdio guidance.
+- Local HTTP registration uses `mcp add-json` with `headersHelper`. Capability and configuration validation happen before old registrations are removed. Custom helpers and OAuth settings require manual migration.
+- `Configure` registers idempotently. The UI dispatches an explicit unregister action separately when the configured transport still matches.
+- Status checks receive endpoint and remote-header expectations captured on the Editor thread. Local helper validation does not read a current token or execute the helper. Explicit other-project overrides keep their existing independent-project status behavior.
 - The `ClaudeCodeConfigurator` class:
   - Only needs a `McpClient` with a `name`.
-  - Overrides `GetInstallationSteps` with CLI-specific instructions.
+  - Inherits CLI-specific installation and reconnect instructions.
 
 ### Claude Desktop (JSON with restrictions)
 
@@ -281,8 +288,8 @@ The Codex-specific status and configure logic is already implemented in the base
 The base class:
 
 - Locates the CLI binary using `MCPServiceLocator.Paths`.
-- Uses `ExecPath.TryRun` to call `mcp list`, `mcp add`, and `mcp remove`.
-- Implements `Configure` as a toggle between register and unregister.
+- Uses `ExecPath.TryRun` for CLI registration/removal and an isolated version probe; status reads configuration directly.
+- Keeps registration and unregistration separate. The UI chooses the action from status and the selected transport.
 
 Use this only if the client exposes an official CLI for managing MCP servers.
 
