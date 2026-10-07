@@ -2,6 +2,7 @@
 Resource to list all available Unity Editor instances.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -93,7 +94,7 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
         else:
             # Stdio/TCP transport: query connection pool
             pool = get_unity_connection_pool()
-            instances = pool.discover_all_instances(force_refresh=False)
+            instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=False)
 
             # Check for duplicate project names
             name_counts = {}

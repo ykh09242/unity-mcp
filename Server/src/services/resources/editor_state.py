@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -188,7 +189,7 @@ async def infer_single_instance_id(ctx: Context) -> str | None:
         from transport.legacy.unity_connection import get_unity_connection_pool
 
         pool = get_unity_connection_pool()
-        instances = pool.discover_all_instances(force_refresh=False)
+        instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=False)
         if isinstance(instances, list) and len(instances) == 1:
             inst = instances[0]
             inst_id = getattr(inst, "id", None)

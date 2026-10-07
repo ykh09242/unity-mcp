@@ -706,7 +706,9 @@ def create_mcp_server(
                     if session_details and session_details.hash:
                         unity_instance_hint = session_details.hash
 
-                    project_id = resolve_project_id_for_unity_instance(unity_instance_hint)
+                    project_id = await asyncio.to_thread(
+                        resolve_project_id_for_unity_instance, unity_instance_hint
+                    )
                     if not project_id:
                         return JSONResponse(
                             {
@@ -784,7 +786,9 @@ def create_mcp_server(
                 if session_details and session_details.hash:
                     unity_instance_hint = session_details.hash
 
-                project_id = resolve_project_id_for_unity_instance(unity_instance_hint)
+                project_id = await asyncio.to_thread(
+                    resolve_project_id_for_unity_instance, unity_instance_hint
+                )
                 if not project_id:
                     return JSONResponse(
                         {
