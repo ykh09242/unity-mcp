@@ -7,6 +7,7 @@ using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -127,6 +128,47 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.IsNotNull(prepare);
             prepare.Invoke(null, new object[] { "capture", 1, true, root });
             Assert.IsFalse(Directory.Exists(root), "Scene View path preparation must also be side-effect free.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SceneViewCapturePreparationRejectsBeforeWindowOrFileSideEffects(bool invalidResolution)
+        {
+            string folder = "Temp/McpSceneViewPrepare-" + Guid.NewGuid().ToString("N");
+            string absoluteFolder = Path.Combine(Path.GetDirectoryName(Application.dataPath), folder);
+            var prepare = typeof(EditorWindowScreenshotUtility).GetMethod("PrepareSceneViewCapture", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(prepare, "Scene View capture must expose target-free preparation before framing or focusing a window.");
+            var focusedWindow = EditorWindow.focusedWindow;
+            var sceneViews = UnityEngine.Resources.FindObjectsOfTypeAll<SceneView>();
+            var activeTexture = RenderTexture.active;
+            int textureCount = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length;
+
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                prepare.Invoke(null, new object[] { "capture", 1, true, invalidResolution ? -1 : 0, invalidResolution ? folder : "../McpSceneViewEscape" })
+            );
+            Assert.That(error.InnerException, invalidResolution ? Is.TypeOf<ArgumentException>() : Is.TypeOf<InvalidOperationException>());
+            StringAssert.Contains(invalidResolution ? "maxResolution" : "Screenshot folder", error.InnerException.Message);
+            Assert.IsFalse(Directory.Exists(absoluteFolder));
+            CollectionAssert.AreEquivalent(sceneViews, UnityEngine.Resources.FindObjectsOfTypeAll<SceneView>());
+            Assert.AreSame(focusedWindow, EditorWindow.focusedWindow);
+            Assert.AreSame(activeTexture, RenderTexture.active);
+            Assert.AreEqual(textureCount, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length);
+        }
+
+        [TestCase("../capture", "capture.png")]
+        [TestCase("CON", "_CON.png")]
+        public void SceneViewCapturePreparationPreservesFilenameRulesWithoutCreatingOutput(string fileName, string expectedName)
+        {
+            string folder = "Temp/McpSceneViewPrepare-" + Guid.NewGuid().ToString("N");
+            string absoluteFolder = Path.Combine(Path.GetDirectoryName(Application.dataPath), folder);
+            var prepare = typeof(EditorWindowScreenshotUtility).GetMethod("PrepareSceneViewCapture", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(prepare);
+            var result = (ScreenshotCaptureResult)prepare.Invoke(null, new object[] { fileName, 1, true, 0, folder });
+            Assert.AreEqual(expectedName, Path.GetFileName(result.FullPath));
+            Assert.AreEqual(folder + "/" + expectedName, result.ProjectRelativePath);
+            Assert.AreEqual(1, result.SuperSize);
+            Assert.IsFalse(result.IsAsync);
+            Assert.IsFalse(Directory.Exists(absoluteFolder));
         }
 
         [TestCase(false)]

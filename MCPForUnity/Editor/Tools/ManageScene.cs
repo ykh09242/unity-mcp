@@ -897,15 +897,6 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No active Scene View found. Open a Scene View window first, then retry screenshot with capture_source='scene_view'.");
             }
 
-            if (cmd.viewTarget != null && cmd.viewTarget.Type != JTokenType.Null)
-            {
-                var frameResult = FrameSceneView(new SceneCommand { sceneViewTarget = cmd.viewTarget });
-                if (frameResult is ErrorResponse)
-                {
-                    return frameResult;
-                }
-            }
-
             try
             {
                 string sceneViewFolderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
@@ -914,6 +905,22 @@ namespace MCPForUnity.Editor.Tools
                 int viewportHeight;
                 try
                 {
+                    var preparedCapture = EditorWindowScreenshotUtility.PrepareSceneViewCapture(
+                        fileName,
+                        resolvedSuperSize,
+                        true,
+                        maxResolution,
+                        sceneViewFolderOverride
+                    );
+                    EditorWindowScreenshotUtility.ValidateSceneViewViewport(sceneView);
+                    if (cmd.viewTarget != null && cmd.viewTarget.Type != JTokenType.Null)
+                    {
+                        var frameResult = FrameSceneView(new SceneCommand { sceneViewTarget = cmd.viewTarget });
+                        if (frameResult is ErrorResponse)
+                        {
+                            return frameResult;
+                        }
+                    }
                     result = EditorWindowScreenshotUtility.CaptureSceneViewViewportToProject(
                         sceneView,
                         fileName,
@@ -923,7 +930,8 @@ namespace MCPForUnity.Editor.Tools
                         maxResolution: maxResolution,
                         out viewportWidth,
                         out viewportHeight,
-                        folderOverride: sceneViewFolderOverride
+                        folderOverride: sceneViewFolderOverride,
+                        preparedCapture: preparedCapture
                     );
                 }
                 catch (InvalidOperationException ex) when (ex.Message.StartsWith("Screenshot folder", StringComparison.Ordinal))

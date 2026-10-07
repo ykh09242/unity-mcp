@@ -67,7 +67,8 @@ namespace MCPForUnity.Editor.Helpers
             int maxResolution,
             out int viewportWidth,
             out int viewportHeight,
-            string folderOverride = null
+            string folderOverride = null,
+            ScreenshotCaptureResult? preparedCapture = null
         )
         {
             if (sceneView == null)
@@ -75,15 +76,14 @@ namespace MCPForUnity.Editor.Helpers
 
             int effectiveSuperSize = NormalizeSceneViewSuperSize(superSize);
             ScreenshotUtility.ValidateMaxResolution(maxResolution);
+            var result = preparedCapture ?? PrepareSceneViewCapture(fileName, effectiveSuperSize, ensureUniqueFileName, maxResolution, folderOverride);
+            ValidateSceneViewViewport(sceneView);
 
             FocusAndRepaint(sceneView);
 
-            Rect viewportRectPixels = GetSceneViewViewportPixelRect(sceneView);
+            Rect viewportRectPixels = ValidateSceneViewViewport(sceneView);
             viewportWidth = Mathf.RoundToInt(viewportRectPixels.width);
             viewportHeight = Mathf.RoundToInt(viewportRectPixels.height);
-
-            if (viewportWidth <= 0 || viewportHeight <= 0)
-                throw new InvalidOperationException("Captured Scene view viewport is empty.");
 
             Texture2D captured = null;
             Texture2D downscaled = null;
@@ -92,7 +92,6 @@ namespace MCPForUnity.Editor.Helpers
                 captured = CaptureViewRect(sceneView, viewportRectPixels);
                 ScreenshotUtility.ValidateFrameDimensions(captured.width, captured.height);
 
-                var result = PrepareCaptureResult(fileName, effectiveSuperSize, ensureUniqueFileName, folderOverride);
                 byte[] png = captured.EncodeToPNG();
                 ScreenshotFileUtility.WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
 
@@ -189,6 +188,17 @@ namespace MCPForUnity.Editor.Helpers
                 Mathf.Round(viewportLocalPoints.width * pixelsPerPoint),
                 Mathf.Round(viewportLocalPoints.height * pixelsPerPoint)
             );
+        }
+
+        internal static Rect ValidateSceneViewViewport(SceneView sceneView)
+        {
+            Rect viewport = GetSceneViewViewportPixelRect(sceneView);
+            int width = Mathf.RoundToInt(viewport.width);
+            int height = Mathf.RoundToInt(viewport.height);
+            if (width <= 0 || height <= 0)
+                throw new InvalidOperationException("Captured Scene view viewport is empty.");
+            ScreenshotUtility.ValidateFrameDimensions(width, height);
+            return viewport;
         }
 
         private static Rect GetViewportLocalRectPoints(SceneView sceneView, float pixelsPerPoint)
@@ -358,6 +368,19 @@ namespace MCPForUnity.Editor.Helpers
 
             texture.SetPixels32(pixels);
             texture.Apply();
+        }
+
+        internal static ScreenshotCaptureResult PrepareSceneViewCapture(
+            string fileName,
+            int superSize,
+            bool ensureUniqueFileName,
+            int maxResolution,
+            string folderOverride
+        )
+        {
+            int effectiveSuperSize = NormalizeSceneViewSuperSize(superSize);
+            ScreenshotUtility.ValidateMaxResolution(maxResolution);
+            return PrepareCaptureResult(fileName, effectiveSuperSize, ensureUniqueFileName, folderOverride);
         }
 
         private static ScreenshotCaptureResult PrepareCaptureResult(string fileName, int superSize, bool ensureUniqueFileName, string folderOverride)
