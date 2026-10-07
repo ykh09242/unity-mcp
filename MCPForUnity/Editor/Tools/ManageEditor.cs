@@ -51,6 +51,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 // Play Mode Control
                 case "play":
+                    if (@params["wait_until"] != null && @params["wait_until"].Type != JTokenType.Null)
+                        return PlayModeReadiness.Start(@params);
                     try
                     {
                         if (!EditorApplication.isPlaying)
@@ -81,7 +83,8 @@ namespace MCPForUnity.Editor.Tools
                 case "stop":
                     try
                     {
-                        if (EditorApplication.isPlaying)
+                        PlayModeReadiness.Cancel("Stop requested before readiness was confirmed.");
+                        if (EditorApplication.isPlayingOrWillChangePlaymode)
                         {
                             EditorApplication.isPlaying = false;
                             return new SuccessResponse("Exited play mode.");
@@ -92,6 +95,15 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return new ErrorResponse($"Error stopping play mode: {e.Message}");
                     }
+
+                case "get_play_mode_job":
+                    return PlayModeReadiness.Get(@params, false);
+                case "cancel_play_mode_job":
+                    return PlayModeReadiness.Get(@params, true);
+                case "get_game_view_size":
+                case "set_game_view_size":
+                case "restore_game_view_size":
+                    return GameViewSizeControl.Execute(action, @params);
 
                 // Tool Control
                 case "set_active_tool":
@@ -122,16 +134,6 @@ namespace MCPForUnity.Editor.Tools
                     if (!removeLayerResult.IsSuccess)
                         return new ErrorResponse(removeLayerResult.ErrorMessage);
                     return RemoveLayer(removeLayerResult.Value);
-                // --- Settings (Example) ---
-                // case "set_resolution":
-                //     int? width = @params["width"]?.ToObject<int?>();
-                //     int? height = @params["height"]?.ToObject<int?>();
-                //     if (!width.HasValue || !height.HasValue) return new ErrorResponse("'width' and 'height' parameters required.");
-                //     return SetGameViewResolution(width.Value, height.Value);
-                // case "set_quality":
-                //     // Handle string name or int index
-                //     return SetQualityLevel(@params["qualityLevel"]);
-
                 // Package Deployment
                 case "deploy_package":
                     return DeployPackage();
@@ -163,7 +165,7 @@ namespace MCPForUnity.Editor.Tools
 
                 default:
                     return new ErrorResponse(
-                        $"Unknown action: '{action}'. Supported actions: play, pause, stop, set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, restore_package, undo, redo. For prefab editing (open/save/close prefab stage), use manage_prefabs. Use MCP resources for reading editor state, project info, tags, layers, selection, windows, prefab stage, and active tool."
+                        $"Unknown action: '{action}'. Supported actions: play, pause, stop, get_play_mode_job, cancel_play_mode_job, get_game_view_size, set_game_view_size, restore_game_view_size, set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, restore_package, undo, redo. For prefab editing (open/save/close prefab stage), use manage_prefabs. Use MCP resources for reading editor state, project info, tags, layers, selection, windows, prefab stage, and active tool."
                     );
             }
         }

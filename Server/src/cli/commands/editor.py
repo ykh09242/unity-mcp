@@ -2,8 +2,12 @@
 
 import sys
 import time
+from uuid import uuid4
 import click
-from typing import Optional, Any
+from typing import Optional, Any, assert_never
+
+from pydantic import ValidationError
+from models.editor_readiness import PlayReadinessJob
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
@@ -25,14 +29,172 @@ def editor():
 
 
 @editor.command("play")
+@click.option(
+    "--wait-until",
+    type=click.Choice(["scene_loaded", "first_frame"]),
+    default=None,
+    help="Wait for loaded active scene or subsequent simulation frame (not app async initialization).",
+)
+@click.option("--timeout-seconds", type=click.IntRange(1, 300), default=30, show_default=True)
 @handle_unity_errors
-def play():
+def play(wait_until: str | None, timeout_seconds: int):
     """Enter play mode."""
     config = get_config()
-    result = run_command("manage_editor", {"action": "play"}, config)
+    params = {"action": "play"}
+    if wait_until is None:
+        result = run_command("manage_editor", params, config)
+    else:
+        job_id = uuid4().hex
+        params.update(wait_until=wait_until, timeout_seconds=timeout_seconds, job_id=job_id)
+        deadline = time.monotonic() + timeout_seconds
+        result = None
+        first_request = True
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                result = run_command(
+                    "manage_editor", params, config, timeout=min(config.timeout, remaining)
+                )
+            except UnityConnectionError as error:
+                # A play transition may drop its acknowledgement. Recover by ID; never replay play.
+                if str(error).startswith("HTTP error from server:") and not str(error).startswith(
+                    ("HTTP error from server: 404", "HTTP error from server: 503")
+                ):
+                    raise
+            except UnityCommandError as error:
+                response = error.response
+                if response.get("hint") != "retry":
+                    raise
+            else:
+                if time.monotonic() >= deadline:
+                    raise UnityCommandError(
+                        {
+                            "success": False,
+                            "error": "play_readiness_timeout",
+                            "data": {
+                                "job_id": job_id,
+                                "status": "wait_timed_out",
+                                "last_response": result,
+                            },
+                        }
+                    )
+                data = result.get("data")
+                try:
+                    job = PlayReadinessJob.model_validate(data)
+                except ValidationError:
+                    raise UnityCommandError(
+                        {
+                            "success": False,
+                            "error": "invalid_play_readiness_response",
+                            "data": result,
+                        }
+                    )
+                if job.job_id != job_id:
+                    raise UnityCommandError(
+                        {"success": False, "error": "play_readiness_job_mismatch", "data": data}
+                    )
+                match job.status:
+                    case "succeeded":
+                        break
+                    case "failed" | "cancelled" | "timed_out":
+                        raise UnityCommandError(
+                            {**result, "success": False, "error": job.error or job.status}
+                        )
+                    case "running":
+                        pass
+                    case unreachable:
+                        assert_never(unreachable)
+            if first_request:
+                params = {"action": "get_play_mode_job", "job_id": job_id}
+                first_request = False
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.1, remaining))
+        else:
+            raise UnityCommandError(
+                {
+                    "success": False,
+                    "error": "play_readiness_timeout",
+                    "data": {
+                        "job_id": job_id,
+                        "status": "wait_timed_out",
+                        "last_response": result,
+                    },
+                }
+            )
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(result.get("message") or "Play mode requested")
+
+
+@editor.command("play-status")
+@click.argument("job_id")
+@handle_unity_errors
+def play_status(job_id: str):
+    """Read a persisted play readiness job."""
+    config = get_config()
+    result = run_command("manage_editor", {"action": "get_play_mode_job", "job_id": job_id}, config)
+    click.echo(format_output(result, config.format))
+
+
+@editor.command("cancel-play-wait")
+@click.argument("job_id")
+@handle_unity_errors
+def cancel_play_wait(job_id: str):
+    """Cancel readiness monitoring without stopping Play Mode."""
+    config = get_config()
+    result = run_command(
+        "manage_editor", {"action": "cancel_play_mode_job", "job_id": job_id}, config
+    )
+    click.echo(format_output(result, config.format))
+
+
+@editor.command("game-view-size")
+@click.option("--width", type=click.IntRange(1, 8192), default=None)
+@click.option("--height", type=click.IntRange(1, 8192), default=None)
+@click.option("--aspect-ratio", default=None, help="Aspect ratio W:H, for example 16:9.")
+@click.option(
+    "--preset", default=None, help="Unique label returned by this command without options."
+)
+@click.option(
+    "--restore-token", default=None, help="Restore a previous selection using a returned token."
+)
+@handle_unity_errors
+def game_view_size(
+    width: int | None,
+    height: int | None,
+    aspect_ratio: str | None,
+    preset: str | None,
+    restore_token: str | None,
+):
+    """Read or select the size of an open Game View."""
+    selectors = sum(
+        (
+            width is not None or height is not None,
+            aspect_ratio is not None,
+            preset is not None,
+            restore_token is not None,
+        )
+    )
+    if selectors > 1 or (width is None) != (height is None):
+        raise click.UsageError(
+            "Specify width and height together, or one of aspect-ratio, preset, restore-token."
+        )
+    config = get_config()
+    action = "get_game_view_size"
+    if selectors:
+        action = "restore_game_view_size" if restore_token is not None else "set_game_view_size"
+    params = {
+        "action": action,
+        "width": width,
+        "height": height,
+        "aspect_ratio": aspect_ratio,
+        "preset": preset,
+        "restore_token": restore_token,
+    }
+    result = run_command(
+        "manage_editor", {key: value for key, value in params.items() if value is not None}, config
+    )
+    click.echo(format_output(result, config.format))
 
 
 @editor.command("pause")

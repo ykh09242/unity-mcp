@@ -124,7 +124,7 @@
     },
     {
       "name": "manage_editor",
-      "description": "Control Unity Editor state, play mode, preferences, undo/redo"
+      "description": "Control Unity Editor state, bounded Play Mode readiness, Game View size, preferences and undo/redo"
     },
     {
       "name": "manage_gameobject",
