@@ -244,14 +244,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return (false, "'prefabPath' parameter is required for create_from_gameobject.", targetName, null, false, false, false);
             }
 
-            string sanitizedPath = AssetPathUtility.GetContainedAssetPath(requestedPath);
-            if (sanitizedPath == null)
+            string sanitizedPath;
+            try
             {
-                return (false, $"Invalid prefab path (path traversal detected): '{requestedPath}'", targetName, null, false, false, false);
+                sanitizedPath = AssetPathUtility.GetContainedAssetPath(requestedPath);
             }
-            if (string.IsNullOrEmpty(sanitizedPath))
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
             {
-                return (false, $"Invalid prefab path '{requestedPath}'. Path cannot be empty.", targetName, null, false, false, false);
+                return (false, $"Invalid prefab path: {ex.Message}", targetName, null, false, false, false);
             }
             if (!sanitizedPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
             {

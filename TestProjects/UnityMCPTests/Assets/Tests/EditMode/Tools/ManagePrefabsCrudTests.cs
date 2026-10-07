@@ -1356,6 +1356,41 @@ namespace MCPForUnityTests.Editor.Tools
             UnityEngine.Object.DestroyImmediate(testObj, true);
         }
 
+        [TestCase("Assets/../Outside.prefab")]
+        [TestCase("/Outside.prefab")]
+        [TestCase("Packages/Outside.prefab")]
+        [TestCase("Assets/Invalid?.prefab")]
+        public void CreateFromGameObject_RejectsUnsafePathsBeforeUnlinking(string outputPath)
+        {
+            string sourcePath = CreateTestPrefab("ValidationSource");
+            byte[] savedSource = File.ReadAllBytes(sourcePath);
+            var source = (GameObject)PrefabUtility.InstantiatePrefab(AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath));
+            try
+            {
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = source.GetInstanceIDCompat(),
+                            ["prefabPath"] = outputPath,
+                            ["unlinkIfInstance"] = true,
+                        }
+                    )
+                );
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.IsNotEmpty(result.Value<string>("error"));
+                Assert.AreEqual(PrefabInstanceStatus.Connected, PrefabUtility.GetPrefabInstanceStatus(source));
+                Assert.AreEqual(sourcePath, PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(source));
+                CollectionAssert.AreEqual(savedSource, File.ReadAllBytes(sourcePath));
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+        }
+
         [Test]
         public void ModifyContents_ReturnsErrorsForInvalidInputs()
         {
