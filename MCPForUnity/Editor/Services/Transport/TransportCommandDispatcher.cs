@@ -83,7 +83,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private static readonly Dictionary<string, PendingCommand> Pending = new();
         private static readonly object PendingLock = new();
-        private static readonly Queue<Action> MainThreadCallbacks = new();
+        private static readonly LinkedList<Action> MainThreadCallbacks = new();
         private static bool updateHooked;
         private static bool initialised;
 
@@ -165,8 +165,26 @@ namespace MCPForUnity.Editor.Services.Transport
             }
 
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            var registration = cancellationToken.CanBeCanceled ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken)) : default;
+            LinkedListNode<Action> queuedCallback = null;
+            CancellationTokenRegistration registration = default;
+            registration = cancellationToken.CanBeCanceled
+                ? cancellationToken.Register(() =>
+                {
+                    lock (PendingLock)
+                    {
+                        if (queuedCallback?.List != null)
+                            MainThreadCallbacks.Remove(queuedCallback);
+                        tcs.TrySetCanceled(cancellationToken);
+                    }
+                    registration.Dispose();
+                })
+                : default;
+            // Register invokes synchronously for an already-canceled token, before assigning registration.
+            if (tcs.Task.IsCompleted)
+            {
+                registration.Dispose();
+                return tcs.Task;
+            }
 
             void Invoke()
             {
@@ -207,7 +225,12 @@ namespace MCPForUnity.Editor.Services.Transport
             if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
             {
                 lock (PendingLock)
-                    MainThreadCallbacks.Enqueue(Invoke);
+                {
+                    if (!tcs.Task.IsCompleted)
+                        queuedCallback = MainThreadCallbacks.AddLast(Invoke);
+                }
+                if (tcs.Task.IsCompleted)
+                    registration.Dispose();
                 return tcs.Task;
             }
             Invoke();
@@ -286,7 +309,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     {
                         if (MainThreadCallbacks.Count == 0)
                             break;
-                        callback = MainThreadCallbacks.Dequeue();
+                        callback = MainThreadCallbacks.First.Value;
+                        MainThreadCallbacks.RemoveFirst();
                     }
                     callback();
                 }

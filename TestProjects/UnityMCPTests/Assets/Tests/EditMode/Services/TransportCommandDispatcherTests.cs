@@ -162,6 +162,170 @@ namespace MCPForUnityTests.Editor.Services
 
         private static Task<string> Dispatch(string json, CancellationToken token) => (Task<string>)Execute.Invoke(null, new object[] { json, token });
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RunOnMainThreadAsync_CanceledFallback_ReleasesQueuedCallbackWithoutEditorPump(bool cancelBeforeQueue)
+        {
+            ContextField.SetValue(null, null);
+            int before = CallbackCount();
+            int invoked = 0;
+            using var cts = new CancellationTokenSource();
+            if (cancelBeforeQueue)
+                cts.Cancel();
+            Task<int> callback = null;
+            try
+            {
+                Assert.IsTrue(
+                    Task.Run(() =>
+                        {
+                            callback = RunCallback(() => ++invoked, cts.Token);
+                        })
+                        .Wait(TimeSpan.FromSeconds(5))
+                );
+                cts.Cancel();
+                Assert.IsTrue(callback.IsCanceled);
+                Assert.AreEqual(before, CallbackCount(), "Canceled work must release its queued closure without requiring an Editor frame.");
+                Assert.AreEqual(0, invoked);
+            }
+            finally
+            {
+                Dispatcher.GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+            }
+        }
+
+        [Test]
+        public void RunOnMainThreadAsync_FallbackCancellation_PreservesLiveCallbackOrderAndThread()
+        {
+            ContextField.SetValue(null, null);
+            int mainThread = Thread.CurrentThread.ManagedThreadId;
+            var invoked = new List<int>();
+            using var cts = new CancellationTokenSource();
+            Task<int> first = null,
+                canceled = null,
+                last = null;
+            try
+            {
+                Assert.IsTrue(
+                    Task.Run(() =>
+                        {
+                            first = RunCallback(
+                                () =>
+                                {
+                                    invoked.Add(1);
+                                    return Thread.CurrentThread.ManagedThreadId;
+                                },
+                                CancellationToken.None
+                            );
+                            canceled = RunCallback(
+                                () =>
+                                {
+                                    invoked.Add(2);
+                                    return 2;
+                                },
+                                cts.Token
+                            );
+                            last = RunCallback(
+                                () =>
+                                {
+                                    invoked.Add(3);
+                                    return Thread.CurrentThread.ManagedThreadId;
+                                },
+                                CancellationToken.None
+                            );
+                        })
+                        .Wait(TimeSpan.FromSeconds(5))
+                );
+                cts.Cancel();
+                Dispatcher.GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+                CollectionAssert.AreEqual(new[] { 1, 3 }, invoked);
+                Assert.AreEqual(mainThread, first.Result);
+                Assert.AreEqual(mainThread, last.Result);
+                Assert.IsTrue(canceled.IsCanceled);
+            }
+            finally
+            {
+                Dispatcher.GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+            }
+        }
+
+        private static Task<int> RunCallback(Func<int> callback, CancellationToken token) =>
+            (Task<int>)
+                Dispatcher.GetMethod("RunOnMainThreadAsync", StaticPrivate).MakeGenericMethod(typeof(int)).Invoke(null, new object[] { callback, token });
+
+        [Test]
+        public void RunOnMainThreadAsync_CancellationRacingFallbackEnqueue_ReleasesEveryCallback()
+        {
+            ContextField.SetValue(null, null);
+            int before = CallbackCount();
+            int invoked = 0;
+            try
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    using var cts = new CancellationTokenSource();
+                    using var start = new ManualResetEventSlim();
+                    Task<int> callback = null;
+                    var enqueue = Task.Run(() =>
+                    {
+                        start.Wait();
+                        callback = RunCallback(() => Interlocked.Increment(ref invoked), cts.Token);
+                    });
+                    var cancel = Task.Run(() =>
+                    {
+                        start.Wait();
+                        cts.Cancel();
+                    });
+                    start.Set();
+                    Assert.IsTrue(Task.WaitAll(new[] { enqueue, cancel }, TimeSpan.FromSeconds(5)), "Enqueue and cancellation must not deadlock.");
+                    Assert.IsTrue(callback.IsCanceled);
+                    Assert.AreEqual(before, CallbackCount(), "Racing cancellation must not retain a queued callback.");
+                }
+                Assert.AreEqual(0, invoked);
+            }
+            finally
+            {
+                Dispatcher.GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+            }
+        }
+
+        [Test]
+        public void RunOnMainThreadAsync_CanceledDuringExecution_AllowsStartedCallbackToFinish()
+        {
+            ContextField.SetValue(null, null);
+            using var cts = new CancellationTokenSource();
+            int mutations = 0;
+            Task<int> callback = null;
+            Assert.IsTrue(
+                Task.Run(() =>
+                    {
+                        callback = RunCallback(
+                            () =>
+                            {
+                                Assert.IsTrue(
+                                    Task.Run(() => cts.Cancel()).Wait(TimeSpan.FromSeconds(5)),
+                                    "Cancellation must not wait for the running callback."
+                                );
+                                return ++mutations;
+                            },
+                            cts.Token
+                        );
+                    })
+                    .Wait(TimeSpan.FromSeconds(5))
+            );
+            Dispatcher.GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+            Assert.IsTrue(callback.IsCanceled, "Cancellation stops the response wait, not a callback that already started.");
+            Assert.AreEqual(1, mutations);
+        }
+
+        private static int CallbackCount()
+        {
+            lock (PendingLock)
+            {
+                var callbacks = Dispatcher.GetField("MainThreadCallbacks", StaticPrivate).GetValue(null);
+                return (int)callbacks.GetType().GetProperty("Count").GetValue(callbacks);
+            }
+        }
+
         private static bool IsPending(Task<string> command)
         {
             lock (PendingLock)
