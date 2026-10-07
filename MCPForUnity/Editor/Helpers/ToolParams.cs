@@ -89,16 +89,28 @@ namespace MCPForUnity.Editor.Helpers
         /// plain strings, JSON arrays, stringified JSON arrays, and double-serialized arrays.
         /// Supports both snake_case and camelCase automatically.
         /// </summary>
-        public string[] GetStringArray(string key)
+        public string[] GetStringArray(string key) => GetStringArray(key, strict: false);
+
+        /// <summary>Optionally rejects unsupported tokens and non-string array members after legacy normalization.</summary>
+        public string[] GetStringArray(string key, bool strict)
         {
-            return CoerceStringArray(GetToken(key));
+            try
+            {
+                return CoerceStringArray(GetToken(key), strict);
+            }
+            catch (ArgumentException error) when (strict)
+            {
+                throw new ArgumentException($"Invalid parameter '{key}': {error.Message}", key, error);
+            }
         }
 
         /// <summary>
         /// Coerces a JToken to a string array, handling various MCP serialization formats:
         /// plain strings, JSON arrays, stringified JSON arrays, and double-serialized arrays.
         /// </summary>
-        internal static string[] CoerceStringArray(JToken token)
+        internal static string[] CoerceStringArray(JToken token) => CoerceStringArray(token, strict: false);
+
+        internal static string[] CoerceStringArray(JToken token, bool strict)
         {
             if (token == null || token.Type == JTokenType.Null)
                 return null;
@@ -115,8 +127,7 @@ namespace MCPForUnity.Editor.Helpers
                     try
                     {
                         var parsed = JArray.Parse(trimmed);
-                        var values = parsed.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-                        return values.Length > 0 ? values : null;
+                        return ReadStringArray(parsed, strict);
                     }
                     catch (JsonException) { /* not a valid JSON array, treat as plain string */ }
                 }
@@ -149,11 +160,20 @@ namespace MCPForUnity.Editor.Helpers
                 {
                     array = array[0] as JArray ?? array;
                 }
-                var values = array.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-                return values.Length > 0 ? values : null;
+                return ReadStringArray(array, strict);
             }
 
+            if (strict)
+                throw new ArgumentException("Expected a string or an array of strings.");
             return null;
+        }
+
+        private static string[] ReadStringArray(JArray array, bool strict)
+        {
+            if (strict && array.Any(item => item.Type != JTokenType.String))
+                throw new ArgumentException("Every array member must be a string.");
+            var values = array.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+            return values.Length > 0 ? values : null;
         }
 
         /// <summary>

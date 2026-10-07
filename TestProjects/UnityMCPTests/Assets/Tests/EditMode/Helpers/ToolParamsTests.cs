@@ -11,6 +11,80 @@ namespace MCPForUnityTests.Editor.Helpers
     {
         #region Constructor Tests
 
+        private static string[] StrictStrings(ToolParams parameters, string key)
+        {
+            var method = typeof(ToolParams).GetMethod("GetStringArray", new[] { typeof(string), typeof(bool) });
+            Assert.NotNull(method, "Strict string-array parsing must be an explicit opt-in overload.");
+            try
+            {
+                return (string[])method.Invoke(parameters, new object[] { key, true });
+            }
+            catch (System.Reflection.TargetInvocationException error)
+            {
+                throw error.InnerException;
+            }
+        }
+
+        [TestCase("42")]
+        [TestCase("true")]
+        [TestCase("{}")]
+        [TestCase("[\"Valid\",42]")]
+        [TestCase("[\"Valid\",true]")]
+        [TestCase("[\"Valid\",null]")]
+        [TestCase("[\"Valid\",{}]")]
+        [TestCase("\"[\\\"Valid\\\",42]\"")]
+        [TestCase("[\"[\\\"Valid\\\",42]\"]")]
+        [TestCase("[[\"Valid\",42]]")]
+        public void StrictStringArray_RejectsMalformedValuesAndNamesParameter(string json)
+        {
+            var parameters = new ToolParams(new JObject { ["counter_names"] = JToken.Parse(json) });
+            var error = Assert.Throws<System.ArgumentException>(() => StrictStrings(parameters, "counterNames"));
+            StringAssert.Contains("counterNames", error.Message);
+        }
+
+        [TestCase("\"Valid\"")]
+        [TestCase("[\"Valid\"]")]
+        [TestCase("\"[\\\"Valid\\\"]\"")]
+        [TestCase("[\"[\\\"Valid\\\"]\"]")]
+        [TestCase("[[\"Valid\"]]")]
+        [TestCase("[\"\",\"Valid\",\" \"]")]
+        [TestCase("\"[not-json]\"")]
+        public void StrictStringArray_PreservesNormalizationAndPlainStringFallback(string json)
+        {
+            var parameters = new ToolParams(new JObject { ["counter_names"] = JToken.Parse(json) });
+            CollectionAssert.AreEqual(parameters.GetStringArray("counterNames"), StrictStrings(parameters, "counterNames"));
+        }
+
+        [TestCase(null)]
+        [TestCase("null")]
+        [TestCase("[]")]
+        [TestCase("\"\"")]
+        [TestCase("\" \"")]
+        public void StrictStringArray_PreservesOptionalDefaults(string json)
+        {
+            var request = new JObject();
+            if (json != null)
+                request["counterNames"] = JToken.Parse(json);
+            Assert.IsNull(StrictStrings(new ToolParams(request), "counterNames"));
+        }
+
+        [Test]
+        public void StrictStringArray_PreservesExactAliasPrecedence()
+        {
+            var parameters = new ToolParams(new JObject { ["counter_names"] = 42, ["counterNames"] = new JArray("Valid") });
+            Assert.Throws<System.ArgumentException>(() => StrictStrings(parameters, "counter_names"));
+            CollectionAssert.AreEqual(new[] { "Valid" }, StrictStrings(parameters, "counterNames"));
+        }
+
+        [Test]
+        public void PermissiveStringArray_RetainsLegacyUnsupportedDefaultsAndMemberConversion()
+        {
+            foreach (var token in new JToken[] { new JValue(42), new JValue(true), new JObject() })
+                Assert.IsNull(new ToolParams(new JObject { ["names"] = token }).GetStringArray("names"));
+            var parameters = new ToolParams(new JObject { ["names"] = new JArray(42, true, JValue.CreateNull(), "Valid") });
+            CollectionAssert.AreEqual(new[] { "42", "True", "Valid" }, parameters.GetStringArray("names"));
+        }
+
         [Test]
         public void ToolParams_Constructor_ThrowsOnNullParams()
         {

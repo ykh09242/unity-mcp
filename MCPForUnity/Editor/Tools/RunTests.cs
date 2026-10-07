@@ -80,10 +80,10 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var p = new ToolParams(@params);
-            var testNames = p.GetStringArray("testNames");
-            var groupNames = p.GetStringArray("groupNames");
-            var categoryNames = p.GetStringArray("categoryNames");
-            var assemblyNames = p.GetStringArray("assemblyNames");
+            var testNames = p.GetStringArray("testNames", strict: true);
+            var groupNames = p.GetStringArray("groupNames", strict: true);
+            var categoryNames = p.GetStringArray("categoryNames", strict: true);
+            var assemblyNames = p.GetStringArray("assemblyNames", strict: true);
 
             if (testNames == null && groupNames == null && categoryNames == null && assemblyNames == null)
             {
