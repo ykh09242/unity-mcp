@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Tools.ProBuilder;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -20,16 +21,27 @@ namespace MCPForUnityTests.Editor.Tools
         private readonly List<GameObject> ownedObjects = new List<GameObject>();
         private readonly HashSet<Mesh> ownedMeshes = new HashSet<Mesh>();
         private readonly Dictionary<FieldInfo, object> savedResolutionFields = new Dictionary<FieldInfo, object>();
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private Scene originalScene;
         private Scene ownedScene;
         private Component mesh;
         private Type meshType;
         private bool capturedScene;
+        private string assetRoot;
+        private string assetRootGuid;
+
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
             capturedScene = false;
+            assetRoot = null;
+            assetRootGuid = null;
             ownedScene = default(Scene);
             ownedObjects.Clear();
             ownedMeshes.Clear();
@@ -51,11 +63,17 @@ namespace MCPForUnityTests.Editor.Tools
             SetResolutionField("_faceType", Type.GetType("UnityEngine.ProBuilder.Face, Unity.ProBuilder", true));
             SetResolutionField("_smoothingType", Type.GetType("UnityEngine.ProBuilder.Smoothing, Unity.ProBuilder", true));
             SetResolutionField("_editorMeshUtilityType", Type.GetType("UnityEditor.ProBuilder.EditorMeshUtility, Unity.ProBuilder.Editor"));
+            SetResolutionField("_combineMeshesType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.CombineMeshes, Unity.ProBuilder", true));
+            SetResolutionField("_meshImporterType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.MeshImporter, Unity.ProBuilder", true));
+            SetResolutionField("_appendElementsType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.AppendElements, Unity.ProBuilder", true));
+            SetResolutionField("_connectElementsType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.ConnectElements, Unity.ProBuilder", true));
+            SetResolutionField("_edgeType", Type.GetType("UnityEngine.ProBuilder.Edge, Unity.ProBuilder", true));
+            SetResolutionField("_vertexEditingType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.VertexEditing, Unity.ProBuilder", true));
+            SetResolutionField("_deleteElementsType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.DeleteElements, Unity.ProBuilder", true));
 
             originalScene = SceneManager.GetActiveScene();
             capturedScene = true;
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+            ownedScene = sceneFixture.Create("McpProBuilderUtility_", Guid.NewGuid().ToString("N"));
 
             Type faceType = Type.GetType("UnityEngine.ProBuilder.Face, Unity.ProBuilder", true);
             Array faces = Array.CreateInstance(faceType, 2);
@@ -118,8 +136,13 @@ namespace MCPForUnityTests.Editor.Tools
                 savedResolutionFields.Clear();
                 if (capturedScene && originalScene.IsValid() && originalScene.isLoaded)
                     SceneManager.SetActiveScene(originalScene);
-                if (ownedScene.IsValid() && ownedScene.isLoaded)
-                    EditorSceneManager.CloseScene(ownedScene, true);
+                sceneFixture.Close();
+                if (assetRootGuid != null)
+                {
+                    StringAssert.StartsWith("Assets/__McpProBuilderIntegrity_", assetRoot);
+                    Assert.AreEqual(assetRootGuid, AssetDatabase.AssetPathToGUID(assetRoot));
+                    Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot), "Only the folder created by this fixture is removed.");
+                }
                 ownedObjects.Clear();
                 ownedMeshes.Clear();
                 capturedScene = false;
@@ -136,6 +159,86 @@ namespace MCPForUnityTests.Editor.Tools
             MeshFilter filter = mesh.GetComponent<MeshFilter>();
             if (filter != null && filter.sharedMesh != null && !AssetDatabase.Contains(filter.sharedMesh))
                 ownedMeshes.Add(filter.sharedMesh);
+        }
+
+        private void SaveOwnedScene()
+        {
+            assetRoot = "Assets/__McpProBuilderIntegrity_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
+            assetRootGuid = AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length));
+            Assert.IsNotEmpty(assetRootGuid);
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("ping")]
+        [TestCase("create_shape")]
+        public void TypeDiscoveryDoesNotPatchDefaultMaterial(string action)
+        {
+            var material = AssetDatabase.LoadAssetAtPath<Material>("Packages/com.unity.probuilder/Content/Resources/Materials/ProBuilderDefault.mat");
+            if (material == null)
+                Assert.Ignore("Optional ProBuilder default material is unavailable.");
+            MaterialGlobalIlluminationFlags original = material.globalIlluminationFlags;
+            var colors = new[] { "_EmissionColor", "_EmissionColorUI", "_EmissionColorWithMapUI" }
+                .Where(material.HasProperty)
+                .ToDictionary(name => name, material.GetColor);
+            try
+            {
+                material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive | MaterialGlobalIlluminationFlags.RealtimeEmissive;
+                var expected = material.globalIlluminationFlags;
+                SetResolutionField("_typesResolved", false);
+                var response = JObject.FromObject(ManageProBuilder.HandleCommand(new JObject { ["action"] = action }));
+                Assert.AreEqual(action == "ping", response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(expected, material.globalIlluminationFlags, "Type lookup/read/rejected creation must not alter shared material state.");
+            }
+            finally
+            {
+                material.globalIlluminationFlags = original;
+                foreach (var color in colors)
+                    material.SetColor(color.Key, color.Value);
+            }
+        }
+
+        [Test]
+        public void SuccessfulShapeCreationStillPatchesDefaultMaterial()
+        {
+            var material = AssetDatabase.LoadAssetAtPath<Material>("Packages/com.unity.probuilder/Content/Resources/Materials/ProBuilderDefault.mat");
+            if (material == null)
+                Assert.Ignore("Optional ProBuilder default material is unavailable.");
+            MaterialGlobalIlluminationFlags original = material.globalIlluminationFlags;
+            var colors = new[] { "_EmissionColor", "_EmissionColorUI", "_EmissionColorWithMapUI" }
+                .Where(material.HasProperty)
+                .ToDictionary(name => name, material.GetColor);
+            try
+            {
+                material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive;
+                SetResolutionField("_typesResolved", false);
+                var response = JObject.FromObject(
+                    ManageProBuilder.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_shape",
+                            ["properties"] = new JObject { ["shapeType"] = "Cube" },
+                        }
+                    )
+                );
+                if (response.Value<bool>("success"))
+                {
+                    var created = ownedScene.GetRootGameObjects().Single(go => go.GetInstanceIDCompat() == response["data"].Value<int>("instanceId"));
+                    ownedObjects.Add(created);
+                    var filter = created.GetComponent<MeshFilter>();
+                    if (filter != null && filter.sharedMesh != null)
+                        ownedMeshes.Add(filter.sharedMesh);
+                }
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(MaterialGlobalIlluminationFlags.EmissiveIsBlack, material.globalIlluminationFlags);
+            }
+            finally
+            {
+                material.globalIlluminationFlags = original;
+                foreach (var color in colors)
+                    material.SetColor(color.Key, color.Value);
+            }
         }
 
         private GameObject Parent(string name)
@@ -163,6 +266,104 @@ namespace MCPForUnityTests.Editor.Tools
             JObject result = JObject.FromObject(ManageProBuilder.HandleCommand(request));
             CaptureMesh();
             return result;
+        }
+
+        [Test]
+        public void MergeObjects_InvalidLaterMeshPreservesEarlierOrdinaryMesh()
+        {
+            var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            cube.name = "__McpMergeCube_" + Guid.NewGuid().ToString("N");
+            ownedObjects.Add(cube);
+            var empty = Parent("__McpMergeEmpty_");
+            var filter = cube.GetComponent<MeshFilter>();
+            var source = filter.sharedMesh;
+            var components = cube.GetComponents<Component>();
+            SaveOwnedScene();
+            int dirty = EditorUtility.GetDirtyCount(cube);
+
+            var result = Send("merge_objects", new JObject { ["targets"] = new JArray(cube.name, empty.name) });
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            // Track any output even on a regression so cleanup remains ownership scoped.
+            if (filter.sharedMesh != null && filter.sharedMesh != source && !AssetDatabase.Contains(filter.sharedMesh))
+                ownedMeshes.Add(filter.sharedMesh);
+            CollectionAssert.AreEqual(components, cube.GetComponents<Component>());
+            Assert.AreSame(source, filter.sharedMesh);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(cube));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("skipMaterialSwap")]
+        [TestCase("skip_material_swap")]
+        public void SetFaceColor_InvalidSkipSwapPreservesColorsAndMaterial(string field)
+        {
+            var colorsProperty = meshType.GetProperty("colors");
+            var before = ((IEnumerable<Color>)colorsProperty.GetValue(mesh))?.ToArray();
+            var renderer = mesh.GetComponent<Renderer>();
+            var materials = renderer.sharedMaterials;
+            SaveOwnedScene();
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+            var props = new JObject { ["color"] = new JArray(.2, .4, .7, 1), [field] = "invalid_bool" };
+
+            var result = Send("set_face_color", props);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            CollectionAssert.AreEqual(before, ((IEnumerable<Color>)colorsProperty.GetValue(mesh))?.ToArray());
+            CollectionAssert.AreEqual(materials, renderer.sharedMaterials);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(mesh));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("rotation", "\"invalid_float\"")]
+        [TestCase("flipU", "\"invalid_bool\"")]
+        [TestCase("flipV", "\"invalid_bool\"")]
+        [TestCase("offset", "[]")]
+        public void SetFaceUVs_InvalidLaterSettingPreservesAllFaces(string field, string json)
+        {
+            var faces = ((IEnumerable)meshType.GetProperty("faces").GetValue(mesh)).Cast<object>().ToArray();
+            var uvProperty = faces[0].GetType().GetProperty("uv");
+            var before = faces.Select(face => JsonUtility.ToJson(uvProperty.GetValue(face))).ToArray();
+            SaveOwnedScene();
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+            var props = new JObject { ["scale"] = new JArray(2, 3), [field] = JToken.Parse(json) };
+
+            var result = Send("set_face_uvs", props);
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            CollectionAssert.AreEqual(before, faces.Select(face => JsonUtility.ToJson(uvProperty.GetValue(face))).ToArray());
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(mesh));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("move_vertices", "{\"vertexIndices\":[0,999],\"offset\":[1,2,3]}")]
+        [TestCase("insert_vertex", "{\"point\":[0,0,0]}")]
+        [TestCase("insert_vertex", "{\"point\":[0,0,0],\"faceIndex\":999}")]
+        [TestCase("append_vertices_to_edge", "{\"edgeIndices\":[999]}")]
+        [TestCase("subdivide", "{\"faceIndices\":[999]}")]
+        [TestCase("connect_elements", "{}")]
+        [TestCase("connect_elements", "{\"faceIndices\":[999]}")]
+        [TestCase("connect_elements", "{\"edgeIndices\":[999]}")]
+        [TestCase("weld_vertices", "{\"vertexIndices\":[-1]}")]
+        [TestCase("weld_vertices", "{\"vertexIndices\":[0,999]}")]
+        [TestCase("create_polygon", "{\"vertexIndices\":[-1]}")]
+        [TestCase("create_polygon", "{\"vertexIndices\":[0,999]}")]
+        [TestCase("bridge_edges", "{\"edgeA\":{\"a\":-1,\"b\":0},\"edgeB\":{\"a\":1,\"b\":2},\"allowNonManifold\":true}")]
+        [TestCase("weld_vertices", "{\"vertexIndices\":null}")]
+        [TestCase("create_polygon", "{\"vertexIndices\":null}")]
+        [TestCase("split_vertices", "{\"vertexIndices\":null}")]
+        [TestCase("delete_faces", "{\"faceIndices\":null}")]
+        public void InvalidMeshEdit_PreservesPositionsAndCleanScene(string action, string json)
+        {
+            SaveOwnedScene();
+            var before = WorldVertices();
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+
+            var result = Send(action, JObject.Parse(json));
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            CollectionAssert.AreEqual(before, WorldVertices());
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(mesh));
+            Assert.IsFalse(ownedScene.isDirty);
         }
 
         [TestCase(0)]

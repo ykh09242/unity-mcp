@@ -127,7 +127,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             _meshValidationType = Type.GetType("UnityEngine.ProBuilder.MeshOperations.MeshValidation, Unity.ProBuilder");
 
             _proBuilderAvailable = true;
-            PatchProBuilderDefaultMaterial();
             return true;
         }
 
@@ -147,9 +146,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         /// <c>globalIlluminationFlags = EmissiveIsBlack</c> on the loaded <see cref="Material"/>
         /// object.  The change is in-memory only — package assets are read-only on disk — but
         /// the GI system and Bloom post-process both re-query the material each frame, so the
-        /// patch is effective for the entire session.  It is re-applied automatically on every
-        /// domain reload because <see cref="EnsureProBuilder"/> is called on the first MCP
-        /// ProBuilder command of each session.
+        /// patch is effective for the entire session. It is applied after a successful MCP
+        /// shape creation so type discovery and rejected commands do not alter shared materials.
         /// </remarks>
         private static void PatchProBuilderDefaultMaterial()
         {
@@ -180,112 +178,60 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
         public static object HandleCommand(JObject @params)
         {
-            if (!EnsureProBuilder())
-            {
-                return new ErrorResponse("ProBuilder package is not installed. Install com.unity.probuilder via Package Manager.");
-            }
-
             var p = new ToolParams(@params);
             string action = p.Get("action");
             if (string.IsNullOrEmpty(action))
                 return new ErrorResponse("Action is required");
 
+            // Reject unknown actions before resolving optional package types.
+            Func<JObject, object> handler = action.ToLowerInvariant() switch
+            {
+                "ping" => _ => new SuccessResponse("ProBuilder tool is available", new { tool = "manage_probuilder" }),
+                "create_shape" => CreateShape,
+                "create_poly_shape" => CreatePolyShape,
+                "extrude_faces" => ExtrudeFaces,
+                "extrude_edges" => ExtrudeEdges,
+                "bevel_edges" => BevelEdges,
+                "subdivide" => Subdivide,
+                "delete_faces" => DeleteFaces,
+                "bridge_edges" => BridgeEdges,
+                "connect_elements" => ConnectElements,
+                "detach_faces" => DetachFaces,
+                "flip_normals" => FlipNormals,
+                "merge_faces" => MergeFaces,
+                "combine_meshes" => CombineMeshes,
+                "merge_objects" => MergeObjects,
+                "duplicate_and_flip" => DuplicateAndFlip,
+                "create_polygon" => CreatePolygon,
+                "merge_vertices" => MergeVertices,
+                "weld_vertices" => WeldVertices,
+                "split_vertices" => SplitVertices,
+                "move_vertices" => MoveVertices,
+                "insert_vertex" => InsertVertex,
+                "append_vertices_to_edge" => AppendVerticesToEdge,
+                "select_faces" => SelectFaces,
+                "set_face_material" => SetFaceMaterial,
+                "set_face_color" => SetFaceColor,
+                "set_face_uvs" => SetFaceUVs,
+                "get_mesh_info" => GetMeshInfo,
+                "convert_to_probuilder" => ConvertToProBuilder,
+                "set_smoothing" => ProBuilderSmoothing.SetSmoothing,
+                "auto_smooth" => ProBuilderSmoothing.AutoSmooth,
+                "center_pivot" => ProBuilderMeshUtils.CenterPivot,
+                "freeze_transform" => ProBuilderMeshUtils.FreezeTransform,
+                "set_pivot" => ProBuilderMeshUtils.SetPivot,
+                "validate_mesh" => ProBuilderMeshUtils.ValidateMesh,
+                "repair_mesh" => ProBuilderMeshUtils.RepairMesh,
+                _ => null,
+            };
+            if (handler == null)
+                return new ErrorResponse($"Unknown action: {action}");
+            if (!EnsureProBuilder())
+                return new ErrorResponse("ProBuilder package is not installed. Install com.unity.probuilder via Package Manager.");
+
             try
             {
-                switch (action.ToLowerInvariant())
-                {
-                    case "ping":
-                        return new SuccessResponse("ProBuilder tool is available", new { tool = "manage_probuilder" });
-
-                    // Shape creation
-                    case "create_shape":
-                        return CreateShape(@params);
-                    case "create_poly_shape":
-                        return CreatePolyShape(@params);
-
-                    // Mesh editing
-                    case "extrude_faces":
-                        return ExtrudeFaces(@params);
-                    case "extrude_edges":
-                        return ExtrudeEdges(@params);
-                    case "bevel_edges":
-                        return BevelEdges(@params);
-                    case "subdivide":
-                        return Subdivide(@params);
-                    case "delete_faces":
-                        return DeleteFaces(@params);
-                    case "bridge_edges":
-                        return BridgeEdges(@params);
-                    case "connect_elements":
-                        return ConnectElements(@params);
-                    case "detach_faces":
-                        return DetachFaces(@params);
-                    case "flip_normals":
-                        return FlipNormals(@params);
-                    case "merge_faces":
-                        return MergeFaces(@params);
-                    case "combine_meshes":
-                        return CombineMeshes(@params);
-                    case "merge_objects":
-                        return MergeObjects(@params);
-                    case "duplicate_and_flip":
-                        return DuplicateAndFlip(@params);
-                    case "create_polygon":
-                        return CreatePolygon(@params);
-
-                    // Vertex operations
-                    case "merge_vertices":
-                        return MergeVertices(@params);
-                    case "weld_vertices":
-                        return WeldVertices(@params);
-                    case "split_vertices":
-                        return SplitVertices(@params);
-                    case "move_vertices":
-                        return MoveVertices(@params);
-                    case "insert_vertex":
-                        return InsertVertex(@params);
-                    case "append_vertices_to_edge":
-                        return AppendVerticesToEdge(@params);
-
-                    // Selection
-                    case "select_faces":
-                        return SelectFaces(@params);
-
-                    // UV & materials
-                    case "set_face_material":
-                        return SetFaceMaterial(@params);
-                    case "set_face_color":
-                        return SetFaceColor(@params);
-                    case "set_face_uvs":
-                        return SetFaceUVs(@params);
-
-                    // Query
-                    case "get_mesh_info":
-                        return GetMeshInfo(@params);
-                    case "convert_to_probuilder":
-                        return ConvertToProBuilder(@params);
-
-                    // Smoothing
-                    case "set_smoothing":
-                        return ProBuilderSmoothing.SetSmoothing(@params);
-                    case "auto_smooth":
-                        return ProBuilderSmoothing.AutoSmooth(@params);
-
-                    // Mesh utilities
-                    case "center_pivot":
-                        return ProBuilderMeshUtils.CenterPivot(@params);
-                    case "freeze_transform":
-                        return ProBuilderMeshUtils.FreezeTransform(@params);
-                    case "set_pivot":
-                        return ProBuilderMeshUtils.SetPivot(@params);
-                    case "validate_mesh":
-                        return ProBuilderMeshUtils.ValidateMesh(@params);
-                    case "repair_mesh":
-                        return ProBuilderMeshUtils.RepairMesh(@params);
-
-                    default:
-                        return new ErrorResponse($"Unknown action: {action}");
-                }
+                return handler(@params);
             }
             catch (Exception ex)
             {
@@ -434,7 +380,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_shapeGeneratorType == null)
                 return null;
             var method = _shapeGeneratorType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public, null, paramTypes, null);
-            return method?.Invoke(null, args) as Component;
+            if (method == null)
+                return null;
+            // All generator arguments have been parsed before entering this boundary.
+            Undo.IncrementCurrentGroup();
+            return method.Invoke(null, args) as Component;
         }
 
         // =====================================================================
@@ -592,6 +542,31 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             return token.ReadScalar<int>();
         }
 
+        private static object ParseBoundedEdge(Component mesh, JToken token)
+        {
+            if (!(token is JObject pair) || pair["a"] == null || pair["b"] == null)
+                throw new ArgumentException("Edge must specify integer vertices a and b.");
+            int a = ParseEdgeVertex(pair["a"]);
+            int b = ParseEdgeVertex(pair["b"]);
+            int count = GetVertexCount(mesh);
+            if (a < 0 || b < 0 || a >= count || b >= count)
+                throw new ArgumentException($"Edge vertices ({a}, {b}) out of range (0-{count - 1}).");
+            return CreateEdge(a, b);
+        }
+
+        private static string ValidateVertexIndices(Component mesh, int[] indices, bool requireNonempty = false)
+        {
+            if (indices == null)
+                return "vertexIndices must be an array, not null.";
+            if (requireNonempty && indices.Length == 0)
+                return "At least one vertex index is required for merging.";
+            int count = GetVertexCount(mesh);
+            foreach (int index in indices)
+                if (index < 0 || index >= count)
+                    return $"Vertex index {index} out of range (0-{count - 1}).";
+            return null;
+        }
+
         /// <summary>
         /// Create a typed List&lt;Edge&gt; from an Edge[] array for APIs that require IList&lt;Edge&gt;.
         /// </summary>
@@ -618,7 +593,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_shapeGeneratorType == null || _shapeTypeEnum == null)
                 return new ErrorResponse("ShapeGenerator or ShapeType not found in ProBuilder assembly.");
 
-            Undo.IncrementCurrentGroup();
+            Vector3? position = props["position"] != null ? ParseVector3(props["position"]) : (Vector3?)null;
+            Vector3? rotation = props["rotation"] != null ? ParseVector3(props["rotation"]) : (Vector3?)null;
+
+            int originalUndoGroup = Undo.GetCurrentGroup();
 
             Component pbMesh = null;
             var pivot = GetPivotCenter();
@@ -629,7 +607,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             // Fallback: generic CreateShape(ShapeType) for unknown shapes or if generator failed
             if (pbMesh == null)
-                pbMesh = CreateShapeGeneric(shapeTypeStr);
+                pbMesh = CreateShapeGeneric(shapeTypeStr, Undo.GetCurrentGroup() == originalUndoGroup);
 
             if (pbMesh == null)
                 return new ErrorResponse($"Failed to create ProBuilder shape '{shapeTypeStr}'.");
@@ -646,14 +624,12 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     go.name = name;
 
                 // Apply position
-                var posToken = props["position"];
-                if (posToken != null)
-                    go.transform.position = ParseVector3(posToken);
+                if (position.HasValue)
+                    go.transform.position = position.Value;
 
                 // Apply rotation
-                var rotToken = props["rotation"];
-                if (rotToken != null)
-                    go.transform.eulerAngles = ParseVector3(rotToken);
+                if (rotation.HasValue)
+                    go.transform.eulerAngles = rotation.Value;
 
                 RefreshMesh(pbMesh);
 
@@ -668,6 +644,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                         vertexCount = GetVertexCount(pbMesh),
                     }
                 );
+                PatchProBuilderDefaultMaterial();
                 completed = true;
                 return response;
             }
@@ -905,7 +882,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             }
         }
 
-        private static Component CreateShapeGeneric(string shapeTypeStr)
+        private static Component CreateShapeGeneric(string shapeTypeStr, bool startUndoGroup)
         {
             object shapeTypeValue;
             try
@@ -942,7 +919,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return null;
             }
 
-            return createMethod?.Invoke(null, invokeArgs) as Component;
+            if (createMethod == null)
+                return null;
+            if (startUndoGroup)
+                Undo.IncrementCurrentGroup();
+            return createMethod.Invoke(null, invokeArgs) as Component;
         }
 
         private static object CreatePolyShape(JObject @params)
@@ -1017,6 +998,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                         vertexCount = GetVertexCount(pbMesh),
                     }
                 );
+                PatchProBuilderDefaultMaterial();
                 completed = true;
                 return response;
             }
@@ -1175,8 +1157,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_connectElementsType == null)
                 return new ErrorResponse("ConnectElements type not found.");
 
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Subdivide");
-
             var faceIndicesToken = props["faceIndices"] ?? props["face_indices"];
 
             // Get faces to subdivide (all faces if none specified)
@@ -1193,6 +1173,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (connectMethod == null)
                 return new ErrorResponse("ConnectElements.Connect (faces) method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Subdivide");
             connectMethod.Invoke(null, new object[] { pbMesh, faceList });
 
             RefreshMesh(pbMesh);
@@ -1212,8 +1193,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("DeleteElements type not found.");
 
             var faceIndices = PropertyConversion.ConvertTo<int[]>(faceIndicesToken);
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Delete Faces");
+            if (faceIndices == null)
+                return new ErrorResponse("faceIndices must be an array, not null.");
 
             // Prefer DeleteFaces(ProBuilderMesh, IList<int>) overload
             var deleteMethod = _deleteElementsType.GetMethod(
@@ -1226,6 +1207,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             if (deleteMethod != null)
             {
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Delete Faces");
                 deleteMethod.Invoke(null, new object[] { pbMesh, faceIndices.ToList() });
             }
             else
@@ -1254,10 +1236,12 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     if (deleteMethod == null)
                         return new ErrorResponse("DeleteElements.DeleteFaces method not found.");
 
+                    Undo.RegisterCompleteObjectUndo(pbMesh, "Delete Faces");
                     deleteMethod.Invoke(null, new object[] { pbMesh, faces });
                 }
                 else
                 {
+                    Undo.RegisterCompleteObjectUndo(pbMesh, "Delete Faces");
                     deleteMethod.Invoke(null, new object[] { pbMesh, faceIndices });
                 }
             }
@@ -1280,13 +1264,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (edgeAToken == null || edgeBToken == null)
                 return new ErrorResponse("edgeA and edgeB parameters are required (as {a, b} vertex index pairs).");
 
-            int aA = edgeAToken["a"]?.ReadScalar<int?>() ?? 0;
-            int aB = edgeAToken["b"]?.ReadScalar<int?>() ?? 0;
-            int bA = edgeBToken["a"]?.ReadScalar<int?>() ?? 0;
-            int bB = edgeBToken["b"]?.ReadScalar<int?>() ?? 0;
-
-            var edgeA = CreateEdge(aA, aB);
-            var edgeB = CreateEdge(bA, bB);
+            var edgeA = ParseBoundedEdge(pbMesh, edgeAToken);
+            var edgeB = ParseBoundedEdge(pbMesh, edgeBToken);
 
             bool allowNonManifold =
                 props["allowNonManifold"]?.ReadScalar<bool?>()
@@ -1294,8 +1273,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 ?? props["allowNonManifoldGeometry"]?.ReadScalar<bool?>()
                 ?? props["allow_non_manifold_geometry"]?.ReadScalar<bool?>()
                 ?? false;
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Bridge Edges");
 
             // Try overload with allowNonManifoldGeometry parameter first
             var bridgeMethod = _appendElementsType.GetMethod(
@@ -1309,6 +1286,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             object result;
             if (bridgeMethod != null)
             {
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Bridge Edges");
                 result = bridgeMethod.Invoke(null, new object[] { pbMesh, edgeA, edgeB, allowNonManifold });
             }
             else
@@ -1325,6 +1303,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 if (bridgeMethod == null)
                     return new ErrorResponse("AppendElements.Bridge method not found.");
 
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Bridge Edges");
                 result = bridgeMethod.Invoke(null, new object[] { pbMesh, edgeA, edgeB });
             }
 
@@ -1340,8 +1319,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             if (_connectElementsType == null)
                 return new ErrorResponse("ConnectElements type not found.");
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Connect Elements");
 
             var faceIndicesToken = props["faceIndices"] ?? props["face_indices"];
             var edgeIndicesToken = props["edgeIndices"] ?? props["edge_indices"];
@@ -1362,6 +1339,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 if (connectMethod == null)
                     return new ErrorResponse("ConnectElements.Connect (faces) method not found.");
 
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Connect Elements");
                 connectMethod.Invoke(null, new object[] { pbMesh, faceList });
             }
             else if (edgeIndicesToken != null || edgePairsToken != null)
@@ -1389,6 +1367,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 if (connectMethod == null)
                     return new ErrorResponse("ConnectElements.Connect (edges) method not found.");
 
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Connect Elements");
                 connectMethod.Invoke(null, new object[] { pbMesh, typedList });
             }
             else
@@ -1580,21 +1559,29 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             return ImportProBuilderMesh(go, meshFilter, false);
         }
 
-        private static Component ImportProBuilderMesh(GameObject go, MeshFilter meshFilter, bool recordUndo)
+        private static void ResolveMeshImporter(out ConstructorInfo importerCtor, out MethodInfo importMethod)
         {
-            var importerCtor =
+            if (_meshImporterType == null)
+                throw new InvalidOperationException("MeshImporter type not found.");
+            importerCtor =
                 _meshImporterType.GetConstructor(new[] { typeof(Mesh), typeof(Material[]), _proBuilderMeshType })
                 ?? _meshImporterType.GetConstructor(new[] { _proBuilderMeshType });
             if (importerCtor == null)
                 throw new InvalidOperationException("MeshImporter constructor not found.");
 
-            var importMethod = _meshImporterType
+            importMethod = _meshImporterType
                 .GetMethods(BindingFlags.Instance | BindingFlags.Public)
                 .Where(m => m.Name == "Import")
                 .OrderBy(m => m.GetParameters().Length)
                 .FirstOrDefault();
             if (importMethod == null || importMethod.GetParameters().Length > 1)
                 throw new InvalidOperationException("Supported MeshImporter.Import method not found.");
+        }
+
+        private static Component ImportProBuilderMesh(GameObject go, MeshFilter meshFilter, bool recordUndo)
+        {
+            ResolveMeshImporter(out ConstructorInfo importerCtor, out MethodInfo importMethod);
+            ValidateImportSource(meshFilter.sharedMesh);
 
             var renderer = go.GetComponent<MeshRenderer>();
             var materials = renderer != null ? renderer.sharedMaterials : new Material[0];
@@ -1651,6 +1638,22 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             }
         }
 
+        private static void ValidateImportSource(Mesh source)
+        {
+            if (source == null)
+                throw new ArgumentException("Source mesh is required for ProBuilder import.");
+            if (!source.isReadable)
+                throw new ArgumentException($"Mesh '{source.name}' must be readable for ProBuilder import.");
+            for (int i = 0; i < source.subMeshCount; i++)
+            {
+                MeshTopology topology = source.GetTopology(i);
+                if (topology != MeshTopology.Triangles && topology != MeshTopology.Quads)
+                    throw new ArgumentException(
+                        $"Mesh '{source.name}' submesh {i} uses unsupported topology {topology}; ProBuilder import requires Triangles or Quads."
+                    );
+            }
+        }
+
         private static object MergeObjects(JObject @params)
         {
             var props = ExtractProperties(@params);
@@ -1680,6 +1683,28 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     nonPbObjects.Add(go);
             }
 
+            // Resolve every deterministic conversion requirement before importing the first source.
+            foreach (var go in nonPbObjects)
+            {
+                var filter = go.GetComponent<MeshFilter>();
+                if (filter == null || filter.sharedMesh == null)
+                    return new ErrorResponse($"Failed to convert '{go.name}' to ProBuilder mesh.");
+                ValidateImportSource(filter.sharedMesh);
+            }
+            if (nonPbObjects.Count > 0)
+                ResolveMeshImporter(out _, out _);
+            var listType = typeof(List<>).MakeGenericType(_proBuilderMeshType);
+            var combineMethod = _combineMeshesType
+                .GetMethods(BindingFlags.Static | BindingFlags.Public)
+                .FirstOrDefault(m =>
+                    m.Name == "Combine"
+                    && m.GetParameters().Length == 2
+                    && m.GetParameters()[0].ParameterType.IsAssignableFrom(listType)
+                    && m.GetParameters()[1].ParameterType == _proBuilderMeshType
+                );
+            if (combineMethod == null)
+                return new ErrorResponse("CombineMeshes.Combine method not found.");
+
             foreach (var go in nonPbObjects)
             {
                 var converted = ConvertToProBuilderInternal(go);
@@ -1693,15 +1718,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             Undo.RegisterCompleteObjectUndo(pbMeshes[0], "Merge Objects");
 
-            var listType = typeof(List<>).MakeGenericType(_proBuilderMeshType);
             var typedList = Activator.CreateInstance(listType) as System.Collections.IList;
             foreach (var m in pbMeshes)
                 typedList.Add(m);
-
-            var combineMethod = _combineMeshesType.GetMethod("Combine", BindingFlags.Static | BindingFlags.Public);
-
-            if (combineMethod == null)
-                return new ErrorResponse("CombineMeshes.Combine method not found.");
 
             combineMethod.Invoke(null, new object[] { typedList, pbMeshes[0] });
             RefreshMesh(pbMeshes[0]);
@@ -1769,9 +1788,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("AppendElements type not found.");
 
             var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            string indicesError = ValidateVertexIndices(pbMesh, vertexIndices);
+            if (indicesError != null)
+                return new ErrorResponse(indicesError);
             bool unordered = props["unordered"]?.ReadScalar<bool?>() ?? true;
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Create Polygon");
 
             // CreatePolygon(ProBuilderMesh, IList<int>, bool)
             var createPolyMethod = _appendElementsType.GetMethod(
@@ -1785,6 +1805,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (createPolyMethod == null)
                 return new ErrorResponse("AppendElements.CreatePolygon method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Create Polygon");
             var result = createPolyMethod.Invoke(null, new object[] { pbMesh, vertexIndices.ToList(), unordered });
             RefreshMesh(pbMesh);
 
@@ -1813,12 +1834,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("vertexIndices parameter is required.");
 
             var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            string indicesError = ValidateVertexIndices(pbMesh, vertexIndices, requireNonempty: true);
+            if (indicesError != null)
+                return new ErrorResponse(indicesError);
             bool collapseToFirst = props["collapseToFirst"]?.ReadScalar<bool?>() ?? props["collapse_to_first"]?.ReadScalar<bool?>() ?? false;
 
             if (_vertexEditingType == null)
                 return new ErrorResponse("VertexEditing type not found.");
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Merge Vertices");
 
             // MergeVertices(ProBuilderMesh mesh, int[] indexes, bool collapseToFirst = false)
             var mergeMethod = _vertexEditingType.GetMethod("MergeVertices", BindingFlags.Static | BindingFlags.Public);
@@ -1826,6 +1848,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (mergeMethod == null)
                 return new ErrorResponse("VertexEditing.MergeVertices method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Merge Vertices");
             var result = mergeMethod.Invoke(null, new object[] { pbMesh, vertexIndices, collapseToFirst });
             RefreshMesh(pbMesh);
 
@@ -1850,6 +1873,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("vertexIndices parameter is required.");
 
             var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            string indicesError = ValidateVertexIndices(pbMesh, vertexIndices);
+            if (indicesError != null)
+                return new ErrorResponse(indicesError);
             float neighborRadius =
                 props["radius"]?.ReadScalar<float?>()
                 ?? props["neighborRadius"]?.ReadScalar<float?>()
@@ -1859,14 +1885,13 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (_vertexEditingType == null)
                 return new ErrorResponse("VertexEditing type not found.");
 
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Weld Vertices");
-
             // WeldVertices(ProBuilderMesh mesh, IEnumerable<int> indexes, float neighborRadius)
             var weldMethod = _vertexEditingType.GetMethod("WeldVertices", BindingFlags.Static | BindingFlags.Public);
 
             if (weldMethod == null)
                 return new ErrorResponse("VertexEditing.WeldVertices method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Weld Vertices");
             var result = weldMethod.Invoke(null, new object[] { pbMesh, vertexIndices.ToList(), neighborRadius });
             RefreshMesh(pbMesh);
 
@@ -1893,11 +1918,12 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("vertexIndices parameter is required.");
 
             var vertexIndices = PropertyConversion.ConvertTo<int[]>(vertexIndicesToken);
+            string indicesError = ValidateVertexIndices(pbMesh, vertexIndices);
+            if (indicesError != null)
+                return new ErrorResponse(indicesError);
 
             if (_vertexEditingType == null)
                 return new ErrorResponse("VertexEditing type not found.");
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Split Vertices");
 
             // SplitVertices(ProBuilderMesh mesh, IEnumerable<int> vertices)
             var splitMethod = _vertexEditingType.GetMethod(
@@ -1921,6 +1947,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (splitMethod == null)
                 return new ErrorResponse("VertexEditing.SplitVertices method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Split Vertices");
             splitMethod.Invoke(null, new object[] { pbMesh, vertexIndices.ToList() });
             RefreshMesh(pbMesh);
 
@@ -1948,8 +1975,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("offset must be a valid vector ([x,y,z] or {x,y,z}).");
             var offset = parsedOffset.Value;
 
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Move Vertices");
-
             // Get positions via property and modify directly
             var positionsProperty = _proBuilderMeshType.GetProperty("positions");
             if (positionsProperty == null)
@@ -1970,6 +1995,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             // Set positions back via property setter
             if (positionsProperty.CanWrite)
             {
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Move Vertices");
                 positionsProperty.SetValue(pbMesh, posList);
             }
             else
@@ -1978,6 +2004,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 var setPositionsMethod = _proBuilderMeshType.GetMethod("SetPositions", BindingFlags.Instance | BindingFlags.Public);
                 if (setPositionsMethod != null)
                 {
+                    Undo.RegisterCompleteObjectUndo(pbMesh, "Move Vertices");
                     setPositionsMethod.Invoke(pbMesh, new object[] { posList.ToArray() });
                 }
                 else
@@ -1987,6 +2014,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     if (rebuildMethod != null)
                     {
                         var allFaces = GetFacesArray(pbMesh);
+                        Undo.RegisterCompleteObjectUndo(pbMesh, "Move Vertices");
                         rebuildMethod.Invoke(pbMesh, new object[] { posList, allFaces });
                     }
                     else
@@ -2018,15 +2046,11 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             var point = ParseVector3(pointToken);
 
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Insert Vertex");
-
             var edgeToken = props["edge"];
             if (edgeToken != null)
             {
                 // InsertVertexOnEdge(ProBuilderMesh mesh, Edge edge, Vector3 point)
-                int a = edgeToken["a"]?.ReadScalar<int?>() ?? 0;
-                int b = edgeToken["b"]?.ReadScalar<int?>() ?? 0;
-                var edge = CreateEdge(a, b);
+                var edge = ParseBoundedEdge(pbMesh, edgeToken);
 
                 var insertMethod = _appendElementsType.GetMethod(
                     "InsertVertexOnEdge",
@@ -2039,6 +2063,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 if (insertMethod == null)
                     return new ErrorResponse("AppendElements.InsertVertexOnEdge method not found.");
 
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Insert Vertex");
                 insertMethod.Invoke(null, new object[] { pbMesh, edge, point });
             }
             else
@@ -2066,6 +2091,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 if (insertMethod == null)
                     return new ErrorResponse("AppendElements.InsertVertexInFace method not found.");
 
+                Undo.RegisterCompleteObjectUndo(pbMesh, "Insert Vertex");
                 insertMethod.Invoke(null, new object[] { pbMesh, face, point });
             }
 
@@ -2091,8 +2117,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("AppendElements type not found.");
 
             int count = props["count"]?.ReadScalar<int?>() ?? 1;
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Append Vertices to Edge");
 
             int edgeCount;
             Array edgeArray;
@@ -2130,6 +2154,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             if (appendMethod == null)
                 return new ErrorResponse("AppendElements.AppendVerticesToEdge method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Append Vertices to Edge");
             appendMethod.Invoke(null, new object[] { pbMesh, typedList, count });
             RefreshMesh(pbMesh);
 
@@ -2395,20 +2420,19 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 return new ErrorResponse("color parameter is required ([r,g,b,a]).");
 
             var color = VectorParsing.ParseColorOrDefault(colorToken);
-
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Set Face Color");
+            bool skipSwap = props["skipMaterialSwap"]?.ReadScalar<bool?>() ?? props["skip_material_swap"]?.ReadScalar<bool?>() ?? false;
 
             var setColorMethod = _proBuilderMeshType.GetMethod("SetFaceColor", BindingFlags.Instance | BindingFlags.Public);
 
             if (setColorMethod == null)
                 return new ErrorResponse("SetFaceColor method not found.");
 
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Set Face Color");
             foreach (var face in faces)
                 setColorMethod.Invoke(pbMesh, new object[] { face, color });
 
             RefreshMesh(pbMesh);
 
-            bool skipSwap = props["skipMaterialSwap"]?.ReadScalar<bool?>() ?? props["skip_material_swap"]?.ReadScalar<bool?>() ?? false;
             if (!skipSwap)
             {
                 var go = pbMesh.gameObject;
@@ -2437,8 +2461,6 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var props = ExtractProperties(@params);
             var faces = GetFacesByIndices(pbMesh, props["faceIndices"] ?? props["face_indices"]);
 
-            Undo.RegisterCompleteObjectUndo(pbMesh, "Set Face UVs");
-
             var uvProperty = _faceType.GetProperty("uv");
             if (uvProperty == null)
                 return new ErrorResponse("Face.uv property not found.");
@@ -2458,30 +2480,41 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             var flipUToken = props["flipU"] ?? props["flip_u"];
             var flipVToken = props["flipV"] ?? props["flip_v"];
 
+            Vector2? scale = null;
+            if (scaleToken != null && scaleField != null)
+            {
+                var values = PropertyConversion.ConvertTo<float[]>(scaleToken);
+                if (values == null || values.Length == 0)
+                    return new ErrorResponse("scale must contain at least one numeric value.");
+                scale = new Vector2(values[0], values.Length > 1 ? values[1] : values[0]);
+            }
+            Vector2? offset = null;
+            if (offsetToken != null && offsetField != null)
+            {
+                var values = PropertyConversion.ConvertTo<float[]>(offsetToken);
+                if (values == null || values.Length == 0)
+                    return new ErrorResponse("offset must contain at least one numeric value.");
+                offset = new Vector2(values[0], values.Length > 1 ? values[1] : 0f);
+            }
+            float? rotation = rotationToken != null && rotField != null ? rotationToken.ReadScalar<float>() : (float?)null;
+            bool? flipU = flipUToken != null && flipUField != null ? flipUToken.ReadScalar<bool>() : (bool?)null;
+            bool? flipV = flipVToken != null && flipVField != null ? flipVToken.ReadScalar<bool>() : (bool?)null;
+
+            Undo.RegisterCompleteObjectUndo(pbMesh, "Set Face UVs");
             foreach (var face in faces)
             {
                 var uvSettings = uvProperty.GetValue(face);
 
-                if (scaleToken != null && scaleField != null)
-                {
-                    var scaleArr = PropertyConversion.ConvertTo<float[]>(scaleToken);
-                    SetUVSetting(scaleField, uvSettings, new Vector2(scaleArr[0], scaleArr.Length > 1 ? scaleArr[1] : scaleArr[0]));
-                }
-
-                if (offsetToken != null && offsetField != null)
-                {
-                    var offsetArr = PropertyConversion.ConvertTo<float[]>(offsetToken);
-                    SetUVSetting(offsetField, uvSettings, new Vector2(offsetArr[0], offsetArr.Length > 1 ? offsetArr[1] : 0f));
-                }
-
-                if (rotationToken != null && rotField != null)
-                    SetUVSetting(rotField, uvSettings, rotationToken.ReadScalar<float>());
-
-                if (flipUToken != null && flipUField != null)
-                    SetUVSetting(flipUField, uvSettings, flipUToken.ReadScalar<bool>());
-
-                if (flipVToken != null && flipVField != null)
-                    SetUVSetting(flipVField, uvSettings, flipVToken.ReadScalar<bool>());
+                if (scale.HasValue)
+                    SetUVSetting(scaleField, uvSettings, scale.Value);
+                if (offset.HasValue)
+                    SetUVSetting(offsetField, uvSettings, offset.Value);
+                if (rotation.HasValue)
+                    SetUVSetting(rotField, uvSettings, rotation.Value);
+                if (flipU.HasValue)
+                    SetUVSetting(flipUField, uvSettings, flipU.Value);
+                if (flipV.HasValue)
+                    SetUVSetting(flipVField, uvSettings, flipV.Value);
 
                 uvProperty.SetValue(face, uvSettings);
             }

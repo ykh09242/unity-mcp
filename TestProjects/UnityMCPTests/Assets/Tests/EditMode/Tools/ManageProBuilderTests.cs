@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.ProBuilder;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -34,6 +35,32 @@ namespace MCPForUnityTests.Editor.Tools
         // =====================================================================
         // Basic action validation (works regardless of ProBuilder installation)
         // =====================================================================
+
+        [TestCase(null)]
+        [TestCase("nonexistent_action")]
+        public void HandleCommand_InvalidActionValidatesBeforePackageInitialization(string action)
+        {
+            var resolved = typeof(ManageProBuilder).GetField("_typesResolved", BindingFlags.Static | BindingFlags.NonPublic);
+            var available = typeof(ManageProBuilder).GetField("_proBuilderAvailable", BindingFlags.Static | BindingFlags.NonPublic);
+            var oldResolved = resolved.GetValue(null);
+            var oldAvailable = available.GetValue(null);
+            try
+            {
+                // A cached unavailable package isolates the action boundary from shared material patching.
+                resolved.SetValue(null, true);
+                available.SetValue(null, false);
+
+                var result = ToJObject(ManageProBuilder.HandleCommand(new JObject { ["action"] = action }));
+
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.That(result["error"]?.ToString(), Does.Contain(action == null ? "Action is required" : "Unknown action"));
+            }
+            finally
+            {
+                resolved.SetValue(null, oldResolved);
+                available.SetValue(null, oldAvailable);
+            }
+        }
 
         [Test]
         public void HandleCommand_MissingAction_ReturnsError()
