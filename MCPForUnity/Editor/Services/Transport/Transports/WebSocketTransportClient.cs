@@ -997,7 +997,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Task SendCommandResultAsync(string id, object result, CancellationToken token)
         {
-            string responseJson = JsonConvert.SerializeObject(new { type = "command_result", id, result });
+            var responseJson = new LargeResultWriter.PreparedJson(JsonConvert.SerializeObject(new { type = "command_result", id, result }));
             bool negotiated;
             bool compressionNegotiated;
             lock (_ownershipLock)
@@ -1007,14 +1007,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 negotiated = _largeResultNegotiated;
                 compressionNegotiated = _compressionNegotiated;
             }
-            if (Encoding.UTF8.GetByteCount(responseJson) > LargeResultWriter.MaxResultBytes)
-                responseJson = JsonConvert.SerializeObject(new { type = "command_result", id,
-                    result = new { status = "error", error = "Command result exceeds the transport size limit" } });
+            if (responseJson.ByteCount > LargeResultWriter.MaxResultBytes)
+                responseJson = new LargeResultWriter.PreparedJson(JsonConvert.SerializeObject(new { type = "command_result", id,
+                    result = new { status = "error", error = "Command result exceeds the transport size limit" } }));
             // Legacy integrations can use opaque IDs; they retain text responses.
             if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id) negotiated = false;
             bool allowCompression = _ownedConnection?.AllowCompression ?? string.Equals(
                 Environment.GetEnvironmentVariable("UNITY_MCP_RESULT_COMPRESSION"), "gzip", StringComparison.OrdinalIgnoreCase);
-            return LargeResultWriter.SendJsonAsync(id, responseJson, negotiated, SendFrameAsync, token,
+            return LargeResultWriter.SendPreparedJsonAsync(id, responseJson, negotiated, SendFrameAsync, token,
                 compressionNegotiated, allowCompression);
         }
 

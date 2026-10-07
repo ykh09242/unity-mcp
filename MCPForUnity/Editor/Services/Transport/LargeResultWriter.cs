@@ -42,6 +42,27 @@ namespace MCPForUnity.Editor.Services.Transport
             CancellationToken token, bool compressionNegotiated = false, bool allowCompression = false)
         {
             if (responseJson == null) throw new ArgumentNullException(nameof(responseJson));
+            return SendPreparedJsonAsync(commandId, new PreparedJson(responseJson), negotiated, sendFrame, token,
+                compressionNegotiated, allowCompression);
+        }
+
+        // The immutable text owns its exact Encoding.UTF8 count; callers cannot supply a false size.
+        internal readonly struct PreparedJson
+        {
+            internal string Text { get; }
+            internal int ByteCount { get; }
+            internal PreparedJson(string text)
+            {
+                Text = text ?? throw new ArgumentNullException(nameof(text));
+                ByteCount = Encoding.UTF8.GetByteCount(text);
+            }
+        }
+
+        internal static Task SendPreparedJsonAsync(string commandId, PreparedJson responseJson, bool negotiated,
+            Func<ArraySegment<byte>, WebSocketMessageType, CancellationToken, Task> sendFrame,
+            CancellationToken token, bool compressionNegotiated = false, bool allowCompression = false)
+        {
+            if (responseJson.Text == null) throw new ArgumentNullException(nameof(responseJson));
             return SendCoreAsync(commandId, new StringSource(responseJson), negotiated, sendFrame, token,
                 compressionNegotiated, allowCompression);
         }
@@ -167,7 +188,7 @@ namespace MCPForUnity.Editor.Services.Transport
             private readonly int _length;
             private byte[] _staging;
             private int _characters, _read, _available;
-            public StringSource(string text) { _text = text; _length = Encoding.UTF8.GetByteCount(text); }
+            public StringSource(PreparedJson json) { _text = json.Text; _length = json.ByteCount; }
             public override int Length => _length;
             public override byte[] GetTextBytes() => Encoding.UTF8.GetBytes(_text);
             public override void CopyTo(int offset, byte[] destination, int start, int count)
