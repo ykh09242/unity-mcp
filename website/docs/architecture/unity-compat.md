@@ -21,6 +21,14 @@ The canonical list lives in `MCPForUnity/Runtime/Helpers/UnityCompatShims.cs` (a
 | `UnityPhysicsCompat` | `Physics{,2D}.autoSyncTransforms`, `autoSimulation` → `simulationMode` | 6000.0 / 2022.2 |
 | `UnityAssembliesCompat` | `AppDomain.GetAssemblies` → `UnityEngine.Assemblies.CurrentAssemblies` | Unity 6.8 CoreCLR |
 
+## Optional UI component adapter
+
+`MCPForUnity/Editor/Helpers/UIComponentAdapter.cs` resolves UIDocument and optional PanelRenderer for `manage_ui`. It avoids a compile-time PanelRenderer reference so older supported Editors retain UIDocument behavior. Auto selection preserves an existing UIDocument; new attachments prefer PanelRenderer when available. Explicit component selection and unsupported API shapes produce clear tool errors.
+
+The adapter uses the documented [`visualTreeAsset`](https://docs.unity3d.com/6000.5/Documentation/ScriptReference/UIElements.PanelRenderer-visualTreeAsset.html), `panelSettings`, inherited `sortingOrder`, and [versioned UI reload callback](https://docs.unity3d.com/6000.5/Documentation/ScriptReference/UIElements.PanelRenderer.RegisterUIReloadCallback.html) APIs. It captures the initialized root during registration and unregisters within the call, so subsequent tool calls retrieve the current root after reload. A missing root is reported as uninitialized.
+
+Reflection contract fixtures verify binding and callback cleanup. Compilation against an older Editor cannot establish native PanelRenderer lifecycle or rendering on Unity 6.5; those need a separate Editor run. Unity's [migration guide](https://docs.unity3d.com/6000.5/Documentation/Manual/UIE-create-ui-document-component.html#migration-to-panel-renderer) continues to support existing UIDocument projects.
+
 ## When to add a new shim
 
 One of these must be true:

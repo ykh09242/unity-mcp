@@ -18,7 +18,13 @@ Groups include `core`, `animation`, `ui`, `vfx`, `scripting_ext`, `testing`, `pr
 
 The `ui` group contains [`manage_ui`](../reference/tools/ui/manage_ui.md) for UI Toolkit and [`manage_ugui`](../reference/tools/ui/manage_ugui.md) for Canvas-based UI. The [uGUI guide](./ugui.md) covers creation, layout editing and screen-size diagnostics.
 
+`manage_ui` accepts `component_type="auto"`, `"ui_document"`, or `"panel_renderer"` for component operations. Auto preserves an existing UIDocument and prefers PanelRenderer for new attachments when the editor exposes its supported API. Explicit PanelRenderer selection reports a capability error on older Editors. Tree inspection, live element edits, detach and rendering use the same selection.
+
 The `animation` group includes [`manage_animation`](../reference/tools/animation/manage_animation.md) and [`manage_sprite`](../reference/tools/animation/manage_sprite.md). The latter handles sprite-sheet inspection, slicing, clips and controller setup when both the Editor and server expose the new tool.
+
+The `testing` group includes [`manage_input`](../reference/tools/testing/manage_input.md), alongside async tests. Its `ui_click` action dispatches uGUI events directly to a scene target; it does not verify raycast occlusion or physical pointer targeting. Key, mouse and touch simulation requires the optional Input System package and compatible Active Input Handling. Inspect `status` before using those capabilities; holds have bounded frame counts and a hard lease.
+
+The `core` group includes [`manage_recording`](../reference/tools/core/manage_recording.md) for bounded silent MP4 capture. Query `capabilities`, start a job, then poll or stop that job explicitly. Recording depends on a supported interactive Windows/macOS Editor and native codec availability; Game View capture requires running unpaused Play Mode and the visible focused view. Linux and headless recording are unsupported.
 
 ## Local sessionless clients
 

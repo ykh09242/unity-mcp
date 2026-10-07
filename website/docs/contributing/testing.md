@@ -43,6 +43,33 @@ CI tests the Python 3.11 support floor and a newer interpreter with locked depen
 
 The matrix's exact versions/profile roles live in `tools/unity-versions.json`; workflow triggers and permissions live in `.github/workflows/`. Record the actual run/revision rather than promising that every PR runs every job. Reference-only compilation is separate from licensed Unity tests.
 
+### Feature and platform boundaries
+
+| Surface | Native verification needed |
+|---|---|
+| PanelRenderer | Unity 6.5 component attachment, root reload, live element edits and rendering. Adapter fixtures and older-version compilation cover compatibility contracts only. |
+| Input simulation | Supported Input System package/handling mode, dynamic/fixed update release, pause/exit cleanup and target application response. Direct uGUI dispatch does not establish physical pointer hit testing. |
+| View recording | Visible Game/Scene View, codec availability, explicit job polling, final playable file and interrupted-job cleanup on the named Windows/macOS Editor. Linux/headless capture is unsupported. |
+| Play readiness | Scene-load or simulation-frame progress, reload recovery and cancellation. Readiness is distinct from rendered output and application async initialization. |
+
+Linux/Vulkan test hangs and macOS background reload recovery require reproduction on those platforms. Diagnostic heartbeat ages, resume state and retry information help identify where progress stopped; they do not establish that an OS-specific stall is fixed or that an inaccessible native modal dialog has been identified. Preserve save/reload dialogs and unsaved state during reproduction.
+
+`ManageRecordingInteractiveTests` is an opt-in public-tool recording scenario. It requires
+`UNITY_MCP_RECORDING_INTERACTIVE_QA=1`, an owned `.unity-ci/.../project` fixture with uGUI,
+and an Editor launched without `-batchmode` or `-nographics`. Run its EditMode filter
+without `-quit`; the test runner exits when complete. The tests exercise rendered
+Game/Scene frames, explicit stop, automatic completion, pause interruption and cleanup.
+They retain MP4/PNG/JSON evidence under the fixture's `Captures/Recordings/` directory.
+Decode the MP4 independently (for example with ffprobe/ffmpeg) and verify the green
+Screen Space Overlay marker in the Game View recording. A valid container alone does
+not prove that the intended rendered content was captured.
+
+Local shutdown tests use the actual ASGI authentication/routes and controlled Uvicorn
+owners to exercise admission races, unknown outcomes and deadlines without binding a
+port, reading live tokens or signaling a process. Report a separate owned-process run
+if asserting that a real managed server exited; ASGI tests establish the handshake,
+not native process termination.
+
 ## Local Unity tests
 
 When native testing is deliberately in scope, prepare the local test project's package source as described in [Dev Setup](./dev-setup.md#connect-a-local-unity-package), open `TestProjects/UnityMCPTests`, and use **Window > General > Test Runner**. Add tests under its existing EditMode/PlayMode assemblies.

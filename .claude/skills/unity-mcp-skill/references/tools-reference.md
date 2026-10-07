@@ -10,17 +10,18 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Find/edit objects | `find_gameobjects`, `manage_gameobject` | Search returns IDs; reuse an ID with `search_method="by_id"` |
 | Components | `manage_components` | Required type/target; explicit null differs from omitted value |
 | Scripts | `create_script`, `get_sha`, `apply_text_edits`, `script_apply_edits`, `validate_script`, `delete_script` | Read [scripts.md](scripts.md) for preview, concurrency and native-file checks |
-| Assets/prefabs | `manage_asset`, `manage_prefabs` | Instantiate a prefab using `manage_gameobject`, not headless prefab editing |
-| Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | Match the installed render pipeline and shader-declared property types |
+| Assets/prefabs | `manage_asset`, `manage_prefabs` | Inspect assigned AssetDatabase bundles with bounded pages; instantiate via `manage_gameobject`; list scene-instance overrides before selecting explicit override IDs to apply/revert |
+| Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads supported `.shadergraph` structure; match the installed render pipeline and shader-declared property types for edits |
 | Cameras/graphics/lighting | `manage_camera`, `manage_graphics`, `manage_components` | Inspect lighting components and optional Cinemachine/URP/HDRP capabilities; do not assume availability |
 | Animation/physics/VFX | `manage_animation`, `manage_physics`, `manage_vfx` | Query identity/state before native mutations; inspect action-specific parameters |
 | 2D sprite animation | `manage_sprite` | Inspect sheet dimensions and slices before reslicing; see the staged workflow below |
 | UI | `manage_ui`, `manage_ugui`, `manage_gameobject`, `manage_components` | UI Toolkit and uGUI use different asset/component workflows |
-| Tests | `run_tests`, `get_test_job` | Async job acknowledgement is not a passing test result |
+| Tests/input | `run_tests`, `get_test_job`, `manage_input` | Input simulation belongs to `testing`; direct uGUI event dispatch does not test raycast occlusion |
+| Video capture | `manage_recording` | Query capabilities; start returns a job ID, status/stop require that ID; silent MP4 on supported interactive Windows/macOS Editors |
 | Build/package jobs | `manage_build`, `manage_packages` | Poll returned identity; consent and optional installation scope still apply |
 | ProBuilder | `manage_probuilder` | Installed package required; [topology guide](probuilder-guide.md) |
 | Audio | `manage_audio` | Play/stop an existing AudioSource in Play mode; no audible-success guarantee |
-| Editor/code | `manage_editor`, `execute_menu_item`, `execute_code` | Exact action/schema plus explicit consent where enforced |
+| Editor/code | `manage_editor`, `execute_menu_item`, `execute_code` | Game View sizing and bounded Play readiness are explicit actions; retain returned job IDs/restore tokens |
 | API inspection/docs | `unity_reflect`, `unity_docs` | Live APIs and installed assets are contextual; docs may describe another version |
 | Bulk commands | `batch_execute` | Nontransactional native handler dispatch, not a tool visibility bypass |
 | Asset generation/import | `generate_image`, `generate_model`, `generate_audio`, `import_model`, `import_model_file`, `blender_bridge` | Confirm provider/model capabilities and consent; poll returned jobs and preserve source/destination assets |
@@ -35,6 +36,17 @@ Start with `get_info` and inspect dimensions, import settings, slice pagination 
 Use `setup_clips` then `setup_controller` for staged control, or `full_setup` only for the requested combined workflow. Inspect skipped entries and each stage's results: earlier stages can remain applied after a later failure. `overwrite` controls existing clips/controllers, not permission to discard arbitrary assets. Clip names influence controller defaults, locomotion and trigger states; verify the resulting controller. Scene assignment is optional, not a prerequisite for creating assets.
 
 ## Common Shapes
+
+For assigned bundle metadata, use `manage_asset` actions `list_asset_bundles`,
+`get_bundle_assets`, and `get_bundle_dependencies`. These inspect AssetDatabase
+assignments; they do not load or extract external bundle files. Use the exact returned
+bundle name and paginate results.
+
+For Shader Graph structure, use `manage_shader` with `action="inspect_graph"` and a
+full project-owned `.shadergraph` path under `Assets/`. Supported modern MultiJSON
+graphs return bounded node/edge/property/keyword pages. This does not edit, compile,
+or validate the graph against the installed Shader Graph package. Unsupported legacy
+serialization returns an error rather than being rewritten.
 
 Use JSON objects/arrays, numeric values and booleans rather than stringifying them unnecessarily. Some tools accept legacy aliases/coercions, but those are not universal contracts. Colors are clearest as normalized `[r,g,b,a]` arrays. Omission preserves an optional value where supported; explicit `null` clears only references/actions that allow it.
 
@@ -65,6 +77,10 @@ Capture visual changes with the actual camera/capture capability:
 ```
 
 Image inclusion and file-output behavior depend on the chosen capture route. Inspect the returned image; a path/metadata acknowledgement does not prove the scene looks correct. Resolve an ID when names are ambiguous. Do not invent `screenshot_multiview` actions or pass camera capture parameters to the current `manage_scene` schema.
+
+Use `manage_editor(action="get_game_view_size")` to inspect the open Game View. Explicit `set_game_view_size` accepts fixed width/height, an aspect ratio, or a discovered preset. Retain the returned `restore_token` for `restore_game_view_size`; screenshots do not resize the view. `manage_recording` captures a visible view over time and scales frames to its output dimensions; it does not set the Game View size.
+
+For recording, call `capabilities` before `start`, retain `data.job_id`, then call `status` or `stop` with that ID. Inspect actual frame counts/skipped slots and final status. Output stays within `Captures/Recordings`; interrupted jobs discard partial video. Linux, batch mode, audio and inline video data are unsupported.
 
 Audio example, only after the user has requested playback in Play mode and an existing source is resolved:
 
