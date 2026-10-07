@@ -545,6 +545,177 @@ runs, but diagnostic overhead and a single run per condition prevent using
 them to dismiss or explain that increase. Its cause remains unresolved.
 The natural results above remain the before/after evidence.
 
+### Large-response sizing, decoding and reservation accounting
+
+The product comparison uses baseline `8b2b6c32` and candidate
+`852b179a`, with the same Python 3.14.6, MCP 2.3.0 and FastMCP 4.0.11
+environment. The implementation adds three focused changes:
+
+- The existing visitor identifies exact built-in ASCII graphs before doing
+  extra serialization work. A graph with an ASCII string of at least 256 KiB
+  counts JSON bytes using string-only chunks of at most 4 KiB through the
+  installed native encoder. Escapes, control characters, separators, aliases
+  and all existing bounds are preserved. Models, subclasses and Unicode retain
+  the original encoder path; numeric representations are unchanged. The
+  existing 2 MiB whole-document encoding cap is unchanged, and final SDK model
+  envelopes are not universally accelerated.
+- The HTTP Hub shares the existing native JSON decoder, after the same strict
+  UTF-8 and structural checks. Unsupported native decoding and nondefault
+  integer digit limits retain standard-library behavior. No dependency was added.
+- Retained and raw response ledgers maintain global, principal and session
+  totals. Admission reads those totals without scanning all responses. Immutable
+  charges and callbacks tied to their original ledger preserve delayed delivery,
+  cancellation, replacement and copy rollback without reducing budgets.
+
+The full regression suite also exposed an existing TCP greeting over-read:
+one receive could contain the greeting newline followed by heartbeat/result
+frames. A deterministic owned TCP reproduction failed on the baseline too.
+Greeting reads now stop exactly at LF and share the absolute handshake deadline;
+the existing frame reader receives all following bytes. Authentication, the
+512-byte greeting bound and explicit legacy opt-in are unchanged.
+
+The comparison tool now supports fixed transport order and verified same-source
+controls. For each of concurrency one and two, the Phase11 procedure runs an
+A/A control, A/B/B/A product comparison and another A/A control, all HTTP-first.
+Every capture retains both protocols, all four workloads, source guards and
+output/lifecycle contracts. A/A requires identical revision assertions and
+actual product/common-harness source hashes. Controls describe procedural
+variation; their ratios are not subtracted from product results. This fixed-order
+profile is distinct from the historical alternating-order Phase10 measurements.
+
+The decoder and ledger component measurements below compare `8b2b6c32` with
+`ac3d3371`, before the subsequent response-sizing rework. They use actual Hub
+decode/admission methods, with three serial baseline/candidate rounds per
+runtime. Decoder medians pool 90 samples; ledger medians pool 1,500. Source and
+dependency hashes, complete decode parity and separate operation counts were
+checked outside timing. These measurements exclude MCP/SDK dispatch, IPC,
+Unity and final-envelope response sizing.
+
+| Component | Python 3.14.6, before → after | Python 3.11.15, before → after |
+| --- | ---: | ---: |
+| 4 MiB Hub text decode | 3.146 → 1.819 ms | 3.130 → 1.845 ms |
+| 4 MiB Hub bytes decode | 3.903 → 2.626 ms | 3.860 → 2.535 ms |
+| Admission, 1 retained entry | 0.7 → 0.7 µs | 0.6 → 0.6 µs |
+| Admission + reserve/release, 1 entry | 0.8 → 2.8 µs | 0.7 → 2.8 µs |
+| Admission, 256 entries | 33.7 → 0.7 µs | 26.3 → 0.7 µs |
+| Admission + reserve/release, 256 entries | 33.6 → 2.8 µs | 26.4 → 2.8 µs |
+| Admission, 4,096 entries | 532.1 → 0.7 µs | 425.3 → 0.7 µs |
+| Admission + reserve/release, 4,096 entries | 531.2 → 2.8 µs | 428.2 → 2.8 µs |
+
+The decoder medians fell by 33–42%. Index bookkeeping adds 2.0–2.1 µs to
+admission plus reserve/release at one entry, while avoiding traversal at larger
+occupancies. The synthetic 256-byte reservations demonstrate scaling; thousands
+of retained entries are not an asserted typical workload. Over 20 admissions,
+the previous implementation visited 20, 5,120 or 81,920 records; the indexed
+implementation performed 120 total reads at each occupancy. These component
+gains do not establish an end-to-end MCP speedup.
+
+The final response-sizing implementation at `852b179a` was separately measured
+against `8b2b6c32`. Each actual-function pair has 11 elapsed-time samples after
+one warmup, baseline then candidate, with 500 invocations per small sample and
+one for each other sample. Both runtimes passed 322 differential comparisons;
+independent review checked 54 additional boundaries and all 396 timing samples.
+
+| Response-sizing fixture | Python 3.14.6, before → after (ms) | Python 3.11.15, before → after (ms) |
+| --- | ---: | ---: |
+| Small | 0.008235 → 0.008573 | 0.007406 → 0.007717 |
+| Dense, 10,000 rows | 48.6063 → 49.6678 | 44.2416 → 45.5652 |
+| Scalar, 4 MiB | 10.0812 → 2.5594 | 10.2920 → 2.5388 |
+| Scalar, 8 MiB | 20.0552 → 5.1146 | 20.6857 → 5.1731 |
+| Preview envelope, 4 MiB | 10.0426 → 2.5733 | 10.4316 → 2.5566 |
+| Preview envelope, 8 MiB | 20.0976 → 5.1305 | 20.1345 → 5.0399 |
+| Escaped, about 4 MiB characters | 10.1774 → 5.4166 | 10.2612 → 4.9994 |
+| Mixed Unicode fallback | 10.0148 → 10.0146 | 10.1022 → 10.1504 |
+| SDK model fallback | 20.1440 → 20.1028 | 20.3203 → 20.4017 |
+
+Eligible plain responses took 74–75% less time and escaped responses 47–51%
+less, using baseline elapsed time as the denominator. The small case costs
+0.31–0.34 µs more (4.1–4.2%); dense graphs are 2.2–3.0% slower. Unicode/model
+fallback results range from 0.2% faster to 0.5% slower, with no material gain
+claimed. A prior design's extra printable-character scan caused large fallback
+regressions; the final implementation checks graph eligibility first.
+
+Separate Python traced working peaks for the eligible 4/8 MiB fixtures fell from
+roughly 4–8 MiB to 9,428–10,589 bytes. Inputs were preallocated and excluded;
+these are neither process RSS nor a measurement of every native allocation.
+Each native string output is bounded to 24,578 bytes plus its input slice.
+Unsupported/native-error fallback keeps its original encoder allocation and
+response reservations remain unchanged. This component timing does not measure
+SDK dispatch or complete MCP latency.
+
+The final fixed-order MCP experiment completed two separate gate/resource smoke
+captures and all 16 natural captures without a failed block or retry. It used
+actual product/SDK transports with owned synthetic Unity peers on Windows,
+Python 3.14.6, MCP 2.3.0 and FastMCP 4.0.11. Each natural capture used 30 samples,
+three warmups, 4 MiB for `large`, zero synthetic work, and diagnostics, gate and
+resource modes off. C1/C2 mean one/two concurrent requests. Both protocols and
+all four output/lifecycle contracts remained enabled in every capture.
+
+The following values are independent medians of the two ABBA runs' quantiles
+for each revision. They are not pooled 60-sample quantiles or median paired
+ratios. Change is `(candidate / baseline - 1) * 100`; p95/p99 ratios also divide
+those independent medians. A ratio above one is slower. A/A controls use the
+second baseline capture divided by the first, separately before and after the
+product comparison; no control ratio is subtracted from a product result.
+
+| Concurrency | Protocol | Workload | p50 before → after (ms) | p50 change | p95 ratio | p99 ratio | A/A p50 ratio before / after |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| C1 | stdio | small | 2.447 → 2.408 | -1.6% | 0.963 | 1.056 | 0.993 / 1.009 |
+| C1 | stdio | state | 3.519 → 3.182 | -9.6% | 0.778 | 0.874 | 0.995 / 1.001 |
+| C1 | stdio | large | 288.191 → 280.198 | -2.8% | 0.958 | 0.932 | 1.022 / 0.997 |
+| C1 | stdio | job | 2.592 → 2.539 | -2.1% | 1.006 | 1.002 | 1.014 / 0.996 |
+| C1 | http | small | 3.872 → 3.935 | +1.6% | 1.004 | 0.935 | 1.003 / 1.002 |
+| C1 | http | state | 5.594 → 5.637 | +0.8% | 1.028 | 1.097 | 1.006 / 0.985 |
+| C1 | http | large | 117.066 → 103.933 | -11.2% | 0.895 | 0.929 | 1.058 / 0.990 |
+| C1 | http | job | 3.146 → 3.149 | +0.1% | 0.978 | 0.943 | 1.010 / 0.989 |
+| C2 | stdio | small | 3.754 → 3.868 | +3.0% | 0.990 | 1.016 | 1.140 / 1.047 |
+| C2 | stdio | state | 5.697 → 4.449 | -21.9% | 0.908 | 0.715 | 1.006 / 1.001 |
+| C2 | stdio | large | 350.275 → 328.855 | -6.1% | 0.987 | 0.938 | 1.008 / 1.046 |
+| C2 | stdio | job | 3.774 → 3.868 | +2.5% | 0.977 | 0.956 | 0.973 / 0.967 |
+| C2 | http | small | 7.605 → 6.899 | -9.3% | 0.882 | 0.880 | 0.958 / 1.096 |
+| C2 | http | state | 9.798 → 9.694 | -1.1% | 0.934 | 0.973 | 0.998 / 1.114 |
+| C2 | http | large | 157.824 → 150.189 | -4.8% | 0.898 | 0.932 | 1.183 / 0.982 |
+| C2 | http | job | 5.662 → 5.566 | -1.7% | 1.013 | 0.993 | 0.866 / 0.992 |
+
+Five p50 conditions increased: C1 HTTP small/state/job and C2 stdio small/job.
+Several other conditions have higher p95 or p99 despite lower p50. HTTP 4 MiB
+p50 fell from 117.066 to 103.933 ms at C1 and 157.824 to 150.189 ms at C2, but
+C2's first paired large-HTTP round increased. The C2 same-source large-HTTP
+control also varied by +18.3% before and -1.8% after; the 4.8% product aggregate
+reduction cannot establish a stable gain by itself. All four large-response
+aggregates decreased, but the experiment does not establish universal speedup,
+statistical significance or a causal explanation for prior phases' results.
+
+All before/after control quantile ratios are retained below. In particular,
+C2 HTTP job's pre-comparison p95/p99 changed sharply even with identical source.
+This procedural variation is part of the evidence, not removed as an outlier.
+
+| Concurrency | Protocol | Workload | A/A before, p50 / p95 / p99 | A/A after, p50 / p95 / p99 |
+| --- | --- | --- | ---: | ---: |
+| C1 | stdio | small | 0.993 / 1.158 / 1.208 | 1.009 / 0.988 / 1.021 |
+| C1 | stdio | state | 0.995 / 1.021 / 0.978 | 1.001 / 1.041 / 0.992 |
+| C1 | stdio | large | 1.022 / 1.039 / 1.418 | 0.997 / 0.991 / 0.931 |
+| C1 | stdio | job | 1.014 / 1.019 / 1.027 | 0.996 / 0.943 / 1.027 |
+| C1 | http | small | 1.003 / 1.082 / 1.054 | 1.002 / 0.922 / 0.957 |
+| C1 | http | state | 1.006 / 1.032 / 1.022 | 0.985 / 0.870 / 0.872 |
+| C1 | http | large | 1.058 / 1.022 / 1.013 | 0.990 / 0.916 / 0.890 |
+| C1 | http | job | 1.010 / 0.991 / 0.994 | 0.989 / 1.021 / 1.052 |
+| C2 | stdio | small | 1.140 / 1.030 / 1.107 | 1.047 / 1.043 / 1.065 |
+| C2 | stdio | state | 1.006 / 1.333 / 1.049 | 1.001 / 0.995 / 1.000 |
+| C2 | stdio | large | 1.008 / 0.999 / 1.004 | 1.046 / 1.041 / 1.069 |
+| C2 | stdio | job | 0.973 / 0.978 / 0.964 | 0.967 / 0.996 / 0.991 |
+| C2 | http | small | 0.958 / 0.949 / 0.911 | 1.096 / 1.083 / 1.083 |
+| C2 | http | state | 0.998 / 0.981 / 1.000 | 1.114 / 1.058 / 1.164 |
+| C2 | http | large | 1.183 / 0.912 / 0.847 | 0.982 / 0.980 / 0.981 |
+| C2 | http | job | 0.866 / 0.143 / 0.144 | 0.992 / 1.018 / 1.017 |
+
+The experiment verifies owned synthetic response and lifecycle behavior through
+the actual MCP stack; it does not measure Unity main-thread execution or real
+project workflows. No external-host idle guarantee is made. Final code CI passed
+both Python 3.11 and 3.14 full suites, three OS bootstrap checks and seven Unity
+compile versions. Earlier local failures and the initial slower sizing design
+remain recorded separately from these final outcomes.
+
 ### Earlier cross-protocol measurements
 
 The earlier v1 subset harness, before the actual `UnityMCP` adapter was included,
