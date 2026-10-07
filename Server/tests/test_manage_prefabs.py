@@ -11,6 +11,90 @@ from services.tools.manage_prefabs import manage_prefabs
 from services.registry import get_registered_tools
 
 
+@pytest.mark.asyncio
+async def test_override_listing_forwards_filters_and_paging(mock_unity):
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action="list_overrides",
+        target=-42,
+        object_id=-7,
+        property_filter="m_Size",
+        offset=5,
+        page_size=25,
+    )
+    assert result["success"] is True
+    assert mock_unity["params"] == {
+        "action": "list_overrides",
+        "target": -42,
+        "objectId": -7,
+        "propertyFilter": "m_Size",
+        "offset": 5,
+        "pageSize": 25,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["revert_overrides", "apply_overrides"])
+async def test_override_writes_forward_only_explicit_selection(mock_unity, action):
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action=action,
+        target="Parent/Child",
+        prefab_path="Assets/Prefab.prefab",
+        override_ids=["property:-42:m_IsTrigger"],
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["overrideIds"] == ["property:-42:m_IsTrigger"]
+    assert mock_unity["params"]["target"] == "Parent/Child"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("values", [[], [""], ["id", "id"], ["id"] * 101, "id", [42]])
+async def test_override_writes_reject_bad_selection_without_transport(mock_unity, values):
+    result = await manage_prefabs(
+        SimpleNamespace(), action="revert_overrides", target=42, override_ids=values
+    )
+    assert result["success"] is False
+    assert "params" not in mock_unity
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"offset": -1},
+        {"offset": True},
+        {"page_size": 0},
+        {"page_size": 501},
+        {"page_size": 1.5},
+        {"object_id": True},
+        {"object_id": 2**31},
+        {"property_filter": "x" * 513},
+    ],
+)
+async def test_override_listing_rejects_invalid_bounds(mock_unity, kwargs):
+    result = await manage_prefabs(SimpleNamespace(), action="list_overrides", target=42, **kwargs)
+    assert result["success"] is False
+    assert "params" not in mock_unity
+
+
+@pytest.mark.asyncio
+async def test_override_apply_requires_destination_and_writes_reject_filters(mock_unity):
+    result = await manage_prefabs(
+        SimpleNamespace(), action="apply_overrides", target=42, override_ids=["id"]
+    )
+    assert result["success"] is False
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action="revert_overrides",
+        target=42,
+        override_ids=["id"],
+        property_filter="m_Size",
+    )
+    assert result["success"] is False
+    assert "params" not in mock_unity
+
+
 # ── Fixture ──────────────────────────────────────────────────────────
 
 

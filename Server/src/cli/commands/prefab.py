@@ -17,6 +17,70 @@ def prefab():
     pass
 
 
+@prefab.command("overrides")
+@click.argument("target")
+@click.option(
+    "--object-id",
+    type=click.IntRange(-(2**31), 2**31 - 1),
+    help="Filter by GameObject/component instance ID",
+)
+@click.option("--property-filter", help="Case-insensitive property-path substring")
+@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--page-size", default=100, type=click.IntRange(1, 500))
+@handle_unity_errors
+def overrides(
+    target: str, object_id: int | None, property_filter: str | None, offset: int, page_size: int
+) -> None:
+    """List scene prefab instance overrides and IDs for explicit apply/revert selection."""
+    config = get_config()
+    params = {"action": "list_overrides", "target": target, "offset": offset, "pageSize": page_size}
+    if object_id is not None:
+        params["objectId"] = object_id
+    if property_filter is not None:
+        params["propertyFilter"] = property_filter
+    click.echo(format_output(run_command("manage_prefabs", params, config), config.format))
+
+
+@prefab.command("revert-overrides")
+@click.argument("target")
+@click.option(
+    "--override-id",
+    multiple=True,
+    required=True,
+    help="Exact overrideId from prefab overrides; repeat to select properties",
+)
+@handle_unity_errors
+def revert_overrides(target: str, override_id: tuple[str, ...]) -> None:
+    """Revert explicitly selected scene prefab instance overrides with Undo."""
+    config = get_config()
+    params = {"action": "revert_overrides", "target": target, "overrideIds": list(override_id)}
+    click.echo(format_output(run_command("manage_prefabs", params, config), config.format))
+
+
+@prefab.command("apply-overrides")
+@click.argument("target")
+@click.option(
+    "--prefab-path", required=True, help="Destination prefabPath returned by prefab overrides"
+)
+@click.option(
+    "--override-id",
+    multiple=True,
+    required=True,
+    help="Exact overrideId; repeat to select properties",
+)
+@handle_unity_errors
+def apply_overrides(target: str, prefab_path: str, override_id: tuple[str, ...]) -> None:
+    """Apply selected scene instance overrides to its nearest prefab asset."""
+    config = get_config()
+    params = {
+        "action": "apply_overrides",
+        "target": target,
+        "prefabPath": prefab_path,
+        "overrideIds": list(override_id),
+    }
+    click.echo(format_output(run_command("manage_prefabs", params, config), config.format))
+
+
 @prefab.command("open")
 @click.argument("path")
 @handle_unity_errors

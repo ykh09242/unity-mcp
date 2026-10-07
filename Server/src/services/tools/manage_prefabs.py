@@ -19,6 +19,9 @@ REQUIRED_PARAMS = {
     "create_from_gameobject": ["target", "prefab_path"],
     "modify_contents": ["prefab_path"],
     "open_prefab_stage": ["prefab_path"],
+    "list_overrides": ["target"],
+    "revert_overrides": ["target", "override_ids"],
+    "apply_overrides": ["target", "prefab_path", "override_ids"],
 }
 
 
@@ -42,6 +45,12 @@ REQUIRED_PARAMS = {
         '(e.g. component_properties={"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}). '
         'Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. '
         "Use manage_asset action=search filterType=Prefab to list prefabs."
+        " For scene prefab instances, list_overrides returns paged entries and groups with explicit overrideId values, "
+        "property paths/current and prefab values, and added/removed components and GameObjects. "
+        "revert_overrides/apply_overrides require override_ids from that listing; apply also requires the returned prefab_path. "
+        "The nearest nested instance root defines the scope. Select one structural override per call or up to 100 properties. "
+        "Array/compound properties and non-Transform RequireComponent structural dependencies are rejected before mutation. "
+        "Removed GameObject overrides require Unity 2022.2+. Override IDs are editor-session identifiers; list again after structural edits."
     ),
     annotations=ToolAnnotations(
         title="Manage Prefabs",
@@ -59,6 +68,9 @@ async def manage_prefabs(
             "open_prefab_stage",
             "save_prefab_stage",
             "close_prefab_stage",
+            "list_overrides",
+            "revert_overrides",
+            "apply_overrides",
         ],
         "Prefab operation to perform.",
     ],
@@ -115,6 +127,21 @@ async def manage_prefabs(
         'Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve.',
     ]
     | None = None,
+    override_ids: Annotated[
+        list[str],
+        "Explicit overrideId values from list_overrides; 1-100 unique values. Required for revert_overrides/apply_overrides. Select object/component/property entries via their IDs; no implicit apply-all.",
+    ]
+    | None = None,
+    object_id: Annotated[
+        int, "list_overrides: filter by scene GameObject or component instance ID."
+    ]
+    | None = None,
+    property_filter: Annotated[
+        str, "list_overrides: case-insensitive property-path substring filter."
+    ]
+    | None = None,
+    offset: Annotated[int, "list_overrides offset, zero or greater."] = 0,
+    page_size: Annotated[int, "list_overrides page size, 1-500."] = 100,
 ) -> dict[str, Any]:
     if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
@@ -134,6 +161,62 @@ async def manage_prefabs(
                 "message": f"Action '{action}' requires parameter '{param_name}'.",
             }
 
+    if action in {"list_overrides", "revert_overrides", "apply_overrides"}:
+        if type(target) not in (int, str) or (
+            type(target) is int and not -(2**31) <= target < 2**31
+        ):
+            return {
+                "success": False,
+                "message": "target must be a scene instance ID, unique name, or full hierarchy path.",
+            }
+        if (
+            type(offset) is not int
+            or offset < 0
+            or type(page_size) is not int
+            or not 1 <= page_size <= 500
+        ):
+            return {
+                "success": False,
+                "message": "offset must be nonnegative and page_size between 1 and 500.",
+            }
+        if object_id is not None and (
+            type(object_id) is not int or not -(2**31) <= object_id < 2**31
+        ):
+            return {"success": False, "message": "object_id must be a 32-bit integer."}
+        if property_filter is not None and (
+            type(property_filter) is not str or len(property_filter) > 512
+        ):
+            return {
+                "success": False,
+                "message": "property_filter must be a string of at most 512 characters.",
+            }
+        if action in {"revert_overrides", "apply_overrides"}:
+            if type(override_ids) is not list or not 1 <= len(override_ids) <= 100:
+                return {
+                    "success": False,
+                    "message": "override_ids must contain 1-100 explicit IDs from list_overrides.",
+                }
+            if any(
+                type(item) is not str or not item.strip() or len(item) > 2048
+                for item in override_ids
+            ):
+                return {
+                    "success": False,
+                    "message": "override_ids entries must be nonempty strings of at most 2048 characters.",
+                }
+            if len(set(override_ids)) != len(override_ids):
+                return {"success": False, "message": "override_ids must be unique."}
+            if (
+                object_id is not None
+                or property_filter is not None
+                or offset != 0
+                or page_size != 100
+            ):
+                return {
+                    "success": False,
+                    "message": "Paging and filtering are only supported for list_overrides; writes use explicit override_ids.",
+                }
+
     try:
         # Build parameters dictionary
         params: dict[str, Any] = {"action": action}
@@ -144,6 +227,16 @@ async def manage_prefabs(
 
         if target is not None:
             params["target"] = target
+
+        if action in {"list_overrides", "revert_overrides", "apply_overrides"}:
+            params["offset"] = offset
+            params["pageSize"] = page_size
+            if override_ids is not None:
+                params["overrideIds"] = override_ids
+            if object_id is not None:
+                params["objectId"] = object_id
+            if property_filter is not None:
+                params["propertyFilter"] = property_filter
 
         allow_overwrite_val = coerce_bool(allow_overwrite)
         if allow_overwrite_val is not None:

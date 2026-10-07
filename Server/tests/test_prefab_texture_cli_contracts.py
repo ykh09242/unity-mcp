@@ -17,6 +17,17 @@ from cli.utils import connection
 PREFAB = "Assets/PrefabFixture.prefab"
 TEXTURE = "Assets/TextureFixture.png"
 COMMANDS = [
+    ["prefab", "overrides", "Player", "--page-size", "5", "--property-filter", "m_"],
+    ["prefab", "revert-overrides", "Player", "--override-id", "property:-42:m_IsTrigger"],
+    [
+        "prefab",
+        "apply-overrides",
+        "Player",
+        "--prefab-path",
+        PREFAB,
+        "--override-id",
+        "property:-42:m_IsTrigger",
+    ],
     ["prefab", "open", PREFAB],
     ["prefab", "close"],
     ["prefab", "save"],
@@ -137,6 +148,47 @@ def test_prefab_modification_keeps_numeric_name_false_and_zero(domain_transport)
         "position": [0.0, 0.0, 0.0],
         "componentProperties": {"MyComponent": {"enabled": False, "count": 0}},
     }
+
+
+def test_prefab_override_cli_preserves_explicit_ids_and_nested_destination(domain_transport):
+    _, requests = domain_transport
+    selected = ["property:-42:m_IsTrigger", "property:-42:m_Size"]
+    result = CliRunner().invoke(
+        cli,
+        [
+            "prefab",
+            "apply-overrides",
+            "Outer/Nested",
+            "--prefab-path",
+            PREFAB,
+            "--override-id",
+            selected[0],
+            "--override-id",
+            selected[1],
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert requests[0]["params"] == {
+        "action": "apply_overrides",
+        "target": "Outer/Nested",
+        "prefabPath": PREFAB,
+        "overrideIds": selected,
+    }
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["prefab", "revert-overrides", "Player"],
+        ["prefab", "apply-overrides", "Player", "--override-id", "id"],
+        ["prefab", "overrides", "Player", "--page-size", "501"],
+    ],
+)
+def test_prefab_override_cli_rejects_incomplete_or_unbounded_requests(domain_transport, command):
+    _, requests = domain_transport
+    result = CliRunner().invoke(cli, command)
+    assert result.exit_code == 2
+    assert requests == []
 
 
 @pytest.mark.parametrize(

@@ -40,7 +40,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             + ", "
             + ACTION_SAVE_PREFAB_STAGE
             + ", "
-            + ACTION_CLOSE_PREFAB_STAGE;
+            + ACTION_CLOSE_PREFAB_STAGE
+            + ", list_overrides, revert_overrides, apply_overrides";
 
         public static object HandleCommand(JObject @params)
         {
@@ -59,6 +60,20 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 switch (action)
                 {
+                    case "list_overrides":
+                    case "revert_overrides":
+                    case "apply_overrides":
+                    {
+                        string target = @params["target"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(target))
+                            return new ErrorResponse("Override actions require a scene prefab instance target.");
+                        GameObject instance = FindSceneObjectByName(target, true, out string error);
+                        if (error != null)
+                            return new ErrorResponse(error);
+                        if (instance == null)
+                            return new ErrorResponse($"Scene target '{target}' not found.");
+                        return PrefabInstanceOverrides.Handle(instance, @params);
+                    }
                     case ACTION_CREATE_FROM_GAMEOBJECT:
                         return CreatePrefabFromGameObject(@params);
                     case ACTION_GET_INFO:
