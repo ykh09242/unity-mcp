@@ -164,6 +164,11 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         );
                 }
             }
+            catch (ArgumentException ex)
+                when (ex.InnerException is Newtonsoft.Json.JsonSerializationException && ex.TargetSite?.DeclaringType == typeof(ParamCoercion))
+            {
+                return new ErrorResponse($"Error in action '{action}': {ex.Message}");
+            }
             catch (Exception ex)
             {
                 McpLog.Error($"[ManageGraphics] Action '{action}' failed: {ex}");

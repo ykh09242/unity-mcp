@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -15,8 +17,6 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private const string TempRoot = "Assets/Temp/ManageGraphicsTests";
         private bool _hasVolumeSystem;
-        private bool _hasURP;
-        private bool _hasHDRP;
         private bool _hasSceneView;
 
         [SetUp]
@@ -29,8 +29,6 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 var data = pingResult["data"];
                 _hasVolumeSystem = data?.Value<bool>("hasVolumeSystem") ?? false;
-                _hasURP = data?.Value<bool>("hasURP") ?? false;
-                _hasHDRP = data?.Value<bool>("hasHDRP") ?? false;
             }
 
             _hasSceneView = UnityEditor.SceneView.lastActiveSceneView != null;
@@ -716,10 +714,10 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PipelineGetSettings_ReturnsSettings()
         {
-            if (!_hasURP && !_hasHDRP)
-                Assert.Ignore("Built-in pipeline has no settings asset — skipping.");
+            using var pipeline = OwnedUrpPipeline.Create();
             var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "pipeline_get_settings" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(pipeline.AssetPath, result["data"]["assetPath"].ToString());
             var settings = result["data"]["settings"];
             Assert.IsNotNull(settings);
             Assert.IsNotNull(settings["renderScale"]);
@@ -728,35 +726,39 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PipelineSetQuality_InvalidLevel_ReturnsError()
         {
+            int originalLevel = QualitySettings.GetQualityLevel();
+            var originalPipeline = QualitySettings.renderPipeline;
+            var originalActivePipeline = GraphicsSettings.currentRenderPipeline;
             var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "pipeline_set_quality", ["level"] = "NonExistentLevel" }));
             Assert.IsFalse(result.Value<bool>("success"));
-            Assert.That(result["error"].ToString(), Does.Contain("Available:"));
+            Assert.That(result["error"].ToString(), Does.Contain("level"));
+            Assert.That(result["error"].ToString(), Does.Contain("Int32"));
+            Assert.AreEqual(originalLevel, QualitySettings.GetQualityLevel());
+            Assert.IsTrue(QualitySettings.renderPipeline == originalPipeline);
+            Assert.IsTrue(GraphicsSettings.currentRenderPipeline == originalActivePipeline);
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
         // =====================================================================
         // Renderer Feature Actions (URP only)
         // =====================================================================
 
-        private void RequireURP()
-        {
-            if (!_hasURP)
-                Assert.Ignore("URP not available — skipping.");
-        }
-
         [Test]
         public void FeatureList_ReturnsFeatures()
         {
-            RequireURP();
+            using var pipeline = OwnedUrpPipeline.Create();
             var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "feature_list" }));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["features"]);
             Assert.IsNotNull(result["data"]["rendererDataName"]);
+            Assert.AreEqual(pipeline.RendererName, result["data"]["rendererDataName"].ToString());
+            Assert.AreEqual(0, ((JArray)result["data"]["features"]).Count);
         }
 
         [Test]
         public void FeatureAdd_InvalidType_ReturnsError()
         {
-            RequireURP();
+            using var pipeline = OwnedUrpPipeline.Create();
             var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "feature_add", ["type"] = "NonExistentFeature" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("not found"));
@@ -766,6 +768,121 @@ namespace MCPForUnityTests.Editor.Tools
         // =====================================================================
         // Helpers
         // =====================================================================
+
+        private sealed class OwnedUrpPipeline : IDisposable
+        {
+            private readonly PropertyInfo _graphicsPipelineProperty;
+            private readonly RenderPipelineAsset _originalGraphicsPipeline;
+            private readonly RenderPipelineAsset _originalQualityPipeline;
+            private readonly int _originalQualityLevel;
+            private string _root;
+            private string _rootGuid;
+            private ScriptableObject _renderer;
+            private RenderPipelineAsset _pipeline;
+            private bool _qualityPipelineAssigned;
+            private bool _disposed;
+
+            public string AssetPath => _root + "/Pipeline.asset";
+            public string RendererName => _renderer.name;
+
+            private OwnedUrpPipeline()
+            {
+                // Keep the test assembly independent of optional URP assemblies and the
+                // defaultRenderPipeline API rename in newer Editors.
+                _graphicsPipelineProperty =
+                    typeof(GraphicsSettings).GetProperty("defaultRenderPipeline", BindingFlags.Public | BindingFlags.Static)
+                    ?? typeof(GraphicsSettings).GetProperty("renderPipelineAsset", BindingFlags.Public | BindingFlags.Static);
+                Assert.IsNotNull(_graphicsPipelineProperty, "The Editor must expose its default render pipeline asset.");
+                _originalGraphicsPipeline = (RenderPipelineAsset)_graphicsPipelineProperty.GetValue(null);
+                _originalQualityPipeline = QualitySettings.renderPipeline;
+                _originalQualityLevel = QualitySettings.GetQualityLevel();
+            }
+
+            public static OwnedUrpPipeline Create()
+            {
+                var pipelineType = Type.GetType("UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime");
+                var rendererType = Type.GetType("UnityEngine.Rendering.Universal.UniversalRendererData, Unity.RenderPipelines.Universal.Runtime");
+                if (pipelineType == null || rendererType == null)
+                    Assert.Ignore("The optional URP package is not installed — skipping owned URP fixture.");
+
+                var owned = new OwnedUrpPipeline();
+                try
+                {
+                    owned._root = "Assets/__McpGraphicsUrp_" + Guid.NewGuid().ToString("N");
+                    Assert.IsFalse(AssetDatabase.IsValidFolder(owned._root));
+                    owned._rootGuid = AssetDatabase.CreateFolder("Assets", owned._root.Substring("Assets/".Length));
+                    Assert.IsNotEmpty(owned._rootGuid);
+                    Assert.AreEqual(owned._root, AssetDatabase.GUIDToAssetPath(owned._rootGuid));
+
+                    owned._renderer = ScriptableObject.CreateInstance(rendererType);
+                    owned._renderer.name = "OwnedGraphicsRenderer";
+                    AssetDatabase.CreateAsset(owned._renderer, owned._root + "/Renderer.asset");
+                    Assert.IsTrue(EditorUtility.IsPersistent(owned._renderer));
+                    var create = pipelineType
+                        .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .SingleOrDefault(method =>
+                            method.Name == "Create"
+                            && method.ReturnType == pipelineType
+                            && method.GetParameters().Length == 1
+                            && method.GetParameters()[0].ParameterType.IsInstanceOfType(owned._renderer)
+                        );
+                    Assert.IsNotNull(create, "Installed URP must expose Create(ScriptableRendererData).");
+                    owned._pipeline = (RenderPipelineAsset)create.Invoke(null, new object[] { owned._renderer });
+                    owned._pipeline.name = "OwnedGraphicsPipeline";
+                    AssetDatabase.CreateAsset(owned._pipeline, owned.AssetPath);
+                    Assert.IsTrue(EditorUtility.IsPersistent(owned._pipeline));
+                    using (var serialized = new SerializedObject(owned._pipeline))
+                    {
+                        var renderers = serialized.FindProperty("m_RendererDataList");
+                        Assert.IsNotNull(renderers);
+                        Assert.AreEqual(1, renderers.arraySize);
+                        Assert.IsTrue(renderers.GetArrayElementAtIndex(0).objectReferenceValue == owned._renderer);
+                    }
+
+                    // A synchronous API test needs only the current quality override; it
+                    // does not render a frame or initialize URP global project settings.
+                    owned._qualityPipelineAssigned = true;
+                    QualitySettings.renderPipeline = owned._pipeline;
+                    Assert.IsTrue(GraphicsSettings.currentRenderPipeline == owned._pipeline);
+                    return owned;
+                }
+                catch
+                {
+                    owned.Dispose();
+                    throw;
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                if (_qualityPipelineAssigned)
+                {
+                    if (QualitySettings.GetQualityLevel() != _originalQualityLevel)
+                        QualitySettings.SetQualityLevel(_originalQualityLevel, false);
+                    QualitySettings.renderPipeline = _originalQualityPipeline;
+                    if ((RenderPipelineAsset)_graphicsPipelineProperty.GetValue(null) != _originalGraphicsPipeline)
+                        _graphicsPipelineProperty.SetValue(null, _originalGraphicsPipeline);
+                    Assert.AreEqual(_originalQualityLevel, QualitySettings.GetQualityLevel());
+                    Assert.IsTrue(QualitySettings.renderPipeline == _originalQualityPipeline);
+                    Assert.IsTrue((RenderPipelineAsset)_graphicsPipelineProperty.GetValue(null) == _originalGraphicsPipeline);
+                }
+
+                if (!string.IsNullOrEmpty(_rootGuid))
+                {
+                    Assert.That(_root, Does.StartWith("Assets/__McpGraphicsUrp_"));
+                    Assert.AreEqual(_root, AssetDatabase.GUIDToAssetPath(_rootGuid));
+                    Assert.AreEqual(_rootGuid, AssetDatabase.AssetPathToGUID(_root));
+                    Assert.IsTrue(AssetDatabase.DeleteAsset(_root));
+                }
+                if (_pipeline != null && !EditorUtility.IsPersistent(_pipeline))
+                    UnityEngine.Object.DestroyImmediate(_pipeline);
+                if (_renderer != null && !EditorUtility.IsPersistent(_renderer))
+                    UnityEngine.Object.DestroyImmediate(_renderer);
+            }
+        }
 
         private void CreateTestVolume(string name)
         {
