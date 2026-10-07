@@ -163,12 +163,12 @@ def _split_uri(uri: str) -> tuple[str, str]:
         # UNC: file://server/share/... -> //server/share/...
         if host and host.lower() != "localhost":
             p = f"//{host}{p}"
-        # Use percent-decoded path, preserving leading slashes
-        raw_path = unquote(p)
+        # Preserve leading slashes until the common decoding step.
+        raw_path = p
     else:
         raw_path = uri
 
-    # Percent-decode any residual encodings and normalize separators
+    # Decode once so escaped percent sequences remain literal path characters.
     raw_path = unquote(raw_path).replace("\\", "/")
     # Strip leading slash only for Windows drive-letter forms like "/C:/..."
     if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
@@ -611,14 +611,15 @@ async def create_script(
     name = os.path.splitext(os.path.basename(path))[0]
     directory = os.path.dirname(path)
     # Local validation to avoid round-trips on obviously bad input
-    norm_path = os.path.normpath((path or "").replace("\\", "/")).replace("\\", "/")
+    raw_path = (path or "").replace("\\", "/")
+    norm_path = os.path.normpath(raw_path).replace("\\", "/")
     if not directory or directory.split("/")[0].lower() != "assets":
         return {
             "success": False,
             "code": "path_outside_assets",
             "message": f"path must be under 'Assets/'; got '{path}'.",
         }
-    if ".." in norm_path.split("/") or norm_path.startswith("/"):
+    if ".." in raw_path.split("/") or norm_path.startswith("/"):
         return {
             "success": False,
             "code": "bad_path",

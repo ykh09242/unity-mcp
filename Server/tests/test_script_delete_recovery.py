@@ -10,6 +10,34 @@ recovery = importlib.import_module("services.tools.refresh_unity")
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "encoded_directory,expected_directory",
+    [
+        ("%252e%252e/Assets", "Assets/%2e%2e/Assets"),
+        ("Scripts%252fNested", "Assets/Scripts%2fNested"),
+    ],
+)
+async def test_delete_file_uri_decodes_percent_escapes_once(
+    monkeypatch, encoded_directory, expected_directory
+):
+    # Given a file URI whose folder contains literal percent-encoded characters.
+    sender = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(scripts, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(scripts, "send_mutation", sender)
+    # When deleting through the public Python entrypoint.
+    response = await scripts.delete_script(
+        None, f"file:///C:/Project/Assets/{encoded_directory}/Foo.cs"
+    )
+    # Then the wire command addresses the literal directory, without decoding it twice.
+    assert response["success"] is True
+    assert sender.await_args.args[3] == {
+        "action": "delete",
+        "name": "Foo",
+        "path": expected_directory,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("entrypoint", ["delete_script", "manage_script"])
 @pytest.mark.parametrize(
     "verification,deleted",

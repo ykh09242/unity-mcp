@@ -13,7 +13,7 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
 from services.tools.manage_script import _validate_script_name
-from services.tools.utils import coerce_int
+from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -103,7 +103,8 @@ async def find_in_file(
         flags = re.MULTILINE
         ic = ignore_case
         if isinstance(ic, str):
-            ic = ic.lower() in ("true", "1", "yes")
+            ic = {"1": True, "yes": True, "0": False, "no": False}.get(ic.lower(), ic)
+        ic = coerce_bool(ic, default=False)
         if ic:
             flags |= re.IGNORECASE
         max_results = max(1, min(coerce_int(max_results, default=200), 1000))
