@@ -378,16 +378,20 @@ namespace MCPForUnity.Editor.Helpers
             if (obj == null)
                 return string.Empty;
 
-            var path = obj.name;
             var parent = obj.transform.parent;
+            if (parent == null)
+                return obj.name;
 
+            // Join once instead of copying the growing path at each ancestor.
+            var names = new Stack<string>();
+            names.Push(obj.name);
             while (parent != null)
             {
-                path = parent.name + "/" + path;
+                names.Push(parent.name);
                 parent = parent.parent;
             }
 
-            return path;
+            return string.Join("/", names);
         }
     }
 }

@@ -32,7 +32,7 @@ namespace MCPForUnityTests.Editor.Tools
             previousScene = SceneManager.GetActiveScene();
             previousSelection = Selection.objects;
             captured = true;
-            ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            ownedScene = EditorSceneManager.NewPreviewScene();
             root = new GameObject("McpPathIntegrity_" + Guid.NewGuid().ToString("N"));
             owned.Add(root);
             SceneManager.MoveGameObjectToScene(root, ownedScene);
@@ -49,7 +49,7 @@ namespace MCPForUnityTests.Editor.Tools
                     if (obj != null)
                         UnityEngine.Object.DestroyImmediate(obj);
                 if (ownedScene.IsValid())
-                    EditorSceneManager.CloseScene(ownedScene, true);
+                    EditorSceneManager.ClosePreviewScene(ownedScene);
             }
             finally
             {
@@ -119,6 +119,49 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Assert.IsFalse(Matches(root, path));
             Assert.IsFalse(Matches(null, "Child"));
+        }
+
+        [TestCase("")]
+        [TestCase("Plain")]
+        [TestCase("Nested/Name")]
+        [TestCase("/Leading/")]
+        [TestCase("한글_😀")]
+        [TestCase("Ch\u00ADild")]
+        public void HierarchyPathPreservesLiteralNames(string name)
+        {
+            GameObject child = Child(name);
+            Assert.AreEqual(root.name + "/" + name, GameObjectLookup.GetGameObjectPath(child));
+            Assert.AreEqual(root.name, GameObjectLookup.GetGameObjectPath(root));
+        }
+
+        [Test]
+        public void DeepHierarchyPathReflectsRenameAndReparent()
+        {
+            var names = new List<string> { root.name };
+            GameObject leaf = root;
+            for (int i = 1; i < 128; i++)
+            {
+                GameObject child = Child("Node_" + i);
+                child.transform.SetParent(leaf.transform, false);
+                leaf = child;
+                names.Add(child.name);
+            }
+
+            Assert.AreEqual(string.Join("/", names), GameObjectLookup.GetGameObjectPath(leaf));
+            root.name = "RenamedRoot";
+            names[0] = root.name;
+            Assert.AreEqual(string.Join("/", names), GameObjectLookup.GetGameObjectPath(leaf));
+            leaf.transform.SetParent(root.transform, false);
+            Assert.AreEqual(root.name + "/" + leaf.name, GameObjectLookup.GetGameObjectPath(leaf));
+        }
+
+        [Test]
+        public void MissingOrDestroyedObjectHasEmptyPath()
+        {
+            GameObject child = Child("Destroyed");
+            UnityEngine.Object.DestroyImmediate(child);
+            Assert.AreEqual(string.Empty, GameObjectLookup.GetGameObjectPath(child));
+            Assert.AreEqual(string.Empty, GameObjectLookup.GetGameObjectPath(null));
         }
     }
 }
