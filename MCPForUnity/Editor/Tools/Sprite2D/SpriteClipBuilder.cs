@@ -160,13 +160,20 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     continue;
                 }
 
-                var existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
-                if (existing != null && !overwrite)
+                string fullClipPath = AssetPathUtility.GetFullAssetPath(clipPath);
+                if (Directory.Exists(fullClipPath))
+                {
+                    diagnostics.AddWarning("CLIP_BAD_PATH", $"Clip '{clipName}': '{clipPath}' is a folder - skipped.", "Choose a different clip name or output_dir.");
+                    continue;
+                }
+                if (!overwrite && (File.Exists(fullClipPath)
+                    || AssetDatabase.LoadMainAssetAtPath(clipPath) != null
+                    || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(clipPath, AssetPathToGUIDOptions.OnlyExistingAssets))))
                 {
                     // Measured: an unrelated clip at this path was replaced by a request carrying
                     // no overwrite field. Same policy as the controller builder: destruction
                     // needs authorisation.
-                    diagnostics.AddWarning("CLIP_EXISTS", $"Clip '{clipName}': an animation clip already exists at '{clipPath}' - skipped.", "Set overwrite=true to replace it.", "Choose a different clip name or output_dir.");
+                    diagnostics.AddWarning("CLIP_EXISTS", $"Clip '{clipName}': an asset already exists at '{clipPath}' - skipped.", "Set overwrite=true to replace it.", "Choose a different clip name or output_dir.");
                     continue;
                 }
 
@@ -246,12 +253,18 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         /// <summary>Creates an asset folder and any missing parents above it.</summary>
         internal static void CreateFolders(string path)
         {
+            path = AssetPathUtility.GetContainedAssetPath(path);
+            if (AssetDatabase.IsValidFolder(path))
+                return;
             string parent = Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
             if (!AssetDatabase.IsValidFolder(parent))
                 CreateFolders(parent);
             string folderName = Path.GetFileName(path);
             if (!string.IsNullOrEmpty(folderName))
+            {
+                AssetPathUtility.GetFullAssetPath(path);
                 AssetDatabase.CreateFolder(parent, folderName);
+            }
         }
     }
 }

@@ -32,6 +32,21 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 || !SpriteParams.TryReadBool(@params, "add_to_scene", false, out bool addToScene, out flagError))
                 return diagnostics.Fail("BAD_PARAM", flagError);
 
+            string outputDir = @params["output_dir"]?.ToString()
+                ?? Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
+            if (!SpriteParams.TryReadAssetPath(new JObject { ["output_dir"] = outputDir },
+                "output_dir", out outputDir, out pathError))
+                return diagnostics.Fail("BAD_PARAM", pathError);
+
+            string controllerPath = @params["controller_path"]?.ToString()
+                ?? $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller";
+            if (!SpriteControllerBuilder.TryResolveControllerPath(controllerPath, out controllerPath, out pathError))
+                return diagnostics.Fail("BAD_PARAM", pathError);
+
+            var clipsToken = @params["clips"] as JArray;
+            if (@params["clips"] != null && @params["clips"].Type != JTokenType.Null && clipsToken == null)
+                return diagnostics.Fail("BAD_PARAM", "'clips' must be an array of clip definitions.");
+
             // ── Step 1: Slice ──────────────────────────────────────────────────
 
             SpriteImportSetup.SliceSheet(@params, diagnostics);
@@ -40,10 +55,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             // ── Step 2: Clips ──────────────────────────────────────────────────
 
-            string outputDir = @params["output_dir"]?.ToString()
-                ?? Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
-
-            var clipsToken = @params["clips"] as JArray;
             if (clipsToken == null || clipsToken.Count == 0)
             {
                 string animName = @params["animation_name"]?.ToString()
@@ -70,9 +81,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 return Stop("setup_clips", diagnostics);
 
             // ── Step 3: Controller ─────────────────────────────────────────────
-
-            string controllerPath = @params["controller_path"]?.ToString()
-                ?? $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller";
 
             var controller = SpriteControllerBuilder.BuildController(
                 clips.Select(c => (c.name, c.path, (bool?)c.loop)), controllerPath, overwrite, diagnostics);

@@ -153,6 +153,7 @@ def test_actual_tools_reject_wrong_scalar_types_before_transport(monkeypatch, mo
     import_model = importlib.import_module("services.tools.import_model_file")
     ui = importlib.import_module("services.tools.manage_ui")
     find = importlib.import_module("services.tools.find_gameobjects")
+    sprite = importlib.import_module("services.tools.manage_sprite")
     sent = []
 
     async def send(*args, **kwargs):
@@ -162,12 +163,15 @@ def test_actual_tools_reject_wrong_scalar_types_before_transport(monkeypatch, mo
     async def preflight(*args, **kwargs):
         return None
 
-    for module in (import_model, ui, find):
+    for module in (import_model, ui, find, sprite):
         monkeypatch.setattr(module, "send_with_unity_instance", send)
     monkeypatch.setattr(ui, "send_mutation", send)
     monkeypatch.setattr(find, "preflight", preflight)
     server = FastMCP("actual-scalar-contract")
-    for module, name in ((import_model, "import_model_file"), (ui, "manage_ui"), (find, "find_gameobjects")):
+    for module, name in (
+        (import_model, "import_model_file"), (ui, "manage_ui"),
+        (find, "find_gameobjects"), (sprite, "manage_sprite"),
+    ):
         metadata = next(t for t in get_registered_tools() if t["name"] == name)
         server.tool(name=name, **metadata["kwargs"])(getattr(module, name))
 
@@ -180,6 +184,11 @@ def test_actual_tools_reject_wrong_scalar_types_before_transport(monkeypatch, mo
                 ("manage_ui", {"action": "get_visual_tree", "max_depth": True}),
                 ("find_gameobjects", {"search_term": "Cube", "page_size": True}),
                 ("find_gameobjects", {"search_term": "Cube", "include_inactive": 0}),
+                ("manage_sprite", {"action": "slice_sheet", "path": "Assets/hero.png", "cols": True}),
+                ("manage_sprite", {"action": "slice_sheet", "path": "Assets/hero.png", "cols": 1.5}),
+                ("manage_sprite", {"action": "get_info", "path": "Assets/hero.png", "page_size": True}),
+                ("manage_sprite", {"action": "full_setup", "path": "Assets/hero.png", "cols": 4, "overwrite": 1}),
+                ("manage_sprite", {"action": "full_setup", "path": "Assets/hero.png", "cols": 4, "add_to_scene": "false"}),
             ):
                 before = len(sent)
                 result = await client.call_tool(name, payload, raise_on_error=False)
@@ -190,6 +199,10 @@ def test_actual_tools_reject_wrong_scalar_types_before_transport(monkeypatch, mo
             assert sent[-1]["targetSize"] == 2.0
             await client.call_tool("find_gameobjects", {"search_term": "Cube", "page_size": "5", "include_inactive": "false"})
             assert sent[-1]["pageSize"] == 5 and sent[-1]["includeInactive"] is False
+            await client.call_tool("manage_sprite", {
+                "action": "get_info", "path": "Assets/hero.png", "page_size": 5, "cursor": 0,
+            })
+            assert sent[-1]["page_size"] == 5 and sent[-1]["cursor"] == 0
 
     asyncio.run(exercise())
 

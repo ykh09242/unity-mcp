@@ -1112,6 +1112,47 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void SetupClips_UnimportedDestinationWithoutOverwrite_IsLeftAlone()
+        {
+            string path = CreateSheet("unimported", 4, 1);
+            Slice(path, 4, 1);
+            string destination = $"{TempRoot}/walk.anim";
+            string fullPath = Path.Combine(Directory.GetParent(Application.dataPath).FullName, destination);
+            byte[] sentinel = { 10, 20, 30, 40 };
+            File.WriteAllBytes(fullPath, sentinel);
+
+            var result = SetupClips(path, OneClip("walk", 0, 3));
+
+            CollectionAssert.AreEqual(sentinel, File.ReadAllBytes(fullPath));
+            Assert.AreEqual(0, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_EXISTS"));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetupClips_DestinationFolder_IsLeftAlone(bool overwrite)
+        {
+            string path = CreateSheet("foldercollision", 4, 1);
+            Slice(path, 4, 1);
+            string destination = $"{TempRoot}/walk.anim";
+            string guid = AssetDatabase.CreateFolder(TempRoot, "walk.anim");
+
+            var result = Run(new JObject
+            {
+                ["action"] = "setup_clips", ["path"] = path,
+                ["clips"] = OneClip("walk", 0, 3), ["output_dir"] = TempRoot,
+                ["overwrite"] = overwrite,
+            });
+
+            Assert.AreEqual(0, result.Value<int>("clip_count"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_PATH"));
+            Assert.IsTrue(AssetDatabase.IsValidFolder(destination));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
         public void SetupClips_NameThatMerelyContainsAKeyword_IsNotTreatedAsLocomotion()
         {
             // 'grunt' contains the letters of 'run'; substring matching makes it loop.
@@ -1456,6 +1497,68 @@ namespace MCPForUnityTests.Editor.Tools
             var second = AssetDatabase.LoadAssetAtPath<AnimatorController>(ctrlPath);
             Assert.That(second.parameters.Select(p => p.name), Has.No.Member("SentinelFromFirstBuild"),
                 "an authorised overwrite must build a new controller, not reuse the old one");
+        }
+
+        [Test]
+        public void SetupController_UnimportedDestinationWithoutOverwrite_IsLeftAlone()
+        {
+            var clips = BuildClips("unimportedcontroller", "idle");
+            string destination = $"{TempRoot}/Hero.controller";
+            string fullPath = Path.Combine(Directory.GetParent(Application.dataPath).FullName, destination);
+            byte[] sentinel = { 10, 20, 30, 40 };
+            File.WriteAllBytes(fullPath, sentinel);
+
+            var result = SetupController(clips);
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("CONTROLLER_EXISTS"));
+            CollectionAssert.AreEqual(sentinel, File.ReadAllBytes(fullPath));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetupController_SuffixedDestinationFolder_IsLeftAlone(bool overwrite)
+        {
+            var clips = BuildClips("suffixedfolder", "idle");
+            string destination = $"{TempRoot}/Hero.controller";
+            string guid = AssetDatabase.CreateFolder(TempRoot, "Hero.controller");
+
+            var result = Run(new JObject
+            {
+                ["action"] = "setup_controller", ["clips"] = clips,
+                ["controller_path"] = $"{TempRoot}/Hero", ["overwrite"] = overwrite,
+            });
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("BAD_PARAM"));
+            Assert.IsTrue(AssetDatabase.IsValidFolder(destination));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("output_dir")]
+        [TestCase("controller_path")]
+        [TestCase("clips")]
+        public void FullSetup_InvalidDestinationOrClips_IsRefusedBeforeChangingTheImporter(string key)
+        {
+            string path = CreateSheet("preflight", 4, 1);
+            var importer = (TextureImporter)AssetImporter.GetAtPath(path);
+            string before = EditorJsonUtility.ToJson(importer);
+            var parameters = new JObject
+            {
+                ["action"] = "full_setup", ["path"] = path, ["cols"] = 4,
+                [key] = key == "clips" ? (JToken)new JObject() : "Assets/../outside",
+            };
+
+            var result = Run(parameters);
+
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.That(result["diagnostics"].ToString(), Does.Contain("BAD_PARAM"));
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(importer));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimationClip", new[] { TempRoot }));
+            Assert.IsEmpty(AssetDatabase.FindAssets("t:AnimatorController", new[] { TempRoot }));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
         }
 
         [Test]

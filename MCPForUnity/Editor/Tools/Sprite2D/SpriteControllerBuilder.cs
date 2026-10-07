@@ -61,30 +61,40 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             };
         }
 
+        internal static bool TryResolveControllerPath(string controllerPath, out string resolvedPath, out string error)
+        {
+            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = controllerPath?.Trim() },
+                "controller_path", out resolvedPath, out error))
+                return false;
+            if (AssetDatabase.IsValidFolder(resolvedPath))
+            {
+                error = $"'controller_path' names the folder '{resolvedPath}'; give the controller a file name inside it.";
+                return false;
+            }
+            if (!resolvedPath.EndsWith(".controller", System.StringComparison.OrdinalIgnoreCase))
+                resolvedPath += ".controller";
+
+            // The suffix can select a different filesystem entry, including a link or junction.
+            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = resolvedPath },
+                "controller_path", out resolvedPath, out error))
+                return false;
+            if (Path.GetFileName(resolvedPath).Equals(".controller", System.StringComparison.OrdinalIgnoreCase)
+                || Directory.Exists(AssetPathUtility.GetFullAssetPath(resolvedPath)))
+            {
+                error = "'controller_path' must name a file under Assets/, not a folder or an empty file name.";
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>Returns default when refused; the diagnostics say why. A non-null loop overrides the name guess.</summary>
         internal static (string path, int stateCount) BuildController(
             IEnumerable<(string name, string path, bool? loop)> clips, string controllerPath, bool overwrite,
             SpriteDiagnosticBuilder diagnostics)
         {
-            if (!SpriteParams.TryReadAssetPath(new JObject { ["controller_path"] = controllerPath?.Trim() },
-                "controller_path", out controllerPath, out string pathError))
+            if (!TryResolveControllerPath(controllerPath, out controllerPath, out string pathError))
             {
                 diagnostics.AddError("BAD_PARAM", pathError);
-                return default;
-            }
-            if (AssetDatabase.IsValidFolder(controllerPath))
-            {
-                diagnostics.AddError("BAD_PARAM", $"'controller_path' names the folder '{controllerPath}'; give the controller a file name inside it.");
-                return default;
-            }
-            if (!controllerPath.EndsWith(".controller"))
-                controllerPath += ".controller";
-            // Checked after the suffix: a bare 'Assets' passes SanitizeAssetPath and then
-            // becomes 'Assets.controller', a file at the project root; 'Assets/' becomes
-            // 'Assets/.controller', a file with no name.
-            if (!AssetPathUtility.IsValidAssetPath(controllerPath) || Path.GetFileName(controllerPath) == ".controller")
-            {
-                diagnostics.AddError("BAD_PARAM", "'controller_path' must name a file under Assets/ without characters like : * ? \" < > |.");
                 return default;
             }
 
@@ -109,9 +119,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             // Not deleted here: CreateAnimatorControllerAtPath replaces the asset itself, and
             // deleting first left a failed rebuild with no controller at all.
-            if (!overwrite && AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath) != null)
+            if (!overwrite && (File.Exists(AssetPathUtility.GetFullAssetPath(controllerPath))
+                || AssetDatabase.LoadMainAssetAtPath(controllerPath) != null
+                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(controllerPath, AssetPathToGUIDOptions.OnlyExistingAssets))))
             {
-                diagnostics.AddError("CONTROLLER_EXISTS", $"Controller already exists at '{controllerPath}'.", "Set overwrite=true to replace it.");
+                diagnostics.AddError("CONTROLLER_EXISTS", $"An asset already exists at '{controllerPath}'.", "Set overwrite=true to replace it.");
                 return default;
             }
 
@@ -119,6 +131,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
                 SpriteClipBuilder.CreateFolders(dir);
 
+            AssetPathUtility.GetFullAssetPath(controllerPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
             // Reference equality, not a null check: a replacement that failed leaves the old
             // asset loadable at the same path.
